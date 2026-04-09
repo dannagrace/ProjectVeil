@@ -162,6 +162,45 @@ test("room connect re-checks persisted ban state and rejects banned players", as
   assert.equal(client.sent.some((message) => message.type === "session.state"), false);
 });
 
+test("room connect allows non-minors to pass through without minor protection errors", async (t) => {
+  mockSystemTime(t, "2026-04-03T14:30:00.000Z");
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  await store.bindPlayerAccountWechatMiniGameIdentity("adult-player", {
+    openId: "wx-adult-player",
+    ageVerified: true,
+    isMinor: false
+  });
+  const room = await createTestRoom(`adult-player-${Date.now()}`);
+  const client = createFakeClient("adult-player-session");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  room.clients.push(client);
+  room.onJoin(client, { playerId: "adult-player" });
+  await emitRoomMessage(room, "connect", client, {
+    type: "connect",
+    requestId: "connect-adult-player",
+    roomId: room.roomId,
+    playerId: "adult-player"
+  });
+
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        (message.reason === "minor_restricted_hours" || message.reason === "minor_daily_limit_reached")
+    ),
+    false
+  );
+  assert.equal(client.sent.some((message) => message.type === "session.state"), true);
+});
+
 test("room connect rejects minors during restricted hours", async (t) => {
   mockSystemTime(t, "2026-04-03T14:30:00.000Z");
   resetLobbyRoomRegistry();
@@ -192,6 +231,49 @@ test("room connect rejects minors during restricted hours", async (t) => {
 
   assert.equal(client.sent.some((message) => message.type === "error" && message.reason === "minor_restricted_hours"), true);
   assert.equal(client.sent.some((message) => message.type === "session.state"), false);
+});
+
+test("room connect allows minors during permitted hours while under the daily limit", async (t) => {
+  mockSystemTime(t, "2026-04-03T01:00:00.000Z");
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  await store.bindPlayerAccountWechatMiniGameIdentity("minor-allowed", {
+    openId: "wx-minor-allowed",
+    ageVerified: true,
+    isMinor: true
+  });
+  await store.savePlayerAccountProgress("minor-allowed", {
+    dailyPlayMinutes: 45,
+    lastPlayDate: "2026-04-03"
+  });
+  const room = await createTestRoom(`minor-allowed-${Date.now()}`);
+  const client = createFakeClient("minor-allowed-session");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  room.clients.push(client);
+  room.onJoin(client, { playerId: "minor-allowed" });
+  await emitRoomMessage(room, "connect", client, {
+    type: "connect",
+    requestId: "connect-minor-allowed",
+    roomId: room.roomId,
+    playerId: "minor-allowed"
+  });
+
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        (message.reason === "minor_restricted_hours" || message.reason === "minor_daily_limit_reached")
+    ),
+    false
+  );
+  assert.equal(client.sent.some((message) => message.type === "session.state"), true);
 });
 
 test("room timer kicks minors after reaching the daily playtime limit and blocks rejoin", async (t) => {
