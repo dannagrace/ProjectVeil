@@ -34,7 +34,9 @@ async function seedSmokeGateRoot(tempDir: string): Promise<void> {
       "campaign-chapter1.json",
       "campaign-chapter2.json",
       "campaign-chapter3.json",
-      "campaign-chapter4.json"
+      "campaign-chapter4.json",
+      "campaign-chapter5.json",
+      "campaign-chapter6.json"
     ].map((fileName) => copyConfigFixture(tempDir, fileName))
   );
 }
@@ -47,7 +49,7 @@ test("content-smoke-gate validates the shipped campaign and representative boss 
   );
 
   assert.match(stdout, /Result: PASS/);
-  assert.match(stdout, /Campaign smoke: PASS \(27 missions across 4 chapters; 3 boss mission\(s\)\)/);
+  assert.match(stdout, /Campaign smoke: PASS \(41 missions across 6 chapters; 5 boss mission\(s\)\)/);
   assert.match(stdout, /Representative boss scenario: chapter2-break-the-ring \(frontier-basin, boss-shadow-warden\)/);
   assert.match(stdout, /Content-pack smoke: PASS \(2 bundle\(s\): default, frontier-basin\)/);
 });
