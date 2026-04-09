@@ -1,0 +1,173 @@
+{
+  "neutralArmies": [
+    {
+      "id": "neutral-grove-sentinels",
+      "position": {
+        "x": 2,
+        "y": 3
+      },
+      "reward": {
+        "kind": "wood",
+        "amount": 12
+      },
+      "stacks": [
+        {
+          "templateId": "moss_stalker",
+          "count": 7
+        },
+        {
+          "templateId": "wolf_pack",
+          "count": 5
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolPath": [
+          { "x": 2, "y": 3 },
+          { "x": 3, "y": 3 },
+          { "x": 3, "y": 2 },
+          { "x": 2, "y": 2 }
+        ],
+        "detectionRadius": 4,
+        "chaseDistance": 6,
+        "speed": 2
+      }
+    },
+    {
+      "id": "neutral-highland-warband",
+      "position": {
+        "x": 8,
+        "y": 3
+      },
+      "reward": {
+        "kind": "gold",
+        "amount": 300
+      },
+      "stacks": [
+        {
+          "templateId": "iron_walker",
+          "count": 5
+        },
+        {
+          "templateId": "hero_guard_basic",
+          "count": 6
+        }
+      ],
+      "behavior": {
+        "mode": "guard",
+        "detectionRadius": 3,
+        "chaseDistance": 5,
+        "speed": 1
+      }
+    },
+    {
+      "id": "neutral-vale-roamers",
+      "position": {
+        "x": 5,
+        "y": 5
+      },
+      "reward": {
+        "kind": "ore",
+        "amount": 6
+      },
+      "stacks": [
+        {
+          "templateId": "wolf_pack",
+          "count": 4
+        }
+      ],
+      "behavior": {
+        "mode": "patrol",
+        "patrolRadius": 2,
+        "detectionRadius": 3,
+        "chaseDistance": 4,
+        "speed": 1
+      }
+    }
+  ],
+  "guaranteedResources": [
+    {
+      "position": { "x": 1, "y": 4 },
+      "resource": { "kind": "wood", "amount": 8 }
+    },
+    {
+      "position": { "x": 7, "y": 2 },
+      "resource": { "kind": "wood", "amount": 6 }
+    },
+    {
+      "position": { "x": 9, "y": 5 },
+      "resource": { "kind": "ore", "amount": 5 }
+    },
+    {
+      "position": { "x": 4, "y": 7 },
+      "resource": { "kind": "gold", "amount": 180 }
+    }
+  ],
+  "buildings": [
+    {
+      "id": "lumber-camp-vale-1",
+      "kind": "resource_mine",
+      "position": { "x": 2, "y": 5 },
+      "label": "翠谷伐木场",
+      "resourceKind": "wood",
+      "income": 6,
+      "maxTier": 3
+    },
+    {
+      "id": "recruit-post-vale-1",
+      "kind": "recruitment_post",
+      "position": { "x": 1, "y": 8 },
+      "label": "翠谷猎兵所",
+      "unitTemplateId": "wild_hawk_rider",
+      "recruitCount": 4,
+      "cost": {
+        "gold": 200,
+        "wood": 2,
+        "ore": 0
+      },
+      "maxTier": 3
+    },
+    {
+      "id": "shrine-power-vale-1",
+      "kind": "attribute_shrine",
+      "position": { "x": 6, "y": 4 },
+      "label": "林心圣龛",
+      "bonus": {
+        "attack": 1,
+        "defense": 0,
+        "power": 1,
+        "knowledge": 0
+      }
+    },
+    {
+      "id": "forge-vale-1",
+      "kind": "resource_mine",
+      "position": { "x": 10, "y": 3 },
+      "label": "高地锻造场",
+      "resourceKind": "ore",
+      "income": 5,
+      "maxTier": 2
+    },
+    {
+      "id": "watchtower-vale-1",
+      "kind": "watchtower",
+      "position": { "x": 5, "y": 2 },
+      "label": "翠谷瞭望台",
+      "visionBonus": 3
+    },
+    {
+      "id": "recruit-post-vale-2",
+      "kind": "recruitment_post",
+      "position": { "x": 10, "y": 7 },
+      "label": "高地驻防所",
+      "unitTemplateId": "iron_walker",
+      "recruitCount": 3,
+      "cost": {
+        "gold": 240,
+        "wood": 0,
+        "ore": 2
+      },
+      "maxTier": 2
+    }
+  ]
+}
