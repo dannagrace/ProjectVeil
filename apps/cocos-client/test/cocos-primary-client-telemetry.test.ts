@@ -16,6 +16,14 @@ afterEach(() => {
   resetClientAnalyticsRuntimeDependencies();
 });
 
+function parseAnalyticsEnvelope(init?: RequestInit): {
+  schemaVersion: number;
+  emittedAt: string;
+  events: Array<{ name: string; payload: Record<string, unknown> }>;
+} {
+  return JSON.parse(String(init?.body));
+}
+
 function createTelemetryEntry(checkpoint: string): PrimaryClientTelemetryEvent {
   return {
     at: `2026-04-02T00:00:${checkpoint.padStart(2, "0")}.000Z`,
@@ -204,6 +212,101 @@ test("emitClientAnalyticsEvent batches production client events to the analytics
   assert.match(String(fetchCalls[0]?.init?.body), /"sessionId":"session-1"/);
 });
 
+test("emitClientAnalyticsEvent flushes queued events after the configured delay", async () => {
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  let scheduledDelayMs: number | null = null;
+  let scheduledFlush: (() => void) | null = null;
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    },
+    setTimeout: (handler, delayMs) => {
+      scheduledDelayMs = delayMs;
+      scheduledFlush = handler;
+      return { delayMs } as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: () => {}
+  });
+
+  emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      surface: "lobby"
+    }
+  );
+
+  assert.equal(fetchCalls.length, 0);
+  assert.equal(scheduledDelayMs, 250);
+  assert.ok(scheduledFlush);
+
+  scheduledFlush();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.input, "http://127.0.0.1:2567/api/analytics/events");
+});
+
+test("emitClientAnalyticsEvent flushes immediately when the batch-size threshold is reached", async () => {
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  const scheduledHandles: Array<ReturnType<typeof globalThis.setTimeout>> = [];
+  const clearedHandles: Array<ReturnType<typeof globalThis.setTimeout>> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    },
+    setTimeout: (_handler, delayMs) => {
+      const handle = { delayMs } as ReturnType<typeof globalThis.setTimeout>;
+      scheduledHandles.push(handle);
+      return handle;
+    },
+    clearTimeout: (handle) => {
+      clearedHandles.push(handle);
+    }
+  });
+
+  for (let index = 0; index < 20; index += 1) {
+    emitClientAnalyticsEvent(
+      "shop_open",
+      {
+        remoteUrl: "http://127.0.0.1:2567",
+        playerId: "player-1",
+        sessionId: "session-1",
+        roomId: "room-telemetry"
+      },
+      {
+        roomId: "room-telemetry",
+        surface: `surface-${index}`
+      }
+    );
+  }
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(scheduledHandles.length, 1);
+  assert.deepEqual(clearedHandles, scheduledHandles);
+  assert.equal(fetchCalls.length, 1);
+
+  const envelope = parseAnalyticsEnvelope(fetchCalls[0]?.init);
+  assert.equal(envelope.events.length, 20);
+});
+
 test("emitClientAnalyticsEvent stays quiet outside production mode", async () => {
   let fetchCalls = 0;
   configureClientAnalyticsRuntimeDependencies({
@@ -235,4 +338,161 @@ test("emitClientAnalyticsEvent stays quiet outside production mode", async () =>
   await flushClientAnalyticsEventsForTest();
 
   assert.equal(fetchCalls, 0);
+});
+
+test("emitClientAnalyticsEvent flush groups pending events by analytics endpoint", async () => {
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      surface: "lobby"
+    }
+  );
+  emitClientAnalyticsEvent(
+    "battle_start",
+    {
+      remoteUrl: "http://127.0.0.1:2567/",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      battleId: "battle-1",
+      encounterKind: "neutral",
+      heroId: "hero-1"
+    }
+  );
+  emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "https://analytics.projectveil.example/game",
+      playerId: "player-2",
+      sessionId: "session-2",
+      roomId: "room-secondary"
+    },
+    {
+      roomId: "room-secondary",
+      surface: "post_battle"
+    }
+  );
+
+  await flushClientAnalyticsEventsForTest();
+
+  assert.equal(fetchCalls.length, 2);
+  assert.deepEqual(
+    fetchCalls.map((call) => call.input).sort(),
+    [
+      "http://127.0.0.1:2567/api/analytics/events",
+      "https://analytics.projectveil.example/api/analytics/events"
+    ]
+  );
+
+  const localBatch = fetchCalls.find((call) => call.input === "http://127.0.0.1:2567/api/analytics/events");
+  const remoteBatch = fetchCalls.find((call) => call.input === "https://analytics.projectveil.example/api/analytics/events");
+  const localEnvelope = parseAnalyticsEnvelope(localBatch?.init);
+  const remoteEnvelope = parseAnalyticsEnvelope(remoteBatch?.init);
+
+  assert.equal(localEnvelope.schemaVersion, 1);
+  assert.match(localEnvelope.emittedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(
+    localEnvelope.events.map((event) => event.name),
+    ["shop_open", "battle_start"]
+  );
+  assert.deepEqual(
+    remoteEnvelope.events.map((event) => event.name),
+    ["shop_open"]
+  );
+});
+
+test("flushClientAnalyticsEventsForTest logs non-ok analytics flush responses without throwing", async () => {
+  const errors: Array<{ message: string; error?: unknown }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async () => ({
+      ok: false,
+      status: 503
+    }),
+    error: (message, error) => {
+      errors.push({ message, error });
+    }
+  });
+
+  emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      surface: "lobby"
+    }
+  );
+
+  await assert.doesNotReject(() => flushClientAnalyticsEventsForTest());
+
+  assert.deepEqual(errors, [
+    {
+      message: "[Analytics] Failed to flush client analytics batch: 503",
+      error: undefined
+    }
+  ]);
+});
+
+test("flushClientAnalyticsEventsForTest logs thrown analytics flush errors without throwing", async () => {
+  const errors: Array<{ message: string; error?: unknown }> = [];
+  const fetchError = new Error("network unavailable");
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async () => {
+      throw fetchError;
+    },
+    error: (message, error) => {
+      errors.push({ message, error });
+    }
+  });
+
+  emitClientAnalyticsEvent(
+    "shop_open",
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      playerId: "player-1",
+      sessionId: "session-1",
+      roomId: "room-telemetry"
+    },
+    {
+      roomId: "room-telemetry",
+      surface: "lobby"
+    }
+  );
+
+  await assert.doesNotReject(() => flushClientAnalyticsEventsForTest());
+
+  assert.deepEqual(errors, [
+    {
+      message: "[Analytics] Failed to flush client analytics batch",
+      error: fetchError
+    }
+  ]);
 });
