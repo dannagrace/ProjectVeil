@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import {
+  applyEloMatchResult,
   createDefaultHeroLoadout,
   createDefaultHeroProgression,
   createMatchmakingHeroSnapshot,
+  type ClientMessage,
   type HeroState,
   type MatchmakingRequest,
+  type ServerMessage,
   type WorldState
 } from "../../../packages/shared/src/index";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
+import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import { MatchmakingService, registerMatchmakingRoutes, resetMatchmakingService } from "../src/matchmaking";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { resetRuntimeObservability } from "../src/observability";
@@ -91,6 +96,7 @@ async function startMatchmakingServer(
   port: number,
   options?: { service?: MatchmakingService; queueTtlSeconds?: number }
 ): Promise<Server> {
+  configureRoomSnapshotStore(store);
   resetGuestAuthSessions();
   resetMatchmakingService();
   resetRuntimeObservability();
@@ -101,6 +107,7 @@ async function startMatchmakingServer(
     queueTtlSeconds: options?.queueTtlSeconds
   });
   const server = new Server({ transport });
+  server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;
 }
@@ -137,6 +144,62 @@ function createQueueRequest(playerId: string, enqueuedAt: string): MatchmakingRe
     rating: 1000,
     enqueuedAt
   };
+}
+
+async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
+  const client = new Client(`http://127.0.0.1:${port}`);
+  return client.joinOrCreate("veil", {
+    logicalRoomId,
+    playerId,
+    seed: 1001
+  });
+}
+
+async function sendRoomRequest<T extends ServerMessage["type"]>(
+  room: ColyseusRoom,
+  message: ClientMessage,
+  expectedType: T
+): Promise<Extract<ServerMessage, { type: T }>> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error(`Timed out waiting for ${expectedType}`));
+    }, 5_000);
+
+    const unsubscribe = room.onMessage("*", (type, payload) => {
+      if (typeof type !== "string") {
+        return;
+      }
+
+      const response = { type, ...(payload as object) } as ServerMessage;
+      if ("requestId" in response && response.requestId !== message.requestId) {
+        return;
+      }
+      if (response.type !== expectedType) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(response as Extract<ServerMessage, { type: T }>);
+    });
+
+    room.send(message.type, message);
+  });
+}
+
+async function connectRoom(room: ColyseusRoom, roomId: string, playerId: string, authToken?: string): Promise<void> {
+  await sendRoomRequest(
+    room,
+    {
+      type: "connect",
+      requestId: `connect-${playerId}-${Date.now()}`,
+      roomId,
+      playerId,
+      ...(authToken ? { authToken } : {})
+    },
+    "session.state"
+  );
 }
 
 test("matchmaking routes enqueue, match, report status, and dequeue cleanly", async (t) => {
@@ -231,6 +294,100 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   });
   const dequeueOnePayload = (await dequeueOne.json()) as { status: string };
   assert.equal(dequeueOnePayload.status, "idle");
+});
+
+test("matchmaking routes can carry matched players through room join and surrender-based elo settlement", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+  const expectedRatings = applyEloMatchResult(1000, 1000);
+  const seedRoomOne = `seed-room-one-${Date.now()}`;
+  const seedRoomTwo = `seed-room-two-${Date.now()}`;
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const seedRoomOneConnection = await joinRoom(port, seedRoomOne, "player-1");
+  const seedRoomTwoConnection = await joinRoom(port, seedRoomTwo, "player-2");
+  await Promise.all([
+    connectRoom(seedRoomOneConnection, seedRoomOne, "player-1", sessionOne.token),
+    connectRoom(seedRoomTwoConnection, seedRoomTwo, "player-2", sessionTwo.token)
+  ]);
+
+  t.after(() => {
+    seedRoomOneConnection.leave();
+    seedRoomTwoConnection.leave();
+  });
+
+  const accountAfterSeedOne = await store.loadPlayerAccount("player-1");
+  const accountAfterSeedTwo = await store.loadPlayerAccount("player-2");
+  assert.equal(accountAfterSeedOne?.lastRoomId, seedRoomOne);
+  assert.equal(accountAfterSeedTwo?.lastRoomId, seedRoomTwo);
+
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionTwo.token}`
+    }
+  });
+
+  const statusOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  const statusOnePayload = (await statusOne.json()) as {
+    status: string;
+    roomId: string;
+    playerIds: [string, string];
+  };
+  assert.equal(statusOnePayload.status, "matched");
+  assert.match(statusOnePayload.roomId, /^pvp-match-/);
+  assert.deepEqual(statusOnePayload.playerIds, ["player-1", "player-2"]);
+
+  const matchedRoomOne = await joinRoom(port, statusOnePayload.roomId, "player-1");
+  const matchedRoomTwo = await joinRoom(port, statusOnePayload.roomId, "player-2");
+  await Promise.all([
+    connectRoom(matchedRoomOne, statusOnePayload.roomId, "player-1", sessionOne.token),
+    connectRoom(matchedRoomTwo, statusOnePayload.roomId, "player-2", sessionTwo.token)
+  ]);
+
+  t.after(() => {
+    matchedRoomOne.leave();
+    matchedRoomTwo.leave();
+  });
+
+  await sendRoomRequest(
+    matchedRoomOne,
+    {
+      type: "world.action",
+      requestId: `surrender-player-1-${Date.now()}`,
+      action: {
+        type: "world.surrender",
+        heroId: "hero-1"
+      }
+    },
+    "session.state"
+  );
+
+  const playerOneAccount = await store.loadPlayerAccount("player-1");
+  const playerTwoAccount = await store.loadPlayerAccount("player-2");
+  assert.equal(playerOneAccount?.lastRoomId, statusOnePayload.roomId);
+  assert.equal(playerTwoAccount?.lastRoomId, statusOnePayload.roomId);
+  assert.equal(playerOneAccount?.eloRating, expectedRatings.loserRating);
+  assert.equal(playerTwoAccount?.eloRating, expectedRatings.winnerRating);
 });
 
 test("matchmaking keeps protected new players out of top-tier opponents", async (t) => {

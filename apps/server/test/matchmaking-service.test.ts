@@ -43,6 +43,17 @@ function createQueueRequest(playerId: string, enqueuedAt: string): MatchmakingRe
   };
 }
 
+function createCustomQueueRequest(
+  playerId: string,
+  enqueuedAt: string,
+  overrides: Partial<MatchmakingRequest> = {}
+): MatchmakingRequest {
+  return {
+    ...createQueueRequest(playerId, enqueuedAt),
+    ...overrides
+  };
+}
+
 function seedQueue(service: MatchmakingService, requests: MatchmakingRequest[]): void {
   const queue = Reflect.get(service as Record<string, unknown>, "queueByPlayerId") as Map<
     string,
@@ -199,4 +210,52 @@ test("redis matchmaking service prunes stale queue entries across shared instanc
     position: 1,
     estimatedWaitSeconds: 0
   });
+});
+
+test("redis matchmaking service shares queued positions and dequeue updates across service instances", async (t) => {
+  const redis = new Redis();
+  const serviceA = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:positions",
+    lockRetryDelayMs: 1
+  });
+  const serviceB = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:positions",
+    lockRetryDelayMs: 1
+  });
+
+  t.after(async () => {
+    await serviceA.close();
+  });
+
+  await serviceA.enqueue(
+    createCustomQueueRequest("player-rookie", "2026-03-28T08:00:00.000Z", {
+      protectedPvpMatchesRemaining: 5
+    })
+  );
+  await serviceB.enqueue(
+    createCustomQueueRequest("player-veteran", "2026-03-28T08:00:05.000Z", {
+      rating: 1600
+    })
+  );
+
+  assert.deepEqual(await serviceA.getStatus("player-rookie"), {
+    status: "queued",
+    position: 1,
+    estimatedWaitSeconds: 0
+  });
+  assert.deepEqual(await serviceB.getStatus("player-veteran"), {
+    status: "queued",
+    position: 2,
+    estimatedWaitSeconds: 15
+  });
+
+  assert.equal(await serviceA.dequeue("player-rookie"), true);
+  assert.deepEqual(await serviceB.getStatus("player-veteran"), {
+    status: "queued",
+    position: 1,
+    estimatedWaitSeconds: 0
+  });
+  assert.equal((await serviceA.getStatus("player-rookie")).status, "idle");
 });
