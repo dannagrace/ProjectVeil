@@ -94,6 +94,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
           "Cross-checks the Phase 1 dossier, exit audit, snapshot, release gate summary, and owner ledger as one same-revision packet. Any drift, stale evidence, or missing link is a release blocker.",
         reviewTreatment: "release blocker",
       };
+    case "release:phase1:evidence-drift-gate":
+      return {
+        owner: "release ops",
+        scope: "same-revision",
+        decisionRole: "authoritative gate",
+        blockingSemantics:
+          "Cross-checks the same-revision bundle contract against the RC bundle, snapshot, owner ledger, and optional runtime observability packet. Any candidate or revision drift blocks Phase 1 release review.",
+        reviewTreatment: "release blocker",
+      };
     case "release:readiness:snapshot":
       return {
         owner: "release ops",
@@ -185,6 +194,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
         blockingSemantics:
           "Required blocking evidence for reconnect and room-recovery release changes. Fail closed on missing cleanup, failed reconnect cycles, or stale candidate evidence.",
         reviewTreatment: "release blocker",
+      };
+    case "smoke:client:boot-room":
+      return {
+        owner: "client owner",
+        scope: "review-aid",
+        decisionRole: "diagnostic",
+        blockingSemantics:
+          "Lightweight packaged-client smoke. Useful to confirm the boot-room path still works, but it does not replace the canonical release-candidate smoke or top-level gate summary.",
+        reviewTreatment: "review aid",
       };
     case "validate:redis-scaling":
       return {

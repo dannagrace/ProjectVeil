@@ -156,6 +156,17 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs and a top-level `SUMMARY.md`.",
     ],
   },
+  "release:phase1:evidence-drift-gate": {
+    purpose:
+      "Fail closed when the Phase 1 same-revision bundle, Cocos RC packet, snapshot outputs, owner ledger, and optional runtime observability packet drift off the same candidate revision.",
+    requiredInputs: [
+      "Pass `--candidate`, `--candidate-revision`, and `--same-revision-bundle-manifest`; optionally pin `--runtime-observability-gate` and `--runtime-observability-evidence` for target-environment validation.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/phase1-release-evidence-drift-gate-<candidate>-<short-sha>.json`",
+      "`artifacts/release-readiness/phase1-release-evidence-drift-gate-<candidate>-<short-sha>.md`",
+    ],
+  },
   "release:phase1:exit-audit": {
     purpose: "Emit the reviewer-facing Phase 1 exit call that maps explicit scorecard criteria onto one candidate revision.",
     requiredInputs: [
@@ -215,6 +226,15 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
     producedArtifacts: [
       "Bundle directory under `artifacts/release-readiness/runtime-observability-bundle-<candidate-or-short-sha>-<short-sha>/` containing `runtime-observability-bundle.json/.md` plus staged runtime evidence and gate artifacts.",
+    ],
+  },
+  "smoke:client:boot-room": {
+    purpose: "Run the lightweight client boot-room smoke used to verify the packaged client can enter the canonical boot path.",
+    requiredInputs: [
+      "Current repo revision and the default local client/runtime configuration; optional CLI flags may pin output paths or smoke parameters.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/client-boot-room-smoke-<short-sha>.json` when an explicit output path is used, or console smoke verdict output by default.",
     ],
   },
   "release:pr-summary": {
