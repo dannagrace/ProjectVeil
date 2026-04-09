@@ -17,6 +17,56 @@ function writeJson(filePath: string, payload: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function writeCocosRcBundleArtifacts(input: {
+  artifactsDir: string;
+  candidate: string;
+  revision: string;
+  releaseReadinessSnapshotPath: string;
+  snapshotExecutedAt: string;
+  primaryJourneyCompletedAt: string;
+}): {
+  snapshotPath: string;
+  primaryJourneyEvidencePath: string;
+} {
+  const snapshotPath = path.join(input.artifactsDir, `cocos-rc-snapshot-${input.candidate}-${input.revision}.json`);
+  const primaryJourneyEvidencePath = path.join(
+    input.artifactsDir,
+    `cocos-primary-journey-evidence-${input.candidate}-${input.revision}.json`
+  );
+  writeJson(snapshotPath, {
+    candidate: {
+      name: input.candidate,
+      commit: input.revision,
+      shortCommit: input.revision
+    },
+    execution: {
+      executedAt: input.snapshotExecutedAt
+    },
+    linkedEvidence: {
+      primaryJourneyEvidence: {
+        path: primaryJourneyEvidencePath
+      },
+      releaseReadinessSnapshot: {
+        path: input.releaseReadinessSnapshotPath
+      }
+    }
+  });
+  writeJson(primaryJourneyEvidencePath, {
+    candidate: {
+      name: input.candidate,
+      commit: input.revision,
+      shortCommit: input.revision
+    },
+    execution: {
+      completedAt: input.primaryJourneyCompletedAt
+    }
+  });
+  return {
+    snapshotPath,
+    primaryJourneyEvidencePath
+  };
+}
+
 function writeLedger(
   filePath: string,
   input: {
@@ -101,6 +151,14 @@ function writeBaseArtifacts(workspace: string): {
   const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
   const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
   const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
+  const cocosArtifacts = writeCocosRcBundleArtifacts({
+    artifactsDir,
+    candidate,
+    revision,
+    releaseReadinessSnapshotPath: snapshotPath,
+    snapshotExecutedAt: hoursAgo(1),
+    primaryJourneyCompletedAt: hoursAgo(1)
+  });
 
   writeJson(snapshotPath, {
     generatedAt: hoursAgo(1),
@@ -125,6 +183,10 @@ function writeBaseArtifacts(workspace: string): {
       candidate,
       commit: revision,
       shortCommit: revision
+    },
+    artifacts: {
+      snapshot: cocosArtifacts.snapshotPath,
+      primaryJourneyEvidence: cocosArtifacts.primaryJourneyEvidencePath
     },
     linkedEvidence: {
       releaseReadinessSnapshot: {

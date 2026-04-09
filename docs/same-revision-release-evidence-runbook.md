@@ -167,7 +167,7 @@ npm run release:cocos-rc:bundle -- \
   --release-readiness-snapshot <snapshot-json>
 ```
 
-Confirm the generated bundle, checklist, and blockers files all point at the same candidate and revision.
+Confirm the generated bundle, linked RC snapshot, linked primary-journey evidence, checklist, and blockers files all point at the same candidate and revision.
 
 After reviewing or editing the checklist / blockers files, update the matching rows in the owner ledger before moving on. The ledger is the release-call index; the checklist and blocker files remain the underlying evidence.
 
@@ -249,7 +249,7 @@ npm run release:candidate:evidence-audit -- \
   --manual-evidence-ledger <owner-ledger-md>
 ```
 
-Keep the emitted JSON / Markdown pair with the rest of the packet. This is the explicit same-revision stitch check for the maintainer flow: it should fail closed when required artifacts drift to another revision, candidate name, linked snapshot/evidence path, or freshness window. The report now also separates `blocking` from `warning` findings so H5 review can keep WeChat/runtime drift visible without treating it as a hard stop.
+Keep the emitted JSON / Markdown pair with the rest of the packet under `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json` and `.md`. This is the explicit same-revision stitch check for the maintainer flow: it should fail closed when required artifacts drift to another revision, candidate name, linked snapshot/evidence path, or freshness window, including the RC snapshot and primary-journey evidence referenced from the Cocos RC bundle. The report now also separates `blocking` from `warning` findings so H5 review can keep WeChat/runtime drift visible without treating it as a hard stop.
 
 10. Run the candidate-level dashboard as the final reviewer summary.
 
