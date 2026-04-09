@@ -195,6 +195,71 @@ test("readStoredSessionReplay loads the cached browser session replay for H5 boo
   }
 });
 
+test("readStoredSessionReplay returns null when H5 boot cannot access sessionStorage", { concurrency: false }, () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      get sessionStorage(): Storage {
+        throw new Error("storage_blocked");
+      }
+    }
+  });
+
+  try {
+    assert.equal(readStoredSessionReplay("room-alpha", "player-1"), null);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+  }
+});
+
+test("connectRemoteGameSession clears a stale stored token and falls back to a fresh join during H5 boot", { concurrency: false }, async () => {
+  const storage = createMemoryStorage([[getReconnectionStorageKey("room-alpha", "player-1"), "stale-token"] as const]);
+  const restoreWindow = installWindow(storage);
+  const joinedRoom = new FakeRoom("fresh-token");
+  const calls: string[] = [];
+
+  try {
+    const { session, recoveredFromStoredToken } = await localSessionTestHooks.connectRemoteGameSession(
+      "room-alpha",
+      "player-1",
+      1001,
+      undefined,
+      {
+        createClient: (url) => ({
+          async reconnect(token: string) {
+            calls.push(`reconnect:${url}:${token}`);
+            throw new Error("reconnect_rejected");
+          },
+          async joinOrCreate(roomName: string, payload: unknown) {
+            calls.push(`joinOrCreate:${url}:${roomName}:${JSON.stringify(payload)}`);
+            return joinedRoom as unknown as ColyseusRoom;
+          }
+        })
+      }
+    );
+
+    assert.equal(recoveredFromStoredToken, false);
+    assert.deepEqual(calls, [
+      "reconnect:ws://127.0.0.1:2567:stale-token",
+      'joinOrCreate:ws://127.0.0.1:2567:veil:{"logicalRoomId":"room-alpha","playerId":"player-1","seed":1001}'
+    ]);
+    assert.ok(session);
+    assert.equal(readReconnectionToken(storage, "room-alpha", "player-1"), "fresh-token");
+  } finally {
+    restoreWindow();
+  }
+});
+
 test("createGameSession falls back to a local session when remote bootstrap is unavailable", { concurrency: false }, async () => {
   const events: ConnectionEvent[] = [];
   const pushed: SessionUpdate[] = [];

@@ -90,7 +90,7 @@ import {
   type PlayerAccountProfile as ClientPlayerAccountProfile,
   type PlayerAccountSessionDevice
 } from "./player-account";
-import { shareBattleResultForRuntime } from "../../cocos-client/assets/scripts/cocos-share-card.ts";
+import * as cocosShareCard from "../../cocos-client/assets/scripts/cocos-share-card.ts";
 import {
   renderAchievementProgress,
   renderBattleReportReplayCenter,
@@ -188,7 +188,7 @@ const H5_SHARE_STUB_SMOKE_REPLAY: PlayerBattleReplaySummary = {
 };
 
 window.run_h5_share_stub_smoke = async () => {
-  const result = await shareBattleResultForRuntime(H5_SHARE_STUB_SMOKE_REPLAY, "H5 Smoke", {
+  const result = await cocosShareCard.shareBattleResultForRuntime(H5_SHARE_STUB_SMOKE_REPLAY, "H5 Smoke", {
     runtimePlatform: "browser"
   });
   return {
