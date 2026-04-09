@@ -176,7 +176,8 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
 - 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
 - 运行时指标抓取：`GET http://127.0.0.1:2567/api/runtime/metrics`
-- 房间 / 重连 / 战斗生命周期摘要：`GET http://127.0.0.1:2567/api/runtime/room-lifecycle-summary`（可加 `?format=text` 输出适合告警或 artifact 留档的紧凑文本）
+- 房间 / 重连 / 战斗生命周期摘要：`GET http://127.0.0.1:2567/api/runtime/room-lifecycle-summary`（可加 `?format=text` 输出适合告警或 artifact 留档的紧凑文本；`reconnect.failed` 事件现在会带 `failureReason=timeout|auth_invalid|version_mismatch|transport_lost|reconnect_window_expired|unknown`，便于测试和运维直接断言）
+- H5 / Cocos 存储 token 的 resume 失败会输出结构化控制台 warning（`[Network] WS resume failed...` / `[CocosNetwork] WS resume failed...`），对象里包含 `phase=resume`、`reason` 和 `retryingWithFreshJoin`
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
 - Cocos 主客户端类型检查：`npm run typecheck:client`

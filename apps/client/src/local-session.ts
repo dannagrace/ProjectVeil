@@ -1,11 +1,13 @@
 import { createRoom, type AuthoritativeWorldRoom } from "../../../apps/server/src/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
 import {
+  classifyReconnectFailure,
   decodePlayerWorldView,
   listReachableTiles,
   normalizeFeatureFlags,
   planHeroMovement,
-  replaceRuntimeConfigs
+  replaceRuntimeConfigs,
+  type ReconnectFailureReason
 } from "../../../packages/shared/src/index";
 import type {
   ActionValidationFailure,
@@ -279,6 +281,12 @@ interface RemoteConnectOptions {
   useStoredToken?: boolean;
   connectTimeoutMs?: number;
   createClient?: (url: string) => Pick<ColyseusClient, "reconnect" | "joinOrCreate">;
+}
+
+interface RemoteConnectResult {
+  session: RemoteGameSession;
+  recoveredFromStoredToken: boolean;
+  resumeFailureReason?: ReconnectFailureReason | null;
 }
 
 interface LocalSessionRuntime {
@@ -941,7 +949,7 @@ async function connectRemoteGameSession(
   seed = 1001,
   options?: GameSessionOptions,
   connectOptions?: RemoteConnectOptions
-): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+): Promise<RemoteConnectResult> {
   // 强制锁定 127.0.0.1:2567，规避 DNS 和 localhost IPv6 解析问题
   const remoteUrl = "ws://127.0.0.1:2567";
   
@@ -950,6 +958,7 @@ async function connectRemoteGameSession(
   const reconnectionToken = useStoredToken && storage ? readReconnectionToken(storage, roomId, playerId) : null;
   const client = connectOptions?.createClient?.(remoteUrl) ?? new ColyseusClient(remoteUrl);
   let recoveredFromStoredToken = false;
+  let resumeFailureReason: ReconnectFailureReason | null = null;
 
   const room = await new Promise<ColyseusRoom>((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -965,7 +974,17 @@ async function connectRemoteGameSession(
           recoveredFromStoredToken = true;
           return recoveredRoom;
         } catch (e) {
-          console.warn("[Network] WS Reconnection failed, trying fresh join.", e);
+          resumeFailureReason = classifyReconnectFailure({
+            error: e,
+            fallbackReason: "transport_lost"
+          });
+          console.warn("[Network] WS resume failed; trying fresh join.", {
+            phase: "resume",
+            roomId,
+            playerId,
+            reason: resumeFailureReason,
+            retryingWithFreshJoin: true
+          });
           if (storage) {
             clearReconnectionToken(storage, roomId, playerId);
           }
@@ -995,7 +1014,8 @@ async function connectRemoteGameSession(
 
   return {
     session: new RemoteGameSession(room, roomId, playerId, options),
-    recoveredFromStoredToken
+    recoveredFromStoredToken,
+    resumeFailureReason
   };
 }
 
@@ -1035,7 +1055,7 @@ class RecoverableRemoteGameSession implements GameSession {
 
   private async openRemoteSession(
     useStoredToken: boolean
-  ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+  ): Promise<RemoteConnectResult> {
     const sessionOptions: GameSessionOptions = {
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),
       ...(this.options?.onConfigUpdate ? { onConfigUpdate: this.options.onConfigUpdate } : {}),
@@ -1218,7 +1238,7 @@ export const localSessionTestHooks = {
     seed = 1001,
     options?: GameSessionOptions,
     connectOptions?: RemoteConnectOptions
-  ): Promise<{ session: GameSession; recoveredFromStoredToken: boolean }> {
+  ): Promise<{ session: GameSession; recoveredFromStoredToken: boolean; resumeFailureReason?: ReconnectFailureReason | null }> {
     return connectRemoteGameSession(roomId, playerId, seed, options, connectOptions);
   },
   createGameSessionWithRuntime(

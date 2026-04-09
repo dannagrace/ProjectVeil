@@ -1,4 +1,5 @@
 import { sys } from "cc";
+import { classifyReconnectFailure, type ReconnectFailureReason } from "../../../../packages/shared/src/index.ts";
 import type { EquipmentType } from "./project-shared/index.ts";
 import { buildCocosAuthHeaders, resolveCocosApiBaseUrl } from "./cocos-lobby.ts";
 import {
@@ -1779,11 +1780,16 @@ async function connectRemoteGameSession(
   seed: number,
   options?: VeilCocosSessionOptions,
   useStoredToken = true
-): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+): Promise<{
+  session: RemoteGameSession;
+  recoveredFromStoredToken: boolean;
+  resumeFailureReason: ReconnectFailureReason | null;
+}> {
   const sdk = await loadColyseusSdk();
   const client = new sdk.Client(getRemoteUrl(options?.remoteUrl));
   const reconnectionToken = useStoredToken ? readReconnectionToken(roomId, playerId) : null;
   let recoveredFromStoredToken = false;
+  let resumeFailureReason: ReconnectFailureReason | null = null;
 
   const room = await new Promise<ColyseusRoomLike>((resolve, reject) => {
     const timer = globalThis.setTimeout(() => {
@@ -1796,7 +1802,18 @@ async function connectRemoteGameSession(
           const recoveredRoom = await client.reconnect(reconnectionToken);
           recoveredFromStoredToken = true;
           return recoveredRoom;
-        } catch {
+        } catch (error) {
+          resumeFailureReason = classifyReconnectFailure({
+            error,
+            fallbackReason: "transport_lost"
+          });
+          console.warn("[CocosNetwork] WS resume failed; trying fresh join.", {
+            phase: "resume",
+            roomId,
+            playerId,
+            reason: resumeFailureReason,
+            retryingWithFreshJoin: true
+          });
           clearReconnectionToken(roomId, playerId);
         }
       }
@@ -1821,7 +1838,8 @@ async function connectRemoteGameSession(
 
   return {
     session: new RemoteGameSession(room, roomId, playerId, sdk.CloseCode, options),
-    recoveredFromStoredToken
+    recoveredFromStoredToken,
+    resumeFailureReason
   };
 }
 
@@ -1936,7 +1954,11 @@ class RecoverableRemoteGameSession {
 
   private async openRemoteSession(
     useStoredToken: boolean
-  ): Promise<{ session: RemoteGameSession; recoveredFromStoredToken: boolean }> {
+  ): Promise<{
+    session: RemoteGameSession;
+    recoveredFromStoredToken: boolean;
+    resumeFailureReason: ReconnectFailureReason | null;
+  }> {
     const nestedOptions: VeilCocosSessionOptions = {
       ...(this.options?.remoteUrl ? { remoteUrl: this.options.remoteUrl } : {}),
       ...(this.options?.onPushUpdate ? { onPushUpdate: this.options.onPushUpdate } : {}),

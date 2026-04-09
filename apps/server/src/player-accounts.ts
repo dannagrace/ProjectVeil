@@ -440,14 +440,15 @@ function findReplaySummaryByLookup(
 function normalizeReplayPlaybackAction(
   action?: string | null
 ): BattleReplayPlaybackCommand["action"] | undefined {
-  switch (action?.trim()) {
+  const normalizedAction = action?.trim();
+  switch (normalizedAction) {
     case "play":
     case "pause":
     case "step":
     case "tick":
     case "reset":
     case "step-back":
-      return action;
+      return normalizedAction;
     case "step-forward":
       return "step";
     default:

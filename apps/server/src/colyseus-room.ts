@@ -2,6 +2,7 @@ import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   applyEloMatchResult,
+  classifyReconnectFailure,
   createInitialWorldState,
   createPlayerWorldView,
   encodePlayerWorldView,
@@ -742,14 +743,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       recordReconnectWindowOpened();
       reconnectWindowOpen = true;
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
-      recordReconnectWindowResolved("success", {
-        roomId: this.metadata.logicalRoomId,
-        playerId
-      });
-      reconnectWindowOpen = false;
       if (configuredRoomSnapshotStore?.loadPlayerBan) {
         const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
         if (isPlayerBanActive(ban)) {
+          if (reconnectWindowOpen) {
+            recordReconnectWindowResolved("failure", {
+              roomId: this.metadata.logicalRoomId,
+              playerId,
+              reason: "auth_invalid"
+            });
+            reconnectWindowOpen = false;
+          }
           this.playerIdBySessionId.delete(client.sessionId);
           reconnectedClient.leave(CloseCode.WITH_ERROR, "account_banned");
           this.publishLobbyRoomSummary();
@@ -757,6 +761,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         }
       }
       if (await this.enforceMinorProtectionForClient(reconnectedClient, playerId, null, "push")) {
+        if (reconnectWindowOpen) {
+          recordReconnectWindowResolved("failure", {
+            roomId: this.metadata.logicalRoomId,
+            playerId,
+            reason: "auth_invalid"
+          });
+          reconnectWindowOpen = false;
+        }
         this.playerIdBySessionId.delete(client.sessionId);
         this.publishLobbyRoomSummary();
         return;
@@ -772,12 +784,22 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         delivery: "push",
         payload: this.buildStatePayload(playerId)
       });
-    } catch {
+      if (reconnectWindowOpen) {
+        recordReconnectWindowResolved("success", {
+          roomId: this.metadata.logicalRoomId,
+          playerId
+        });
+        reconnectWindowOpen = false;
+      }
+    } catch (error) {
       if (reconnectWindowOpen) {
         recordReconnectWindowResolved("failure", {
           roomId: this.metadata.logicalRoomId,
           playerId,
-          reason: "reconnect_window_expired"
+          reason: classifyReconnectFailure({
+            error,
+            fallbackReason: "reconnect_window_expired"
+          })
         });
       }
       this.playerIdBySessionId.delete(client.sessionId);

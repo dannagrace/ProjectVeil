@@ -29,6 +29,7 @@ export * from "./models.ts";
 export * from "./onboarding-funnel.ts";
 export * from "./protocol.ts";
 export * from "./player-account.ts";
+export * from "./reconnect-observability.ts";
 export * from "./runtime-diagnostics.ts";
 export * from "./tutorial.ts";
 export * from "./world-config.ts";
