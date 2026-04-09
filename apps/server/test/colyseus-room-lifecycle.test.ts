@@ -82,6 +82,25 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject
+  };
+}
+
 function createManualRoomTimer(startAtMs = 0): {
   nowMs: number;
   tick(): Promise<void>;
@@ -591,6 +610,94 @@ test("reconnect preserves lobby registration counts while other players stay con
   const resumedState = lastSessionState(reconnectedClient, "push");
   assert.equal(resumedState.requestId, "push");
   assert.equal(resumedState.delivery, "push");
+});
+
+test("pending reconnect window immediately marks the room as waiting for reconnect", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-pending-${Date.now()}`);
+  const originalClient = createFakeClient("session-reconnect-pending-original");
+  const resumedClient = createFakeClient("session-reconnect-pending-resumed");
+  const reconnectGate = createDeferred<Client>();
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(async () => {
+    reconnectGate.reject(new Error("test cleanup"));
+    await flushAsyncWork();
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-reconnect-pending");
+  internalRoom.allowReconnection = async () => reconnectGate.promise;
+
+  const dropPromise = room.onDrop(originalClient);
+  await flushAsyncWork();
+
+  const waitingSummary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  assert.equal(internalRoom.playerIdBySessionId.has(originalClient.sessionId), false);
+  assert.equal(waitingSummary?.connectedPlayers, 0);
+  assert.equal(waitingSummary?.disconnectedPlayers, 1);
+  assert.equal(waitingSummary?.statusLabel, "等待重连");
+
+  reconnectGate.resolve(resumedClient);
+  await dropPromise;
+
+  const resumedSummary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
+  assert.equal(internalRoom.playerIdBySessionId.get(resumedClient.sessionId), "player-1");
+  assert.equal(resumedSummary?.connectedPlayers, 1);
+  assert.equal(resumedSummary?.disconnectedPlayers, 0);
+  assert.equal(lastSessionState(resumedClient, "push").requestId, "push");
+});
+
+test("pending reconnect in one room does not disturb multi-room registration for another room", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const roomA = await createTestRoom(`lifecycle-reconnect-pending-room-a-${Date.now()}`, 1001);
+  const roomB = await createTestRoom(`lifecycle-reconnect-pending-room-b-${Date.now()}`, 2002);
+  const originalClientA = createFakeClient("session-reconnect-pending-room-a-original");
+  const resumedClientA = createFakeClient("session-reconnect-pending-room-a-resumed");
+  const clientB = createFakeClient("session-reconnect-pending-room-b");
+  const reconnectGate = createDeferred<Client>();
+  const internalRoomA = roomA as VeilColyseusRoom & {
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(async () => {
+    reconnectGate.reject(new Error("test cleanup"));
+    await flushAsyncWork();
+    cleanupRoom(roomA);
+    cleanupRoom(roomB);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(roomA, originalClientA, "player-1", "connect-reconnect-pending-room-a");
+  await connectPlayer(roomB, clientB, "player-1", "connect-reconnect-pending-room-b");
+  internalRoomA.allowReconnection = async () => reconnectGate.promise;
+
+  const dropPromise = roomA.onDrop(originalClientA);
+  await flushAsyncWork();
+
+  const pendingSummaries = listLobbyRooms();
+  assert.equal(pendingSummaries.length, 2);
+  assert.equal(pendingSummaries.find((entry) => entry.roomId === roomA.roomId)?.connectedPlayers, 0);
+  assert.equal(pendingSummaries.find((entry) => entry.roomId === roomA.roomId)?.disconnectedPlayers, 1);
+  assert.equal(pendingSummaries.find((entry) => entry.roomId === roomA.roomId)?.statusLabel, "等待重连");
+  assert.equal(pendingSummaries.find((entry) => entry.roomId === roomB.roomId)?.connectedPlayers, 1);
+  assert.equal(pendingSummaries.find((entry) => entry.roomId === roomB.roomId)?.disconnectedPlayers, 0);
+
+  reconnectGate.resolve(resumedClientA);
+  await dropPromise;
+
+  const resumedSummaries = listLobbyRooms();
+  assert.equal(resumedSummaries.find((entry) => entry.roomId === roomA.roomId)?.connectedPlayers, 1);
+  assert.equal(resumedSummaries.find((entry) => entry.roomId === roomB.roomId)?.connectedPlayers, 1);
+  assert.deepEqual(lastSessionState(clientB, "reply").payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
 });
 
 test("stale leave after a successful reconnect does not clear the resumed player slot", async (t) => {

@@ -736,7 +736,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
+    this.playerIdBySessionId.delete(client.sessionId);
     this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
+    this.ensureTurnTimerState();
+    this.publishLobbyRoomSummary();
     let reconnectWindowOpen = false;
 
     try {
@@ -754,7 +757,6 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             });
             reconnectWindowOpen = false;
           }
-          this.playerIdBySessionId.delete(client.sessionId);
           reconnectedClient.leave(CloseCode.WITH_ERROR, "account_banned");
           this.publishLobbyRoomSummary();
           return;
@@ -769,11 +771,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           });
           reconnectWindowOpen = false;
         }
-        this.playerIdBySessionId.delete(client.sessionId);
         this.publishLobbyRoomSummary();
         return;
       }
-      this.playerIdBySessionId.delete(client.sessionId);
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       this.disconnectedAtByPlayerId.delete(playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
