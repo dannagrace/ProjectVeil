@@ -419,6 +419,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       if (await this.enforceMinorProtectionForClient(client, playerId, ensuredAccount, message.requestId)) {
         return;
       }
+      if (
+        !this.worldRoom.getInternalState().heroes.some((hero) => hero.playerId === playerId) &&
+        !this.findAvailablePlayerWorldSlotId()
+      ) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "room_full" });
+        client.leave(CloseCode.WITH_ERROR, "room_full");
+        return;
+      }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
       if (this.shouldRunTurnTimer()) {
         this.ensureTurnTimerState();
@@ -1649,19 +1657,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
-    const connectedPlayerIds = new Set(this.playerIdBySessionId.values());
-    const availableSlotId = Array.from(
-      new Set([...internalState.heroes.map((hero) => hero.playerId), ...Object.keys(internalState.resources)])
-    )
-      .filter((candidatePlayerId) => {
-        if (!isDefaultPlayerSlotId(candidatePlayerId)) {
-          return false;
-        }
-
-        return !connectedPlayerIds.has(candidatePlayerId);
-      })
-      .sort(compareDefaultPlayerSlotIds)[0];
-
+    const availableSlotId = this.findAvailablePlayerWorldSlotId();
     if (!availableSlotId) {
       return;
     }
@@ -1684,6 +1680,22 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         lastRoomId: this.metadata.logicalRoomId
       });
     }
+  }
+
+  private findAvailablePlayerWorldSlotId(): string | null {
+    const internalState = this.worldRoom.getInternalState();
+    const connectedPlayerIds = new Set(this.playerIdBySessionId.values());
+    return (
+      Array.from(new Set([...internalState.heroes.map((hero) => hero.playerId), ...Object.keys(internalState.resources)]))
+        .filter((candidatePlayerId) => {
+          if (!isDefaultPlayerSlotId(candidatePlayerId)) {
+            return false;
+          }
+
+          return !connectedPlayerIds.has(candidatePlayerId);
+        })
+        .sort(compareDefaultPlayerSlotIds)[0] ?? null
+    );
   }
 
   private buildStatePayload(
