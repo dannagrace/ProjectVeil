@@ -243,6 +243,22 @@ function parseOffset(request: IncomingMessage): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function readDailyDungeonNowOverride(request: IncomingMessage): Date | null {
+  const rawValue = request.headers["x-veil-test-now"];
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function resolveDailyDungeonNow(request: IncomingMessage): Date {
+  return readDailyDungeonNowOverride(request) ?? new Date();
+}
+
 function parsePlayerIdFilter(request: IncomingMessage): string | undefined {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const value = url.searchParams.get("playerId")?.trim();
@@ -2000,6 +2016,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const now = resolveDailyDungeonNow(request);
       const account = store
         ? ((await store.loadPlayerAccount(authSession.playerId)) ??
           (await store.ensurePlayerAccount({
@@ -2012,9 +2029,18 @@ export function registerPlayerAccountRoutes(
             ...(authSession.loginId ? { loginId: authSession.loginId } : {})
           });
       sendJson(response, 200, {
-        dailyDungeon: toDailyDungeonResponse(account)
+        dailyDungeon: toDailyDungeonResponse(account, now)
       });
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith("daily_dungeon_not_active_for_")) {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_dungeon_not_active",
+            message: "Daily dungeon is not active for the requested date"
+          }
+        });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -2036,6 +2062,7 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const now = resolveDailyDungeonNow(request);
       const body = (await readJsonBody(request)) as { floor?: number | null };
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
@@ -2043,8 +2070,8 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const dungeon = resolvePrimaryDailyDungeon();
-      const result = startDailyDungeonRun(dungeon, account.dailyDungeonState, body.floor ?? undefined);
+      const dungeon = resolvePrimaryDailyDungeon(now);
+      const result = startDailyDungeonRun(dungeon, account.dailyDungeonState, body.floor ?? undefined, now);
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         dailyDungeonState: result.dailyDungeonState
       });
@@ -2053,7 +2080,7 @@ export function registerPlayerAccountRoutes(
         started: true,
         run: result.run,
         floor: result.floor,
-        dailyDungeon: toDailyDungeonResponse(nextAccount)
+        dailyDungeon: toDailyDungeonResponse(nextAccount, now)
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -2087,6 +2114,24 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
+      if (error instanceof Error && error.message === "daily_dungeon_already_completed") {
+        sendJson(response, 409, {
+          error: {
+            code: "daily_dungeon_already_completed",
+            message: "Daily dungeon has already been completed for the current window"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message.startsWith("daily_dungeon_not_active_for_")) {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_dungeon_not_active",
+            message: "Daily dungeon is not active for the requested date"
+          }
+        });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -2114,14 +2159,15 @@ export function registerPlayerAccountRoutes(
     }
 
     try {
+      const now = resolveDailyDungeonNow(request);
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const dungeon = resolvePrimaryDailyDungeon();
-      const result = claimDailyDungeonRunReward(dungeon, account.dailyDungeonState, runId);
+      const dungeon = resolvePrimaryDailyDungeon(now);
+      const result = claimDailyDungeonRunReward(dungeon, account.dailyDungeonState, runId, now);
       const rewardMutation = toRewardMutation(account, result.floor.reward);
       const eventMutation = applyActiveSeasonalEventProgress(
         account,
@@ -2131,7 +2177,7 @@ export function registerPlayerAccountRoutes(
           dungeonId: result.run.dungeonId,
           ...(result.run.rewardClaimedAt ? { occurredAt: result.run.rewardClaimedAt } : {})
         },
-        new Date(result.run.rewardClaimedAt ?? new Date().toISOString())
+        new Date(result.run.rewardClaimedAt ?? now.toISOString())
       );
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         dailyDungeonState: result.dailyDungeonState,
@@ -2144,7 +2190,7 @@ export function registerPlayerAccountRoutes(
         claimed: true,
         run: result.run,
         reward: result.floor.reward,
-        dailyDungeon: toDailyDungeonResponse(nextAccount),
+        dailyDungeon: toDailyDungeonResponse(nextAccount, now),
         ...(eventMutation.eventProgress.length > 0 ? { eventProgress: eventMutation.eventProgress } : {})
       });
     } catch (error) {
@@ -2162,6 +2208,15 @@ export function registerPlayerAccountRoutes(
           error: {
             code: "daily_dungeon_reward_already_claimed",
             message: "Daily dungeon reward has already been claimed"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message.startsWith("daily_dungeon_not_active_for_")) {
+        sendJson(response, 404, {
+          error: {
+            code: "daily_dungeon_not_active",
+            message: "Daily dungeon is not active for the requested date"
           }
         });
         return;

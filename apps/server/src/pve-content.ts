@@ -572,6 +572,17 @@ export function startDailyDungeonRun(
   now = new Date()
 ): { dailyDungeonState: DailyDungeonState; run: DailyDungeonRunRecord; floor: DailyDungeonFloor } {
   const currentState = getCurrentDailyDungeonState(dailyDungeonState, now);
+  const highestClaimedFloor = currentState.runs.reduce((highestFloor, run) => {
+    if (run.rewardClaimedAt == null) {
+      return highestFloor;
+    }
+    return Math.max(highestFloor, run.floor);
+  }, 0);
+  const lastFloorNumber = dungeon.floors.reduce((highestFloor, floor) => Math.max(highestFloor, floor.floor), 0);
+
+  if (highestClaimedFloor >= lastFloorNumber) {
+    throw new Error("daily_dungeon_already_completed");
+  }
   if (currentState.attemptsUsed >= dungeon.attemptLimit) {
     throw new Error("daily_dungeon_attempt_limit_reached");
   }

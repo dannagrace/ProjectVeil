@@ -160,6 +160,20 @@ test("daily dungeon state resets by date key and enforces one-time reward claims
   assert.deepEqual(reset.runs, []);
 });
 
+test("daily dungeon cannot be re-entered after the final floor reward is claimed in the same window", () => {
+  const dungeon = resolveActiveDailyDungeon(new Date("2026-04-06T02:00:00.000Z"));
+  assert.ok(dungeon);
+
+  const finalFloor = Math.max(...dungeon.floors.map((floor) => floor.floor));
+  const started = startDailyDungeonRun(dungeon, undefined, finalFloor, new Date("2026-04-06T02:00:00.000Z"));
+  const claimed = claimDailyDungeonRunReward(dungeon, started.dailyDungeonState, started.run.runId, new Date("2026-04-06T02:05:00.000Z"));
+
+  assert.throws(
+    () => startDailyDungeonRun(dungeon, claimed.dailyDungeonState, 1, new Date("2026-04-06T02:10:00.000Z")),
+    /daily_dungeon_already_completed/
+  );
+});
+
 test("daily dungeon config includes weekly windows and resolves the active rotation by date", () => {
   const dungeons = resolveDailyDungeonConfig();
 
