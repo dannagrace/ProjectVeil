@@ -14,6 +14,11 @@ import {
   resetClientAnalyticsRuntimeDependencies
 } from "../assets/scripts/cocos-primary-client-telemetry.ts";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
+import {
+  ANALYTICS_EVENT_CATALOG,
+  type AnalyticsEvent,
+  type AnalyticsEventName
+} from "../../../packages/shared/src/index.ts";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
@@ -42,6 +47,73 @@ function createDeferred<T>(): {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+type AnalyticsPayloadValue =
+  | string
+  | number
+  | boolean
+  | null
+  | AnalyticsPayloadValue[]
+  | { [key: string]: AnalyticsPayloadValue };
+
+function assertPayloadMatchesSample(sample: AnalyticsPayloadValue, actual: AnalyticsPayloadValue, path: string): void {
+  if (Array.isArray(sample)) {
+    assert.equal(Array.isArray(actual), true, `${path} should be an array`);
+    const sampleItem = sample[0];
+    if (sampleItem === undefined) {
+      return;
+    }
+
+    for (const [index, item] of (actual as AnalyticsPayloadValue[]).entries()) {
+      assertPayloadMatchesSample(sampleItem, item, `${path}[${index}]`);
+    }
+    return;
+  }
+
+  if (sample && typeof sample === "object") {
+    assert.equal(Boolean(actual) && typeof actual === "object" && !Array.isArray(actual), true, `${path} should be an object`);
+    for (const [key, value] of Object.entries(sample)) {
+      const actualValue = (actual as Record<string, AnalyticsPayloadValue | undefined>)[key];
+      assert.notEqual(actualValue, undefined, `${path}.${key} should be defined`);
+      assertPayloadMatchesSample(value, actualValue as AnalyticsPayloadValue, `${path}.${key}`);
+    }
+    return;
+  }
+
+  if (sample === null) {
+    assert.equal(actual, null, `${path} should be null`);
+    return;
+  }
+
+  assert.equal(typeof actual, typeof sample, `${path} should be a ${typeof sample}`);
+}
+
+function parseCapturedAnalyticsEvents(fetchCalls: Array<{ input: string; init?: RequestInit }>): AnalyticsEvent[] {
+  return fetchCalls.flatMap((call) => {
+    const rawBody = call.init?.body;
+    if (typeof rawBody !== "string") {
+      return [];
+    }
+
+    const payload = JSON.parse(rawBody) as { events?: AnalyticsEvent[] };
+    return payload.events ?? [];
+  });
+}
+
+function assertCapturedAnalyticsEvent<Name extends AnalyticsEventName>(
+  events: AnalyticsEvent[],
+  name: Name,
+  predicate?: (event: AnalyticsEvent<Name>) => boolean
+): AnalyticsEvent<Name> {
+  const matchingEvents = events.filter((event): event is AnalyticsEvent<Name> => event.name === name);
+  const event = predicate ? matchingEvents.find(predicate) : matchingEvents.at(-1);
+  assert.ok(event, `expected analytics event ${name}`);
+  const catalogEntry = ANALYTICS_EVENT_CATALOG[name];
+  assert.equal(event.name, catalogEntry.name);
+  assert.equal(event.version, catalogEntry.version);
+  assertPayloadMatchesSample(catalogEntry.samplePayload as AnalyticsPayloadValue, event.payload as AnalyticsPayloadValue, `${name}.payload`);
+  return event;
 }
 
 function createFirstBattleState(): BattleState {
@@ -953,13 +1025,34 @@ test("VeilRoot emits shop, tutorial, quest, and experiment analytics once per se
   await root.advanceTutorialFlow();
   await flushClientAnalyticsEventsForTest();
 
-  const body = fetchCalls.map((call) => String(call.init?.body)).join("\n");
-  assert.match(body, /"name":"shop_open"/);
-  assert.match(body, /"name":"purchase_initiated"/);
-  assert.match(body, /"name":"experiment_exposure"/);
-  assert.match(body, /"name":"quest_complete"/);
-  assert.match(body, /"name":"tutorial_step"/);
-  assert.equal((body.match(/"name":"experiment_exposure"/g) ?? []).length, 1);
+  const events = parseCapturedAnalyticsEvents(fetchCalls);
+  const shopOpenEvent = assertCapturedAnalyticsEvent(
+    events,
+    "shop_open",
+    (event) => event.payload.roomId === "room-analytics" && event.payload.surface === "lobby"
+  );
+  assert.equal(shopOpenEvent.roomId, "room-analytics");
+
+  const purchaseInitiatedEvent = assertCapturedAnalyticsEvent(
+    events,
+    "purchase_initiated",
+    (event) => event.payload.productId === "gem-pack-small" && event.payload.surface === "lobby"
+  );
+  assert.equal(purchaseInitiatedEvent.payload.productType, "gem_pack");
+  assert.equal(typeof purchaseInitiatedEvent.payload.currency, typeof ANALYTICS_EVENT_CATALOG.purchase_initiated.samplePayload.currency);
+  assert.equal(typeof purchaseInitiatedEvent.payload.price, "number");
+
+  const experimentExposureEvent = assertCapturedAnalyticsEvent(
+    events,
+    "experiment_exposure",
+    (event) => event.payload.experimentKey === "account_portal_copy" && event.payload.surface === "player_account_profile"
+  );
+  assert.equal(experimentExposureEvent.payload.variant, "upgrade");
+  assert.equal(typeof experimentExposureEvent.payload.bucket, "number");
+  assert.equal(events.filter((event) => event.name === "experiment_exposure").length, 1);
+
+  assertCapturedAnalyticsEvent(events, "quest_complete", (event) => event.payload.questId === "daily_explore_frontier");
+  assertCapturedAnalyticsEvent(events, "tutorial_step");
 });
 
 test("VeilRoot gameplay account refresh uses the injected loader for remote equipment and loot updates", async () => {
