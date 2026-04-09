@@ -69,10 +69,44 @@ interface CocosRcBundleManifest {
     commit?: string;
     shortCommit?: string;
   };
+  artifacts?: {
+    primaryJourneyEvidence?: string;
+    snapshot?: string;
+  };
   linkedEvidence?: {
     releaseReadinessSnapshot?: {
       path?: string;
     };
+  };
+}
+
+interface CocosRcSnapshotArtifact {
+  candidate?: {
+    name?: string;
+    commit?: string;
+    shortCommit?: string;
+  };
+  execution?: {
+    executedAt?: string;
+  };
+  linkedEvidence?: {
+    primaryJourneyEvidence?: {
+      path?: string;
+    };
+    releaseReadinessSnapshot?: {
+      path?: string;
+    };
+  };
+}
+
+interface CocosPrimaryJourneyEvidenceArtifact {
+  candidate?: {
+    name?: string;
+    commit?: string;
+    shortCommit?: string;
+  };
+  execution?: {
+    completedAt?: string;
   };
 }
 
@@ -196,6 +230,8 @@ interface ArtifactFamilyReport {
     | "release-readiness-snapshot"
     | "release-gate-summary"
     | "cocos-rc-bundle"
+    | "cocos-rc-snapshot"
+    | "cocos-primary-journey-evidence"
     | "runtime-observability-evidence"
     | "runtime-observability-gate"
     | "manual-evidence-ledger"
@@ -1259,6 +1295,94 @@ export function buildSameCandidateEvidenceAuditReport(args: Args): CandidateEvid
       freshness,
       findings
     });
+
+    const cocosRcSnapshotPath = bundle.artifacts?.snapshot ? path.resolve(bundle.artifacts.snapshot) : undefined;
+    if (!cocosRcSnapshotPath || !fs.existsSync(cocosRcSnapshotPath)) {
+      artifactFamilies.push(buildMissingFamily("cocos-rc-snapshot", "Cocos RC snapshot", "blocking", true, true));
+    } else {
+      const snapshot = readJsonFile<CocosRcSnapshotArtifact>(cocosRcSnapshotPath);
+      const snapshotFindings: AuditFinding[] = [];
+      const snapshotFreshness = addCommonFindings(snapshotFindings, {
+        severity: "blocking",
+        label: "Cocos RC snapshot",
+        candidate: snapshot.candidate?.name,
+        revision: snapshot.candidate?.commit ?? snapshot.candidate?.shortCommit,
+        generatedAt: snapshot.execution?.executedAt,
+        expectedCandidate: args.candidate,
+        expectedRevision,
+        maxAgeMs,
+        artifactPath: cocosRcSnapshotPath
+      });
+      const linkedBundleSnapshotFinding = compareLinkedSnapshot(
+        snapshotPath,
+        snapshot.linkedEvidence?.releaseReadinessSnapshot?.path,
+        "Cocos RC snapshot",
+        "blocking"
+      );
+      if (linkedBundleSnapshotFinding) {
+        snapshotFindings.push(linkedBundleSnapshotFinding);
+      }
+      const linkedPrimaryJourneyFinding = compareLinkedArtifact(
+        bundle.artifacts?.primaryJourneyEvidence ? path.resolve(bundle.artifacts.primaryJourneyEvidence) : undefined,
+        snapshot.linkedEvidence?.primaryJourneyEvidence?.path,
+        "Cocos RC snapshot",
+        "blocking"
+      );
+      if (linkedPrimaryJourneyFinding) {
+        snapshotFindings.push(linkedPrimaryJourneyFinding);
+      }
+      artifactFamilies.push({
+        id: "cocos-rc-snapshot",
+        label: "Cocos RC snapshot",
+        severity: "blocking",
+        required: true,
+        applicable: true,
+        status: getFamilyStatus(snapshotFindings, "blocking"),
+        artifactPath: cocosRcSnapshotPath,
+        revision: snapshot.candidate?.commit ?? snapshot.candidate?.shortCommit,
+        candidate: snapshot.candidate?.name,
+        generatedAt: snapshot.execution?.executedAt,
+        freshness: snapshotFreshness,
+        findings: snapshotFindings
+      });
+    }
+
+    const primaryJourneyEvidencePath = bundle.artifacts?.primaryJourneyEvidence
+      ? path.resolve(bundle.artifacts.primaryJourneyEvidence)
+      : undefined;
+    if (!primaryJourneyEvidencePath || !fs.existsSync(primaryJourneyEvidencePath)) {
+      artifactFamilies.push(
+        buildMissingFamily("cocos-primary-journey-evidence", "Cocos primary-journey evidence", "blocking", true, true)
+      );
+    } else {
+      const primaryJourneyEvidence = readJsonFile<CocosPrimaryJourneyEvidenceArtifact>(primaryJourneyEvidencePath);
+      const primaryJourneyFindings: AuditFinding[] = [];
+      const primaryJourneyFreshness = addCommonFindings(primaryJourneyFindings, {
+        severity: "blocking",
+        label: "Cocos primary-journey evidence",
+        candidate: primaryJourneyEvidence.candidate?.name,
+        revision: primaryJourneyEvidence.candidate?.commit ?? primaryJourneyEvidence.candidate?.shortCommit,
+        generatedAt: primaryJourneyEvidence.execution?.completedAt,
+        expectedCandidate: args.candidate,
+        expectedRevision,
+        maxAgeMs,
+        artifactPath: primaryJourneyEvidencePath
+      });
+      artifactFamilies.push({
+        id: "cocos-primary-journey-evidence",
+        label: "Cocos primary-journey evidence",
+        severity: "blocking",
+        required: true,
+        applicable: true,
+        status: getFamilyStatus(primaryJourneyFindings, "blocking"),
+        artifactPath: primaryJourneyEvidencePath,
+        revision: primaryJourneyEvidence.candidate?.commit ?? primaryJourneyEvidence.candidate?.shortCommit,
+        candidate: primaryJourneyEvidence.candidate?.name,
+        generatedAt: primaryJourneyEvidence.execution?.completedAt,
+        freshness: primaryJourneyFreshness,
+        findings: primaryJourneyFindings
+      });
+    }
   }
 
   const runtimeSeverity: FindingSeverity = wechatSurfaceRequired ? "blocking" : "warning";
