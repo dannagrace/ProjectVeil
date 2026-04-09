@@ -53,6 +53,7 @@ import {
   loadCocosPlayerProgressionSnapshot,
   loadCocosSeasonProgress,
   loginCocosGuestAuthSession,
+  loginCocosWechatAuthSession,
   logoutCurrentCocosAuthSession,
   postCocosPlayerReferral,
   readPreferredCocosDisplayName,
@@ -105,8 +106,14 @@ import {
   buildCocosAccountLifecyclePanelView,
   type CocosAccountLifecycleDeliveryMode,
   type CocosAccountLifecycleDraft,
-  type CocosAccountLifecycleKind
+  type CocosAccountLifecycleKind,
+  type CocosAccountLifecyclePanelView
 } from "./cocos-account-lifecycle.ts";
+import {
+  buildCocosAccountRegistrationPanelView,
+  type CocosAccountRegistrationPanelView,
+  type CocosWechatMinorProtectionSelection
+} from "./cocos-account-registration.ts";
 import { VeilMapBoard } from "./VeilMapBoard.ts";
 import { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "./cocos-map-visuals.ts";
 import { getPlaceholderSpriteAssetUsageSummary } from "./cocos-placeholder-sprites.ts";
@@ -458,6 +465,7 @@ export class VeilRoot extends Component {
   private registrationPassword = "";
   private registrationDeliveryMode: CocosAccountLifecycleDeliveryMode = "idle";
   private registrationExpiresAt = "";
+  private wechatMinorProtectionSelection: CocosWechatMinorProtectionSelection = "unknown";
   private recoveryToken = "";
   private recoveryPassword = "";
   private recoveryDeliveryMode: CocosAccountLifecycleDeliveryMode = "idle";
@@ -1031,6 +1039,12 @@ export class VeilRoot extends Component {
       },
       onConfirmAccountFlow: () => {
         void this.confirmActiveAccountFlow();
+      },
+      onToggleAccountMinorProtection: () => {
+        this.toggleWechatMinorProtectionSelection();
+      },
+      onBindWechatAccount: () => {
+        void this.bindWechatIdentityFromLobbyAccountFlow();
       },
       onCancelAccountFlow: () => {
         this.closeLobbyAccountFlow();
@@ -4518,21 +4532,17 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      const authSession = await loginWithCocosProvider(
-        this.remoteUrl,
-        {
-          provider: "wechat-mini-game",
-          playerId: this.playerId,
-          displayName: this.displayName || this.playerId
-        },
-        {
-          storage,
-          wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null,
-          config: this.loginRuntimeConfig,
-          authToken: this.authToken,
-          privacyConsentAccepted: this.privacyConsentAccepted
-        }
-      );
+      const authSession = await loginCocosWechatAuthSession(this.remoteUrl, this.playerId, this.displayName || this.playerId, {
+        storage,
+        wx: (globalThis as { wx?: { login?: ((options: unknown) => void) | undefined } }).wx ?? null,
+        exchangePath: this.loginRuntimeConfig.wechatMiniGame.exchangePath,
+        ...(this.loginRuntimeConfig.wechatMiniGame.mockCode ? { mockCode: this.loginRuntimeConfig.wechatMiniGame.mockCode } : {}),
+        ...(this.authToken ? { authToken: this.authToken } : {}),
+        ...(this.privacyConsentAccepted ? { privacyConsentAccepted: true } : {}),
+        ...(this.activeAccountFlow === "registration" && this.wechatMinorProtectionSelection !== "unknown"
+          ? { minorProtection: { isAdult: this.wechatMinorProtectionSelection === "adult" } }
+          : {})
+      });
       this.authToken = authSession.token ?? null;
       this.playerId = authSession.playerId;
       this.displayName = authSession.displayName;
@@ -4540,6 +4550,10 @@ export class VeilRoot extends Component {
       this.authProvider = authSession.provider ?? "wechat-mini-game";
       this.loginId = authSession.loginId ?? "";
       this.sessionSource = authSession.source;
+      if (this.activeAccountFlow === "registration") {
+        this.activeAccountFlow = null;
+        this.wechatMinorProtectionSelection = "unknown";
+      }
       this.syncWechatShareBridge();
       this.lobbyStatus = "微信小游戏登录已连通，正在同步会话并进入房间...";
       saveCocosLobbyPreferences(authSession.playerId, this.roomId, undefined, storage);
@@ -4766,10 +4780,52 @@ export class VeilRoot extends Component {
     await this.syncLobbyBootstrap();
   }
 
-  private buildActiveAccountFlowPanelView() {
+  private buildActiveAccountFlowPanelView(): CocosAccountLifecyclePanelView | CocosAccountRegistrationPanelView | null {
     const draft = this.buildActiveAccountLifecycleDraft();
     if (!draft) {
       return null;
+    }
+
+    if (draft.kind === "registration") {
+      const registrationDraft: CocosAccountLifecycleDraft & { kind: "registration" } = {
+        ...draft,
+        kind: "registration"
+      };
+      const wechatProvider = this.loginProviders.find((provider) => provider.id === "wechat-mini-game");
+      const registeredAccount =
+        this.authMode === "account" || Boolean(this.lobbyAccountProfile.credentialBoundAt)
+          ? {
+              ...(this.lobbyAccountProfile.loginId ?? this.loginId
+                ? { loginId: this.lobbyAccountProfile.loginId ?? this.loginId }
+                : {}),
+              ...(this.lobbyAccountProfile.credentialBoundAt
+                ? { credentialBoundAt: this.lobbyAccountProfile.credentialBoundAt }
+                : {}),
+              provider: this.authProvider
+            }
+          : null;
+      return buildCocosAccountRegistrationPanelView({
+        draft: registrationDraft,
+        privacyConsentAccepted: this.privacyConsentAccepted,
+        submitState: this.lobbyEntering
+          ? this.activeAccountFlow === "registration" && this.authProvider === "wechat-mini-game"
+            ? "binding-wechat"
+            : this.registrationToken && this.registrationPassword
+              ? "confirming-registration"
+              : "requesting-token"
+          : this.authMode === "account" && !this.activeAccountFlow
+            ? "success"
+            : "idle",
+        statusMessage: this.lobbyStatus,
+        showValidationErrors: false,
+        ...(registeredAccount ? { registeredAccount } : {}),
+        wechat: {
+          supported: this.runtimePlatform === "wechat-game",
+          available: wechatProvider?.available === true,
+          bound: this.authProvider === "wechat-mini-game",
+          minorProtectionSelection: this.wechatMinorProtectionSelection
+        }
+      });
     }
 
     return buildCocosAccountLifecyclePanelView(draft);
@@ -4806,6 +4862,7 @@ export class VeilRoot extends Component {
     this.loginId = this.loginId.trim().toLowerCase();
     if (kind === "registration" && !this.registrationDisplayName.trim()) {
       this.registrationDisplayName = this.displayName || this.loginId;
+      this.wechatMinorProtectionSelection = "unknown";
     }
     this.lobbyStatus =
       kind === "registration"
@@ -4815,9 +4872,44 @@ export class VeilRoot extends Component {
   }
 
   private closeLobbyAccountFlow(): void {
+    this.wechatMinorProtectionSelection = "unknown";
     this.activeAccountFlow = null;
     this.lobbyStatus = "已收起账号生命周期面板。";
     this.renderView();
+  }
+
+  private toggleWechatMinorProtectionSelection(): void {
+    if (this.activeAccountFlow !== "registration") {
+      return;
+    }
+
+    this.wechatMinorProtectionSelection =
+      this.wechatMinorProtectionSelection === "unknown"
+        ? "adult"
+        : this.wechatMinorProtectionSelection === "adult"
+          ? "minor"
+          : "adult";
+    this.lobbyStatus =
+      this.wechatMinorProtectionSelection === "adult"
+        ? "已声明为成年人，绑定微信时将按成年人策略提交。"
+        : "已声明为未成年人，绑定微信时将按未成年人策略提交。";
+    this.renderView();
+  }
+
+  private async bindWechatIdentityFromLobbyAccountFlow(): Promise<void> {
+    if (this.activeAccountFlow !== "registration" || this.authMode !== "account") {
+      this.lobbyStatus = "需先完成正式注册或登录正式账号，才能绑定微信身份。";
+      this.renderView();
+      return;
+    }
+
+    if (this.wechatMinorProtectionSelection === "unknown") {
+      this.lobbyStatus = "绑定微信身份前，请先设置未成年人保护声明。";
+      this.renderView();
+      return;
+    }
+
+    await this.loginLobbyWechatMiniGame();
   }
 
   private togglePrivacyConsent(): void {
