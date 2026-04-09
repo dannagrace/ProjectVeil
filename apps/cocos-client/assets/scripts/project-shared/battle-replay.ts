@@ -1,4 +1,4 @@
-import { applyBattleAction, getBattleOutcome } from "./battle.ts";
+import { applyBattleAction, getBattleOutcome, normalizeBattleState } from "./battle.ts";
 import type { BattleAction, BattleOutcome, BattleState, UnitStack } from "./models.ts";
 
 export type BattleReplayResult = "attacker_victory" | "defender_victory";
@@ -97,7 +97,7 @@ function normalizeTimestamp(value?: string | null): string | undefined {
 }
 
 function cloneBattleState(state: BattleState): BattleState {
-  return structuredClone(state);
+  return normalizeBattleState(structuredClone(state));
 }
 
 function unitHpPool(unit?: UnitStack | null): number {
