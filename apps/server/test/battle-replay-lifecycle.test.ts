@@ -242,6 +242,64 @@ test("authoritative room captures and drains a completed neutral battle replay",
   assert.deepEqual(room.consumeCompletedBattleReplays(), []);
 });
 
+test("authoritative room records rejected player battle actions in completed replay steps", () => {
+  const room = createRoom("replay-capture-rejected-room", 1001);
+  room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 5, y: 4 }
+  });
+
+  let rejectedActionRecorded = false;
+  let playerSteps = 0;
+
+  while (playerSteps < 20) {
+    const battle = room.getBattleForPlayer("player-1");
+    if (!battle) {
+      break;
+    }
+
+    const activeUnitId = battle.activeUnitId;
+    const activeUnit = activeUnitId ? battle.units[activeUnitId] : undefined;
+    const target = activeUnit
+      ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+      : undefined;
+
+    assert.ok(activeUnitId);
+    assert.ok(target);
+
+    if (!rejectedActionRecorded && activeUnit.camp === "attacker") {
+      const invalidResult = room.dispatchBattle("player-1", {
+        type: "battle.attack",
+        attackerId: target.id,
+        defenderId: activeUnitId
+      });
+      assert.equal(invalidResult.ok, false);
+      assert.equal(invalidResult.reason, "unit_not_player_controlled");
+      rejectedActionRecorded = true;
+    }
+
+    room.dispatchBattle("player-1", {
+      type: "battle.attack",
+      attackerId: activeUnitId,
+      defenderId: target.id
+    });
+    playerSteps += 1;
+  }
+
+  assert.equal(rejectedActionRecorded, true);
+  const completed = room.consumeCompletedBattleReplays();
+  assert.equal(completed.length, 1);
+  assert.ok(
+    completed[0]?.steps.some(
+      (step) =>
+        step.source === "player" &&
+        step.action.type === "battle.attack" &&
+        step.rejection?.reason === "unit_not_player_controlled"
+    )
+  );
+});
+
 test("colyseus replay lifecycle persists the settled replay once into the player account", async (t) => {
   resetLobbyRoomRegistry();
   const store = new InstrumentedRoomSnapshotStore();

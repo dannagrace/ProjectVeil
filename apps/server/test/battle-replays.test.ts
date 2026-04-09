@@ -258,6 +258,50 @@ test("battle replay capture records sequential immutable steps for each action a
   });
 });
 
+test("battle replay capture preserves structured rejections for invalid appended actions", () => {
+  const capture = createBattleReplayCapture(
+    "room-rejected-272",
+    createBattleState({
+      id: "battle-rejected-272",
+      worldHeroId: "hero-replay"
+    }),
+    { attackerPlayerId: "player-step" },
+    "2026-03-29T15:20:00.000Z"
+  );
+
+  const withRejectedStep = appendBattleReplayStep(
+    capture,
+    {
+      type: "battle.skill",
+      unitId: "hero-stack",
+      skillId: "power_shot",
+      targetId: "wolf-stack"
+    },
+    "player",
+    {
+      scope: "battle",
+      actionType: "battle.skill",
+      reason: "skill_on_cooldown"
+    }
+  );
+
+  assert.deepEqual(withRejectedStep.steps[0], {
+    index: 1,
+    source: "player",
+    action: {
+      type: "battle.skill",
+      unitId: "hero-stack",
+      skillId: "power_shot",
+      targetId: "wolf-stack"
+    },
+    rejection: {
+      scope: "battle",
+      actionType: "battle.skill",
+      reason: "skill_on_cooldown"
+    }
+  });
+});
+
 test("battle replay emission requires hero identifiers before generating summaries", () => {
   const attackerCapture = finalizeBattleReplayCapture(
     createBattleReplayCapture(
