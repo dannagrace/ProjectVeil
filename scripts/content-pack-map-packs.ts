@@ -112,6 +112,13 @@ export const EXTRA_CONTENT_PACK_MAP_PACKS: ContentPackMapPackDefinition[] = [
     mapObjectsFileName: "phase2-map-objects-frontier-expanded.json",
     phase: "phase2",
     aliases: ["phase2_frontier_expanded", "frontier-expanded", "frontier_expanded"]
+  },
+  {
+    id: "phase2-verdant-vale",
+    worldFileName: "phase2-world-verdant-vale.json",
+    mapObjectsFileName: "phase2-map-objects-verdant-vale.json",
+    phase: "phase2",
+    aliases: ["phase2_verdant_vale", "verdant-vale", "verdant_vale"]
   }
 ];
 
