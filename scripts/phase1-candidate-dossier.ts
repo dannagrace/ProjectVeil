@@ -617,7 +617,7 @@ function writeJsonFile(filePath: string, payload: unknown): void {
   writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean): string | undefined {
+export function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean): string | undefined {
   if (!fs.existsSync(dirPath)) {
     return undefined;
   }
@@ -627,7 +627,10 @@ function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean)
     .filter((entry) => matcher(entry))
     .map((entry) => path.join(dirPath, entry))
     .filter((entry) => fs.statSync(entry).isFile())
-    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+    .sort((left, right) => {
+      const mtimeDelta = fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs;
+      return mtimeDelta !== 0 ? mtimeDelta : path.basename(left).localeCompare(path.basename(right));
+    });
 
   return candidates[0];
 }
