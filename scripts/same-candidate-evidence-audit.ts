@@ -136,6 +136,7 @@ interface RuntimeObservabilityGateReport {
 interface ManualEvidenceOwnerLedgerMetadata {
   candidate?: string;
   targetRevision?: string;
+  releaseOwner?: string;
   lastUpdated?: string;
   linkedReadinessSnapshot?: string;
 }
@@ -280,6 +281,43 @@ interface CandidateEvidenceAuditReport {
   };
   manualEvidenceContract: ManualEvidenceContractReport;
   artifactFamilies: ArtifactFamilyReport[];
+}
+
+type OwnerReminderCondition = "stale_artifact" | "missing_artifact" | "missing_owner_assignment";
+
+interface OwnerReminderEntry {
+  artifactFamilyId: ArtifactFamilyReport["id"];
+  artifactFamilyLabel: string;
+  condition: OwnerReminderCondition;
+  severity: FindingSeverity;
+  summary: string;
+  artifactPath?: string;
+  expectedOwners: string[];
+  ownerLedgerEvidenceTypes: string[];
+  ownerLedgerReference: string;
+  sourceFindingCodes: FindingCode[];
+}
+
+interface CandidateOwnerReminderReport {
+  schemaVersion: 1;
+  generatedAt: string;
+  candidate: {
+    name: string;
+    revision: string;
+    targetSurface: Exclude<TargetSurface, "auto"> | "auto";
+  };
+  summary: {
+    status: AuditStatus;
+    itemCount: number;
+    missingArtifactCount: number;
+    staleArtifactCount: number;
+    missingOwnerAssignmentCount: number;
+    summary: string;
+  };
+  inputs: {
+    manualEvidenceLedgerPath?: string;
+  };
+  items: OwnerReminderEntry[];
 }
 
 interface ManualEvidenceSource {
@@ -646,6 +684,7 @@ function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLe
     metadata: {
       candidate: capture("Candidate"),
       targetRevision: capture("Target revision"),
+      releaseOwner: capture("Release owner"),
       lastUpdated: capture("Last updated"),
       linkedReadinessSnapshot: capture("Linked readiness snapshot")
     },
@@ -1160,6 +1199,124 @@ function collectTriageEntries(
   return {
     blockers: entries.filter((entry) => entry.severity === "blocking"),
     warnings: entries.filter((entry) => entry.severity === "warning")
+  };
+}
+
+function getOwnerLedgerEvidenceTypesForArtifactFamily(
+  familyId: ArtifactFamilyReport["id"]
+): string[] {
+  switch (familyId) {
+    case "cocos-rc-bundle":
+    case "cocos-rc-snapshot":
+    case "cocos-primary-journey-evidence":
+      return [...COCOS_RC_SIGNOFF_LEDGER_EVIDENCE_TYPES];
+    case "runtime-observability-evidence":
+    case "runtime-observability-gate":
+      return [...RUNTIME_OBSERVABILITY_LEDGER_EVIDENCE_TYPES];
+    case "wechat-release-evidence":
+      return [...WECHAT_RELEASE_SIGNOFF_LEDGER_EVIDENCE_TYPES];
+    default:
+      return [];
+  }
+}
+
+function getReminderCondition(findings: AuditFinding[], hasOwnerAssignment: boolean): OwnerReminderCondition | undefined {
+  if (!hasOwnerAssignment) {
+    return "missing_owner_assignment";
+  }
+  if (findings.some((finding) => finding.code === "missing")) {
+    return "missing_artifact";
+  }
+  if (findings.some((finding) => finding.code === "stale")) {
+    return "stale_artifact";
+  }
+  return undefined;
+}
+
+function buildOwnerReminderReport(
+  auditReport: CandidateEvidenceAuditReport,
+  ledger: ManualEvidenceOwnerLedger | undefined
+): CandidateOwnerReminderReport {
+  const ledgerPath = auditReport.inputs.manualEvidenceLedgerPath;
+  const items: OwnerReminderEntry[] = [];
+
+  for (const family of auditReport.artifactFamilies) {
+    const relevantFindings = family.findings.filter((finding) => finding.code === "missing" || finding.code === "stale");
+    if (relevantFindings.length === 0) {
+      continue;
+    }
+
+    const ownerLedgerEvidenceTypes = getOwnerLedgerEvidenceTypesForArtifactFamily(family.id);
+    const matchingRows =
+      ownerLedgerEvidenceTypes.length === 0
+        ? []
+        : (ledger?.rows ?? []).filter((row) => ownerLedgerEvidenceTypes.includes(row.evidenceType));
+    const expectedOwners = Array.from(
+      new Set(
+        matchingRows
+          .map((row) => row.owner?.trim())
+          .filter((owner): owner is string => Boolean(owner))
+      )
+    );
+    const hasOwnerAssignment =
+      expectedOwners.length > 0 || (family.id === "manual-evidence-ledger" && Boolean(ledger?.metadata.releaseOwner?.trim()));
+    const condition = getReminderCondition(relevantFindings, hasOwnerAssignment);
+    if (!condition) {
+      continue;
+    }
+
+    const ownerLedgerReference =
+      family.id === "manual-evidence-ledger" && ledger?.metadata.releaseOwner?.trim()
+        ? `release owner \`${ledger.metadata.releaseOwner.trim()}\`${ledgerPath ? ` via \`${toRelativePath(ledgerPath)}\`` : ""}`
+        : ownerLedgerEvidenceTypes.length === 0
+          ? `no owner ledger evidence mapping is defined for ${family.label}${ledgerPath ? ` in \`${toRelativePath(ledgerPath)}\`` : ""}`
+          : matchingRows.length === 0
+            ? `ledger is missing expected row(s) for ${ownerLedgerEvidenceTypes.map((type) => `\`${type}\``).join(", ")}${
+                ledgerPath ? ` in \`${toRelativePath(ledgerPath)}\`` : ""
+              }`
+            : `${ownerLedgerEvidenceTypes.map((type) => `\`${type}\``).join(", ")}${ledgerPath ? ` from \`${toRelativePath(ledgerPath)}\`` : ""}`;
+
+    items.push({
+      artifactFamilyId: family.id,
+      artifactFamilyLabel: family.label,
+      condition,
+      severity: family.severity,
+      summary: relevantFindings.map((finding) => finding.summary).join(" "),
+      ...(family.artifactPath ? { artifactPath: family.artifactPath } : {}),
+      expectedOwners:
+        family.id === "manual-evidence-ledger" && ledger?.metadata.releaseOwner?.trim()
+          ? [ledger.metadata.releaseOwner.trim()]
+          : expectedOwners,
+      ownerLedgerEvidenceTypes,
+      ownerLedgerReference,
+      sourceFindingCodes: relevantFindings.map((finding) => finding.code)
+    });
+  }
+
+  const missingArtifactCount = items.filter((item) => item.condition === "missing_artifact").length;
+  const staleArtifactCount = items.filter((item) => item.condition === "stale_artifact").length;
+  const missingOwnerAssignmentCount = items.filter((item) => item.condition === "missing_owner_assignment").length;
+  const status: AuditStatus = items.some((item) => item.severity === "blocking") ? "failed" : items.length > 0 ? "warning" : "passed";
+
+  return {
+    schemaVersion: 1,
+    generatedAt: auditReport.generatedAt,
+    candidate: auditReport.candidate,
+    summary: {
+      status,
+      itemCount: items.length,
+      missingArtifactCount,
+      staleArtifactCount,
+      missingOwnerAssignmentCount,
+      summary:
+        items.length === 0
+          ? `No stale or missing candidate artifacts require owner follow-up for ${auditReport.candidate.name}.`
+          : `${items.length} owner reminder item(s): ${missingArtifactCount} missing artifact, ${staleArtifactCount} stale artifact, ${missingOwnerAssignmentCount} missing owner assignment.`
+    },
+    inputs: {
+      ...(ledgerPath ? { manualEvidenceLedgerPath: ledgerPath } : {})
+    },
+    items
   };
 }
 
@@ -1829,6 +1986,54 @@ export function renderMarkdown(report: CandidateEvidenceAuditReport): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
+export function renderOwnerReminderMarkdown(report: CandidateOwnerReminderReport): string {
+  const lines: string[] = [];
+  lines.push("# Candidate Owner Reminder Report");
+  lines.push("");
+  lines.push(`- Generated at: \`${report.generatedAt}\``);
+  lines.push(`- Candidate: \`${report.candidate.name}\``);
+  lines.push(`- Candidate revision: \`${report.candidate.revision}\``);
+  lines.push(`- Target surface: \`${report.candidate.targetSurface}\``);
+  lines.push(`- Overall status: **${report.summary.status.toUpperCase()}**`);
+  lines.push(`- Reminder items: ${report.summary.itemCount}`);
+  lines.push(`- Missing artifact items: ${report.summary.missingArtifactCount}`);
+  lines.push(`- Stale artifact items: ${report.summary.staleArtifactCount}`);
+  lines.push(`- Missing owner assignment items: ${report.summary.missingOwnerAssignmentCount}`);
+  lines.push(`- Summary: ${report.summary.summary}`);
+  lines.push("");
+  lines.push("Run this report during candidate review after the current candidate artifacts have been generated and before the final owner reminder/sign-off pass.");
+  lines.push(
+    `Store the JSON + Markdown outputs in \`${report.inputs.manualEvidenceLedgerPath ? toRelativePath(path.dirname(report.inputs.manualEvidenceLedgerPath)) : "artifacts/release-readiness"}\` with the rest of the candidate evidence bundle.`
+  );
+  lines.push("");
+  lines.push("## Reminder Items");
+  lines.push("");
+
+  if (report.items.length === 0) {
+    lines.push("- No owner reminder items.");
+  } else {
+    for (const item of report.items) {
+      lines.push(`### ${item.artifactFamilyLabel}`);
+      lines.push("");
+      lines.push(`- Condition: \`${item.condition}\``);
+      lines.push(`- Severity: \`${item.severity}\``);
+      lines.push(`- Artifact: \`${item.artifactPath ? toRelativePath(item.artifactPath) : "<missing>"}\``);
+      lines.push(`- Expected owners: ${item.expectedOwners.length > 0 ? item.expectedOwners.map((owner) => `\`${owner}\``).join(", ") : "<missing>"}`);
+      lines.push(
+        `- Owner ledger evidence types: ${
+          item.ownerLedgerEvidenceTypes.length > 0 ? item.ownerLedgerEvidenceTypes.map((type) => `\`${type}\``).join(", ") : "<unmapped>"
+        }`
+      );
+      lines.push(`- Owner ledger reference: ${item.ownerLedgerReference}`);
+      lines.push(`- Source finding codes: ${item.sourceFindingCodes.map((code) => `\`${code}\``).join(", ")}`);
+      lines.push(`- Summary: ${item.summary}`);
+      lines.push("");
+    }
+  }
+
+  return `${lines.join("\n").trim()}\n`;
+}
+
 function defaultOutputPath(args: Args, outputBaseName = "candidate-evidence-audit"): string {
   if (args.outputPath) {
     return path.resolve(args.outputPath);
@@ -1849,6 +2054,30 @@ function defaultMarkdownOutputPath(args: Args, outputBaseName = "candidate-evide
   );
 }
 
+function defaultOwnerReminderOutputPath(args: Args, outputBaseName = "candidate-evidence-owner-reminder-report"): string {
+  const baseDir = args.outputPath
+    ? path.dirname(path.resolve(args.outputPath))
+    : args.markdownOutputPath
+      ? path.dirname(path.resolve(args.markdownOutputPath))
+      : DEFAULT_RELEASE_READINESS_DIR;
+  return path.resolve(
+    baseDir,
+    `${outputBaseName}-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.json`
+  );
+}
+
+function defaultOwnerReminderMarkdownOutputPath(args: Args, outputBaseName = "candidate-evidence-owner-reminder-report"): string {
+  const baseDir = args.markdownOutputPath
+    ? path.dirname(path.resolve(args.markdownOutputPath))
+    : args.outputPath
+      ? path.dirname(path.resolve(args.outputPath))
+      : DEFAULT_RELEASE_READINESS_DIR;
+  return path.resolve(
+    baseDir,
+    `${outputBaseName}-${slugifyCandidate(args.candidate)}-${args.candidateRevision.slice(0, 12)}.md`
+  );
+}
+
 export function runSameCandidateEvidenceAuditCli(
   argv = process.argv,
   options?: {
@@ -1860,13 +2089,24 @@ export function runSameCandidateEvidenceAuditCli(
   const report = buildSameCandidateEvidenceAuditReport(args);
   const outputPath = defaultOutputPath(args, options?.outputBaseName);
   const markdownOutputPath = defaultMarkdownOutputPath(args, options?.outputBaseName);
+  const ownerReminderOutputPath = defaultOwnerReminderOutputPath(args);
+  const ownerReminderMarkdownOutputPath = defaultOwnerReminderMarkdownOutputPath(args);
   const logLabel = options?.logLabel ?? "candidate evidence audit";
+  const parsedLedger =
+    report.inputs.manualEvidenceLedgerPath && fs.existsSync(report.inputs.manualEvidenceLedgerPath)
+      ? parseManualEvidenceOwnerLedger(report.inputs.manualEvidenceLedgerPath)
+      : undefined;
+  const ownerReminderReport = buildOwnerReminderReport(report, parsedLedger);
 
   writeJsonFile(outputPath, report);
   writeFile(markdownOutputPath, renderMarkdown(report));
+  writeJsonFile(ownerReminderOutputPath, ownerReminderReport);
+  writeFile(ownerReminderMarkdownOutputPath, renderOwnerReminderMarkdown(ownerReminderReport));
 
   console.log(`Wrote ${logLabel} JSON: ${toRelativePath(outputPath)}`);
   console.log(`Wrote ${logLabel} Markdown: ${toRelativePath(markdownOutputPath)}`);
+  console.log(`Wrote owner reminder JSON: ${toRelativePath(ownerReminderOutputPath)}`);
+  console.log(`Wrote owner reminder Markdown: ${toRelativePath(ownerReminderMarkdownOutputPath)}`);
 
   if (report.summary.status === "failed") {
     process.exitCode = 1;
