@@ -267,6 +267,84 @@ test("config center save flow calls the config API with the edited draft body", 
   assert.equal(controller.state.lastSavedImpactSummary?.impactedModules.includes("招募库存"), true);
 });
 
+test("config center world save refreshes the preview from the persisted draft", async () => {
+  const savedDocument = createDocument("world", "{\n  \"width\": 10,\n  \"height\": 8\n}\n", { version: 3 });
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/world" && request.method === "PUT") {
+      return new Response(
+        JSON.stringify({
+          storage: "filesystem",
+          document: savedDocument
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (request.url === "/api/config-center/configs") {
+      return new Response(JSON.stringify({ storage: "filesystem", items: [savedDocument] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/snapshots") {
+      return new Response(JSON.stringify({ storage: "filesystem", snapshots: [], publishHistory: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/presets") {
+      return new Response(JSON.stringify({ storage: "filesystem", presets: [] }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    if (request.url === "/api/config-center/configs/world/preview" && request.method === "POST") {
+      return new Response(JSON.stringify({ storage: "filesystem", preview: createWorldPreview() }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n", { version: 2 });
+  controller.state.validation = createValidationReport(true);
+  controller.setDraft("{\n  \"width\": 10,\n  \"height\": 8\n}\n");
+
+  await controller.saveCurrentDocument();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const previewRequest = requests.find(
+    (request) => request.url === "/api/config-center/configs/world/preview" && request.method === "POST"
+  );
+  assert.ok(previewRequest);
+  assert.deepEqual(JSON.parse(previewRequest.body ?? "{}"), {
+    content: "{\n  \"width\": 10,\n  \"height\": 8\n}\n",
+    seed: 1001
+  });
+  assert.equal(controller.state.current?.content, "{\n  \"width\": 10,\n  \"height\": 8\n}\n");
+  assert.equal(controller.state.worldPreview?.roomId, "preview-room");
+  assert.equal(controller.state.previewError, "");
+});
+
 test("config center save is blocked when validation has already failed", async () => {
   const { fetch, requests } = createFetchStub((request) => {
     throw new Error(`Unexpected request: ${request.method} ${request.url}`);
@@ -424,6 +502,46 @@ test("config center snapshot flow saves the current draft and refreshes the snap
   assert.deepEqual(controller.state.snapshots, [snapshot]);
   assert.equal(controller.state.selectedSnapshotId, "snapshot-world-4");
   assert.equal(controller.state.snapshotDiff?.entries[0]?.path, "width");
+});
+
+test("config center preview flow posts the current draft with the selected seed and blocks invalid JSON locally", async () => {
+  const { fetch, requests } = createFetchStub((request) => {
+    if (request.url === "/api/config-center/configs/world/preview" && request.method === "POST") {
+      return new Response(JSON.stringify({ storage: "filesystem", preview: createWorldPreview() }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+  });
+
+  const controller = createConfigCenterController({ fetch });
+  controller.state.current = createDocument("world", "{\n  \"width\": 8,\n  \"height\": 8\n}\n");
+  controller.state.previewSeed = 2026;
+  controller.setDraft("{\n  \"width\": 10,\n  \"height\": 8\n}\n");
+
+  await controller.loadWorldPreview();
+
+  const previewRequest = requests.find(
+    (request) => request.url === "/api/config-center/configs/world/preview" && request.method === "POST"
+  );
+  assert.ok(previewRequest);
+  assert.deepEqual(JSON.parse(previewRequest.body ?? "{}"), {
+    content: "{\n  \"width\": 10,\n  \"height\": 8\n}\n",
+    seed: 2026
+  });
+  assert.equal(controller.state.worldPreview?.seed, 1001);
+
+  controller.setDraft("{\n  \"width\": \n}\n");
+
+  await controller.loadWorldPreview();
+
+  assert.equal(requests.filter((request) => request.url.endsWith("/preview")).length, 1);
+  assert.equal(controller.state.worldPreview, null);
+  assert.match(controller.state.previewError, /JSON 语法无效/);
 });
 
 test("config center snapshot diff exposes non-empty changes for an edited field", async () => {
