@@ -833,6 +833,160 @@ test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) =>
   assert.ok(payload.report.resolvedAt);
 });
 
+test("GET /api/admin/overview returns 503 when ADMIN_SECRET is not configured", async () => {
+  const original = process.env.ADMIN_SECRET;
+  delete process.env.ADMIN_SECRET;
+  try {
+    const { gets } = registerRoutes();
+    const handler = gets.get("/api/admin/overview");
+    assert.ok(handler);
+
+    const response = createResponse();
+    await handler(createRequest({ headers: { "x-veil-admin-secret": "any-secret" } }), response);
+
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+  } finally {
+    if (original === undefined) {
+      delete process.env.ADMIN_SECRET;
+    } else {
+      process.env.ADMIN_SECRET = original;
+    }
+  }
+});
+
+test("GET /admin serves admin.html with text/html content-type", async (t) => {
+  withAdminSecret(t);
+  const { gets } = registerRoutes();
+  const handler = gets.get("/admin");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(createRequest({ url: "/admin" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["Content-Type"] ?? "", /text\/html/);
+  assert.ok(response.body.length > 0, "admin.html body should be non-empty");
+});
+
+test("POST /api/admin/players/:id/unban returns 401 without a valid admin secret", async (t) => {
+  withAdminSecret(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/unban");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      body: JSON.stringify({ reason: "appeal approved" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(JSON.parse(response.body), { error: "Unauthorized: Invalid Admin Secret" });
+});
+
+test("POST /api/admin/players/:id/unban returns 503 when ADMIN_SECRET is not configured", async () => {
+  const original = process.env.ADMIN_SECRET;
+  delete process.env.ADMIN_SECRET;
+  try {
+    const { posts } = registerRoutes();
+    const handler = posts.get("/api/admin/players/:id/unban");
+    assert.ok(handler);
+
+    const response = createResponse();
+    await handler(
+      createRequest({ method: "POST", params: { id: "player-1" }, body: JSON.stringify({}) }),
+      response
+    );
+
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+  } finally {
+    if (original === undefined) {
+      delete process.env.ADMIN_SECRET;
+    } else {
+      process.env.ADMIN_SECRET = original;
+    }
+  }
+});
+
+test("GET /api/admin/players/:id/ban-history returns 503 when ADMIN_SECRET is not configured", async () => {
+  const original = process.env.ADMIN_SECRET;
+  delete process.env.ADMIN_SECRET;
+  try {
+    const store = createStore();
+    const { gets } = registerRoutes(store as RoomSnapshotStore);
+    const handler = gets.get("/api/admin/players/:id/ban-history");
+    assert.ok(handler);
+
+    const response = createResponse();
+    await handler(createRequest({ params: { id: "player-1" } }), response);
+
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+  } finally {
+    if (original === undefined) {
+      delete process.env.ADMIN_SECRET;
+    } else {
+      process.env.ADMIN_SECRET = original;
+    }
+  }
+});
+
+test("GET /api/admin/reports returns 503 when ADMIN_SECRET is not configured", async () => {
+  const original = process.env.ADMIN_SECRET;
+  delete process.env.ADMIN_SECRET;
+  try {
+    const store = createStore();
+    const { gets } = registerRoutes(store as RoomSnapshotStore);
+    const handler = gets.get("/api/admin/reports");
+    assert.ok(handler);
+
+    const response = createResponse();
+    await handler(createRequest({ url: "/api/admin/reports" }), response);
+
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+  } finally {
+    if (original === undefined) {
+      delete process.env.ADMIN_SECRET;
+    } else {
+      process.env.ADMIN_SECRET = original;
+    }
+  }
+});
+
+test("POST /api/admin/reports/:id/resolve returns 503 when ADMIN_SECRET is not configured", async () => {
+  const original = process.env.ADMIN_SECRET;
+  delete process.env.ADMIN_SECRET;
+  try {
+    const store = createStore();
+    const { posts } = registerRoutes(store as RoomSnapshotStore);
+    const handler = posts.get("/api/admin/reports/:id/resolve");
+    assert.ok(handler);
+
+    const response = createResponse();
+    await handler(
+      createRequest({ method: "POST", params: { id: "report-1" }, body: JSON.stringify({ status: "dismissed" }) }),
+      response
+    );
+
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+  } finally {
+    if (original === undefined) {
+      delete process.env.ADMIN_SECRET;
+    } else {
+      process.env.ADMIN_SECRET = original;
+    }
+  }
+});
+
 test("POST /api/admin/reports/:id/resolve with banned also bans the reported player", async (t) => {
   const secret = withAdminSecret(t);
   const store = createStore();
