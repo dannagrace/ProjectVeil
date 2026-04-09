@@ -69,3 +69,41 @@ test("cocos project-shared replay restore normalizes legacy battle states withou
   assert.deepEqual(playback.currentState.units, replayedState.units);
   assert.deepEqual(playback.currentState.log, replayedState.log);
 });
+
+test("cocos project-shared replay restore reproduces retaliation state transitions", () => {
+  const initialState = createDemoBattleState();
+  const action = {
+    type: "battle.attack" as const,
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
+  };
+  const replay: PlayerBattleReplaySummary = {
+    id: "replay-cocos-retaliation",
+    roomId: "room-alpha",
+    playerId: "player-1",
+    battleId: "battle-retaliation",
+    battleKind: "neutral",
+    playerCamp: "attacker",
+    heroId: "hero-1",
+    neutralArmyId: "neutral-1",
+    startedAt: "2026-04-09T00:00:00.000Z",
+    completedAt: "2026-04-09T00:01:00.000Z",
+    initialState,
+    steps: [
+      {
+        index: 1,
+        source: "player",
+        action
+      }
+    ],
+    result: "defender_victory"
+  };
+
+  const playback = restoreBattleReplayPlaybackState(replay, 1, "paused");
+  const resolved = applyBattleAction(createDemoBattleState(), action);
+
+  assert.equal(playback.currentState.units["pikeman-a"]?.hasRetaliated, true);
+  assert.deepEqual(playback.currentState.units, resolved.units);
+  assert.deepEqual(playback.currentState.rng, resolved.rng);
+  assert.match(playback.currentState.log.join("\n"), /枪兵 反击 恶狼/);
+});

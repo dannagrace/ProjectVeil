@@ -41,6 +41,14 @@ interface BattleCatalogIndex {
   statusById: Map<BattleStatusEffectId, BattleStatusEffectConfig>;
 }
 
+function attackRangeOf(unit: UnitStack): number {
+  return Math.max(1, Math.floor(unit.attackRange ?? 1));
+}
+
+function isRangedUnit(unit: UnitStack): boolean {
+  return attackRangeOf(unit) > 1;
+}
+
 function cloneSkillState(skill: BattleSkillState): BattleSkillState {
   return { ...skill };
 }
@@ -68,6 +76,7 @@ function equipmentEffectsOf(unit: UnitStack): EquipmentSpecialEffectId[] {
 function withNormalizedCollections(unit: UnitStack): UnitStack {
   return {
     ...unit,
+    attackRange: attackRangeOf(unit),
     skills: skillsOf(unit).map(cloneSkillState),
     statusEffects: statusEffectsOf(unit).map(cloneStatusEffectState)
   };
@@ -1253,7 +1262,13 @@ function applyAttackSequence(
     }
   }
 
-  if ((options?.allowRetaliation ?? true) && damagedDefender.count > 0 && !damagedDefender.hasRetaliated) {
+  if (
+    (options?.allowRetaliation ?? true) &&
+    damagedDefender.count > 0 &&
+    !damagedDefender.hasRetaliated &&
+    !isRangedUnit(attacker) &&
+    !isRangedUnit(damagedDefender)
+  ) {
     const retaliationRoll = nextDeterministicRandom(nextRngState.seed);
     const retaliationDamage = estimateDamage(damagedDefender, nextAttacker, retaliationRoll.value, preparedState.state);
     let damagedAttacker = applyDamage(nextAttacker, retaliationDamage);
@@ -1584,6 +1599,7 @@ export function createDemoBattleState(): BattleState {
         defense: 5,
         minDamage: 1,
         maxDamage: 3,
+        attackRange: 1,
         count: 12,
         currentHp: 10,
         maxHp: 10,
@@ -1605,6 +1621,7 @@ export function createDemoBattleState(): BattleState {
         defense: 4,
         minDamage: 2,
         maxDamage: 4,
+        attackRange: 1,
         count: 8,
         currentHp: 8,
         maxHp: 8,
@@ -1673,6 +1690,7 @@ export function createNeutralBattleState(
       defense: heroTemplate.defense + hero.stats.defense + heroEquipment.defense,
       minDamage: heroTemplate.minDamage,
       maxDamage: heroTemplate.maxDamage,
+      attackRange: heroTemplate.attackRange ?? 1,
       count: hero.armyCount,
       currentHp: heroTemplate.maxHp,
       maxHp: heroTemplate.maxHp,
@@ -1703,6 +1721,7 @@ export function createNeutralBattleState(
         defense: template.defense,
         minDamage: template.minDamage,
         maxDamage: template.maxDamage,
+        attackRange: template.attackRange ?? 1,
         count: stack.count,
         currentHp: template.maxHp,
         maxHp: template.maxHp,
@@ -1776,6 +1795,7 @@ export function createHeroBattleState(
         defense: attackerTemplate.defense + attackerHero.stats.defense + attackerEquipment.defense,
         minDamage: attackerTemplate.minDamage,
         maxDamage: attackerTemplate.maxDamage,
+        attackRange: attackerTemplate.attackRange ?? 1,
         count: attackerHero.armyCount,
         currentHp: attackerTemplate.maxHp,
         maxHp: attackerTemplate.maxHp,
@@ -1799,6 +1819,7 @@ export function createHeroBattleState(
         defense: defenderTemplate.defense + defenderHero.stats.defense + defenderEquipment.defense,
         minDamage: defenderTemplate.minDamage,
         maxDamage: defenderTemplate.maxDamage,
+        attackRange: defenderTemplate.attackRange ?? 1,
         count: defenderHero.armyCount,
         currentHp: defenderTemplate.maxHp,
         maxHp: defenderTemplate.maxHp,

@@ -60,6 +60,7 @@
       "defense": 3,
       "minDamage": 3,
       "maxDamage": 5,
+      "attackRange": 2,
       "maxHp": 8,
       "battleSkills": [
         "power_shot",
@@ -217,6 +218,7 @@
       "defense": 3,
       "minDamage": 2,
       "maxDamage": 4,
+      "attackRange": 2,
       "maxHp": 7,
       "battleSkills": [
         "power_shot",
