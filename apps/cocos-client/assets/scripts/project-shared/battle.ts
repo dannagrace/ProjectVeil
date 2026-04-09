@@ -23,7 +23,7 @@ import {
   validateAction,
   type ActionPrecheckResult
 } from "./action-precheck.ts";
-import { nextDeterministicRandom } from "./deterministic-rng.ts";
+import { nextDeterministicRandom, normalizeDeterministicSeed } from "./deterministic-rng.ts";
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
 import { grantedHeroBattleSkillIds } from "./hero-skills.ts";
 import { requireValue, withOptionalProperty } from "./invariant.ts";
@@ -80,7 +80,7 @@ function hazardsOf(state: BattleState): BattleHazardState[] {
 function normalizeBattleRngState(state: BattleState): BattleState["rng"] {
   const rng = state.rng;
   return {
-    seed: Number.isFinite(rng?.seed) ? Math.floor(rng.seed) >>> 0 : 1,
+    seed: normalizeDeterministicSeed(rng?.seed ?? 1),
     cursor: Number.isFinite(rng?.cursor) ? Math.max(0, Math.floor(rng.cursor)) : 0
   };
 }
