@@ -2215,6 +2215,36 @@ export function validateWorldAction(
   }
 
   if (action.type === "hero.move") {
+    if (requestingPlayerId) {
+      const view = createPlayerWorldView(state, requestingPlayerId);
+      const destinationTile = findPlayerTile(view, action.destination);
+      if (!destinationTile) {
+        return { valid: false, reason: "destination_not_found" };
+      }
+
+      if (!isTraversableTile(destinationTile, heroCanFlyOverWater(hero)) || destinationTile.fog === "hidden") {
+        return { valid: false, reason: "destination_blocked" };
+      }
+
+      const occupiedByOtherHero = view.ownHeroes.find(
+        (item) => item.id !== hero.id && samePosition(item.position, action.destination)
+      );
+      if (occupiedByOtherHero && occupiedByOtherHero.playerId === hero.playerId) {
+        return { valid: false, reason: "destination_occupied" };
+      }
+
+      const plan = planPlayerViewMovement(view, hero.id, action.destination);
+      if (!plan) {
+        return { valid: false, reason: "path_not_found" };
+      }
+
+      if (plan.moveCost > hero.move.remaining) {
+        return { valid: false, reason: "not_enough_move_points" };
+      }
+
+      return { valid: true };
+    }
+
     const tile = findTile(state.map, action.destination);
     if (!tile) {
       return { valid: false, reason: "destination_not_found" };
