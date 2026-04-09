@@ -355,3 +355,87 @@ test("battle replay emission requires hero identifiers before generating summari
     []
   );
 });
+
+test("buildPlayerBattleReplaySummariesForPlayer produces correct summaries for both PVP participants", () => {
+  const battle = createBattleState({
+    id: "battle-pvp-dual-272",
+    worldHeroId: "hero-attacker",
+    defenderHeroId: "hero-defender"
+  });
+
+  const capture = createBattleReplayCapture(
+    "room-pvp-dual-272",
+    battle,
+    { attackerPlayerId: "player-attacker", defenderPlayerId: "player-defender" },
+    "2026-03-29T16:00:00.000Z"
+  );
+
+  const completed = finalizeBattleReplayCapture(
+    appendBattleReplayStep(capture, { type: "battle.wait", unitId: "hero-attacker-stack" }, "player"),
+    createBattleState({
+      id: "battle-pvp-dual-272",
+      worldHeroId: "hero-attacker",
+      defenderHeroId: "hero-defender"
+    }),
+    { status: "attacker_victory", survivingAttackers: ["hero-attacker-stack"], survivingDefenders: [] },
+    "2026-03-29T16:01:00.000Z"
+  );
+
+  assert.ok(completed);
+
+  const attackerSummaries = buildPlayerBattleReplaySummariesForPlayer(completed, "player-attacker");
+  assert.equal(attackerSummaries.length, 1);
+  const attackerSummary = attackerSummaries[0];
+  assert.ok(attackerSummary);
+  assert.equal(attackerSummary.battleKind, "hero");
+  assert.equal(attackerSummary.playerCamp, "attacker");
+  assert.equal(attackerSummary.heroId, "hero-attacker");
+  assert.equal(attackerSummary.opponentHeroId, "hero-defender");
+  assert.equal(attackerSummary.result, "attacker_victory");
+
+  const defenderSummaries = buildPlayerBattleReplaySummariesForPlayer(completed, "player-defender");
+  assert.equal(defenderSummaries.length, 1);
+  const defenderSummary = defenderSummaries[0];
+  assert.ok(defenderSummary);
+  assert.equal(defenderSummary.battleKind, "hero");
+  assert.equal(defenderSummary.playerCamp, "defender");
+  assert.equal(defenderSummary.heroId, "hero-defender");
+  assert.equal(defenderSummary.opponentHeroId, "hero-attacker");
+  assert.equal(defenderSummary.result, "attacker_victory");
+
+  const uninvolvedSummaries = buildPlayerBattleReplaySummariesForPlayer(completed, "player-uninvolved");
+  assert.equal(uninvolvedSummaries.length, 0);
+});
+
+test("appendCompletedBattleReplaysToAccount trims to the five most recent replays", () => {
+  let account = createAccount();
+
+  for (let i = 1; i <= 6; i++) {
+    const battle = createBattleState({
+      id: `battle-trim-${i}`,
+      worldHeroId: "hero-1",
+      neutralArmyId: `neutral-${i}`
+    });
+
+    const completed = finalizeBattleReplayCapture(
+      createBattleReplayCapture(
+        "room-trim",
+        battle,
+        { attackerPlayerId: "player-1" },
+        `2026-03-29T17:0${i}:00.000Z`
+      ),
+      createBattleState({ id: `battle-trim-${i}`, worldHeroId: "hero-1", neutralArmyId: `neutral-${i}` }),
+      { status: "attacker_victory", survivingAttackers: ["hero-1-stack"], survivingDefenders: [] },
+      `2026-03-29T17:0${i}:30.000Z`
+    );
+
+    assert.ok(completed);
+    const summaries = buildPlayerBattleReplaySummariesForPlayer(completed, "player-1");
+    account = appendCompletedBattleReplaysToAccount(account, summaries);
+  }
+
+  assert.equal(account.recentBattleReplays?.length, 5, "should trim to RECENT_BATTLE_REPLAY_LIMIT (5)");
+  assert.equal(account.recentBattleReplays?.[0]?.battleId, "battle-trim-6", "most recent replay should be first");
+  const ids = account.recentBattleReplays?.map((r) => r.battleId) ?? [];
+  assert.ok(!ids.includes("battle-trim-1"), "oldest replay should be evicted");
+});
