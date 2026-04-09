@@ -139,6 +139,17 @@ function runAudit(args: string[], cwd: string): { stdout: string; status: number
   }
 }
 
+function getOwnerReminderPaths(outputDir: string, candidate: string, revision: string): {
+  jsonPath: string;
+  markdownPath: string;
+} {
+  const suffix = `${candidate}-${revision.slice(0, 12)}`;
+  return {
+    jsonPath: path.join(outputDir, `candidate-evidence-owner-reminder-report-${suffix}.json`),
+    markdownPath: path.join(outputDir, `candidate-evidence-owner-reminder-report-${suffix}.md`)
+  };
+}
+
 test("same-candidate evidence audit passes when required artifact families align to the same candidate revision", () => {
   const workspace = createTempWorkspace();
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
@@ -262,6 +273,14 @@ test("same-candidate evidence audit passes when required artifact families align
   assert.equal(report.artifactFamilies.every((family) => family.status === "passed"), true);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /Overall status: \*\*PASSED\*\*/);
   assert.match(fs.readFileSync(markdownOutputPath, "utf8"), /## Review Triage/);
+
+  const ownerReminder = JSON.parse(
+    fs.readFileSync(getOwnerReminderPaths(path.dirname(outputPath), candidate, revision).jsonPath, "utf8")
+  ) as {
+    summary: { status: string; itemCount: number };
+  };
+  assert.equal(ownerReminder.summary.status, "passed");
+  assert.equal(ownerReminder.summary.itemCount, 0);
 });
 
 test("same-candidate evidence audit reports missing, stale, and revision mismatch findings in one summary", () => {
@@ -354,6 +373,144 @@ test("same-candidate evidence audit reports missing, stale, and revision mismatc
   assert.deepEqual(gateSummaryFamily?.findings.map((finding) => finding.code), ["revision_mismatch", "linked_snapshot_mismatch"]);
   assert.deepEqual(bundleFamily?.findings.map((finding) => finding.code), ["missing"]);
   assert.deepEqual(cocosContractFamily?.findings.map((finding) => finding.code), ["missing"]);
+});
+
+test("same-candidate evidence audit emits an owner reminder report with stale, missing, and missing-owner conditions", () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const candidate = "phase1-rc";
+  const revision = "abc1234";
+  const snapshotPath = path.join(artifactsDir, "release-readiness-current.json");
+  const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
+  const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
+  const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
+  const cocosArtifacts = writeCocosRcBundleArtifacts({
+    artifactsDir,
+    candidate,
+    revision,
+    releaseReadinessSnapshotPath: snapshotPath,
+    snapshotExecutedAt: hoursAgo(1),
+    primaryJourneyCompletedAt: hoursAgo(1)
+  });
+
+  writeJson(snapshotPath, {
+    generatedAt: hoursAgo(MAX_AGE_HOURS + 24),
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    }
+  });
+  writeJson(gateSummaryPath, {
+    generatedAt: hoursAgo(1),
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    },
+    inputs: {
+      snapshotPath
+    }
+  });
+  writeJson(bundlePath, {
+    bundle: {
+      generatedAt: hoursAgo(1),
+      candidate,
+      commit: revision,
+      shortCommit: revision
+    },
+    artifacts: {
+      snapshot: cocosArtifacts.snapshotPath,
+      primaryJourneyEvidence: cocosArtifacts.primaryJourneyEvidencePath
+    },
+    linkedEvidence: {
+      releaseReadinessSnapshot: {
+        path: snapshotPath
+      }
+    }
+  });
+  writeLedger(ledgerPath, {
+    candidate,
+    targetRevision: revision,
+    lastUpdated: hoursAgo(MAX_AGE_HOURS + 24),
+    linkedReadinessSnapshot: snapshotPath,
+    rows: [
+      {
+        evidenceType: "cocos-rc-checklist-review",
+        candidate,
+        revision,
+        owner: "release-owner",
+        status: "done",
+        lastUpdated: hoursAgo(1),
+        artifactPath: path.join(artifactsDir, `cocos-rc-checklist-${revision}.md`),
+        notes: "Checklist reviewed for this candidate."
+      }
+    ]
+  });
+
+  const outputPath = path.join(workspace, "same-candidate-evidence-audit.json");
+  const markdownOutputPath = path.join(workspace, "same-candidate-evidence-audit.md");
+  const result = runAudit(
+    [
+      "--candidate",
+      candidate,
+      "--candidate-revision",
+      revision,
+      "--snapshot",
+      snapshotPath,
+      "--release-gate-summary",
+      gateSummaryPath,
+      "--cocos-rc-bundle",
+      path.join(artifactsDir, "missing-bundle.json"),
+      "--manual-evidence-ledger",
+      ledgerPath,
+      "--output",
+      outputPath,
+      "--markdown-output",
+      markdownOutputPath,
+      "--max-age-hours",
+      "72"
+    ],
+    REPO_ROOT
+  );
+
+  assert.equal(result.status, 1);
+  const ownerReminderPaths = getOwnerReminderPaths(path.dirname(outputPath), candidate, revision);
+  const ownerReminder = JSON.parse(fs.readFileSync(ownerReminderPaths.jsonPath, "utf8")) as {
+    summary: {
+      status: string;
+      itemCount: number;
+      staleArtifactCount: number;
+      missingArtifactCount: number;
+      missingOwnerAssignmentCount: number;
+    };
+    items: Array<{
+      artifactFamilyId: string;
+      condition: string;
+      expectedOwners: string[];
+      ownerLedgerEvidenceTypes: string[];
+    }>;
+  };
+  assert.equal(ownerReminder.summary.status, "failed");
+  assert.equal(ownerReminder.summary.itemCount, 3);
+  assert.equal(ownerReminder.summary.staleArtifactCount, 1);
+  assert.equal(ownerReminder.summary.missingArtifactCount, 1);
+  assert.equal(ownerReminder.summary.missingOwnerAssignmentCount, 1);
+
+  const staleSnapshot = ownerReminder.items.find((item) => item.artifactFamilyId === "release-readiness-snapshot");
+  const missingBundle = ownerReminder.items.find((item) => item.artifactFamilyId === "cocos-rc-bundle");
+  const staleLedger = ownerReminder.items.find((item) => item.artifactFamilyId === "manual-evidence-ledger");
+  assert.equal(staleSnapshot?.condition, "missing_owner_assignment");
+  assert.deepEqual(staleSnapshot?.expectedOwners, []);
+  assert.deepEqual(staleSnapshot?.ownerLedgerEvidenceTypes, []);
+  assert.equal(missingBundle?.condition, "missing_artifact");
+  assert.deepEqual(missingBundle?.expectedOwners, ["release-owner"]);
+  assert.deepEqual(missingBundle?.ownerLedgerEvidenceTypes, ["cocos-rc-checklist-review", "cocos-rc-blockers-review", "cocos-presentation-signoff"]);
+  assert.equal(staleLedger?.condition, "stale_artifact");
+  assert.deepEqual(staleLedger?.expectedOwners, ["release-oncall"]);
+
+  const reminderMarkdown = fs.readFileSync(ownerReminderPaths.markdownPath, "utf8");
+  assert.match(reminderMarkdown, /Condition: `missing_owner_assignment`/);
+  assert.match(reminderMarkdown, /Condition: `missing_artifact`/);
+  assert.match(reminderMarkdown, /Store the JSON \+ Markdown outputs in/);
 });
 
 test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat evidence, and pending ledger items", () => {
