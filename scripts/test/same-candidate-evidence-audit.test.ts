@@ -150,6 +150,10 @@ function getOwnerReminderPaths(outputDir: string, candidate: string, revision: s
   };
 }
 
+function getFreshnessHistoryPath(outputDir: string, candidate: string): string {
+  return path.join(outputDir, `candidate-evidence-freshness-history-${candidate}.json`);
+}
+
 test("same-candidate evidence audit passes when required artifact families align to the same candidate revision", () => {
   const workspace = createTempWorkspace();
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
@@ -511,6 +515,160 @@ test("same-candidate evidence audit emits an owner reminder report with stale, m
   assert.match(reminderMarkdown, /Condition: `missing_owner_assignment`/);
   assert.match(reminderMarkdown, /Condition: `missing_artifact`/);
   assert.match(reminderMarkdown, /Store the JSON \+ Markdown outputs in/);
+});
+
+test("same-candidate evidence audit appends candidate freshness history across repeated RC audits", () => {
+  const workspace = createTempWorkspace();
+  const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
+  const candidate = "phase1-rc";
+  const revision = "abc1234";
+  const snapshotPath = path.join(artifactsDir, "release-readiness-current.json");
+  const gateSummaryPath = path.join(artifactsDir, `release-gate-summary-${revision}.json`);
+  const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
+  const ledgerPath = path.join(artifactsDir, `manual-release-evidence-owner-ledger-${candidate}-${revision}.md`);
+  const outputDir = path.join(workspace, "outputs");
+  const outputPath = path.join(outputDir, "same-candidate-evidence-audit.json");
+  const markdownOutputPath = path.join(outputDir, "same-candidate-evidence-audit.md");
+  const historyPath = getFreshnessHistoryPath(outputDir, candidate);
+  const cocosArtifacts = writeCocosRcBundleArtifacts({
+    artifactsDir,
+    candidate,
+    revision,
+    releaseReadinessSnapshotPath: snapshotPath,
+    snapshotExecutedAt: hoursAgo(1),
+    primaryJourneyCompletedAt: hoursAgo(1)
+  });
+
+  writeJson(snapshotPath, {
+    generatedAt: hoursAgo(1),
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    }
+  });
+  writeJson(gateSummaryPath, {
+    generatedAt: hoursAgo(1),
+    revision: {
+      commit: revision,
+      shortCommit: revision
+    },
+    inputs: {
+      snapshotPath
+    }
+  });
+  writeJson(bundlePath, {
+    bundle: {
+      generatedAt: hoursAgo(1),
+      candidate,
+      commit: revision,
+      shortCommit: revision
+    },
+    artifacts: {
+      snapshot: cocosArtifacts.snapshotPath,
+      primaryJourneyEvidence: cocosArtifacts.primaryJourneyEvidencePath
+    },
+    linkedEvidence: {
+      releaseReadinessSnapshot: {
+        path: snapshotPath
+      }
+    }
+  });
+  writeLedger(ledgerPath, {
+    candidate,
+    targetRevision: revision,
+    lastUpdated: hoursAgo(1),
+    linkedReadinessSnapshot: snapshotPath,
+    rows: [
+      {
+        evidenceType: "runtime-observability-review",
+        candidate,
+        revision,
+        owner: "oncall-ops",
+        status: "done",
+        lastUpdated: hoursAgo(1),
+        artifactPath: path.join(artifactsDir, `runtime-observability-signoff-${revision}.md`),
+        notes: "Release runtime endpoints reviewed for this candidate."
+      },
+      {
+        evidenceType: "cocos-rc-checklist-review",
+        candidate,
+        revision,
+        owner: "release-owner",
+        status: "done",
+        lastUpdated: hoursAgo(1),
+        artifactPath: path.join(artifactsDir, `cocos-rc-checklist-${revision}.md`),
+        notes: "Checklist reviewed for this candidate."
+      }
+    ]
+  });
+
+  const baseArgs = [
+    "--candidate",
+    candidate,
+    "--candidate-revision",
+    revision,
+    "--snapshot",
+    snapshotPath,
+    "--release-gate-summary",
+    gateSummaryPath,
+    "--cocos-rc-bundle",
+    bundlePath,
+    "--manual-evidence-ledger",
+    ledgerPath,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ];
+
+  const firstResult = runAudit(baseArgs, REPO_ROOT);
+  assert.equal(firstResult.status, 0);
+
+  writeJson(gateSummaryPath, {
+    generatedAt: hoursAgo(1),
+    revision: {
+      commit: "deadbeef",
+      shortCommit: "deadbeef"
+    },
+    inputs: {
+      snapshotPath
+    }
+  });
+
+  const secondResult = runAudit(baseArgs, REPO_ROOT);
+  assert.equal(secondResult.status, 1);
+
+  const history = JSON.parse(fs.readFileSync(historyPath, "utf8")) as {
+    candidate: { name: string };
+    generatedAt: string;
+    entries: Array<{
+      candidateRevision: string;
+      overallStatus: string;
+      blockerCount: number;
+      warningCount: number;
+      blockingFindings: Array<{ familyId: string; code: string }>;
+      artifactFamilies: Array<{ id: string; revision?: string; findingCodes: string[] }>;
+    }>;
+  };
+  assert.equal(history.candidate.name, candidate);
+  assert.equal(typeof history.generatedAt, "string");
+  assert.equal(history.entries.length, 2);
+  assert.equal(history.entries[0]?.candidateRevision, revision);
+  assert.equal(history.entries[0]?.overallStatus, "passed");
+  assert.equal(history.entries[0]?.blockingFindings.length, 0);
+  assert.equal(history.entries[1]?.candidateRevision, revision);
+  assert.equal(history.entries[1]?.overallStatus, "failed");
+  assert.equal((history.entries[1]?.blockerCount ?? 0) > 0, true);
+  assert.equal(history.entries[1]?.warningCount, 0);
+  assert.equal(
+    history.entries[1]?.blockingFindings.some((finding) => finding.familyId === "release-gate-summary" && finding.code === "revision_mismatch"),
+    true
+  );
+  assert.deepEqual(
+    history.entries[1]?.artifactFamilies.find((family) => family.id === "release-gate-summary")?.findingCodes,
+    ["revision_mismatch"]
+  );
+  assert.equal(history.entries[1]?.artifactFamilies.find((family) => family.id === "release-gate-summary")?.revision, "deadbeef");
 });
 
 test("same-candidate evidence audit flags stale runtime sign-off, blocked WeChat evidence, and pending ledger items", () => {
