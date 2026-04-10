@@ -14,6 +14,7 @@ import {
   recordAuthAccountBinding,
   recordAuthAccountLogin,
   recordAuthAccountRegistration,
+  recordAuthCredentialStuffingBlocked,
   recordAuthGuestLogin,
   recordAuthInvalidCredentials,
   recordAuthLogout,
@@ -24,6 +25,7 @@ import {
   recordAuthSessionFailure,
   removeAuthAccountSessionsForPlayer,
   setAuthAccountLockCount,
+  setAuthCredentialStuffingSourceCount,
   setAuthGuestSessionCount,
   setPendingAuthRecoveryCount,
   setPendingAuthRegistrationCount,
@@ -77,6 +79,9 @@ interface AuthRuntimeConfig {
   rateLimitMax: number;
   lockoutThreshold: number;
   lockoutDurationMs: number;
+  credentialStuffingWindowMs: number;
+  credentialStuffingDistinctLoginIdThreshold: number;
+  credentialStuffingBlockDurationMs: number;
   maxGuestSessions: number;
   accessTtlSeconds: number;
   refreshTtlSeconds: number;
@@ -97,6 +102,11 @@ interface RateLimitResult {
 interface AccountLockoutState {
   failedAttempts: number[];
   lockedUntil?: number;
+}
+
+interface CredentialStuffingState {
+  failedAttempts: Array<{ at: number; loginId: string }>;
+  blockedUntil?: number;
 }
 
 interface WechatMiniGameLoginConfig {
@@ -152,6 +162,9 @@ const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
 const DEFAULT_AUTH_LOCKOUT_THRESHOLD = 10;
 const DEFAULT_AUTH_LOCKOUT_DURATION_MINUTES = 15;
+const DEFAULT_AUTH_CREDENTIAL_STUFFING_WINDOW_MS = 5 * 60_000;
+const DEFAULT_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_ID_THRESHOLD = 5;
+const DEFAULT_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES = 15;
 const DEFAULT_MAX_GUEST_SESSIONS = 10_000;
 const DEFAULT_AUTH_ACCESS_TTL_SECONDS = 60 * 60;
 const DEFAULT_AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -161,6 +174,7 @@ const DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES = 15;
 
 const authRateLimitCounters = new Map<string, number[]>();
 const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
+const credentialStuffingStateByIp = new Map<string, CredentialStuffingState>();
 const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
@@ -184,9 +198,28 @@ function countActiveAccountLockouts(): number {
   return count;
 }
 
+function countActiveCredentialStuffingBlocks(): number {
+  const currentTime = nowMs();
+  let count = 0;
+
+  for (const [ip, state] of credentialStuffingStateByIp.entries()) {
+    if (state.blockedUntil && state.blockedUntil > currentTime) {
+      count += 1;
+      continue;
+    }
+
+    if (state.failedAttempts.length === 0) {
+      credentialStuffingStateByIp.delete(ip);
+    }
+  }
+
+  return count;
+}
+
 function syncAuthStateTelemetry(): void {
   setAuthGuestSessionCount(guestSessionsById.size);
   setAuthAccountLockCount(countActiveAccountLockouts());
+  setAuthCredentialStuffingSourceCount(countActiveCredentialStuffingBlocks());
   setPendingAuthRegistrationCount(accountRegistrationStateByLoginId.size);
   setPendingAuthRecoveryCount(passwordRecoveryStateByLoginId.size);
 }
@@ -227,6 +260,30 @@ function readAuthRuntimeConfig(env: NodeJS.ProcessEnv = process.env): AuthRuntim
       parseEnvNumber(env.VEIL_AUTH_LOCKOUT_DURATION_MINUTES, DEFAULT_AUTH_LOCKOUT_DURATION_MINUTES, {
         minimum: 1 / 60_000
       }) * 60_000,
+    credentialStuffingWindowMs: parseEnvNumber(
+      env.VEIL_AUTH_CREDENTIAL_STUFFING_WINDOW_MS,
+      DEFAULT_AUTH_CREDENTIAL_STUFFING_WINDOW_MS,
+      {
+        minimum: 1,
+        integer: true
+      }
+    ),
+    credentialStuffingDistinctLoginIdThreshold: parseEnvNumber(
+      env.VEIL_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_IDS,
+      DEFAULT_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_ID_THRESHOLD,
+      {
+        minimum: 2,
+        integer: true
+      }
+    ),
+    credentialStuffingBlockDurationMs:
+      parseEnvNumber(
+        env.VEIL_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES,
+        DEFAULT_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES,
+        {
+          minimum: 1 / 60_000
+        }
+      ) * 60_000,
     maxGuestSessions: parseEnvNumber(env.VEIL_MAX_GUEST_SESSIONS, DEFAULT_MAX_GUEST_SESSIONS, {
       minimum: 1,
       integer: true
@@ -1680,6 +1737,51 @@ function clearAccountLoginFailures(loginId: string): void {
   syncAuthStateTelemetry();
 }
 
+function pruneCredentialStuffingState(ip: string, config = readAuthRuntimeConfig()): CredentialStuffingState {
+  const currentTime = nowMs();
+  const windowStart = currentTime - config.credentialStuffingWindowMs;
+  const existingState = credentialStuffingStateByIp.get(ip) ?? { failedAttempts: [] };
+  const nextState: CredentialStuffingState = {
+    failedAttempts: existingState.failedAttempts.filter((attempt) => attempt.at > windowStart),
+    ...(existingState.blockedUntil && existingState.blockedUntil > currentTime
+      ? { blockedUntil: existingState.blockedUntil }
+      : {})
+  };
+
+  if (nextState.failedAttempts.length === 0 && !nextState.blockedUntil) {
+    credentialStuffingStateByIp.delete(ip);
+    syncAuthStateTelemetry();
+    return nextState;
+  }
+
+  credentialStuffingStateByIp.set(ip, nextState);
+  syncAuthStateTelemetry();
+  return nextState;
+}
+
+function getCredentialStuffingBlockedUntil(ip: string): number | null {
+  return pruneCredentialStuffingState(ip).blockedUntil ?? null;
+}
+
+function recordCredentialStuffingFailure(ip: string, loginId: string, config = readAuthRuntimeConfig()): number | null {
+  const currentTime = nowMs();
+  const nextState = pruneCredentialStuffingState(ip, config);
+  nextState.failedAttempts.push({
+    at: currentTime,
+    loginId
+  });
+  const distinctLoginIdCount = new Set(nextState.failedAttempts.map((attempt) => attempt.loginId)).size;
+  if (distinctLoginIdCount >= config.credentialStuffingDistinctLoginIdThreshold) {
+    nextState.blockedUntil = Math.max(
+      nextState.blockedUntil ?? 0,
+      currentTime + config.credentialStuffingBlockDurationMs
+    );
+  }
+  credentialStuffingStateByIp.set(ip, nextState);
+  syncAuthStateTelemetry();
+  return nextState.blockedUntil ?? null;
+}
+
 function sendAccountLocked(response: ServerResponse, lockedUntilMs: number): void {
   const retryAfterSeconds = Math.max(1, Math.ceil((lockedUntilMs - nowMs()) / 1000));
   response.setHeader("Retry-After", String(retryAfterSeconds));
@@ -1688,6 +1790,20 @@ function sendAccountLocked(response: ServerResponse, lockedUntilMs: number): voi
       code: "account_locked",
       message: "Account login is temporarily locked",
       lockedUntil: new Date(lockedUntilMs).toISOString()
+    }
+  });
+}
+
+function sendCredentialStuffingBlocked(response: ServerResponse, blockedUntilMs: number): void {
+  const retryAfterSeconds = Math.max(1, Math.ceil((blockedUntilMs - nowMs()) / 1000));
+  recordAuthRateLimited();
+  recordAuthCredentialStuffingBlocked();
+  response.setHeader("Retry-After", String(retryAfterSeconds));
+  sendJson(response, 429, {
+    error: {
+      code: "credential_stuffing_blocked",
+      message: "Too many failed login attempts across multiple accounts from this source",
+      blockedUntil: new Date(blockedUntilMs).toISOString()
     }
   });
 }
@@ -1733,6 +1849,7 @@ export function revokeGuestAuthSession(sessionId: string): boolean {
 export function resetGuestAuthSessions(): void {
   authRateLimitCounters.clear();
   accountLockoutStateByLoginId.clear();
+  credentialStuffingStateByIp.clear();
   guestSessionsById.clear();
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
@@ -2083,6 +2200,13 @@ export function registerAuthRoutes(
 
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
+      const requestIp = resolveRequestIp(request);
+
+      const sourceBlockedUntil = getCredentialStuffingBlockedUntil(requestIp);
+      if (sourceBlockedUntil) {
+        sendCredentialStuffingBlocked(response, sourceBlockedUntil);
+        return;
+      }
 
       // 后端 Debug Bypass 逻辑
       if (password === "debug-bypass") {
@@ -2125,8 +2249,11 @@ export function registerAuthRoutes(
       const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
         recordAuthInvalidCredentials();
+        const credentialStuffingBlockedUntil = recordCredentialStuffingFailure(requestIp, loginId);
         const nextLockedUntil = recordAccountLoginFailure(loginId);
-        if (nextLockedUntil) {
+        if (credentialStuffingBlockedUntil) {
+          sendCredentialStuffingBlocked(response, credentialStuffingBlockedUntil);
+        } else if (nextLockedUntil) {
           sendAccountLocked(response, nextLockedUntil);
         } else {
           sendJson(response, 401, {
