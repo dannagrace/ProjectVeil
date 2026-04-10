@@ -685,6 +685,50 @@ function resolveReconnectSoakPath(args: Args): string | undefined {
   return resolveLatestReconnectSoakFile(getDefaultReleaseReadinessDir());
 }
 
+function directoryContainsWechatEvidence(dirPath: string): boolean {
+  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+    return false;
+  }
+  return [
+    "codex.wechat.release-candidate-summary.json",
+    "codex.wechat.rc-validation-report.json",
+    "codex.wechat.smoke-report.json"
+  ].some((entry) => fs.existsSync(path.join(dirPath, entry)));
+}
+
+function collectMatchingDirectories(
+  dirPath: string,
+  predicate: (fullPath: string) => boolean,
+  maxDepth: number,
+  currentDepth = 0
+): string[] {
+  if (!fs.existsSync(dirPath)) {
+    return [];
+  }
+
+  const matches: string[] = [];
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const fullPath = path.join(dirPath, entry.name);
+    if (predicate(fullPath)) {
+      matches.push(fullPath);
+    }
+    if (currentDepth < maxDepth) {
+      matches.push(...collectMatchingDirectories(fullPath, predicate, maxDepth, currentDepth + 1));
+    }
+  }
+  return matches;
+}
+
+function resolveLatestWechatArtifactsDir(rootDir: string): string | undefined {
+  const candidates = collectMatchingDirectories(rootDir, directoryContainsWechatEvidence, 3).sort(
+    (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
+  );
+  return candidates[0];
+}
+
 function resolveWechatArtifactsDir(args: Args): string | undefined {
   if (args.wechatArtifactsDir) {
     return path.resolve(args.wechatArtifactsDir);
