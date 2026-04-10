@@ -87,16 +87,16 @@
   - 负责汇总像素图、资源音频和动画交付状态
   - 当前会统一输出 `表现 像素 ... · 音频 ... · 动画 ...` 这条摘要，供 Lobby 画册和 HUD 状态卡复用
   - 同时会把 `战斗流程 正式 4/4` 作为 battle journey 基线写入 readiness，明确 `进场 / 指令 / 受击 / 结算` 已在 copy/state 层正式化，剩余风险只继续记在资产层
-  - 也会给出 `战斗流程 正式 4/4 · 待替换 正式像素美术 / 真实 BGM-SFX` 这类后续收口提示
+  - 当像素资源和音频都达到发布要求后，会给出 `战斗流程与表现资源均已达到正式阶段`
   - 发布门禁可通过 `npm run check:cocos-release-readiness` 强制要求表现资源达到 release-ready，再串接微信小游戏构建校验
 - `assets/scripts/cocos-audio-runtime.ts`
   - 轻量合成音频运行时
-  - 现在会优先加载 `resources/audio/*` 下的 `AudioClip` 占位资源，再回退到波形合成
-  - Creator / H5 预览环境下可先用资源占位音频验证 `explore / battle` BGM 和 `attack / skill / hit / level_up` cue
+  - 现在会优先加载 `resources/audio/*` 下的 `AudioClip` 资源，再回退到波形合成
+  - Creator / H5 预览环境下可直接验证 `explore / battle` BGM 和 `attack / skill / hit / level_up` cue 的资源音频链路
   - 资源缺失或加载失败时会安全回退到合成音频；没有 `AudioContext` 时也会保留状态机与 HUD 验证信息
 - `assets/scripts/cocos-audio-resources.ts`
   - 把 `configs/cocos-presentation.json` 里声明的 `audio/*` 路径接到 Cocos `resources.load(AudioClip)` 和 `AudioSource`
-  - 当前会分别维护 `ProjectVeilMusicAudio / ProjectVeilCueAudio` 两个音频节点，便于后续替换成正式 BGM / SFX
+  - 当前会分别维护 `ProjectVeilMusicAudio / ProjectVeilCueAudio` 两个音频节点，作为正式 BGM / SFX 的统一入口
 - `assets/scripts/cocos-pixel-sprites.ts`
   - 统一加载 H5 / Cocos 共用的像素资源清单
   - 现在会按 `boot / battle` 两组做预载与按需补载，而不是一次把所有像素资源整包拉起

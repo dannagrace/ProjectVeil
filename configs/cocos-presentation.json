@@ -74,12 +74,30 @@
         "gapMs": 42,
         "loopGapMs": 180,
         "notes": [
-          { "frequency": 261.63, "durationMs": 220 },
-          { "frequency": 329.63, "durationMs": 220 },
-          { "frequency": 392, "durationMs": 320 },
-          { "frequency": 329.63, "durationMs": 220 },
-          { "frequency": 293.66, "durationMs": 220 },
-          { "frequency": 392, "durationMs": 360 }
+          {
+            "frequency": 261.63,
+            "durationMs": 220
+          },
+          {
+            "frequency": 329.63,
+            "durationMs": 220
+          },
+          {
+            "frequency": 392,
+            "durationMs": 320
+          },
+          {
+            "frequency": 329.63,
+            "durationMs": 220
+          },
+          {
+            "frequency": 293.66,
+            "durationMs": 220
+          },
+          {
+            "frequency": 392,
+            "durationMs": 360
+          }
         ]
       },
       "battle": {
@@ -93,12 +111,30 @@
         "gapMs": 28,
         "loopGapMs": 120,
         "notes": [
-          { "frequency": 196, "durationMs": 180 },
-          { "frequency": 220, "durationMs": 180 },
-          { "frequency": 246.94, "durationMs": 180 },
-          { "frequency": 293.66, "durationMs": 280 },
-          { "frequency": 246.94, "durationMs": 180 },
-          { "frequency": 220, "durationMs": 260 }
+          {
+            "frequency": 196,
+            "durationMs": 180
+          },
+          {
+            "frequency": 220,
+            "durationMs": 180
+          },
+          {
+            "frequency": 246.94,
+            "durationMs": 180
+          },
+          {
+            "frequency": 293.66,
+            "durationMs": 280
+          },
+          {
+            "frequency": 246.94,
+            "durationMs": 180
+          },
+          {
+            "frequency": 220,
+            "durationMs": 260
+          }
         ]
       }
     },
@@ -114,8 +150,14 @@
         "gapMs": 18,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 310, "durationMs": 72 },
-          { "frequency": 220, "durationMs": 88 }
+          {
+            "frequency": 310,
+            "durationMs": 72
+          },
+          {
+            "frequency": 220,
+            "durationMs": 88
+          }
         ]
       },
       "skill": {
@@ -129,9 +171,18 @@
         "gapMs": 14,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 392, "durationMs": 90 },
-          { "frequency": 523.25, "durationMs": 110 },
-          { "frequency": 659.25, "durationMs": 140 }
+          {
+            "frequency": 392,
+            "durationMs": 90
+          },
+          {
+            "frequency": 523.25,
+            "durationMs": 110
+          },
+          {
+            "frequency": 659.25,
+            "durationMs": 140
+          }
         ]
       },
       "hit": {
@@ -145,7 +196,10 @@
         "gapMs": 0,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 170, "durationMs": 120 }
+          {
+            "frequency": 170,
+            "durationMs": 120
+          }
         ]
       },
       "victory": {
@@ -159,9 +213,18 @@
         "gapMs": 12,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 523.25, "durationMs": 180 },
-          { "frequency": 659.25, "durationMs": 160 },
-          { "frequency": 783.99, "durationMs": 220 }
+          {
+            "frequency": 523.25,
+            "durationMs": 180
+          },
+          {
+            "frequency": 659.25,
+            "durationMs": 160
+          },
+          {
+            "frequency": 783.99,
+            "durationMs": 220
+          }
         ]
       },
       "defeat": {
@@ -175,25 +238,43 @@
         "gapMs": 14,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 392, "durationMs": 160 },
-          { "frequency": 349.23, "durationMs": 140 },
-          { "frequency": 261.63, "durationMs": 220 }
+          {
+            "frequency": 392,
+            "durationMs": 160
+          },
+          {
+            "frequency": 349.23,
+            "durationMs": 140
+          },
+          {
+            "frequency": 261.63,
+            "durationMs": 220
+          }
         ]
       },
       "level_up": {
         "waveform": "triangle",
         "gain": 0.05,
         "assetPath": "audio/level-up",
-        "assetStage": "placeholder",
+        "assetStage": "production",
         "assetVolume": 0.82,
         "attackMs": 16,
         "releaseMs": 120,
         "gapMs": 12,
         "loopGapMs": 0,
         "notes": [
-          { "frequency": 523.25, "durationMs": 90 },
-          { "frequency": 659.25, "durationMs": 110 },
-          { "frequency": 783.99, "durationMs": 160 }
+          {
+            "frequency": 523.25,
+            "durationMs": 90
+          },
+          {
+            "frequency": 659.25,
+            "durationMs": 110
+          },
+          {
+            "frequency": 783.99,
+            "durationMs": 160
+          }
         ]
       }
     }

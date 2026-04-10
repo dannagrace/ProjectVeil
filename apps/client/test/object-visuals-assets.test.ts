@@ -150,7 +150,7 @@ test("describeTileObject maps a resource mine through assets, badges, and manife
   });
   assert.deepEqual(assetManifestEntry(descriptor?.icon ?? ""), {
     slot: "building.resource_mine",
-    stage: "prototype",
+    stage: "production",
     source: "generated"
   });
 });

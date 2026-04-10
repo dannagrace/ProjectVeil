@@ -6,7 +6,7 @@ test("presentation config exposes animation profiles and load budget", () => {
   const guardProfile = resolveUnitAnimationProfile("hero_guard_basic");
   assert.equal(guardProfile.fallbackPrefix, "Guard");
   assert.equal(guardProfile.spinePrefix, "hero_guard_basic_");
-  assert.equal(guardProfile.deliveryMode, "fallback");
+  assert.equal(guardProfile.deliveryMode, "sequence");
   assert.equal(guardProfile.assetStage, "production");
   assert.equal(guardProfile.returnTimings.attack, 0.42);
 
@@ -45,5 +45,6 @@ test("audio cue sequences are normalized from config", () => {
   assert.equal(cocosPresentationConfig.audio.cues.victory.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.cues.defeat.assetPath, "audio/defeat-sting");
   assert.equal(cocosPresentationConfig.audio.cues.defeat.assetStage, "production");
+  assert.equal(cocosPresentationConfig.audio.cues.level_up.assetStage, "production");
   assert.equal(cocosPresentationConfig.audio.cues.level_up.notes.at(-1)?.frequency, 783.99);
 });
