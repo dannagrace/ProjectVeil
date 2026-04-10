@@ -15,6 +15,7 @@ interface Args {
   wechatRcValidationPath?: string;
   wechatCandidateSummaryPath?: string;
   wechatSmokeReportPath?: string;
+  wechatCommercialVerificationPath?: string;
   wechatArtifactsDir?: string;
   manualEvidenceLedgerPath?: string;
   configCenterLibraryPath?: string;
@@ -251,6 +252,23 @@ interface ReconnectSoakArtifact {
   };
 }
 
+interface WechatCommercialVerificationReport {
+  generatedAt?: string;
+  candidate?: {
+    revision?: string | null;
+    status?: "ready" | "blocked";
+  };
+  summary?: {
+    status?: "ready" | "blocked";
+    blockerCount?: number;
+    requiredPendingChecks?: number;
+    requiredFailedChecks?: number;
+    requiredMetadataFailures?: number;
+    acceptedRiskCount?: number;
+    conclusion?: string;
+  };
+}
+
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 type ConfigRiskLevel = "low" | "medium" | "high";
 
@@ -356,6 +374,7 @@ interface ReleaseGateSummaryReport {
     wechatRcValidationPath?: string;
     wechatCandidateSummaryPath?: string;
     wechatSmokeReportPath?: string;
+    wechatCommercialVerificationPath?: string;
     wechatArtifactsDir?: string;
     manualEvidenceLedgerPath?: string;
     configCenterLibraryPath?: string;
@@ -372,7 +391,14 @@ interface ReleaseGateSummaryReport {
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
 const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 72;
+const MAX_COMMERCIAL_VERIFICATION_AGE_MS = 1000 * 60 * 60 * 24;
 const LEDGER_PENDING_STATUSES = new Set(["pending", "in-review"]);
+const COMMERCIAL_VERIFICATION_FILE_PREFIX = "codex.wechat.commercial-verification-";
+const COMMERCIAL_REVIEW_LEGACY_FILENAMES = [
+  "codex.wechat.commercial-review.json",
+  "wechat-commercial-review.json",
+  "commercial-review.json"
+] as const;
 const RISK_PRIORITY: Record<ConfigRiskLevel, number> = {
   low: 1,
   medium: 2,
@@ -469,6 +495,7 @@ function parseArgs(argv: string[]): Args {
   let wechatRcValidationPath: string | undefined;
   let wechatCandidateSummaryPath: string | undefined;
   let wechatSmokeReportPath: string | undefined;
+  let wechatCommercialVerificationPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let manualEvidenceLedgerPath: string | undefined;
   let configCenterLibraryPath: string | undefined;
@@ -507,6 +534,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--wechat-smoke-report" && next) {
       wechatSmokeReportPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--wechat-commercial-verification" && next) {
+      wechatCommercialVerificationPath = next;
       index += 1;
       continue;
     }
@@ -554,6 +586,7 @@ function parseArgs(argv: string[]): Args {
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
+    ...(wechatCommercialVerificationPath ? { wechatCommercialVerificationPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
@@ -736,6 +769,29 @@ function resolveWechatSmokeReportPath(args: Args, wechatArtifactsDir?: string): 
   }
   const candidate = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
   return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+function resolveWechatCommercialVerificationPath(args: Args, wechatArtifactsDir?: string): string | undefined {
+  if (args.wechatCommercialVerificationPath) {
+    return path.resolve(args.wechatCommercialVerificationPath);
+  }
+  if (!wechatArtifactsDir || !fs.existsSync(wechatArtifactsDir)) {
+    return undefined;
+  }
+  const verificationReport = resolveLatestFile(
+    wechatArtifactsDir,
+    (entry) => entry.startsWith(COMMERCIAL_VERIFICATION_FILE_PREFIX) && entry.endsWith(".json")
+  );
+  if (verificationReport) {
+    return verificationReport;
+  }
+  for (const fileName of COMMERCIAL_REVIEW_LEGACY_FILENAMES) {
+    const candidate = path.join(wechatArtifactsDir, fileName);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function resolveConfigCenterLibraryPath(args: Args): string | undefined {
@@ -1413,6 +1469,7 @@ function buildReleaseSurfaceContract(
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
+  wechatCommercialVerificationPath: string | undefined,
   manualEvidenceLedgerPath: string | undefined
 ): ReleaseSurfaceContract {
   const evidence: ReleaseSurfaceEvidenceItem[] = [];
@@ -1587,6 +1644,56 @@ function buildReleaseSurfaceContract(
             artifactPath: check.artifactPath,
             blockerIds: check.blockerIds ?? [],
             waiverReason: check.waiver?.reason
+          })
+        );
+      }
+
+      if (!wechatCommercialVerificationPath || !fs.existsSync(wechatCommercialVerificationPath)) {
+        evidence.push(
+          createSurfaceEvidenceItem({
+            id: "wechat-commercial-verification",
+            label: "WeChat commercial verification",
+            required: false,
+            status: "pending",
+            summary:
+              "External-launch commercial verification is not attached yet. Run release:wechat:commercial-verification before submission or external rollout review."
+          })
+        );
+      } else {
+        const commercialVerification = readJsonFile<WechatCommercialVerificationReport>(wechatCommercialVerificationPath);
+        const freshness = evaluateFreshness(commercialVerification.generatedAt, MAX_COMMERCIAL_VERIFICATION_AGE_MS);
+        const metadataFailures = [
+          !commitsMatch(commercialVerification.candidate?.revision ?? undefined, candidateRevision)
+            ? `revision ${commercialVerification.candidate?.revision?.trim() || "<missing>"} != ${candidateRevision}`
+            : "",
+          freshness !== "fresh" ? `freshness=${freshness}` : ""
+        ].filter((value) => value.length > 0);
+        const blocked =
+          commercialVerification.summary?.status !== "ready" ||
+          metadataFailures.length > 0 ||
+          (commercialVerification.summary?.blockerCount ?? 0) > 0 ||
+          (commercialVerification.summary?.requiredPendingChecks ?? 0) > 0 ||
+          (commercialVerification.summary?.requiredFailedChecks ?? 0) > 0 ||
+          (commercialVerification.summary?.requiredMetadataFailures ?? 0) > 0;
+
+        evidence.push(
+          createSurfaceEvidenceItem({
+            id: "wechat-commercial-verification",
+            label: "WeChat commercial verification",
+            required: false,
+            status: blocked ? "failed" : "passed",
+            summary: blocked
+              ? commercialVerification.summary?.conclusion?.trim() ||
+                `Commercial verification is blocked: ${
+                  metadataFailures[0] ??
+                  `blockers=${commercialVerification.summary?.blockerCount ?? 0}, pending=${commercialVerification.summary?.requiredPendingChecks ?? 0}, failed=${commercialVerification.summary?.requiredFailedChecks ?? 0}`
+                }.`
+              : commercialVerification.summary?.conclusion?.trim() ||
+                `Commercial verification is ready with ${commercialVerification.summary?.acceptedRiskCount ?? 0} accepted risk(s).`,
+            freshness,
+            observedAt: commercialVerification.generatedAt,
+            revision: commercialVerification.candidate?.revision ?? undefined,
+            artifactPath: wechatCommercialVerificationPath
           })
         );
       }
@@ -2089,8 +2196,34 @@ function buildReleaseGateTriage(
     }));
 
   const blockers = [...gateBlockers, ...manualEvidenceBlockers];
-
-  const warnings: ReleaseGateTriageEntry[] =
+  const warnings: ReleaseGateTriageEntry[] = [
+    ...(
+      targetSurface === "wechat"
+        ? releaseSurface.evidence
+            .filter(
+              (entry) =>
+                entry.id === "wechat-commercial-verification" &&
+                (entry.status !== "passed" ||
+                  entry.freshness === "stale" ||
+                  entry.freshness === "missing_timestamp" ||
+                  entry.freshness === "invalid_timestamp")
+            )
+            .map((entry) => ({
+              id: "wechat-commercial-verification:warning",
+              severity: "warning" as const,
+              gateId: "wechat-release" as const,
+              title: entry.label,
+              impactedSurface: targetSurface,
+              summary: `${entry.label} is not ready for external launch review: ${entry.summary}`,
+              nextStep:
+                `Run \`npm run release:wechat:commercial-verification -- --artifacts-dir ${
+                  inputs.wechatArtifactsDir ? relativeReportPath(inputs.wechatArtifactsDir) : "artifacts/wechat-release"
+                }\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`,
+              artifacts: createTriageArtifactReference(entry.label, entry.artifactPath)
+            }))
+        : []
+    ),
+    ...(
     configChangeRisk.status === "available" &&
     (configChangeRisk.overallRisk === "medium" ||
       configChangeRisk.overallRisk === "high" ||
@@ -2113,7 +2246,9 @@ function buildReleaseGateTriage(
             artifacts: createTriageArtifactReference("Config publish audit", configChangeRisk.source?.path)
           }
         ]
-      : [];
+      : []
+    )
+  ];
 
   return { blockers, warnings };
 }
@@ -2126,6 +2261,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, wechatArtifactsDir);
   const wechatSmokeReportPath = resolveWechatSmokeReportPath(args, wechatArtifactsDir);
+  const wechatCommercialVerificationPath = resolveWechatCommercialVerificationPath(args, wechatArtifactsDir);
   const manualEvidenceLedgerPath = args.manualEvidenceLedgerPath ? resolveManualEvidenceLedgerPath(args) : undefined;
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
   const releaseSurface = buildReleaseSurfaceContract(
@@ -2135,6 +2271,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     h5SmokePath,
     reconnectSoakPath,
     wechatCandidateSummaryPath,
+    wechatCommercialVerificationPath,
     manualEvidenceLedgerPath
   );
 
@@ -2163,6 +2300,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
+    ...(wechatCommercialVerificationPath ? { wechatCommercialVerificationPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
@@ -2213,6 +2351,9 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
     `- WeChat candidate summary: \`${report.inputs.wechatCandidateSummaryPath ? relativeReportPath(report.inputs.wechatCandidateSummaryPath) : "<missing>"}\``
   );
   lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
+  lines.push(
+    `- WeChat commercial verification: \`${report.inputs.wechatCommercialVerificationPath ? relativeReportPath(report.inputs.wechatCommercialVerificationPath) : "<missing>"}\``
+  );
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
   lines.push(`- Manual evidence ledger: \`${report.inputs.manualEvidenceLedgerPath ? relativeReportPath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
   lines.push(`- Config audit: \`${report.inputs.configCenterLibraryPath ? relativeReportPath(report.inputs.configCenterLibraryPath) : "<missing>"}\``);
