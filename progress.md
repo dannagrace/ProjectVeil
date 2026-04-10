@@ -1473,3 +1473,35 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `node --import tsx --test ./apps/cocos-client/test/cocos-ui-formatters.test.ts` 通过
   - `npm run typecheck:cocos` 通过
   - `npm test` 通过（`424/424`）
+
+## Issue #1173 - WeChat release gate evidence chain - 2026-04-10
+
+- 本轮补齐了同一候选 revision 的 WeChat release gate 证据链，并收掉了两个真实阻塞点：
+  - `apps/server/src/auth.ts`
+    - 修复 guest 会话在 `/api/auth/session` 刷新后没有重新注册到 `guestSessionsById` 的问题
+    - 之前 H5 packaged RC smoke 会在“恢复缓存会话 -> 重新进房”时拿着新 token 被服务端判成 `unauthorized`
+    - 现在 refresh token 后会同步注册新的 guest session，房间连接可继续复用刷新后的 bearer token
+  - `scripts/release-gate-summary.ts`
+    - release gate 汇总现在支持递归发现 `artifacts/release-readiness/**` 下的 rehearsal 证据目录
+    - 修掉了顶层汇总把 `release-readiness-dashboard-*.json` 误当成正式 snapshot 的问题，避免明明候选包已通过却仍被总门禁判成 failed
+  - `scripts/validate-wechat-release-candidate.ts`
+    - WeChat RC 校验现在会自动识别候选包目录中的 `codex.wechat.manual-review.json / wechat-manual-review.json / wechat-manual-checks.json`
+    - 这样 `release:phase1:candidate-rehearsal` 复制 artifacts 后，能继续复用同一份人工验收结论，不会重建成 pending/blocked 候选摘要
+- E2E / smoke 辅助链路也做了配套收口：
+  - `tests/e2e/fixtures.ts`
+    - 改成先在同源页面清空 `localStorage/sessionStorage`，避免 Playwright 在无 origin 状态下静默失败，污染 RC smoke
+  - `tests/e2e/smoke-helpers.ts` 与多条 H5 smoke spec
+    - 新增 `acceptLobbyPrivacyConsent()`，把隐私同意流程纳进自动化链路
+    - release-candidate smoke 不再强依赖 diagnostics panel，以匹配打包版 H5 的真实 UI 形态
+  - `tsconfig.base.json` / `tsconfig.json`
+    - 为 `tsx` 路径解析补上根级 tsconfig 和 `cc` stub 映射，避免 release/ops 脚本在仓库根目录运行时吃不到统一配置
+- 本轮已拿到的同 revision 证据：
+  - `npm run smoke:client:release-candidate` 通过
+  - `npm run release:reconnect-soak` 通过
+  - `npm run release:phase1:candidate-rehearsal -- --target-surface wechat` 通过
+  - `npm run release:gate:summary -- --target-surface wechat` 通过
+  - 顶层 release gate 当前结论为 `status = passed`，摘要为 `Target surface wechat has current required evidence.`
+- 本轮定向验证结果：
+  - `npm run typecheck:server` 通过
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/wechat-release-artifacts.test.ts ./scripts/test/release-gate-summary.test.ts ./scripts/test/phase1-candidate-rehearsal.test.ts` 通过

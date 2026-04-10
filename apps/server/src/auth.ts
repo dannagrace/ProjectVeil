@@ -1150,12 +1150,14 @@ export function issueNextAuthSession(
   }
 
   const nextGuestSessionId = input.sessionId ?? currentSession?.sessionId;
-  return issueGuestAccessSession({
+  const nextGuestSession = issueGuestAccessSession({
     playerId: input.playerId,
     displayName: input.displayName,
     provider: currentSession?.provider ?? "guest",
     ...(nextGuestSessionId !== undefined ? { sessionId: nextGuestSessionId } : {})
   });
+  registerGuestSession(nextGuestSession);
+  return nextGuestSession;
 }
 
 function resolveAuthSession(token: string): GuestAuthSession | null {

@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "./fixtures";
-import { buildRoomId, expectRoomReady, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
+import {
+  acceptLobbyPrivacyConsent,
+  buildRoomId,
+  expectRoomReady,
+  fullMoveTextPattern,
+  waitForLobbyReady,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId?: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -30,6 +37,7 @@ test("lobby opens and a guest can enter a room", async ({ page }, testInfo) => {
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-player-id]").fill("player-1");
     await page.locator("[data-lobby-display-name]").fill("Smoke Guest");
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expectEnteredRoom(page, roomId, "player-1");
@@ -56,6 +64,7 @@ test("lobby reuses a cached guest session when entering a room", async ({ page }
     await waitForLobbyReady(page);
     await expect(page.getByText("已缓存本地会话：cached-guest-1")).toBeVisible();
     await page.locator("[data-lobby-room-id]").fill(roomId);
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expectEnteredRoom(page, roomId, "cached-guest-1");
@@ -76,6 +85,7 @@ test("lobby supports formal registration and enters the room with an account ses
     await page.locator("[data-lobby-login-id]").fill(loginId);
     await page.locator("[data-registration-display-name]").fill(displayName);
     await page.locator("[data-registration-password]").fill(password);
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-request-registration]").click();
 
     await expect(page.locator("[data-registration-token]")).toHaveValue(/\S+/, { timeout: 10_000 });
@@ -135,6 +145,7 @@ test("lobby supports password recovery and rotates the account password before e
     await waitForLobbyReady(page);
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-login-id]").fill(loginId);
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-request-recovery]").click();
 
     await expect(page.locator("[data-recovery-token]")).toHaveValue(/\S+/, { timeout: 10_000 });

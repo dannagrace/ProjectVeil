@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { buildRoomId, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
+import { acceptLobbyPrivacyConsent, buildRoomId, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 const SERVER_BASE_URL = "http://127.0.0.1:2567";
 
@@ -35,6 +35,7 @@ async function enterRoomThroughLobby(page: Page, roomId: string, playerId: strin
   await page.locator("[data-lobby-room-id]").fill(roomId);
   await page.locator("[data-lobby-player-id]").fill(playerId);
   await page.locator("[data-lobby-display-name]").fill(displayName);
+  await acceptLobbyPrivacyConsent(page);
   await page.locator("[data-enter-room]").click();
 
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -195,6 +196,7 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
 
     const secondRoomId = buildRoomId("e2e-onboarding-return-second");
     await page.locator("[data-lobby-room-id]").fill(secondRoomId);
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expect(page).toHaveURL(new RegExp(`roomId=${secondRoomId}`));

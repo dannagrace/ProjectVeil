@@ -837,8 +837,10 @@ test("auth session route resolves a bearer token into the current guest session"
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  const room = await joinRoom(port, "session-refresh-room", "spoofed-player");
 
   t.after(async () => {
+    await room.leave(true).catch(() => undefined);
     resetGuestAuthSessions();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
@@ -855,6 +857,19 @@ test("auth session route resolves a bearer token into the current guest session"
   assert.equal(sessionPayload.session.displayName, "回声旅人");
   assert.equal(sessionPayload.session.provider, "guest");
   assert.match(sessionPayload.session.token, /\./);
+
+  const connectPayload = await sendRequest(
+    room,
+    {
+      type: "connect",
+      requestId: "session-refresh-connect",
+      roomId: "session-refresh-room",
+      playerId: "spoofed-player",
+      authToken: sessionPayload.session.token
+    },
+    "session.state"
+  );
+  assert.equal(connectPayload.payload.world.playerId, "player-session");
 });
 
 test("connect message prefers auth token identity over a spoofed playerId", async (t) => {

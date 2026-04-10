@@ -238,6 +238,11 @@ interface CandidateSummary {
 
 const OUTPUT_TAIL_BYTES = 4000;
 const MANUAL_REVIEW_MAX_AGE_MS = 1000 * 60 * 60 * 24;
+const AUTO_MANUAL_CHECK_FILENAMES = [
+  "codex.wechat.manual-review.json",
+  "wechat-manual-review.json",
+  "wechat-manual-checks.json"
+] as const;
 const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
   {
     id: "wechat-devtools-export-review",
@@ -530,13 +535,40 @@ function resolveOptionalArtifactPath(explicitPath: string | undefined, fallbackP
   return fs.existsSync(fallbackPath) ? fallbackPath : undefined;
 }
 
+function resolveAutoManualChecksPath(args: Args): string | undefined {
+  if (args.manualChecksPath || args.manualChecks.length > 0) {
+    return undefined;
+  }
+
+  const candidateRoots = new Set<string>();
+  if (args.artifactsDir) {
+    candidateRoots.add(path.resolve(args.artifactsDir));
+  }
+  if (args.metadataPath) {
+    candidateRoots.add(path.dirname(path.resolve(args.metadataPath)));
+  }
+
+  for (const root of candidateRoots) {
+    for (const filename of AUTO_MANUAL_CHECK_FILENAMES) {
+      const candidatePath = path.join(root, filename);
+      if (fs.existsSync(candidatePath)) {
+        return candidatePath;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function readManualChecks(args: Args): ManualReviewCheck[] {
-  if (!args.manualChecksPath && args.manualChecks.length === 0) {
+  const manualChecksPath = args.manualChecksPath ?? resolveAutoManualChecksPath(args);
+
+  if (!manualChecksPath && args.manualChecks.length === 0) {
     return DEFAULT_MANUAL_CHECKS.map((check) => ({ ...check, evidence: [...check.evidence] }));
   }
 
-  const fromFile = args.manualChecksPath
-    ? parseManualChecksFile(args.manualChecksPath).map((check) => ({
+  const fromFile = manualChecksPath
+    ? parseManualChecksFile(manualChecksPath).map((check) => ({
         id: check.id,
         title: check.title,
         required: check.required,

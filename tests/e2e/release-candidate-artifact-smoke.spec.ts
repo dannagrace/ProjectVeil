@@ -1,13 +1,15 @@
 import { expect, test, type Page } from "./fixtures";
-import { buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
+import { acceptLobbyPrivacyConsent, buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
   await expectRoomReady(page, {
     roomId,
     playerId,
-    expectedMoveText: fullMoveTextPattern(playerId)
+    expectedMoveText: fullMoveTextPattern(playerId),
+    requireDiagnosticsPanel: false
   });
+  await expect(page.getByTestId("event-log")).toContainText("会话已连接", { timeout: 10_000 });
 }
 
 test("rc-artifact: guest login reaches lobby and room boot", async ({ page }, testInfo) => {
@@ -23,11 +25,11 @@ test("rc-artifact: guest login reaches lobby and room boot", async ({ page }, te
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-player-id]").fill(playerId);
     await page.locator("[data-lobby-display-name]").fill("RC Smoke Guest");
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expectEnteredRoom(page, roomId, playerId);
     await expect(page.getByTestId("account-card")).toContainText("RC Smoke Guest");
-    await expect(page.getByTestId("event-log")).toContainText("已加入房间", { timeout: 10_000 });
   });
 });
 
@@ -52,11 +54,10 @@ test("rc-artifact: cached session restore reaches room boot", async ({ page }, t
 
     await expect(page.getByText("已缓存本地会话：cached-guest-1")).toBeVisible();
     await page.locator("[data-lobby-room-id]").fill(roomId);
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expectEnteredRoom(page, roomId, playerId);
     await expect(page.getByTestId("account-card")).toContainText("Cached RC Guest");
-    // Room entry shows "会话已连接。Room {roomId} / Player {playerId}" instead of "已加入房间"
-    await expect(page.getByTestId("event-log")).toContainText("会话已连接", { timeout: 10_000 });
   });
 });

@@ -13,6 +13,9 @@
     "resolveJsonModule": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "cc": ["packages/cc-runtime-stub/index.js"]
+    }
   }
 }

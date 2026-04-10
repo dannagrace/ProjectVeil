@@ -24,6 +24,8 @@ Use the latest local artifacts under `artifacts/release-readiness/` and `artifac
 npm run release:gate:summary
 ```
 
+When the current working set lives inside a candidate rehearsal bundle rather than the top-level artifact roots, the command now also scans nested directories under `artifacts/release-readiness/` and reuses the newest matching snapshot / H5 smoke / reconnect soak / WeChat evidence set from that bundle.
+
 Pick the release target surface explicitly when needed:
 
 ```bash
@@ -60,6 +62,8 @@ If you do not pass output flags, the script writes:
 
 - `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
 - `artifacts/release-readiness/release-gate-summary-<short-sha>.md`
+
+Default input discovery remains intentionally conservative about artifact families, but it is now recursive for release-readiness working-set files. That means a prior `release:phase1:candidate-rehearsal` run can feed a later top-level `release:gate:summary` call without having to re-pass every nested path explicitly.
 
 ## Triage Summary
 

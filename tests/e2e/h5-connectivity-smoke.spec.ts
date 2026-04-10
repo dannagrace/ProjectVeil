@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
-import { buildRoomId, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
+import { acceptLobbyPrivacyConsent, buildRoomId, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 interface RuntimeDiagnosticSnapshot {
   room?: {
@@ -53,6 +53,7 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-player-id]").fill(playerId);
     await page.locator("[data-lobby-display-name]").fill("Connectivity Smoke");
+    await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
     await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
