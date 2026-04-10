@@ -26,9 +26,11 @@ The packet always includes these operator-facing sections:
 
 - candidate metadata
 - validation summary
+- commercial readiness summary
 - blocker summary
 - runtime observability sign-off links
 - unresolved manual checks
+- unresolved commercial checks
 
 Pass, warning, and blocker items are normalized into one summary so the final reviewer can distinguish accepted risk from true release blockers.
 
@@ -48,7 +50,8 @@ Pin explicit artifact paths when CI already produced the exact files you want to
 npm run release:go-no-go-packet -- \
   --dossier artifacts/release-readiness/phase1-candidate-dossier-phase1-wechat-rc-abc1234/phase1-candidate-dossier.json \
   --release-gate-summary artifacts/release-readiness/release-gate-summary-abc1234.json \
-  --wechat-candidate-summary artifacts/wechat-release/codex.wechat.release-candidate-summary.json
+  --wechat-candidate-summary artifacts/wechat-release/codex.wechat.release-candidate-summary.json \
+  --commercial-review artifacts/wechat-release/codex.wechat.commercial-review.json
 ```
 
 Write to explicit output files:
@@ -69,6 +72,13 @@ The packet fails closed when required upstream evidence is missing:
 - release gate summary
 - WeChat candidate summary when the target surface is `wechat`
 
+When you are preparing an external WeChat release decision instead of a purely technical RC verdict, also attach a commercial review file:
+
+- `docs/release-evidence/wechat-commercial-review.example.json`
+- recommended artifact path: `artifacts/wechat-release/codex.wechat.commercial-review.json`
+
+This review captures payment, subscription reachability, analytics, compliance, and device-experience conclusions for the same candidate revision. When present, unresolved required commercial checks are folded into the final packet decision.
+
 Those errors are intentional. The packet is the last-mile reviewer artifact, so it should not invent partial state when the underlying evidence set is incomplete.
 
 ## Operator Workflow
@@ -76,9 +86,10 @@ Those errors are intentional. The packet is the last-mile reviewer artifact, so 
 1. Generate or refresh the underlying candidate evidence for one fixed revision.
 2. Build the candidate dossier and release gate summary for that same revision.
 3. Refresh the WeChat candidate summary and manual-review metadata when the target surface is `wechat`.
-4. Run `npm run release:go-no-go-packet`.
-5. Run `npm run release:pr-summary -- --release-gate-summary <path> --release-health-summary <path> --go-no-go-packet <path>` to render the concise PR-visible summary markdown when you need to preview the exact reviewer digest locally.
-6. In CI pull-request runs, the `Build go/no-go decision packet artifact` plus `Comment PR with release summary` steps publish or update the single bot comment in place, so reruns refresh the same PR-visible summary instead of creating duplicates.
-7. Attach or inspect the Markdown packet itself when the release owner needs the full operator record.
+4. For external release calls, copy `docs/release-evidence/wechat-commercial-review.example.json` into the candidate artifacts dir, fill in the current candidate revision, owner, timestamps, and evidence links, then pass it via `--commercial-review`.
+5. Run `npm run release:go-no-go-packet`.
+6. Run `npm run release:pr-summary -- --release-gate-summary <path> --release-health-summary <path> --go-no-go-packet <path>` to render the concise PR-visible summary markdown when you need to preview the exact reviewer digest locally.
+7. In CI pull-request runs, the `Build go/no-go decision packet artifact` plus `Comment PR with release summary` steps publish or update the single bot comment in place, so reruns refresh the same PR-visible summary instead of creating duplicates.
+8. Attach or inspect the Markdown packet itself when the release owner needs the full operator record.
 
 If the packet still shows blocker items, clear those upstream artifacts first and regenerate the packet instead of editing the packet by hand.

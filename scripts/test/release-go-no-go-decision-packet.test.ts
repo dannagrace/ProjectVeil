@@ -7,6 +7,8 @@ import test from "node:test";
 
 import { buildGoNoGoDecisionPacket, renderMarkdown } from "../release-go-no-go-decision-packet.ts";
 
+const repoRoot = path.resolve(__dirname, "../..");
+
 function writeJson(filePath: string, payload: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -196,13 +198,165 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
   assert.match(markdown, /## Unresolved Manual Checks \(1\)/);
 });
 
+test("buildGoNoGoDecisionPacket folds commercial review blockers into the final decision", () => {
+  const workspace = createTempWorkspace();
+  const releaseDir = path.join(workspace, "artifacts", "release-readiness");
+  const dossierDir = path.join(releaseDir, "phase1-candidate-dossier-phase1-rc-abc1234");
+  const wechatDir = path.join(workspace, "artifacts", "wechat-release");
+  const dossierPath = path.join(dossierDir, "phase1-candidate-dossier.json");
+  const releaseGateSummaryPath = path.join(releaseDir, "release-gate-summary-abc1234.json");
+  const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+  const commercialReviewPath = path.join(wechatDir, "codex.wechat.commercial-review.json");
+
+  writeJson(dossierPath, {
+    generatedAt: "2026-04-10T09:00:00.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc1234def5678",
+      shortRevision: "abc1234",
+      branch: "release/phase1",
+      dirty: false,
+      targetSurface: "wechat"
+    },
+    summary: {
+      status: "passed",
+      totalSections: 1,
+      requiredFailed: [],
+      requiredPending: [],
+      acceptedRiskCount: 0
+    },
+    phase1ExitEvidenceGate: {
+      result: "passed",
+      summary: "All required evidence passed.",
+      blockingSections: [],
+      pendingSections: [],
+      acceptedRiskSections: []
+    },
+    sections: [
+      {
+        id: "release-readiness",
+        label: "Release readiness",
+        required: true,
+        result: "passed",
+        summary: "Automated release readiness checks passed.",
+        artifactPath: path.join(releaseDir, "release-readiness-abc1234.json"),
+        freshness: "fresh"
+      }
+    ]
+  });
+
+  writeJson(releaseGateSummaryPath, {
+    generatedAt: "2026-04-10T09:05:00.000Z",
+    targetSurface: "wechat",
+    summary: {
+      status: "passed",
+      failedGateIds: []
+    },
+    inputs: {
+      wechatArtifactsDir: wechatDir,
+      wechatCandidateSummaryPath
+    },
+    triage: {
+      blockers: [],
+      warnings: []
+    },
+    releaseSurface: {
+      status: "passed",
+      summary: "Release surface evidence is passing for the selected wechat target.",
+      evidence: []
+    }
+  });
+
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-10T09:10:00.000Z",
+    candidate: {
+      revision: "abc1234def5678",
+      version: "1.2.3",
+      status: "ready"
+    },
+    evidence: {
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  writeJson(commercialReviewPath, {
+    generatedAt: "2026-04-10T09:12:00.000Z",
+    candidate: {
+      revision: "abc1234def5678",
+      version: "1.2.3",
+      status: "blocked"
+    },
+    checks: [
+      {
+        id: "payment-e2e",
+        title: "支付链路端到端验证",
+        category: "payment",
+        required: true,
+        status: "pending",
+        owner: "release-commerce",
+        recordedAt: "2026-04-10T09:11:00.000Z",
+        revision: "abc1234def5678",
+        artifactPath: "artifacts/wechat-release/commercial-payment-review.json",
+        notes: "Waiting on live payment callback proof."
+      },
+      {
+        id: "analytics-funnel-audit",
+        title: "核心漏斗与付费埋点验收",
+        category: "analytics",
+        required: true,
+        status: "passed",
+        owner: "release-analytics",
+        recordedAt: "2026-04-10T09:11:30.000Z",
+        revision: "abc1234def5678",
+        artifactPath: "artifacts/analytics/onboarding-funnel-report.json",
+        notes: "Funnel and payment events are available."
+      }
+    ],
+    blockers: [
+      {
+        id: "commercial-signoff-missing",
+        summary: "Commercial sign-off is still blocked by unfinished payment verification.",
+        artifactPath: "artifacts/wechat-release/codex.wechat.commercial-review.json",
+        nextCommand: "Complete the payment review and regenerate the packet."
+      }
+    ]
+  });
+
+  const packet = buildGoNoGoDecisionPacket({
+    dossierPath,
+    releaseGateSummaryPath,
+    wechatCandidateSummaryPath,
+    commercialReviewPath
+  });
+
+  assert.equal(packet.decision.status, "no_go");
+  assert.equal(packet.inputs.commercialReviewPath, commercialReviewPath);
+  assert.equal(packet.sections.commercialReadinessSummary.status, "blocked");
+  assert.equal(packet.sections.commercialReadinessSummary.requiredPendingChecks, 1);
+  assert.equal(packet.sections.unresolvedCommercialChecks.length, 1);
+  assert.equal(packet.sections.blockerSummary.blockers.some((item) => item.id === "commercial:payment-e2e"), true);
+  assert.equal(packet.sections.blockerSummary.blockers.some((item) => item.id === "commercial:commercial-signoff-missing"), true);
+
+  const markdown = renderMarkdown(packet);
+  assert.match(markdown, /## Commercial Readiness Summary/);
+  assert.match(markdown, /## Unresolved Commercial Checks \(1\)/);
+  assert.match(markdown, /支付 - 支付链路端到端验证/);
+});
+
 test("go/no-go packet CLI fails with an actionable error when the dossier is missing", () => {
   const workspace = createTempWorkspace();
   const result = spawnSync(
     "node",
     ["--import", "tsx", "./scripts/release-go-no-go-decision-packet.ts", "--dossier", path.join(workspace, "missing.json")],
     {
-      cwd: "/home/gpt/project/ProjectVeil",
+      cwd: repoRoot,
       encoding: "utf8"
     }
   );
@@ -317,7 +471,7 @@ test("go/no-go packet CLI writes the default packet outputs", () => {
     [
       "--import",
       "tsx",
-      "/home/gpt/project/ProjectVeil/scripts/release-go-no-go-decision-packet.ts",
+      path.join(repoRoot, "scripts", "release-go-no-go-decision-packet.ts"),
       "--dossier",
       dossierPath,
       "--release-gate-summary",
@@ -330,7 +484,7 @@ test("go/no-go packet CLI writes the default packet outputs", () => {
       markdownOutputPath
     ],
     {
-      cwd: "/home/gpt/project/ProjectVeil",
+      cwd: repoRoot,
       encoding: "utf8"
     }
   );

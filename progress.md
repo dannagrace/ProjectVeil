@@ -1524,3 +1524,28 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/wechat-release-artifacts.test.ts` 通过
+
+## Issue #1183 - Commercial review go/no-go packet - 2026-04-10
+
+- 本轮给 `release:go-no-go-packet` 补上了商运外放结论的正式输入面：
+  - `scripts/release-go-no-go-decision-packet.ts`
+    - 新增 `--commercial-review <path>` 参数，支持显式传入商运复核证据
+    - 默认也会从 WeChat artifacts 目录自动发现 `codex.wechat.commercial-review.json / wechat-commercial-review.json / commercial-review.json`
+    - packet 里新增 `commercialReadinessSummary` 与 `unresolvedCommercialChecks`
+    - 必填商运检查会对 `owner / recordedAt / revision / artifactPath` 做元数据完整性校验，缺失时直接作为 blocker 纳入最终 go/no-go 结论
+    - Markdown 输出新增 `Commercial Readiness Summary` 和 `Unresolved Commercial Checks` 两段，方便 release reviewer 直接查看支付、订阅、埋点、合规、真机体验的阻塞项
+- 为了让人工填写格式稳定下来，新增了商运复核模板：
+  - `docs/release-evidence/wechat-commercial-review.example.json`
+    - 覆盖 `payment / subscription / analytics / compliance / device_experience` 五类复核项
+    - 约定了 `summary / checks / blockers` 的 JSON 契约，供后续候选包沿用
+- 说明文档也同步到了：
+  - `docs/release-go-no-go-decision-packet.md`
+    - 新增 `--commercial-review` 用法示例
+    - 明确要求在跑 go/no-go packet 前附带商运复核文件
+- 测试收口：
+  - `scripts/test/release-go-no-go-decision-packet.test.ts`
+    - 新增商运 blocker 会把最终结论压成 `no_go` 的覆盖
+    - 同时修正 CLI 用例的仓库根路径解析，避免环境相关的假失败
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts` 通过（`4/4`）
