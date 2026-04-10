@@ -26,8 +26,10 @@ test("placeholder scope plan exposes the expected scope order and asset groups",
 });
 
 test("normalizePlaceholderScopes accepts strings, defaults all scopes, and filters duplicates", () => {
+  assert.deepEqual(normalizePlaceholderScopes("hud"), ["hud"]);
   assert.deepEqual(normalizePlaceholderScopes(["map", "hud", "map", "timeline"]), ["map", "hud", "timeline"]);
   assert.deepEqual(normalizePlaceholderScopes(undefined), ALL_PLACEHOLDER_SCOPES);
+  assert.deepEqual(normalizePlaceholderScopes(["invalid" as "map"]), []);
   assert.deepEqual(
     normalizePlaceholderScopes(["timeline", "unknown" as "timeline", "hud", "timeline"]),
     ["timeline", "hud"]
@@ -53,4 +55,22 @@ test("resolvePlaceholderSpritePathsForScopes deduplicates shared hero icon acros
   assert.ok(paths.includes(PLACEHOLDER_ICON_PATHS.hud));
   assert.ok(paths.includes("placeholder/tiles/grass-1"));
   assert.ok(paths.includes("placeholder/icons/mine"));
+});
+
+test("resolvePlaceholderSpritePathsForScopes resolves a single scope string in declared order", () => {
+  assert.deepEqual(resolvePlaceholderSpritePathsForScopes("hud"), [
+    PLACEHOLDER_ICON_PATHS.hud,
+    PLACEHOLDER_ICON_PATHS.hero
+  ]);
+  assert.deepEqual(resolvePlaceholderSpritePathsForScopes("timeline"), [PLACEHOLDER_ICON_PATHS.timeline]);
+});
+
+test("resolvePlaceholderSpritePathsForScopes skips invalid and duplicate scopes while preserving first-seen paths", () => {
+  const paths = resolvePlaceholderSpritePathsForScopes(["hud", "bogus" as "hud", "map", "hud"]);
+
+  assert.equal(paths[0], PLACEHOLDER_ICON_PATHS.hud);
+  assert.equal(paths[1], PLACEHOLDER_ICON_PATHS.hero);
+  assert.equal(paths[2], PLACEHOLDER_TILE_PATHS.grass[0]);
+  assert.equal(paths.at(-1), PLACEHOLDER_ICON_PATHS.mine);
+  assert.equal(paths.filter((path) => path === PLACEHOLDER_ICON_PATHS.hero).length, 1);
 });
