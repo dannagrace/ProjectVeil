@@ -652,6 +652,14 @@ function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean,
   return candidates[0];
 }
 
+export function resolveLatestReconnectSoakFile(dirPath: string): string | undefined {
+  return resolveLatestFile(
+    dirPath,
+    (entry) => entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json"),
+    3
+  );
+}
+
 function resolveSnapshotPath(args: Args): string | undefined {
   if (args.snapshotPath) {
     return path.resolve(args.snapshotPath);
@@ -674,13 +682,7 @@ function resolveReconnectSoakPath(args: Args): string | undefined {
   if (args.reconnectSoakPath) {
     return path.resolve(args.reconnectSoakPath);
   }
-  const fixedCandidate = path.join(getDefaultReleaseReadinessDir(), "colyseus-reconnect-soak-summary.json");
-  if (fs.existsSync(fixedCandidate)) {
-    return fixedCandidate;
-  }
-  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
-    entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json")
-  , 3);
+  return resolveLatestReconnectSoakFile(getDefaultReleaseReadinessDir());
 }
 
 function directoryContainsWechatEvidence(dirPath: string): boolean {

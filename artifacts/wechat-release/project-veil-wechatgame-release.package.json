@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "buildTemplatePlatform": "wechatgame",
+  "projectName": "Project Veil",
+  "appId": "touristappid",
+  "archiveFileName": "project-veil-wechatgame-release.tar.gz",
+  "archiveBytes": 0,
+  "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "releaseManifestFile": "wechatgame/codex.wechat.release.json",
+  "exportedBuildDir": "apps/cocos-client/test/fixtures/wechatgame-export",
+  "packagedBuildDir": "wechatgame",
+  "fileCount": 7,
+  "sourceRevision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+  "runtimeRemoteUrl": "http://127.0.0.1:2567"
+}

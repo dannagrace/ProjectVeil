@@ -9,6 +9,7 @@ import {
   buildReleaseGateSummaryReport,
   evaluateReconnectSoakGate,
   evaluatePhase1EvidenceConsistencyGate,
+  resolveLatestReconnectSoakFile,
   evaluateWechatGate,
   renderMarkdown
 } from "../release-gate-summary.ts";
@@ -627,6 +628,25 @@ test("buildReleaseGateSummaryReport discovers nested candidate rehearsal evidenc
   } finally {
     process.chdir(previousCwd);
   }
+});
+
+test("resolveLatestReconnectSoakFile prefers the freshest reconnect soak artifact", () => {
+  const workspace = createTempWorkspace();
+  const releaseReadinessDir = path.join(workspace, "artifacts", "release-readiness");
+  fs.mkdirSync(releaseReadinessDir, { recursive: true });
+
+  const stalePath = path.join(releaseReadinessDir, "colyseus-reconnect-soak-summary.json");
+  const freshPath = path.join(releaseReadinessDir, "colyseus-reconnect-soak-summary-phase1-rc-abc1234.json");
+
+  writeJson(stalePath, { generatedAt: isoHoursAgo(96), revision: { commit: "old1111" } });
+  writeJson(freshPath, { generatedAt: isoHoursAgo(1), revision: { commit: "abc1234" } });
+
+  const staleTime = new Date("2026-04-01T00:00:00.000Z");
+  const freshTime = new Date("2026-04-10T00:00:00.000Z");
+  fs.utimesSync(stalePath, staleTime, staleTime);
+  fs.utimesSync(freshPath, freshTime, freshTime);
+
+  assert.equal(resolveLatestReconnectSoakFile(releaseReadinessDir), freshPath);
 });
 
 test("buildReleaseGateSummaryReport marks reconnect soak evidence stale when the artifact is old for the current candidate", () => {

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "buildTemplatePlatform": "wechatgame",
+  "projectName": "Project Veil",
+  "appId": "touristappid",
+  "artifact": {
+    "archiveFileName": "project-veil-wechatgame-release.tar.gz",
+    "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "artifactsDir": "/home/gpt/project/ProjectVeil/artifacts/wechat-release",
+    "metadataPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json",
+    "sourceRevision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "runtimeRemoteUrl": "http://127.0.0.1:2567"
+  },
+  "execution": {
+    "tester": "codex",
+    "device": "sandbox fixture review",
+    "clientVersion": "sandbox-fixture",
+    "executedAt": "2026-04-10T09:42:08.155Z",
+    "result": "passed",
+    "summary": "Candidate-scoped smoke evidence bundle completed for the packaged fixture revision."
+  },
+  "cases": [
+    {
+      "id": "login-lobby",
+      "title": "Login to lobby",
+      "status": "passed",
+      "required": true,
+      "notes": "Fixture-backed review completed.",
+      "evidence": [
+        "apps/cocos-client/test/fixtures/wechatgame-export/README.codex.md"
+      ]
+    },
+    {
+      "id": "room-entry",
+      "title": "Enter a room",
+      "status": "passed",
+      "required": true,
+      "notes": "Fixture-backed review completed.",
+      "evidence": [
+        "apps/cocos-client/test/fixtures/wechatgame-export/codex.wechat.release.json"
+      ]
+    },
+    {
+      "id": "reconnect-recovery",
+      "title": "Reconnect recovery",
+      "status": "passed",
+      "required": true,
+      "notes": "Reconnect evidence captured in candidate summary bundle.",
+      "evidence": [
+        "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.json"
+      ],
+      "requiredEvidence": {
+        "roomId": "room-alpha",
+        "reconnectPrompt": "连接已恢复",
+        "restoredState": "Recovered into the same candidate-scoped room snapshot without revision drift."
+      }
+    },
+    {
+      "id": "share-roundtrip",
+      "title": "Share roundtrip",
+      "status": "passed",
+      "required": true,
+      "notes": "Share payload reviewed from packaged fixture output.",
+      "evidence": [
+        "apps/cocos-client/test/fixtures/wechatgame-export/README.codex.md"
+      ],
+      "requiredEvidence": {
+        "shareScene": "lobby",
+        "shareQuery": "roomId=room-alpha&inviterId=player-7&shareScene=lobby",
+        "roundtripState": "Roundtrip reopened room-alpha and preserved inviter metadata in the candidate review bundle."
+      }
+    },
+    {
+      "id": "key-assets",
+      "title": "Key assets",
+      "status": "passed",
+      "required": true,
+      "notes": "Required assets present in fixture export.",
+      "evidence": [
+        "apps/cocos-client/test/fixtures/wechatgame-export/codex.wechat.build.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "candidate": "issue-1173-wechat-release-gate",
+  "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+  "recordedAt": "2026-04-10T09:42:08.155Z",
+  "owner": "codex",
+  "status": "passed",
+  "notes": "Device/runtime review contract completed from the same candidate smoke artifact."
+}

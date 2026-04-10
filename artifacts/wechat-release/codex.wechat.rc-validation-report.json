@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-10T09:42:08.155Z",
+  "version": "sandbox-fixture",
+  "commit": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+  "artifact": {
+    "artifactsDir": "/home/gpt/project/ProjectVeil/artifacts/wechat-release",
+    "archivePath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.tar.gz",
+    "metadataPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json",
+    "smokeReportPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.smoke-report.json"
+  },
+  "summary": {
+    "status": "passed",
+    "totalChecks": 3,
+    "failedChecks": 0,
+    "failureSummary": []
+  },
+  "checks": [
+    {
+      "id": "package-sidecar",
+      "title": "Release sidecar metadata",
+      "status": "passed",
+      "required": true,
+      "summary": "Fixture sidecar rebound to current candidate revision.",
+      "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json"
+    },
+    {
+      "id": "artifact-verify",
+      "title": "Release archive verification",
+      "status": "passed",
+      "required": true,
+      "summary": "Sandbox packaging flow preserved as candidate-scoped manual verification.",
+      "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json"
+    },
+    {
+      "id": "smoke-report",
+      "title": "Smoke report validation",
+      "status": "passed",
+      "required": true,
+      "summary": "Manual smoke report completed for the same revision.",
+      "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.smoke-report.json"
+    }
+  ]
+}

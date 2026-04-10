@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 2,
+  "artifactType": "release-candidate-reconnect-soak",
+  "generatedAt": "2026-04-10T09:42:08.155Z",
+  "command": "node --import tsx ./scripts/stress-concurrent-rooms.ts --scenarios=reconnect_soak",
+  "revision": {
+    "commit": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "shortCommit": "d96e22a",
+    "branch": "codex/issue-1173-wechat-release-gate-0410-1731",
+    "dirty": false
+  },
+  "status": "passed",
+  "options": {
+    "rooms": 48,
+    "reconnectCycles": 8,
+    "scenarios": [
+      "reconnect_soak"
+    ]
+  },
+  "summary": {
+    "totalScenarios": 1,
+    "failedScenarios": 0,
+    "scenarioNames": [
+      "reconnect_soak"
+    ]
+  },
+  "soakSummary": {
+    "reconnectCycles": 8,
+    "reconnectAttempts": 384,
+    "invariantChecks": 2304,
+    "worldReconnectCycles": 320,
+    "battleReconnectCycles": 64,
+    "finalBattleRooms": 4,
+    "finalDayRange": {
+      "min": 3,
+      "max": 5
+    }
+  },
+  "results": [
+    {
+      "scenario": "reconnect_soak",
+      "rooms": 48,
+      "successfulRooms": 48,
+      "failedRooms": 0,
+      "completedActions": 0,
+      "durationMs": 600000,
+      "runtimeHealthAfterCleanup": {
+        "activeRoomCount": 0,
+        "connectionCount": 0,
+        "activeBattleCount": 0,
+        "heroCount": 0
+      },
+      "soakSummary": {
+        "reconnectCycles": 8,
+        "reconnectAttempts": 384,
+        "invariantChecks": 2304,
+        "worldReconnectCycles": 320,
+        "battleReconnectCycles": 64,
+        "finalBattleRooms": 4,
+        "finalDayRange": {
+          "min": 3,
+          "max": 5
+        }
+      }
+    }
+  ],
+  "candidate": {
+    "name": "issue-1173-wechat-release-gate",
+    "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "shortRevision": "d96e22a"
+  },
+  "artifacts": {
+    "jsonPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.json",
+    "markdownPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.md"
+  },
+  "verdict": {
+    "status": "passed",
+    "summary": "Reconnect soak evidence is present and passing for this candidate revision."
+  },
+  "reviewSignals": {
+    "durationMinutes": 10,
+    "reconnectAttempts": 384,
+    "invariantChecks": 2304,
+    "worldReconnectCycles": 320,
+    "battleReconnectCycles": 64,
+    "finalBattleRooms": 4,
+    "finalDayRange": {
+      "min": 3,
+      "max": 5
+    },
+    "cleanupHealthy": true,
+    "cleanup": {
+      "activeRoomCount": 0,
+      "connectionCount": 0,
+      "activeBattleCount": 0,
+      "heroCount": 0
+    }
+  },
+  "scenarioMatrix": [
+    {
+      "scenario": "reconnect_soak",
+      "rooms": 48,
+      "successfulRooms": 48,
+      "failedRooms": 0,
+      "durationMinutes": 10,
+      "reconnectAttempts": 384,
+      "invariantChecks": 2304,
+      "cleanupHealthy": true,
+      "cleanup": {
+        "activeRoomCount": 0,
+        "connectionCount": 0,
+        "activeBattleCount": 0,
+        "heroCount": 0
+      }
+    }
+  ],
+  "failures": [],
+  "rerunTriggers": [
+    "Candidate revision changes.",
+    "Reconnect, room recovery, battle recovery, world progression, or snapshot persistence code changes.",
+    "Reconnect soak defaults, scenario matrix, or artifact contract changes.",
+    "A prior soak artifact is stale, partial, or failed."
+  ],
+  "operatorGuidance": {
+    "minimumProfile": "Use the canonical reconnect soak defaults: 48 rooms, 8 reconnect cycles per room, 12 connect concurrency, 12 action concurrency, 150ms reconnect pause.",
+    "flakySignalPolicy": "Treat a one-off infra or port-binding interruption as a rerun candidate only when reconnect invariants and cleanup counters never regressed; otherwise treat the artifact as stale and rerun on the pinned revision.",
+    "blockerPolicy": "Any invariant failure, cleanup leak, revision mismatch, or zero reconnect/invariant counts is a release blocker until a fresh candidate-scoped soak passes."
+  }
+}
