@@ -1643,3 +1643,31 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`9/9`）
+
+## Issue #1198 - Phase 1 candidate rehearsal evidence front-door - 2026-04-10
+
+- 本轮把 `release:phase1:candidate-rehearsal` 又往 reviewer 前门推进了一步：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 复用了 `phase1-same-revision-evidence-bundle` 生成的 owner ledger，并在 rehearsal 顶层 packet 再 stage 一份稳定路径
+    - 新增 `candidate-evidence-audit` 阶段，直接生成候选级 evidence audit JSON / Markdown
+    - 新增 `release-evidence-index` 阶段，基于当前 rehearsal packet 生成 reviewer first-stop 的 current release evidence index
+    - rehearsal artifacts 现在会显式记录：
+      - `manualEvidenceLedgerPath`
+      - `candidateEvidenceAuditPath`
+      - `candidateEvidenceAuditMarkdownPath`
+      - `releaseEvidenceIndexPath`
+      - `releaseEvidenceIndexMarkdownPath`
+    - candidate evidence audit 会按“产物生成成功”收口，不会因为 manual sign-off 仍待完成就把整条 rehearsal generation 判成失败
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal 现在会附带 reviewer 前门的 evidence audit 与 current evidence index
+    - 补充 candidate evidence audit 在 manual sign-off 仍 pending 时属于预期信息性阻塞，不视为 generation failure
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 candidate evidence audit 与 current evidence index
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `candidate-evidence-audit` 与 `release-evidence-index` 两个新阶段
+    - 校验 rehearsal summary 会显式列出 reviewer 前门产物
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-evidence-index.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`6/6`）
