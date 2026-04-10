@@ -382,17 +382,17 @@ test("asset config exposes metadata for referenced asset paths", () => {
 
   assert.deepEqual(getAssetMetadataEntry(assetConfig, assetPath), {
     slot: "unit.hero_guard_basic.idle",
-    stage: "prototype",
+    stage: "production",
     source: "generated",
-    notes: "Synced from Cocos placeholder icon bundle for H5 pixel preview."
+    notes: "Promoted from the shared Cocos icon bundle for H5/Cocos release use."
   });
 
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
     total: 65,
     byStage: {
-      placeholder: 38,
-      prototype: 27,
-      production: 0
+      placeholder: 0,
+      prototype: 0,
+      production: 65
     },
     bySource: {
       generated: 65,

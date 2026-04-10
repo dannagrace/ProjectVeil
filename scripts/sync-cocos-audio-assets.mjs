@@ -21,7 +21,7 @@ for (const sequence of allTargets) {
   writtenCount += 1;
 }
 
-console.log(`Synced ${writtenCount} Cocos placeholder audio assets into resources/audio.`);
+console.log(`Synced ${writtenCount} Cocos audio assets into resources/audio.`);
 
 function createWaveBuffer(sequence, rate) {
   const channels = 1;

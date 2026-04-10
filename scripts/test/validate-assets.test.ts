@@ -13,17 +13,16 @@ test("validate:assets passes in baseline mode", () => {
   });
 
   assert.match(output, /Asset validation passed:/);
-  assert.match(output, /readiness 像素 占位/);
+  assert.match(output, /readiness 像素 正式 \d+\/\d+ · 音频 正式 8\/8 · 动画 序列 2\/2/);
 });
 
-test("validate:assets strict mode fails when cocos presentation is not release-ready", () => {
-  assert.throws(
-    () =>
-      execFileSync("node", ["--import", "tsx", "./scripts/validate-assets.ts", "--require-cocos-release-ready"], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        stdio: "pipe"
-      }),
-    /Cocos primary client is not release-ready: 正式像素美术, 真实 BGM\/SFX/
-  );
+test("validate:assets strict mode passes when cocos presentation is release-ready", () => {
+  const output = execFileSync("node", ["--import", "tsx", "./scripts/validate-assets.ts", "--require-cocos-release-ready"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+
+  assert.match(output, /Asset validation passed:/);
+  assert.doesNotMatch(output, /Cocos primary client is not release-ready/);
 });

@@ -93,8 +93,8 @@ For the primary Cocos client battle path, the following now count as `production
 
 The following are still considered `non-blocking fallback` for Phase 1 hardening and should stay tracked through [`docs/cocos-phase1-presentation-signoff.md`](./cocos-phase1-presentation-signoff.md) plus the surrounding presentation-readiness / RC evidence rather than battle-loop copy logic:
 
-- placeholder pixel art and mixed audio packs
-- any remaining asset substitutions already reported by `cocos-presentation-readiness`
+- battle-entry chrome and impact-pass polish that are still explicitly accepted for controlled-test review
+- any future asset substitution newly reported by `cocos-presentation-readiness`
 
 ## What Advancing Beyond Phase 1 Means Here
 

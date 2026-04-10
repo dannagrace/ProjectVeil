@@ -198,330 +198,330 @@
   "metadata": {
     "/assets/pixel/terrain/grass-tile.png": {
       "slot": "terrain.grass.default",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated",
-      "notes": "Synced from Cocos placeholder tile bundle for H5 pixel preview."
+      "notes": "Promoted from the shared Cocos tile bundle for H5/Cocos release use."
     },
     "/assets/pixel/terrain/grass-tile-alt.png": {
       "slot": "terrain.grass.alt",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/dirt-tile.png": {
       "slot": "terrain.dirt.default",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/dirt-tile-alt.png": {
       "slot": "terrain.dirt.alt",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/sand-tile.png": {
       "slot": "terrain.sand.default",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/sand-tile-alt.png": {
       "slot": "terrain.sand.alt",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/water-tile.png": {
       "slot": "terrain.water.default",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/water-tile-alt.png": {
       "slot": "terrain.water.alt",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/terrain/fog-tile.png": {
       "slot": "terrain.unknown.default",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/resources/gold-pile.png": {
       "slot": "resource.gold",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/resources/wood-stack.png": {
       "slot": "resource.wood",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/resources/ore-crate.png": {
       "slot": "resource.ore",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/buildings/recruitment-post.png": {
       "slot": "building.recruitment_post",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/buildings/attribute-shrine.png": {
       "slot": "building.attribute_shrine",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/buildings/resource-mine.png": {
       "slot": "building.resource_mine",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/units/hero-guard-basic.png": {
       "slot": "unit.hero_guard_basic.idle",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated",
-      "notes": "Synced from Cocos placeholder icon bundle for H5 pixel preview."
+      "notes": "Promoted from the shared Cocos icon bundle for H5/Cocos release use."
     },
     "/assets/pixel/units/hero-guard-basic-selected.png": {
       "slot": "unit.hero_guard_basic.selected",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/units/hero-guard-basic-hit.png": {
       "slot": "unit.hero_guard_basic.hit",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/frames/unit-frame-ally.png": {
       "slot": "unit.hero_guard_basic.frame",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/units/wolf-pack.png": {
       "slot": "unit.wolf_pack.idle",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/units/wolf-pack-selected.png": {
       "slot": "unit.wolf_pack.selected",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/units/wolf-pack-hit.png": {
       "slot": "unit.wolf_pack.hit",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/frames/unit-frame-enemy.png": {
       "slot": "unit.wolf_pack.frame",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/hero-marker.png": {
       "slot": "marker.hero.idle",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/hero-marker-selected.png": {
       "slot": "marker.hero.selected",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/hero-marker-hit.png": {
       "slot": "marker.hero.hit",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker.png": {
       "slot": "marker.neutral.idle",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker-selected.png": {
       "slot": "marker.neutral.selected",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/markers/neutral-marker-hit.png": {
       "slot": "marker.neutral.hit",
-      "stage": "prototype",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/faction-crown.png": {
       "slot": "badge.factions.crown",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/faction-wild.png": {
       "slot": "badge.factions.wild",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/faction-shadow.png": {
       "slot": "badge.factions.shadow",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/rarity-common.png": {
       "slot": "badge.rarities.common",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/rarity-elite.png": {
       "slot": "badge.rarities.elite",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/interaction-move.png": {
       "slot": "badge.interactions.move",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/interaction-pickup.png": {
       "slot": "badge.interactions.pickup",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/badges/interaction-battle.png": {
       "slot": "badge.interactions.battle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/heroes/hero-guard-basic.png": {
       "slot": "hero.hero_guard_basic.portrait",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated",
       "notes": "Generated pixel portrait scaffold for the primary crown hero."
     },
     "/assets/pixel/heroes/hero-ranger-serin.png": {
       "slot": "hero.hero_ranger_serin.portrait",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/heroes/hero-oracle-lyra.png": {
       "slot": "hero.hero_oracle_lyra.portrait",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/heroes/hero-forgeguard-borin.png": {
       "slot": "hero.hero_forgeguard_borin.portrait",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/buildings/forge-hall.png": {
       "slot": "showcase_building.forge_hall",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-terrain/grassland-tile.png": {
       "slot": "showcase_terrain.grassland",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-terrain/mountain-tile.png": {
       "slot": "showcase_terrain.mountain",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-terrain/water-tile.png": {
       "slot": "showcase_terrain.water",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-terrain/desert-tile.png": {
       "slot": "showcase_terrain.desert",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-terrain/snow-tile.png": {
       "slot": "showcase_terrain.snow",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/sunlance-knight.png": {
       "slot": "showcase_unit.sunlance_knight.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/sunlance-knight-selected.png": {
       "slot": "showcase_unit.sunlance_knight.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/sunlance-knight-hit.png": {
       "slot": "showcase_unit.sunlance_knight.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/moss-stalker.png": {
       "slot": "showcase_unit.moss_stalker.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/moss-stalker-selected.png": {
       "slot": "showcase_unit.moss_stalker.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/moss-stalker-hit.png": {
       "slot": "showcase_unit.moss_stalker.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/ember-mage.png": {
       "slot": "showcase_unit.ember_mage.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/ember-mage-selected.png": {
       "slot": "showcase_unit.ember_mage.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/ember-mage-hit.png": {
       "slot": "showcase_unit.ember_mage.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/iron-walker.png": {
       "slot": "showcase_unit.iron_walker.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/iron-walker-selected.png": {
       "slot": "showcase_unit.iron_walker.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/iron-walker-hit.png": {
       "slot": "showcase_unit.iron_walker.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/dune-raider.png": {
       "slot": "showcase_unit.dune_raider.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/dune-raider-selected.png": {
       "slot": "showcase_unit.dune_raider.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/dune-raider-hit.png": {
       "slot": "showcase_unit.dune_raider.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/glacier-warden.png": {
       "slot": "showcase_unit.glacier_warden.idle",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/glacier-warden-selected.png": {
       "slot": "showcase_unit.glacier_warden.selected",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     },
     "/assets/pixel/showcase-units/glacier-warden-hit.png": {
       "slot": "showcase_unit.glacier_warden.hit",
-      "stage": "placeholder",
+      "stage": "production",
       "source": "generated"
     }
   },
