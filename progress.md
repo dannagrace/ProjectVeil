@@ -1505,3 +1505,22 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:server` 通过
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/wechat-release-artifacts.test.ts ./scripts/test/release-gate-summary.test.ts ./scripts/test/phase1-candidate-rehearsal.test.ts` 通过
+
+## Issue #1174 - WeChat RC DevTools evidence bundle - 2026-04-10
+
+- 本轮把 `release:wechat:rehearsal` 从“prepare / package / verify / validate”四段式彩排，补成了能直接收口 WeChat RC 证据包的工作流：
+  - `scripts/wechat-release-rehearsal.ts`
+    - 新增可选的 `install-launch-evidence` 阶段：当传入 `--candidate --environment --operator --status` 时，会自动调用 `release:wechat:install-launch-evidence`
+    - 新增可选的 `smoke` 阶段：当传入 `--runtime-evidence <json>` 时，会自动生成同目录的 `codex.wechat.smoke-report.json`
+    - `validate` 阶段现在支持直接复用 `--manual-checks <json>`，这样同一条 rehearsal 可以把 candidate summary / RC validation / smoke / DevTools 验收记录一起收成一个 artifacts dir
+    - 摘要里的 `## Artifacts` 也补出了 `codex.wechat.install-launch-evidence.json/.md`，方便 reviewer 直接校对同一候选 revision 的开发者工具验收记录
+  - `scripts/test/wechat-release-rehearsal.test.ts`
+    - 新增“带 DevTools install-launch evidence + runtime evidence + manual review”的完整 rehearsal 覆盖
+    - 锁住新增阶段顺序、artifact 检测和 candidate summary 产出，避免以后回退到只剩 package/verify
+  - `docs/wechat-minigame-release.md`
+    - 补上了一条 one-shot 命令示例，说明如何在同一次 rehearsal 里把 DevTools 验收记录、smoke report 和 candidate summary 收到同一候选包
+  - `docs/release-script-inventory.md`
+    - 同步更新 `release:wechat:rehearsal` 的能力说明与产物列表
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/wechat-release-artifacts.test.ts` 通过

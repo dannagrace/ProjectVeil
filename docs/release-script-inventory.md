@@ -393,11 +393,14 @@ Relevant scripts: 48
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/wechat-release-rehearsal.ts`
-- Purpose: Run the WeChat release rehearsal flow that chains prepare, package, verify, and validate steps into one summary.
+- Purpose: Run the WeChat release rehearsal flow that chains prepare, package, verify, and optionally install/launch evidence, smoke, and RC validation into one summary.
 - Required inputs:
   - A WeChat build directory plus an artifacts directory; optional config/summary path overrides.
+  - Pass `--candidate --environment --operator --status` to record DevTools install/launch evidence during the same run.
+  - Pass `--runtime-evidence <json>` to generate `codex.wechat.smoke-report.json` during the same run.
+  - Pass `--manual-checks <json>` when the rehearsal should also emit a ready/blocked candidate summary instead of a pending template.
 - Produced artifacts:
-  - Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, and upload artifacts it references.
+  - Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, install/launch evidence, and upload artifacts it references.
 
 ## `smoke:client:boot-room`
 

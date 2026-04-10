@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 type StageStatus = "passed" | "failed" | "skipped";
+type VerificationStatus = "passed" | "failed";
 
 interface Args {
   configPath: string;
@@ -15,6 +16,20 @@ interface Args {
   summaryPath?: string;
   markdownPath?: string;
   requireSmokeReport: boolean;
+  candidate?: string;
+  candidateRevision?: string;
+  environment?: string;
+  operator?: string;
+  recordedAt?: string;
+  status?: VerificationStatus;
+  installStatus?: VerificationStatus;
+  launchStatus?: VerificationStatus;
+  verificationSummary?: string;
+  installSummary?: string;
+  launchSummary?: string;
+  runtimeEvidencePath?: string;
+  manualChecksPath?: string;
+  evidence: string[];
 }
 
 interface GitRevision {
@@ -68,11 +83,23 @@ interface DetectedArtifacts {
   validationReportPath?: string;
   smokeReportPath?: string;
   uploadReceiptPath?: string;
+  installLaunchEvidenceJsonPath?: string;
+  installLaunchEvidenceMarkdownPath?: string;
   candidateSummaryJsonPath?: string;
   candidateSummaryMarkdownPath?: string;
 }
 
 const OUTPUT_LIMIT = 4000;
+
+function parseStatus(value: string | undefined, flag: string): VerificationStatus | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value === "passed" || value === "failed") {
+    return value;
+  }
+  throw new Error(`Unsupported ${flag} value: ${value}`);
+}
 
 function parseArgs(argv: string[]): Args {
   let configPath = "apps/cocos-client/wechat-minigame.build.json";
@@ -85,6 +112,20 @@ function parseArgs(argv: string[]): Args {
   let summaryPath: string | undefined;
   let markdownPath: string | undefined;
   let requireSmokeReport = false;
+  let candidate: string | undefined;
+  let candidateRevision: string | undefined;
+  let environment: string | undefined;
+  let operator: string | undefined;
+  let recordedAt: string | undefined;
+  let status: VerificationStatus | undefined;
+  let installStatus: VerificationStatus | undefined;
+  let launchStatus: VerificationStatus | undefined;
+  let verificationSummary: string | undefined;
+  let installSummary: string | undefined;
+  let launchSummary: string | undefined;
+  let runtimeEvidencePath: string | undefined;
+  let manualChecksPath: string | undefined;
+  const evidence: string[] = [];
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -139,6 +180,79 @@ function parseArgs(argv: string[]): Args {
       requireSmokeReport = true;
       continue;
     }
+    if (arg === "--candidate" && next) {
+      candidate = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--candidate-revision" && next) {
+      candidateRevision = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--environment" && next) {
+      environment = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--operator" && next) {
+      operator = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--recorded-at" && next) {
+      recordedAt = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--status" && next) {
+      status = parseStatus(next.trim(), "--status");
+      index += 1;
+      continue;
+    }
+    if (arg === "--install-status" && next) {
+      installStatus = parseStatus(next.trim(), "--install-status");
+      index += 1;
+      continue;
+    }
+    if (arg === "--launch-status" && next) {
+      launchStatus = parseStatus(next.trim(), "--launch-status");
+      index += 1;
+      continue;
+    }
+    if (arg === "--verification-summary" && next) {
+      verificationSummary = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--install-summary" && next) {
+      installSummary = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--launch-summary" && next) {
+      launchSummary = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-evidence" && next) {
+      runtimeEvidencePath = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--manual-checks" && next) {
+      manualChecksPath = next.trim() || undefined;
+      index += 1;
+      continue;
+    }
+    if (arg === "--evidence" && next) {
+      const value = next.trim();
+      if (value) {
+        evidence.push(value);
+      }
+      index += 1;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -153,7 +267,21 @@ function parseArgs(argv: string[]): Args {
     ...(packageName ? { packageName } : {}),
     ...(summaryPath ? { summaryPath } : {}),
     ...(markdownPath ? { markdownPath } : {}),
-    requireSmokeReport
+    requireSmokeReport,
+    ...(candidate ? { candidate } : {}),
+    ...(candidateRevision ? { candidateRevision } : {}),
+    ...(environment ? { environment } : {}),
+    ...(operator ? { operator } : {}),
+    ...(recordedAt ? { recordedAt } : {}),
+    ...(status ? { status } : {}),
+    ...(installStatus ? { installStatus } : {}),
+    ...(launchStatus ? { launchStatus } : {}),
+    ...(verificationSummary ? { verificationSummary } : {}),
+    ...(installSummary ? { installSummary } : {}),
+    ...(launchSummary ? { launchSummary } : {}),
+    ...(runtimeEvidencePath ? { runtimeEvidencePath } : {}),
+    ...(manualChecksPath ? { manualChecksPath } : {}),
+    evidence
   };
 }
 
@@ -285,6 +413,8 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
   const report = entries.find((entry) => entry === "codex.wechat.rc-validation-report.json");
   const smoke = entries.find((entry) => entry === "codex.wechat.smoke-report.json");
   const receipt = entries.find((entry) => entry.endsWith(".upload.json"));
+  const installLaunchEvidenceJson = entries.find((entry) => entry === "codex.wechat.install-launch-evidence.json");
+  const installLaunchEvidenceMarkdown = entries.find((entry) => entry === "codex.wechat.install-launch-evidence.md");
   const candidateSummaryJson = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.json");
   const candidateSummaryMarkdown = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.md");
   return {
@@ -293,6 +423,8 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
     ...(report ? { validationReportPath: path.join(artifactsDir, report) } : {}),
     ...(smoke ? { smokeReportPath: path.join(artifactsDir, smoke) } : {}),
     ...(receipt ? { uploadReceiptPath: path.join(artifactsDir, receipt) } : {}),
+    ...(installLaunchEvidenceJson ? { installLaunchEvidenceJsonPath: path.join(artifactsDir, installLaunchEvidenceJson) } : {}),
+    ...(installLaunchEvidenceMarkdown ? { installLaunchEvidenceMarkdownPath: path.join(artifactsDir, installLaunchEvidenceMarkdown) } : {}),
     ...(candidateSummaryJson ? { candidateSummaryJsonPath: path.join(artifactsDir, candidateSummaryJson) } : {}),
     ...(candidateSummaryMarkdown
       ? { candidateSummaryMarkdownPath: path.join(artifactsDir, candidateSummaryMarkdown) }
@@ -341,6 +473,12 @@ function renderMarkdown(summary: RehearsalSummary): string {
   if (artifacts.uploadReceiptPath) {
     artifactLines.push(`- Upload Receipt: \`${artifacts.uploadReceiptPath}\``);
   }
+  if (artifacts.installLaunchEvidenceJsonPath) {
+    artifactLines.push(`- Install/Launch Evidence (JSON): \`${artifacts.installLaunchEvidenceJsonPath}\``);
+  }
+  if (artifacts.installLaunchEvidenceMarkdownPath) {
+    artifactLines.push(`- Install/Launch Evidence (Markdown): \`${artifacts.installLaunchEvidenceMarkdownPath}\``);
+  }
   if (artifacts.candidateSummaryJsonPath) {
     artifactLines.push(`- Candidate Summary (JSON): \`${artifacts.candidateSummaryJsonPath}\``);
   }
@@ -365,9 +503,43 @@ function main(): void {
   const resolvedArtifactsDir = path.resolve(repoRoot, args.artifactsDir);
   const sourceRevision = args.sourceRevision ?? revision.commit ?? undefined;
   const expectedRevision = args.expectedRevision ?? sourceRevision;
+  const resolvedRuntimeEvidencePath = args.runtimeEvidencePath ? path.resolve(repoRoot, args.runtimeEvidencePath) : undefined;
+  const resolvedManualChecksPath = args.manualChecksPath ? path.resolve(repoRoot, args.manualChecksPath) : undefined;
   const summaryBaseName = revision.shortCommit ? `wechat-release-rehearsal-${revision.shortCommit}` : `wechat-release-rehearsal`;
   const summaryPath = path.resolve(repoRoot, args.summaryPath ?? path.join(args.artifactsDir, `${summaryBaseName}.json`));
   const markdownPath = path.resolve(repoRoot, args.markdownPath ?? path.join(args.artifactsDir, `${summaryBaseName}.md`));
+  const smokeReportPath = path.join(resolvedArtifactsDir, "codex.wechat.smoke-report.json");
+
+  const hasInstallLaunchOptions =
+    Boolean(
+      args.candidate ||
+        args.candidateRevision ||
+        args.environment ||
+        args.operator ||
+        args.recordedAt ||
+        args.status ||
+        args.installStatus ||
+        args.launchStatus ||
+        args.verificationSummary ||
+        args.installSummary ||
+        args.launchSummary
+    ) || args.evidence.length > 0;
+  const shouldRecordInstallLaunchEvidence = hasInstallLaunchOptions;
+
+  if (hasInstallLaunchOptions) {
+    if (!args.candidate?.trim()) {
+      throw new Error("Pass --candidate <candidate-name> when recording WeChat install/launch evidence in the rehearsal.");
+    }
+    if (!args.environment?.trim()) {
+      throw new Error("Pass --environment <wechat-devtools|device-lab|qa-phone> when recording WeChat install/launch evidence.");
+    }
+    if (!args.operator?.trim()) {
+      throw new Error("Pass --operator <name> when recording WeChat install/launch evidence.");
+    }
+    if (!args.status && !args.installStatus && !args.launchStatus) {
+      throw new Error("Pass --status <passed|failed> or explicit --install-status/--launch-status when recording WeChat install/launch evidence.");
+    }
+  }
 
   fs.mkdirSync(resolvedArtifactsDir, { recursive: true });
 
@@ -420,8 +592,60 @@ function main(): void {
         resolvedArtifactsDir,
         ...(expectedRevision ? ["--expected-revision", expectedRevision] : [])
       ]
-    },
-    {
+    }
+  ];
+
+  if (shouldRecordInstallLaunchEvidence) {
+    stageDefinitions.push({
+      id: "install-launch-evidence",
+      title: "Record WeChat install/launch evidence",
+      command: [
+        nodeExec,
+        "--import",
+        "tsx",
+        "./scripts/wechat-package-install-launch-evidence.ts",
+        "--artifacts-dir",
+        resolvedArtifactsDir,
+        "--candidate",
+        args.candidate!.trim(),
+        ...(args.candidateRevision?.trim() ? ["--candidate-revision", args.candidateRevision.trim()] : []),
+        "--environment",
+        args.environment!.trim(),
+        "--operator",
+        args.operator!.trim(),
+        ...(args.recordedAt?.trim() ? ["--recorded-at", args.recordedAt.trim()] : []),
+        ...(args.status ? ["--status", args.status] : []),
+        ...(args.installStatus ? ["--install-status", args.installStatus] : []),
+        ...(args.launchStatus ? ["--launch-status", args.launchStatus] : []),
+        ...(args.verificationSummary?.trim() ? ["--summary", args.verificationSummary.trim()] : []),
+        ...(args.installSummary?.trim() ? ["--install-summary", args.installSummary.trim()] : []),
+        ...(args.launchSummary?.trim() ? ["--launch-summary", args.launchSummary.trim()] : []),
+        ...args.evidence.flatMap((entry) => ["--evidence", entry])
+      ]
+    });
+  }
+
+  if (resolvedRuntimeEvidencePath) {
+    stageDefinitions.push({
+      id: "smoke",
+      title: "Generate WeChat smoke report",
+      command: [
+        nodeExec,
+        "--import",
+        "tsx",
+        "./scripts/smoke-wechat-minigame-release.ts",
+        "--artifacts-dir",
+        resolvedArtifactsDir,
+        "--report",
+        smokeReportPath,
+        "--runtime-evidence",
+        resolvedRuntimeEvidencePath,
+        "--force"
+      ]
+    });
+  }
+
+  stageDefinitions.push({
       id: "validate",
       title: "Validate release candidate",
       command: [
@@ -433,10 +657,11 @@ function main(): void {
         resolvedArtifactsDir,
         ...(expectedRevision ? ["--expected-revision", expectedRevision] : []),
         ...(args.version ? ["--version", args.version] : []),
-        ...(args.requireSmokeReport ? ["--require-smoke-report"] : [])
+        ...(args.requireSmokeReport ? ["--require-smoke-report"] : []),
+        ...(resolvedManualChecksPath ? ["--manual-checks", resolvedManualChecksPath] : [])
       ]
     }
-  ];
+  );
 
   const stageResults: StageResult[] = [];
   let failureStage: StageResult | undefined;
