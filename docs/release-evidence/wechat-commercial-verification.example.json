@@ -1,0 +1,96 @@
+[
+  {
+    "id": "wechat-payment-e2e",
+    "title": "WeChat payment end-to-end verified",
+    "status": "pending",
+    "required": true,
+    "notes": "Verify payment initiation, callback,到账、失败补偿和风控/完整性事件记录 against the packaged candidate revision.",
+    "owner": "<commerce-owner>",
+    "recordedAt": "<2026-04-10T09:00:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/payment-e2e-review.md",
+    "evidence": [
+      "payment order create evidence",
+      "callback / receipt evidence",
+      "compensation / retry evidence",
+      "payment_fraud_signal analytics capture"
+    ],
+    "acceptedRisks": [
+      {
+        "id": "payment-risk-example",
+        "summary": "Fraud-monitoring alerts stay on-call for the first external rollout window.",
+        "owner": "<commerce-owner>",
+        "expiresAt": "<2026-04-12T09:00:00.000Z>",
+        "artifactPath": "artifacts/wechat-release/payment-e2e-review.md"
+      }
+    ]
+  },
+  {
+    "id": "wechat-subscribe-delivery",
+    "title": "WeChat subscribe-message delivery verified",
+    "status": "pending",
+    "required": true,
+    "notes": "Verify authorization, send preconditions, delivery result, and fallback path for the same candidate revision.",
+    "owner": "<ops-owner>",
+    "recordedAt": "<2026-04-10T09:05:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/subscribe-delivery-review.md",
+    "evidence": [
+      "subscription authorization capture",
+      "message send request/response",
+      "fallback or failure-handling note"
+    ]
+  },
+  {
+    "id": "wechat-analytics-acceptance",
+    "title": "Commercial analytics acceptance verified",
+    "status": "pending",
+    "required": true,
+    "notes": "Verify funnel, retention, monetization, and error events are queryable for the packaged candidate.",
+    "owner": "<data-owner>",
+    "recordedAt": "<2026-04-10T09:10:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/analytics-acceptance-review.md",
+    "evidence": [
+      "funnel evidence",
+      "retention evidence",
+      "purchase event evidence",
+      "error event evidence"
+    ]
+  },
+  {
+    "id": "wechat-compliance-review",
+    "title": "Commercial compliance and submission material reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Verify privacy text, minor-protection wording, customer-feedback entry, and submission notes/materials for the packaged candidate.",
+    "owner": "<compliance-owner>",
+    "recordedAt": "<2026-04-10T09:15:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/compliance-review.md",
+    "evidence": [
+      "privacy copy capture",
+      "minor-protection wording",
+      "customer-service or feedback entry capture",
+      "submission note or review packet"
+    ]
+  },
+  {
+    "id": "wechat-device-experience-review",
+    "title": "Physical-device experience reviewed",
+    "status": "pending",
+    "required": true,
+    "notes": "Verify startup, reconnect, weak-network, audio, frame rate, memory, and safe-area/orientation behavior on the same candidate revision.",
+    "owner": "<qa-owner>",
+    "recordedAt": "<2026-04-10T09:20:00.000Z>",
+    "revision": "<git-sha>",
+    "artifactPath": "artifacts/wechat-release/device-experience-review.md",
+    "evidence": [
+      "startup capture",
+      "weak-network / reconnect capture",
+      "audio verification note",
+      "frame-rate or memory note",
+      "safe-area / orientation capture"
+    ]
+  }
+]

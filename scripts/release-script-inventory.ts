@@ -208,6 +208,17 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`codex.wechat.install-launch-evidence.md` in the selected artifacts directory.",
     ],
   },
+  "release:wechat:commercial-verification": {
+    purpose:
+      "Aggregate the candidate-scoped WeChat commercial verification contract on top of validate:wechat-rc, covering payment, delivery, analytics, compliance, and physical-device review.",
+    requiredInputs: [
+      "Pass `--artifacts-dir`; optionally provide `--checks`, `--wechat-candidate-summary`, `--candidate`, and `--candidate-revision` to pin the commercial review packet.",
+    ],
+    producedArtifacts: [
+      "`codex.wechat.commercial-verification-<short-sha>.json` in the selected artifacts directory.",
+      "`codex.wechat.commercial-verification-<short-sha>.md` in the selected artifacts directory.",
+    ],
+  },
   "release:runtime-observability:evidence": {
     purpose: "Capture candidate-scoped runtime endpoint evidence for one target environment, including raw health, auth-readiness, and metrics payloads.",
     requiredInputs: [
