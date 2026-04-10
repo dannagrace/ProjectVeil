@@ -29,6 +29,9 @@ interface Args {
   launchSummary?: string;
   runtimeEvidencePath?: string;
   manualChecksPath?: string;
+  runCommercialVerification: boolean;
+  commercialChecksPath?: string;
+  commercialFreshnessHours?: number;
   evidence: string[];
 }
 
@@ -87,6 +90,8 @@ interface DetectedArtifacts {
   installLaunchEvidenceMarkdownPath?: string;
   candidateSummaryJsonPath?: string;
   candidateSummaryMarkdownPath?: string;
+  commercialVerificationJsonPath?: string;
+  commercialVerificationMarkdownPath?: string;
 }
 
 const OUTPUT_LIMIT = 4000;
@@ -125,6 +130,9 @@ function parseArgs(argv: string[]): Args {
   let launchSummary: string | undefined;
   let runtimeEvidencePath: string | undefined;
   let manualChecksPath: string | undefined;
+  let runCommercialVerification = false;
+  let commercialChecksPath: string | undefined;
+  let commercialFreshnessHours: number | undefined;
   const evidence: string[] = [];
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -245,6 +253,25 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--run-commercial-verification") {
+      runCommercialVerification = true;
+      continue;
+    }
+    if (arg === "--commercial-checks" && next) {
+      commercialChecksPath = next.trim() || undefined;
+      runCommercialVerification = true;
+      index += 1;
+      continue;
+    }
+    if (arg === "--commercial-freshness-hours" && next) {
+      commercialFreshnessHours = Number.parseInt(next, 10);
+      if (!Number.isFinite(commercialFreshnessHours) || commercialFreshnessHours <= 0) {
+        throw new Error(`--commercial-freshness-hours must be a positive integer, received: ${next}`);
+      }
+      runCommercialVerification = true;
+      index += 1;
+      continue;
+    }
     if (arg === "--evidence" && next) {
       const value = next.trim();
       if (value) {
@@ -281,6 +308,9 @@ function parseArgs(argv: string[]): Args {
     ...(launchSummary ? { launchSummary } : {}),
     ...(runtimeEvidencePath ? { runtimeEvidencePath } : {}),
     ...(manualChecksPath ? { manualChecksPath } : {}),
+    runCommercialVerification,
+    ...(commercialChecksPath ? { commercialChecksPath } : {}),
+    ...(commercialFreshnessHours ? { commercialFreshnessHours } : {}),
     evidence
   };
 }
@@ -417,6 +447,12 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
   const installLaunchEvidenceMarkdown = entries.find((entry) => entry === "codex.wechat.install-launch-evidence.md");
   const candidateSummaryJson = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.json");
   const candidateSummaryMarkdown = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.md");
+  const commercialVerificationJson = entries
+    .filter((entry) => entry.startsWith("codex.wechat.commercial-verification-") && entry.endsWith(".json"))
+    .sort()[0];
+  const commercialVerificationMarkdown = entries
+    .filter((entry) => entry.startsWith("codex.wechat.commercial-verification-") && entry.endsWith(".md"))
+    .sort()[0];
   return {
     ...(archive ? { archivePath: path.join(artifactsDir, archive) } : {}),
     ...(metadata ? { metadataPath: path.join(artifactsDir, metadata) } : {}),
@@ -428,6 +464,12 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
     ...(candidateSummaryJson ? { candidateSummaryJsonPath: path.join(artifactsDir, candidateSummaryJson) } : {}),
     ...(candidateSummaryMarkdown
       ? { candidateSummaryMarkdownPath: path.join(artifactsDir, candidateSummaryMarkdown) }
+      : {}),
+    ...(commercialVerificationJson
+      ? { commercialVerificationJsonPath: path.join(artifactsDir, commercialVerificationJson) }
+      : {}),
+    ...(commercialVerificationMarkdown
+      ? { commercialVerificationMarkdownPath: path.join(artifactsDir, commercialVerificationMarkdown) }
       : {})
   };
 }
@@ -485,6 +527,12 @@ function renderMarkdown(summary: RehearsalSummary): string {
   if (artifacts.candidateSummaryMarkdownPath) {
     artifactLines.push(`- Candidate Summary (Markdown): \`${artifacts.candidateSummaryMarkdownPath}\``);
   }
+  if (artifacts.commercialVerificationJsonPath) {
+    artifactLines.push(`- Commercial Verification (JSON): \`${artifacts.commercialVerificationJsonPath}\``);
+  }
+  if (artifacts.commercialVerificationMarkdownPath) {
+    artifactLines.push(`- Commercial Verification (Markdown): \`${artifacts.commercialVerificationMarkdownPath}\``);
+  }
   if (artifactLines.length > 0) {
     lines.push("\n## Artifacts\n\n");
     lines.push(artifactLines.join("\n"));
@@ -505,6 +553,7 @@ function main(): void {
   const expectedRevision = args.expectedRevision ?? sourceRevision;
   const resolvedRuntimeEvidencePath = args.runtimeEvidencePath ? path.resolve(repoRoot, args.runtimeEvidencePath) : undefined;
   const resolvedManualChecksPath = args.manualChecksPath ? path.resolve(repoRoot, args.manualChecksPath) : undefined;
+  const resolvedCommercialChecksPath = args.commercialChecksPath ? path.resolve(repoRoot, args.commercialChecksPath) : undefined;
   const summaryBaseName = revision.shortCommit ? `wechat-release-rehearsal-${revision.shortCommit}` : `wechat-release-rehearsal`;
   const summaryPath = path.resolve(repoRoot, args.summaryPath ?? path.join(args.artifactsDir, `${summaryBaseName}.json`));
   const markdownPath = path.resolve(repoRoot, args.markdownPath ?? path.join(args.artifactsDir, `${summaryBaseName}.md`));
@@ -662,6 +711,27 @@ function main(): void {
       ]
     }
   );
+
+  if (args.runCommercialVerification) {
+    stageDefinitions.push({
+      id: "commercial-verification",
+      title: "Generate commercial verification summary",
+      command: [
+        nodeExec,
+        "--import",
+        "tsx",
+        "./scripts/wechat-commercial-verification.ts",
+        "--artifacts-dir",
+        resolvedArtifactsDir,
+        ...(resolvedCommercialChecksPath ? ["--checks", resolvedCommercialChecksPath] : []),
+        ...(args.candidate?.trim() ? ["--candidate", args.candidate.trim()] : []),
+        ...((args.candidateRevision ?? expectedRevision)?.trim()
+          ? ["--candidate-revision", (args.candidateRevision ?? expectedRevision)!.trim()]
+          : []),
+        ...(args.commercialFreshnessHours ? ["--freshness-hours", String(args.commercialFreshnessHours)] : [])
+      ]
+    });
+  }
 
   const stageResults: StageResult[] = [];
   let failureStage: StageResult | undefined;

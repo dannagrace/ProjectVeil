@@ -45,7 +45,7 @@ Relevant scripts: 49
 | `release:same-candidate:evidence-audit` | release | `artifacts/release-readiness/candidate-evidence-audit-<candidate>-<short-sha>.json` |
 | `release:wechat:commercial-verification` | release | `codex.wechat.commercial-verification-<short-sha>.json` in the selected artifacts directory. |
 | `release:wechat:install-launch-evidence` | release | `codex.wechat.install-launch-evidence.json` in the selected artifacts directory. |
-| `release:wechat:rehearsal` | release | Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, and upload artifacts it references. |
+| `release:wechat:rehearsal` | release | Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, commercial verification, and upload artifacts they reference. |
 | `smoke:client:boot-room` | smoke | `artifacts/release-readiness/client-boot-room-smoke-<short-sha>.json` when an explicit output path is used, or console smoke verdict output by default. |
 | `smoke:client:release-candidate` | smoke | `artifacts/release-readiness/client-release-candidate-smoke-<short-sha>-<timestamp>.json` |
 | `smoke:cocos:canonical-journey` | smoke | `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json` |
@@ -404,11 +404,11 @@ Relevant scripts: 49
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/wechat-release-rehearsal.ts`
-- Purpose: Run the WeChat release rehearsal flow that chains prepare, package, verify, and validate steps into one summary.
+- Purpose: Run the WeChat release rehearsal flow that chains prepare, package, verify, validate, and optional commercial verification steps into one summary.
 - Required inputs:
-  - A WeChat build directory plus an artifacts directory; optional config/summary path overrides.
+  - A WeChat build directory plus an artifacts directory; optional config/summary path overrides, install/smoke/manual-review inputs, and `--run-commercial-verification` / `--commercial-checks` when the rehearsal should also emit the commercial verification artifact.
 - Produced artifacts:
-  - Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, and upload artifacts it references.
+  - Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, commercial verification, and upload artifacts they reference.
 
 ## `smoke:client:boot-room`
 

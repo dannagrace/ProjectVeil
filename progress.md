@@ -1573,3 +1573,24 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`10/10`）
+
+## Issue #1187 - WeChat rehearsal commercial verification stage - 2026-04-10
+
+- 本轮把 `release:wechat:rehearsal` 从“技术候选包彩排”继续推进成“可选收口商运结论”的一键链路：
+  - `scripts/wechat-release-rehearsal.ts`
+    - 新增 `--run-commercial-verification`，用于在 rehearsal 末尾追加 `release:wechat:commercial-verification`
+    - 新增 `--commercial-checks <json>` 与 `--commercial-freshness-hours <hours>`，可直接把 candidate 专属商运复核 contract 透传给 commercial verification 阶段
+    - `DetectedArtifacts` 和 Markdown summary 现在会自动收集并展示 `codex.wechat.commercial-verification-<short-sha>.json/.md`
+    - 保持旧调用方式不变：不传上述参数时，rehearsal 仍只跑原有 `prepare / package / verify / install-launch / smoke / validate`
+- 文档与 inventory 已同步：
+  - `docs/wechat-minigame-release.md`
+    - 更新 `release:wechat:rehearsal` 的命令示例与发布彩排摘要，明确可选 commercial verification 阶段
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 更新 `release:wechat:rehearsal` 的职责与产物说明
+- 测试收口：
+  - `scripts/test/wechat-release-rehearsal.test.ts`
+    - 新增“rehearsal 可追加 commercial verification artifacts”的完整覆盖
+    - 断言阶段序列扩展为 `prepare -> package -> verify -> install-launch-evidence -> smoke -> validate -> commercial-verification`
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`7/7`）
