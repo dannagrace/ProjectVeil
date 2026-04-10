@@ -29,7 +29,7 @@ Relevant scripts: 49
 | `release:health:trend-baseline` | release | `artifacts/release-readiness/release-health-trend-baseline.json` |
 | `release:health:trend-compare` | release | `artifacts/release-readiness/release-health-trend-compare.json` |
 | `release:phase1:candidate-dossier` | release | Bundle directory `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/` with `phase1-candidate-dossier.json/.md`, `runtime-observability-dossier.json/.md`, `release-gate-summary.json/.md`, and `release-health-summary.json/.md`. |
-| `release:phase1:candidate-rehearsal` | release | Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, final go/no-go packet, and a top-level `SUMMARY.md`. |
+| `release:phase1:candidate-rehearsal` | release | Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, final go/no-go packet, and a top-level `SUMMARY.md`. |
 | `release:phase1:evidence-drift-gate` | release | `artifacts/release-readiness/phase1-release-evidence-drift-gate-<candidate>-<short-sha>.json` |
 | `release:phase1:exit-audit` | release | `artifacts/release-readiness/phase1-exit-audit-<candidate>-<short-sha>.json` |
 | `release:phase1:exit-dossier-freshness-gate` | release | `artifacts/release-readiness/phase1-exit-dossier-freshness-gate-<candidate>-<short-sha>.json` |
@@ -232,11 +232,11 @@ Relevant scripts: 49
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/phase1-candidate-rehearsal.ts`
-- Purpose: Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the candidate evidence audit, current evidence index, and final go/no-go packet, into one release-readiness bundle directory.
+- Purpose: Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, and final go/no-go packet, into one release-readiness bundle directory.
 - Required inputs:
   - Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.
 - Produced artifacts:
-  - Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, final go/no-go packet, and a top-level `SUMMARY.md`.
+  - Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, final go/no-go packet, and a top-level `SUMMARY.md`.
 
 ## `release:phase1:evidence-drift-gate`
 

@@ -1671,3 +1671,28 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-evidence-index.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`6/6`）
+
+## Issue #1220 - Phase 1 candidate rehearsal exit gates - 2026-04-11
+
+- 本轮把 `release:phase1:candidate-rehearsal` 的最终 reviewer gate 也收进了同一个 candidate packet：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `phase1-exit-audit` 阶段，直接在 rehearsal 中生成 Phase 1 exit audit JSON / Markdown
+    - 新增 `phase1-exit-dossier-freshness-gate` 阶段，校验 dossier / exit audit / snapshot / gate / owner ledger 的同 revision 一致性
+    - final reviewer gate 现在会复用同一轮 rehearsal 已生成的 dossier，并把 exit audit 内部引用的 snapshot / gate / ledger 路径归一到当前 candidate packet
+    - rehearsal artifacts 现在会显式记录：
+      - `phase1ExitAuditPath`
+      - `phase1ExitAuditMarkdownPath`
+      - `phase1ExitDossierFreshnessGatePath`
+      - `phase1ExitDossierFreshnessGateMarkdownPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal 现在会附带 Phase 1 exit audit 与 exit-dossier freshness gate
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 final reviewer gate
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `phase1-exit-audit` 与 `phase1-exit-dossier-freshness-gate` 两个新阶段
+    - 校验 rehearsal summary 会显式列出 final reviewer gate 产物
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/phase1-exit-dossier-freshness-gate.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`7/7`）
