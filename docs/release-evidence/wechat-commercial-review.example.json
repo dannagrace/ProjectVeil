@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-04-10T18:30:00.000Z",
+  "candidate": {
+    "revision": "abc1234def5678",
+    "version": "1.2.3",
+    "status": "blocked"
+  },
+  "summary": {
+    "status": "blocked",
+    "requiredPendingChecks": 2,
+    "requiredFailedChecks": 0,
+    "requiredMetadataFailures": 0
+  },
+  "checks": [
+    {
+      "id": "payment-e2e",
+      "title": "支付链路端到端验证",
+      "category": "payment",
+      "required": true,
+      "status": "pending",
+      "owner": "release-commerce",
+      "recordedAt": "2026-04-10T18:10:00.000Z",
+      "revision": "abc1234def5678",
+      "artifactPath": "artifacts/wechat-release/commercial-payment-review.json",
+      "notes": "待补真实支付发起、回调、到账与失败补偿证据。"
+    },
+    {
+      "id": "subscription-reachability",
+      "title": "订阅消息与触达验证",
+      "category": "subscription",
+      "required": true,
+      "status": "pending",
+      "owner": "release-growth",
+      "recordedAt": "2026-04-10T18:12:00.000Z",
+      "revision": "abc1234def5678",
+      "artifactPath": "artifacts/wechat-release/commercial-subscribe-review.json",
+      "notes": "待补授权、触发条件与失败兜底证据。"
+    },
+    {
+      "id": "analytics-funnel-audit",
+      "title": "核心漏斗与付费埋点验收",
+      "category": "analytics",
+      "required": true,
+      "status": "passed",
+      "owner": "release-analytics",
+      "recordedAt": "2026-04-10T18:14:00.000Z",
+      "revision": "abc1234def5678",
+      "artifactPath": "artifacts/analytics/onboarding-funnel-report.json",
+      "notes": "核心漏斗与错误事件已可用。"
+    },
+    {
+      "id": "compliance-materials",
+      "title": "隐私/未成年人/提审物料复核",
+      "category": "compliance",
+      "required": true,
+      "status": "passed",
+      "owner": "release-compliance",
+      "recordedAt": "2026-04-10T18:16:00.000Z",
+      "revision": "abc1234def5678",
+      "artifactPath": "artifacts/wechat-release/commercial-compliance-review.json",
+      "notes": "隐私协议、未成年人限制、客服入口与提审说明已复核。"
+    },
+    {
+      "id": "device-experience-review",
+      "title": "真机体验复核",
+      "category": "device_experience",
+      "required": true,
+      "status": "pending",
+      "owner": "release-qa",
+      "recordedAt": "2026-04-10T18:18:00.000Z",
+      "revision": "abc1234def5678",
+      "artifactPath": "artifacts/wechat-release/commercial-device-review.json",
+      "notes": "待补弱网、断网恢复、音频、帧率、内存与安全区结论。"
+    }
+  ],
+  "blockers": [
+    {
+      "id": "commercial-signoff-missing",
+      "summary": "商运外放复核尚未形成 complete sign-off。",
+      "artifactPath": "artifacts/wechat-release/codex.wechat.commercial-review.json",
+      "nextCommand": "补齐 payment / subscription / device review 结论后重新生成 go/no-go packet。"
+    }
+  ]
+}

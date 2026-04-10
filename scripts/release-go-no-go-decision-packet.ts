@@ -15,6 +15,7 @@ interface Args {
   releaseGateSummaryPath?: string;
   wechatArtifactsDir?: string;
   wechatCandidateSummaryPath?: string;
+  commercialReviewPath?: string;
   outputPath?: string;
   markdownOutputPath?: string;
 }
@@ -162,12 +163,53 @@ interface WechatManualReviewCheck {
   };
 }
 
+interface CommercialReviewCheck {
+  id?: string;
+  title?: string;
+  category?: "payment" | "subscription" | "analytics" | "compliance" | "device_experience";
+  required?: boolean;
+  status?: ManualCheckStatus;
+  owner?: string;
+  recordedAt?: string;
+  revision?: string;
+  artifactPath?: string;
+  notes?: string;
+  waiver?: {
+    approvedBy?: string;
+    approvedAt?: string;
+    reason?: string;
+    expiresAt?: string;
+  };
+}
+
+interface CommercialReviewDocument {
+  generatedAt?: string;
+  candidate?: {
+    revision?: string | null;
+    version?: string | null;
+    status?: "ready" | "blocked";
+  };
+  summary?: {
+    status?: "ready" | "blocked";
+    requiredPendingChecks?: number;
+    requiredFailedChecks?: number;
+    requiredMetadataFailures?: number;
+  };
+  checks?: CommercialReviewCheck[];
+  blockers?: Array<{
+    id?: string;
+    summary?: string;
+    artifactPath?: string;
+    nextCommand?: string;
+  }>;
+}
+
 interface PacketItem {
   id: string;
   title: string;
   severity: PacketSeverity;
   summary: string;
-  source: "candidate-dossier" | "release-gate-summary" | "wechat-manual-review";
+  source: "candidate-dossier" | "release-gate-summary" | "wechat-manual-review" | "commercial-review";
   artifactPath?: string;
   nextStep?: string;
 }
@@ -216,17 +258,26 @@ interface GoNoGoDecisionPacket {
     runtimeObservabilityDossierPath?: string;
     releaseGateSummaryPath: string;
     wechatCandidateSummaryPath?: string;
+    commercialReviewPath?: string;
   };
   sections: {
     candidateMetadata: {
       dossierGeneratedAt: string;
       releaseGateGeneratedAt: string;
       wechatCandidateSummaryGeneratedAt?: string;
+      commercialReviewGeneratedAt?: string;
     };
     validationSummary: {
       releaseGateStatus: GateStatus;
       phase1ExitEvidenceGate: DossierResult;
       summary: string;
+    };
+    commercialReadinessSummary: {
+      status: "not_provided" | "ready" | "blocked";
+      summary: string;
+      requiredPendingChecks: number;
+      requiredFailedChecks: number;
+      requiredMetadataFailures: number;
     };
     blockerSummary: {
       blockers: PacketItem[];
@@ -235,11 +286,17 @@ interface GoNoGoDecisionPacket {
     };
     runtimeObservabilitySignoffLinks: RuntimeObservabilityLink[];
     unresolvedManualChecks: UnresolvedManualCheck[];
+    unresolvedCommercialChecks: UnresolvedManualCheck[];
   };
 }
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
+const COMMERCIAL_REVIEW_FILENAMES = [
+  "codex.wechat.commercial-review.json",
+  "wechat-commercial-review.json",
+  "commercial-review.json"
+] as const;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -252,6 +309,7 @@ function parseArgs(argv: string[]): Args {
   let releaseGateSummaryPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let wechatCandidateSummaryPath: string | undefined;
+  let commercialReviewPath: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
 
@@ -289,6 +347,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--commercial-review" && next) {
+      commercialReviewPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -310,6 +373,7 @@ function parseArgs(argv: string[]): Args {
     ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
+    ...(commercialReviewPath ? { commercialReviewPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {})
   };
@@ -477,6 +541,30 @@ function resolveWechatCandidateSummaryPath(
   return undefined;
 }
 
+function resolveCommercialReviewPath(args: Args, releaseGateSummaryPath: string): string | undefined {
+  if (args.commercialReviewPath) {
+    return requireExistingFile(
+      args.commercialReviewPath,
+      "Commercial review evidence",
+      "Pass a valid `--commercial-review <path>` or place `codex.wechat.commercial-review.json` under the WeChat artifacts dir."
+    );
+  }
+
+  const wechatArtifactsDir = resolveWechatArtifactsDir(args, releaseGateSummaryPath);
+  if (!wechatArtifactsDir) {
+    return undefined;
+  }
+
+  for (const fileName of COMMERCIAL_REVIEW_FILENAMES) {
+    const candidate = path.join(wechatArtifactsDir, fileName);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
 function toPacketSeverity(result: DossierResult | GateStatus): PacketSeverity {
   if (result === "failed") {
     return "blocker";
@@ -497,8 +585,72 @@ function manualCheckSeverity(check: WechatManualReviewCheck): PacketSeverity {
   return "pass";
 }
 
+function commercialCheckSeverity(check: CommercialReviewCheck, metadataFailures: string[]): PacketSeverity {
+  if (metadataFailures.length > 0) {
+    return "blocker";
+  }
+  if (check.status === "failed") {
+    return "blocker";
+  }
+  if (check.status === "pending") {
+    return check.required === false ? "warning" : "blocker";
+  }
+  if (check.status === "not_applicable") {
+    if (check.required === false) {
+      return "pass";
+    }
+    return check.waiver?.reason ? "warning" : "blocker";
+  }
+  if (check.waiver?.reason) {
+    return "warning";
+  }
+  return "pass";
+}
+
 function normalizeItemId(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function normalizeCheckCategory(check: CommercialReviewCheck): string {
+  switch (check.category) {
+    case "payment":
+      return "支付";
+    case "subscription":
+      return "订阅消息";
+    case "analytics":
+      return "埋点/分析";
+    case "compliance":
+      return "合规";
+    case "device_experience":
+      return "真机体验";
+    default:
+      return "商运";
+  }
+}
+
+function collectCommercialMetadataFailures(
+  check: CommercialReviewCheck,
+  candidateRevision: string
+): string[] {
+  const failures: string[] = [];
+  if (check.required === false) {
+    return failures;
+  }
+  if (!check.owner?.trim()) {
+    failures.push("missing owner");
+  }
+  if (!check.recordedAt?.trim()) {
+    failures.push("missing recordedAt");
+  }
+  if (!check.revision?.trim()) {
+    failures.push("missing revision");
+  } else if (check.revision !== candidateRevision) {
+    failures.push(`revision mismatch (${check.revision})`);
+  }
+  if (!check.artifactPath?.trim()) {
+    failures.push("missing artifactPath");
+  }
+  return failures;
 }
 
 function summarizeValidation(dossier: Phase1CandidateDossier, releaseGate: ReleaseGateSummaryReport): string {
@@ -536,6 +688,8 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
   const wechatCandidateSummary = wechatCandidateSummaryPath
     ? readJsonFile<WechatCandidateSummary>(wechatCandidateSummaryPath)
     : undefined;
+  const commercialReviewPath = resolveCommercialReviewPath(args, releaseGateSummaryPath);
+  const commercialReview = commercialReviewPath ? readJsonFile<CommercialReviewDocument>(commercialReviewPath) : undefined;
 
   const passing: PacketItem[] = [];
   const warnings: PacketItem[] = [];
@@ -671,6 +825,94 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
       notes: check.notes
     }));
 
+  const commercialChecks = commercialReview?.checks ?? [];
+  const unresolvedCommercialChecks: UnresolvedManualCheck[] = [];
+  let commercialRequiredPendingChecks = 0;
+  let commercialRequiredFailedChecks = 0;
+  let commercialRequiredMetadataFailures = 0;
+
+  for (const check of commercialChecks) {
+    const metadataFailures = collectCommercialMetadataFailures(check, dossier.candidate.revision);
+    if (check.required !== false) {
+      if (check.status === "pending") {
+        commercialRequiredPendingChecks += 1;
+      }
+      if (check.status === "failed") {
+        commercialRequiredFailedChecks += 1;
+      }
+      if (metadataFailures.length > 0) {
+        commercialRequiredMetadataFailures += 1;
+      }
+    }
+
+    const category = normalizeCheckCategory(check);
+    const severity = commercialCheckSeverity(check, metadataFailures);
+    const detailSummary = [
+      `${category}检查状态为 ${check.status ?? "pending"}.`,
+      check.notes?.trim() ?? null,
+      metadataFailures.length > 0 ? `Metadata: ${metadataFailures.join(", ")}.` : null,
+      check.waiver?.reason ? `Waiver: ${check.waiver.reason}` : null
+    ]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(" ");
+
+    const item: PacketItem = {
+      id: check.id ? `commercial:${check.id}` : `commercial:${normalizeItemId(check.title ?? category)}`,
+      title: `${category} - ${check.title ?? check.id ?? "商业化复核项"}`,
+      severity,
+      summary: detailSummary,
+      source: "commercial-review",
+      artifactPath: check.artifactPath
+    };
+
+    if (severity === "blocker") {
+      blockers.push(item);
+    } else if (severity === "warning") {
+      warnings.push(item);
+    } else {
+      passing.push(item);
+    }
+
+    if (severity !== "pass") {
+      unresolvedCommercialChecks.push({
+        id: check.id ?? "commercial-check",
+        title: `${category} - ${check.title ?? check.id ?? "商业化复核项"}`,
+        status: check.status ?? "pending",
+        owner: check.owner,
+        recordedAt: check.recordedAt,
+        revision: check.revision,
+        artifactPath: check.artifactPath,
+        notes: detailSummary,
+        waiverReason: check.waiver?.reason
+      });
+    }
+  }
+
+  for (const blocker of commercialReview?.blockers ?? []) {
+    blockers.push({
+      id: blocker.id ? `commercial:${blocker.id}` : "commercial:blocker",
+      title: blocker.id ?? "Commercial blocker",
+      severity: "blocker",
+      summary: blocker.summary ?? "Commercial review reported a blocker.",
+      source: "commercial-review",
+      artifactPath: blocker.artifactPath,
+      nextStep: blocker.nextCommand
+    });
+  }
+
+  const commercialReadinessStatus =
+    !commercialReview
+      ? "not_provided"
+      : commercialRequiredPendingChecks > 0 || commercialRequiredFailedChecks > 0 || commercialRequiredMetadataFailures > 0 || (commercialReview.blockers?.length ?? 0) > 0
+        ? "blocked"
+        : "ready";
+  const commercialReadinessSummary =
+    commercialReadinessStatus === "not_provided"
+      ? "No commercial review evidence was attached to this packet."
+      : commercialReadinessStatus === "ready"
+        ? "Commercial release review is ready for this candidate."
+        : `Commercial release review is blocked: pending=${commercialRequiredPendingChecks}, failed=${commercialRequiredFailedChecks}, metadataFailures=${commercialRequiredMetadataFailures}, explicitBlockers=${commercialReview?.blockers?.length ?? 0}.`;
+
   const decision: PacketDecision = blockers.length > 0 ? "no_go" : "go";
   const decisionSummary =
     decision === "go"
@@ -697,18 +939,27 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
       dossierPath,
       ...(runtimeObservabilityDossierPath ? { runtimeObservabilityDossierPath } : {}),
       releaseGateSummaryPath,
-      ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {})
+      ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
+      ...(commercialReviewPath ? { commercialReviewPath } : {})
     },
     sections: {
       candidateMetadata: {
         dossierGeneratedAt: dossier.generatedAt,
         releaseGateGeneratedAt: releaseGate.generatedAt,
-        ...(wechatCandidateSummary?.generatedAt ? { wechatCandidateSummaryGeneratedAt: wechatCandidateSummary.generatedAt } : {})
+        ...(wechatCandidateSummary?.generatedAt ? { wechatCandidateSummaryGeneratedAt: wechatCandidateSummary.generatedAt } : {}),
+        ...(commercialReview?.generatedAt ? { commercialReviewGeneratedAt: commercialReview.generatedAt } : {})
       },
       validationSummary: {
         releaseGateStatus: releaseGate.summary.status,
         phase1ExitEvidenceGate: dossier.phase1ExitEvidenceGate.result,
         summary: summarizeValidation(dossier, releaseGate)
+      },
+      commercialReadinessSummary: {
+        status: commercialReadinessStatus,
+        summary: commercialReadinessSummary,
+        requiredPendingChecks: commercialRequiredPendingChecks,
+        requiredFailedChecks: commercialRequiredFailedChecks,
+        requiredMetadataFailures: commercialRequiredMetadataFailures
       },
       blockerSummary: {
         blockers,
@@ -716,7 +967,8 @@ export function buildGoNoGoDecisionPacket(args: Args): GoNoGoDecisionPacket {
         passing
       },
       runtimeObservabilitySignoffLinks,
-      unresolvedManualChecks
+      unresolvedManualChecks,
+      unresolvedCommercialChecks
     }
   };
 }
@@ -751,10 +1003,16 @@ export function renderMarkdown(packet: GoNoGoDecisionPacket): string {
   if (packet.inputs.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${toDisplayPath(packet.inputs.wechatCandidateSummaryPath)}\``);
   }
+  if (packet.inputs.commercialReviewPath) {
+    lines.push(`- Commercial review evidence: \`${toDisplayPath(packet.inputs.commercialReviewPath)}\``);
+  }
   lines.push(`- Dossier generated at: \`${packet.sections.candidateMetadata.dossierGeneratedAt}\``);
   lines.push(`- Release gate generated at: \`${packet.sections.candidateMetadata.releaseGateGeneratedAt}\``);
   if (packet.sections.candidateMetadata.wechatCandidateSummaryGeneratedAt) {
     lines.push(`- WeChat candidate summary generated at: \`${packet.sections.candidateMetadata.wechatCandidateSummaryGeneratedAt}\``);
+  }
+  if (packet.sections.candidateMetadata.commercialReviewGeneratedAt) {
+    lines.push(`- Commercial review generated at: \`${packet.sections.candidateMetadata.commercialReviewGeneratedAt}\``);
   }
   lines.push("");
   lines.push("## Validation Summary");
@@ -762,6 +1020,14 @@ export function renderMarkdown(packet: GoNoGoDecisionPacket): string {
   lines.push(`- Phase 1 exit evidence gate: \`${packet.sections.validationSummary.phase1ExitEvidenceGate}\``);
   lines.push(`- Release gate status: \`${packet.sections.validationSummary.releaseGateStatus}\``);
   lines.push(`- Summary: ${packet.sections.validationSummary.summary}`);
+  lines.push("");
+  lines.push("## Commercial Readiness Summary");
+  lines.push("");
+  lines.push(`- Status: \`${packet.sections.commercialReadinessSummary.status}\``);
+  lines.push(`- Required pending checks: \`${packet.sections.commercialReadinessSummary.requiredPendingChecks}\``);
+  lines.push(`- Required failed checks: \`${packet.sections.commercialReadinessSummary.requiredFailedChecks}\``);
+  lines.push(`- Required metadata failures: \`${packet.sections.commercialReadinessSummary.requiredMetadataFailures}\``);
+  lines.push(`- Summary: ${packet.sections.commercialReadinessSummary.summary}`);
   lines.push("");
   lines.push(`## Blocker Summary (${packet.sections.blockerSummary.blockers.length})`);
   lines.push("");
@@ -829,6 +1095,32 @@ export function renderMarkdown(packet: GoNoGoDecisionPacket): string {
     lines.push("No unresolved required manual checks.");
   } else {
     for (const check of packet.sections.unresolvedManualChecks) {
+      lines.push(`- ${check.title}: \`${check.status}\``);
+      if (check.owner) {
+        lines.push(`  Owner: \`${check.owner}\``);
+      }
+      if (check.recordedAt) {
+        lines.push(`  Recorded at: \`${check.recordedAt}\``);
+      }
+      if (check.artifactPath) {
+        lines.push(`  Artifact: \`${check.artifactPath}\``);
+      }
+      if (check.notes) {
+        lines.push(`  Notes: ${check.notes}`);
+      }
+      if (check.waiverReason) {
+        lines.push(`  Waiver: ${check.waiverReason}`);
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push(`## Unresolved Commercial Checks (${packet.sections.unresolvedCommercialChecks.length})`);
+  lines.push("");
+  if (packet.sections.unresolvedCommercialChecks.length === 0) {
+    lines.push("No unresolved commercial checks.");
+  } else {
+    for (const check of packet.sections.unresolvedCommercialChecks) {
       lines.push(`- ${check.title}: \`${check.status}\``);
       if (check.owner) {
         lines.push(`  Owner: \`${check.owner}\``);
