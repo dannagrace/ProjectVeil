@@ -90,6 +90,34 @@ function withAdminSecret(t: TestContext, secret = "test-admin-secret"): string {
   return secret;
 }
 
+function withSupportSecrets(
+  t: TestContext,
+  options: {
+    moderator?: string;
+    supervisor?: string;
+  } = {}
+): { moderator: string; supervisor: string } {
+  const moderator = options.moderator ?? "test-support-moderator-secret";
+  const supervisor = options.supervisor ?? "test-support-supervisor-secret";
+  const originalModeratorSecret = process.env.SUPPORT_MODERATOR_SECRET;
+  const originalSupervisorSecret = process.env.SUPPORT_SUPERVISOR_SECRET;
+  process.env.SUPPORT_MODERATOR_SECRET = moderator;
+  process.env.SUPPORT_SUPERVISOR_SECRET = supervisor;
+  t.after(() => {
+    if (originalModeratorSecret === undefined) {
+      delete process.env.SUPPORT_MODERATOR_SECRET;
+    } else {
+      process.env.SUPPORT_MODERATOR_SECRET = originalModeratorSecret;
+    }
+    if (originalSupervisorSecret === undefined) {
+      delete process.env.SUPPORT_SUPERVISOR_SECRET;
+    } else {
+      process.env.SUPPORT_SUPERVISOR_SECRET = originalSupervisorSecret;
+    }
+  });
+  return { moderator, supervisor };
+}
+
 function registerRoutes(store: RoomSnapshotStore | null = null) {
   const { app, gets, posts } = createTestApp();
   registerAdminRoutes(app, store);
@@ -654,7 +682,8 @@ test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t
 });
 
 test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it", async (t) => {
-  const secret = withAdminSecret(t);
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
   const store = createStore({
     "player-7": { gold: 1, wood: 2, ore: 3 }
   });
@@ -670,7 +699,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
       method: "POST",
       params: { id: "player-7" },
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": moderator
       },
       body: JSON.stringify({
         banStatus: "temporary",
@@ -699,7 +728,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
       method: "POST",
       params: { id: "player-7" },
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": moderator
       },
       body: JSON.stringify({ reason: "Appeal approved" })
     }),
@@ -718,7 +747,8 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
 });
 
 test("GET /api/admin/players/:id/ban-history returns current ban state and history records", async (t) => {
-  const secret = withAdminSecret(t);
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
   const store = createStore();
   await store.savePlayerBan("player-history", {
     banStatus: "permanent",
@@ -736,7 +766,7 @@ test("GET /api/admin/players/:id/ban-history returns current ban state and histo
     createRequest({
       params: { id: "player-history" },
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": moderator
       }
     }),
     response
@@ -754,7 +784,8 @@ test("GET /api/admin/players/:id/ban-history returns current ban state and histo
 });
 
 test("GET /api/admin/reports returns filtered player reports", async (t) => {
-  const secret = withAdminSecret(t);
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
   const store = createStore();
   await store.createPlayerReport({
     reporterId: "player-1",
@@ -779,7 +810,7 @@ test("GET /api/admin/reports returns filtered player reports", async (t) => {
     createRequest({
       url: "/api/admin/reports?status=pending",
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": moderator
       }
     }),
     response
@@ -797,7 +828,8 @@ test("GET /api/admin/reports returns filtered player reports", async (t) => {
 });
 
 test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) => {
-  const secret = withAdminSecret(t);
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
   const store = createStore();
   const report = await store.createPlayerReport({
     reporterId: "player-1",
@@ -816,7 +848,7 @@ test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) =>
       method: "POST",
       params: { id: report.reportId },
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": moderator
       },
       body: JSON.stringify({ status: "warned" })
     }),
@@ -871,6 +903,7 @@ test("GET /admin serves admin.html with text/html content-type", async (t) => {
 
 test("POST /api/admin/players/:id/unban returns 401 without a valid admin secret", async (t) => {
   withAdminSecret(t);
+  withSupportSecrets(t);
   const store = createStore();
   const { posts } = registerRoutes(store as RoomSnapshotStore);
   const handler = posts.get("/api/admin/players/:id/unban");
@@ -890,9 +923,13 @@ test("POST /api/admin/players/:id/unban returns 401 without a valid admin secret
   assert.deepEqual(JSON.parse(response.body), { error: "Unauthorized: Invalid Admin Secret" });
 });
 
-test("POST /api/admin/players/:id/unban returns 503 when ADMIN_SECRET is not configured", async () => {
+test("POST /api/admin/players/:id/unban returns 503 when support secrets are not configured", async () => {
   const original = process.env.ADMIN_SECRET;
+  const originalModeratorSecret = process.env.SUPPORT_MODERATOR_SECRET;
+  const originalSupervisorSecret = process.env.SUPPORT_SUPERVISOR_SECRET;
   delete process.env.ADMIN_SECRET;
+  delete process.env.SUPPORT_MODERATOR_SECRET;
+  delete process.env.SUPPORT_SUPERVISOR_SECRET;
   try {
     const { posts } = registerRoutes();
     const handler = posts.get("/api/admin/players/:id/unban");
@@ -905,19 +942,33 @@ test("POST /api/admin/players/:id/unban returns 503 when ADMIN_SECRET is not con
     );
 
     assert.equal(response.statusCode, 503);
-    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+    assert.deepEqual(JSON.parse(response.body), { error: "Player support secrets are not configured" });
   } finally {
     if (original === undefined) {
       delete process.env.ADMIN_SECRET;
     } else {
       process.env.ADMIN_SECRET = original;
     }
+    if (originalModeratorSecret === undefined) {
+      delete process.env.SUPPORT_MODERATOR_SECRET;
+    } else {
+      process.env.SUPPORT_MODERATOR_SECRET = originalModeratorSecret;
+    }
+    if (originalSupervisorSecret === undefined) {
+      delete process.env.SUPPORT_SUPERVISOR_SECRET;
+    } else {
+      process.env.SUPPORT_SUPERVISOR_SECRET = originalSupervisorSecret;
+    }
   }
 });
 
-test("GET /api/admin/players/:id/ban-history returns 503 when ADMIN_SECRET is not configured", async () => {
+test("GET /api/admin/players/:id/ban-history returns 503 when support secrets are not configured", async () => {
   const original = process.env.ADMIN_SECRET;
+  const originalModeratorSecret = process.env.SUPPORT_MODERATOR_SECRET;
+  const originalSupervisorSecret = process.env.SUPPORT_SUPERVISOR_SECRET;
   delete process.env.ADMIN_SECRET;
+  delete process.env.SUPPORT_MODERATOR_SECRET;
+  delete process.env.SUPPORT_SUPERVISOR_SECRET;
   try {
     const store = createStore();
     const { gets } = registerRoutes(store as RoomSnapshotStore);
@@ -928,19 +979,33 @@ test("GET /api/admin/players/:id/ban-history returns 503 when ADMIN_SECRET is no
     await handler(createRequest({ params: { id: "player-1" } }), response);
 
     assert.equal(response.statusCode, 503);
-    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+    assert.deepEqual(JSON.parse(response.body), { error: "Player support secrets are not configured" });
   } finally {
     if (original === undefined) {
       delete process.env.ADMIN_SECRET;
     } else {
       process.env.ADMIN_SECRET = original;
     }
+    if (originalModeratorSecret === undefined) {
+      delete process.env.SUPPORT_MODERATOR_SECRET;
+    } else {
+      process.env.SUPPORT_MODERATOR_SECRET = originalModeratorSecret;
+    }
+    if (originalSupervisorSecret === undefined) {
+      delete process.env.SUPPORT_SUPERVISOR_SECRET;
+    } else {
+      process.env.SUPPORT_SUPERVISOR_SECRET = originalSupervisorSecret;
+    }
   }
 });
 
-test("GET /api/admin/reports returns 503 when ADMIN_SECRET is not configured", async () => {
+test("GET /api/admin/reports returns 503 when support secrets are not configured", async () => {
   const original = process.env.ADMIN_SECRET;
+  const originalModeratorSecret = process.env.SUPPORT_MODERATOR_SECRET;
+  const originalSupervisorSecret = process.env.SUPPORT_SUPERVISOR_SECRET;
   delete process.env.ADMIN_SECRET;
+  delete process.env.SUPPORT_MODERATOR_SECRET;
+  delete process.env.SUPPORT_SUPERVISOR_SECRET;
   try {
     const store = createStore();
     const { gets } = registerRoutes(store as RoomSnapshotStore);
@@ -951,19 +1016,33 @@ test("GET /api/admin/reports returns 503 when ADMIN_SECRET is not configured", a
     await handler(createRequest({ url: "/api/admin/reports" }), response);
 
     assert.equal(response.statusCode, 503);
-    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+    assert.deepEqual(JSON.parse(response.body), { error: "Player support secrets are not configured" });
   } finally {
     if (original === undefined) {
       delete process.env.ADMIN_SECRET;
     } else {
       process.env.ADMIN_SECRET = original;
     }
+    if (originalModeratorSecret === undefined) {
+      delete process.env.SUPPORT_MODERATOR_SECRET;
+    } else {
+      process.env.SUPPORT_MODERATOR_SECRET = originalModeratorSecret;
+    }
+    if (originalSupervisorSecret === undefined) {
+      delete process.env.SUPPORT_SUPERVISOR_SECRET;
+    } else {
+      process.env.SUPPORT_SUPERVISOR_SECRET = originalSupervisorSecret;
+    }
   }
 });
 
-test("POST /api/admin/reports/:id/resolve returns 503 when ADMIN_SECRET is not configured", async () => {
+test("POST /api/admin/reports/:id/resolve returns 503 when support secrets are not configured", async () => {
   const original = process.env.ADMIN_SECRET;
+  const originalModeratorSecret = process.env.SUPPORT_MODERATOR_SECRET;
+  const originalSupervisorSecret = process.env.SUPPORT_SUPERVISOR_SECRET;
   delete process.env.ADMIN_SECRET;
+  delete process.env.SUPPORT_MODERATOR_SECRET;
+  delete process.env.SUPPORT_SUPERVISOR_SECRET;
   try {
     const store = createStore();
     const { posts } = registerRoutes(store as RoomSnapshotStore);
@@ -977,18 +1056,29 @@ test("POST /api/admin/reports/:id/resolve returns 503 when ADMIN_SECRET is not c
     );
 
     assert.equal(response.statusCode, 503);
-    assert.deepEqual(JSON.parse(response.body), { error: "ADMIN_SECRET is not configured" });
+    assert.deepEqual(JSON.parse(response.body), { error: "Player support secrets are not configured" });
   } finally {
     if (original === undefined) {
       delete process.env.ADMIN_SECRET;
     } else {
       process.env.ADMIN_SECRET = original;
     }
+    if (originalModeratorSecret === undefined) {
+      delete process.env.SUPPORT_MODERATOR_SECRET;
+    } else {
+      process.env.SUPPORT_MODERATOR_SECRET = originalModeratorSecret;
+    }
+    if (originalSupervisorSecret === undefined) {
+      delete process.env.SUPPORT_SUPERVISOR_SECRET;
+    } else {
+      process.env.SUPPORT_SUPERVISOR_SECRET = originalSupervisorSecret;
+    }
   }
 });
 
 test("POST /api/admin/reports/:id/resolve with banned also bans the reported player", async (t) => {
-  const secret = withAdminSecret(t);
+  withAdminSecret(t);
+  const { supervisor } = withSupportSecrets(t);
   const store = createStore();
   const report = await store.createPlayerReport({
     reporterId: "player-1",
@@ -1007,9 +1097,15 @@ test("POST /api/admin/reports/:id/resolve with banned also bans the reported pla
       method: "POST",
       params: { id: report.reportId },
       headers: {
-        "x-veil-admin-secret": secret
+        "x-veil-admin-secret": supervisor
       },
-      body: JSON.stringify({ status: "banned" })
+      body: JSON.stringify({
+        status: "banned",
+        approval: {
+          approvedBy: "ops-lead",
+          approvalReference: "SUP-204"
+        }
+      })
     }),
     response
   );
@@ -1026,4 +1122,139 @@ test("POST /api/admin/reports/:id/resolve with banned also bans the reported pla
   assert.equal(payload.disconnectedClients, 0);
   assert.equal(currentBan?.banStatus, "permanent");
   assert.match(currentBan?.banReason ?? "", /player report/);
+  assert.match(currentBan?.banReason ?? "", /approvedBy=ops-lead/);
+});
+
+test("POST /api/admin/players/:id/ban rejects permanent bans from support moderators", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/ban");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-9" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      },
+      body: JSON.stringify({
+        banStatus: "permanent",
+        banReason: "Confirmed botting",
+        approval: {
+          approvedBy: "ops-lead",
+          approvalReference: "SUP-205"
+        }
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: "Forbidden: permanent bans require support-supervisor or admin credentials"
+  });
+});
+
+test("POST /api/admin/players/:id/ban requires approval metadata for permanent bans", async (t) => {
+  withAdminSecret(t);
+  const { supervisor } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/ban");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-10" },
+      headers: {
+        "x-veil-admin-secret": supervisor
+      },
+      body: JSON.stringify({
+        banStatus: "permanent",
+        banReason: "Chargeback fraud"
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(JSON.parse(response.body), { error: "\"approval\" is required" });
+});
+
+test("POST /api/admin/players/:id/unban rejects permanent-ban reversal from support moderators", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  await store.savePlayerBan("player-11", {
+    banStatus: "permanent",
+    banReason: "Severe abuse"
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/unban");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-11" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      },
+      body: JSON.stringify({ reason: "appeal approved" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: "Forbidden: permanent-ban reversals require support-supervisor or admin credentials"
+  });
+});
+
+test("GET /api/admin/players/:id/export returns account data for support workflows", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore({
+    "player-export": { gold: 9, wood: 4, ore: 2 }
+  });
+  await store.savePlayerBan("player-export", {
+    banStatus: "temporary",
+    banReason: "Spam",
+    banExpiry: "2026-05-10T00:00:00.000Z"
+  });
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/export");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-export" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    playerId: string;
+    exportedAt: string;
+    account: { playerId: string; globalResources: { gold: number; wood: number; ore: number } };
+    moderation: { currentBan: { banStatus: string }; banHistory: Array<{ action: string }> };
+  };
+  assert.equal(payload.playerId, "player-export");
+  assert.ok(Number.isFinite(Date.parse(payload.exportedAt)));
+  assert.equal(payload.account.playerId, "player-export");
+  assert.deepEqual(payload.account.globalResources, { gold: 9, wood: 4, ore: 2 });
+  assert.equal(payload.moderation.currentBan.banStatus, "temporary");
+  assert.equal(payload.moderation.banHistory[0]?.action, "ban");
 });
