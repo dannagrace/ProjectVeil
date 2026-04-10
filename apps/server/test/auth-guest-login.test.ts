@@ -5,6 +5,7 @@ import { createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
+import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import {
@@ -170,6 +171,9 @@ class MemoryAuthStore implements RoomSnapshotStore {
       playerId,
       displayName: input.displayName?.trim() || existing?.displayName || playerId,
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      ...(existing?.gems ? { gems: existing.gems } : {}),
+      ...(existing?.seasonXp ? { seasonXp: existing.seasonXp } : {}),
+      ...(existing?.loginStreak ? { loginStreak: existing.loginStreak } : {}),
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
       achievements: structuredClone(existing?.achievements ?? []),
       recentEventLog: structuredClone(existing?.recentEventLog ?? []),
@@ -440,11 +444,22 @@ class MemoryAuthStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId });
     const account: PlayerAccountSnapshot = {
       ...existing,
+      ...(patch.gems !== undefined ? { gems: Math.max(0, Math.floor(patch.gems ?? 0)) } : existing.gems ? { gems: existing.gems } : {}),
+      ...(patch.seasonXpDelta !== undefined
+        ? { seasonXp: Math.max(0, Math.floor(existing.seasonXp ?? 0) + Math.floor(patch.seasonXpDelta ?? 0)) }
+        : existing.seasonXp
+          ? { seasonXp: existing.seasonXp }
+          : {}),
       globalResources: structuredClone(
         (patch.globalResources as PlayerAccountSnapshot["globalResources"] | undefined) ?? existing.globalResources
       ),
       achievements: structuredClone((patch.achievements as PlayerAccountSnapshot["achievements"] | undefined) ?? existing.achievements),
       recentEventLog: structuredClone((patch.recentEventLog as PlayerAccountSnapshot["recentEventLog"] | undefined) ?? existing.recentEventLog),
+      ...(patch.loginStreak !== undefined
+        ? { loginStreak: Math.max(0, Math.floor(patch.loginStreak ?? 0)) }
+        : existing.loginStreak
+          ? { loginStreak: existing.loginStreak }
+          : {}),
       ...(patch.dailyPlayMinutes !== undefined ? { dailyPlayMinutes: Math.max(0, Math.floor(patch.dailyPlayMinutes ?? 0)) } : existing.dailyPlayMinutes ? { dailyPlayMinutes: existing.dailyPlayMinutes } : {}),
       ...(patch.lastPlayDate !== undefined ? (patch.lastPlayDate ? { lastPlayDate: patch.lastPlayDate.trim() } : {}) : existing.lastPlayDate ? { lastPlayDate: existing.lastPlayDate } : {}),
       ...(patch.lastRoomId !== undefined
@@ -954,6 +969,78 @@ test("guest auth connect claims a default hero slot for non-template player ids"
   assert.equal((await store.loadPlayerAccount("guest-rune"))?.lastRoomId, "guest-slot-room");
 });
 
+test("guest-login issues the daily first-login reward once and emits analytics", async (t) => {
+  const port = 44490 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const analyticsLogs: string[] = [];
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetAnalyticsRuntimeDependencies();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "retention-guest",
+      displayName: "晨雾旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    session: GuestAuthSession;
+    dailyLoginReward?: {
+      streak: number;
+      reward: { gems: number; gold: number };
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.dailyLoginReward?.streak, 1);
+  assert.deepEqual(payload.dailyLoginReward?.reward, { gems: 5, gold: 50 });
+
+  const account = await store.loadPlayerAccount("retention-guest");
+  assert.equal(account?.gems, 5);
+  assert.equal(account?.globalResources.gold, 50);
+  assert.equal(account?.loginStreak, 1);
+  assert.equal(account?.lastPlayDate, getDailyRewardDateKey());
+  assert.match(account?.recentEventLog[0]?.description ?? "", /^每日签到奖励：连签第 1 天/);
+
+  await flushAnalyticsEventsForTest();
+  const dailyLoginLog = analyticsLogs.find((entry) => entry.includes("\"name\":\"daily_login\""));
+  assert.ok(dailyLoginLog);
+  assert.match(dailyLoginLog ?? "", /"streak":1/);
+  assert.match(dailyLoginLog ?? "", /"dateKey":"/);
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "retention-guest",
+      displayName: "晨雾旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    dailyLoginReward?: unknown;
+  };
+
+  assert.equal(secondResponse.status, 200);
+  assert.equal(secondPayload.dailyLoginReward, undefined);
+});
+
 test("account bind upgrades a guest session into password login and account-login restores it", async (t) => {
   const port = 44500 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
@@ -1032,6 +1119,66 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.authMode, "account");
   assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("account-login carries the streak from yesterday and returns the issued reward", async (t) => {
+  const port = 44505 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const today = getDailyRewardDateKey();
+  const yesterday = getPreviousDailyRewardDateKey(today);
+
+  await store.ensurePlayerAccount({
+    playerId: "daily-account",
+    displayName: "连签守望"
+  });
+  await store.bindPlayerAccountCredentials("daily-account", {
+    loginId: "daily-account",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+  await store.savePlayerAccountProgress("daily-account", {
+    gems: 20,
+    globalResources: { gold: 100, wood: 0, ore: 0 },
+    lastPlayDate: yesterday,
+    loginStreak: 1,
+    dailyPlayMinutes: 45
+  });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "daily-account",
+      password: "hunter2",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    account: PlayerAccountSnapshot;
+    session: GuestAuthSession;
+    dailyLoginReward?: {
+      streak: number;
+      reward: { gems: number; gold: number };
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.dailyLoginReward?.streak, 2);
+  assert.deepEqual(payload.dailyLoginReward?.reward, { gems: 5, gold: 75 });
+  assert.equal(payload.account.loginStreak, 2);
+  assert.equal(payload.account.gems, 25);
+  assert.equal(payload.account.globalResources.gold, 175);
+  assert.equal(payload.account.lastPlayDate, today);
+  assert.equal(payload.account.dailyPlayMinutes, 0);
+  assert.equal(payload.session.authMode, "account");
+  assert.equal(payload.session.provider, "account-password");
 });
 
 test("account bind emits experiment conversion analytics for the assigned variant", async (t) => {

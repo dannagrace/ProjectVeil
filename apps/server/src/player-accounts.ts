@@ -26,6 +26,7 @@ import {
   createDailyQuestClaimEventLogEntry,
   loadDailyQuestBoard
 } from "./daily-quests";
+import { issueDailyLoginReward } from "./daily-login-rewards";
 import { resolveBattlePassConfig } from "./battle-pass";
 import { emitAnalyticsEvent } from "./analytics";
 import {
@@ -44,7 +45,6 @@ import type {
   PlayerEventHistoryQuery,
   RoomSnapshotStore
 } from "./persistence";
-import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";
 import {
   applySeasonalEventProgress,
   buildEventLeaderboard,
@@ -861,33 +861,6 @@ function sendForbidden(response: ServerResponse): void {
   });
 }
 
-function createDailyRewardEventLogEntry(
-  playerId: string,
-  streak: number,
-  reward: { gems: number; gold: number },
-  timestamp = new Date().toISOString()
-) {
-  const rewardSummary = [
-    reward.gems > 0 ? `宝石 x${reward.gems}` : null,
-    reward.gold > 0 ? `金币 x${reward.gold}` : null
-  ]
-    .filter((entry): entry is string => Boolean(entry))
-    .join("、");
-
-  return {
-    id: `${playerId}:${timestamp}:daily-login:${streak}`,
-    timestamp,
-    roomId: "daily-login",
-    playerId,
-    category: "account" as const,
-    description: `每日签到奖励：连签第 ${streak} 天，获得 ${rewardSummary || "奖励已发放"}。`,
-    rewards: [
-      ...(reward.gems > 0 ? [{ type: "resource" as const, label: "gems", amount: reward.gems }] : []),
-      ...(reward.gold > 0 ? [{ type: "resource" as const, label: "gold", amount: reward.gold }] : [])
-    ]
-  };
-}
-
 async function requireAuthSession(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1399,36 +1372,19 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const today = getDailyRewardDateKey();
-      if (account.lastPlayDate === today) {
+      const result = await issueDailyLoginReward(store, account);
+      if (!result.claimed) {
         sendJson(response, 200, {
           claimed: false,
-          reason: "already_claimed_today"
+          reason: result.reason
         });
         return;
       }
 
-      const streak = account.lastPlayDate === getPreviousDailyRewardDateKey(today) ? Math.max(0, account.loginStreak ?? 0) + 1 : 1;
-      const reward = resolveDailyRewardForStreak(streak);
-      const eventEntry = createDailyRewardEventLogEntry(account.playerId, streak, reward);
-
-      await store.savePlayerAccountProgress(account.playerId, {
-        gems: (account.gems ?? 0) + reward.gems,
-        seasonXpDelta: resolveBattlePassConfig().seasonXpDailyLoginBonus,
-        globalResources: {
-          ...account.globalResources,
-          gold: (account.globalResources.gold ?? 0) + reward.gold
-        },
-        recentEventLog: appendEventLogEntries(account.recentEventLog, [eventEntry]),
-        lastPlayDate: today,
-        dailyPlayMinutes: 0,
-        loginStreak: streak
-      });
-
       sendJson(response, 200, {
         claimed: true,
-        streak,
-        reward
+        streak: result.streak,
+        reward: result.reward
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

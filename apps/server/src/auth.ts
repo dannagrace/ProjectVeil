@@ -29,6 +29,7 @@ import {
   setPendingAuthRegistrationCount,
   upsertAuthAccountSession
 } from "./observability";
+import { issueDailyLoginReward } from "./daily-login-rewards";
 import { deriveWechatMinorProtection } from "./minor-protection";
 import {
   isPlayerBanActive,
@@ -1034,6 +1035,7 @@ async function handleWechatLogin(
   let playerId = authSession?.playerId ?? normalizePlayerId(body.playerId || createWechatMiniGamePlayerId(identity.openId));
   let displayName = normalizeDisplayName(playerId, body.displayName ?? authSession?.displayName);
   let loginId = authSession?.loginId;
+  let rewardAccount: PlayerAccountSnapshot | null = null;
 
   if (store) {
     const boundAccount = await store.loadPlayerAccountByWechatMiniGameOpenId(identity.openId);
@@ -1071,6 +1073,7 @@ async function handleWechatLogin(
       playerId = syncedAccount.playerId;
       displayName = syncedAccount.displayName;
       loginId = syncedAccount.loginId;
+      rewardAccount = syncedAccount;
     } else {
       const targetPlayerId = authSession?.playerId ?? playerId;
       let boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
@@ -1088,6 +1091,7 @@ async function handleWechatLogin(
       playerId = boundAccountResult.playerId;
       displayName = boundAccountResult.displayName;
       loginId = boundAccountResult.loginId;
+      rewardAccount = boundAccountResult;
     }
   } else if (!authSession && body.playerId?.trim()) {
     playerId = normalizePlayerId(body.playerId);
@@ -1101,6 +1105,8 @@ async function handleWechatLogin(
   }
 
   cacheWechatSessionKey(playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
+
+  const dailyLoginReward = store && rewardAccount ? await issueDailyLoginReward(store, rewardAccount) : null;
 
   sendJson(response, 200, {
     session:
@@ -1116,7 +1122,15 @@ async function handleWechatLogin(
             playerId,
             displayName,
             ...(loginId ? { loginId } : {})
-          })
+          }),
+    ...(dailyLoginReward?.claimed
+      ? {
+          dailyLoginReward: {
+            streak: dailyLoginReward.streak,
+            reward: dailyLoginReward.reward
+          }
+        }
+      : {})
   });
   if (store && loginId) {
     recordAuthAccountLogin();
@@ -1979,6 +1993,23 @@ export function registerAuthRoutes(
         }
         playerId = account.playerId;
         displayName = account.displayName;
+        const dailyLoginReward = await issueDailyLoginReward(store, account);
+        sendJson(response, 200, {
+          session: issueGuestAuthSession({
+            playerId,
+            displayName
+          }),
+          ...(dailyLoginReward.claimed
+            ? {
+                dailyLoginReward: {
+                  streak: dailyLoginReward.streak,
+                  reward: dailyLoginReward.reward
+                }
+              }
+            : {})
+        });
+        recordAuthGuestLogin();
+        return;
       }
 
       sendJson(response, 200, {
@@ -2066,12 +2097,21 @@ export function registerAuthRoutes(
           return;
         }
         
+        const dailyLoginReward = store ? await issueDailyLoginReward(store, account) : null;
         sendJson(response, 200, {
-          account,
+          account: dailyLoginReward?.account ?? account,
           session: issueGuestAuthSession({
             playerId: account.playerId,
             displayName: account.displayName
-          })
+          }),
+          ...(dailyLoginReward?.claimed
+            ? {
+                dailyLoginReward: {
+                  streak: dailyLoginReward.streak,
+                  reward: dailyLoginReward.reward
+                }
+              }
+            : {})
         });
         return;
       }
@@ -2114,14 +2154,23 @@ export function registerAuthRoutes(
         sendAuthFailure(response, "account_banned", activeBan);
         return;
       }
+      const dailyLoginReward = await issueDailyLoginReward(store, account);
       sendJson(response, 200, {
-        account,
+        account: dailyLoginReward.account,
         session: await createAccountSessionBundle(store, {
           playerId: account.playerId,
           displayName: account.displayName,
           loginId,
           deviceLabel: resolveDeviceLabel(request)
-        })
+        }),
+        ...(dailyLoginReward.claimed
+          ? {
+              dailyLoginReward: {
+                streak: dailyLoginReward.streak,
+                reward: dailyLoginReward.reward
+              }
+            }
+          : {})
       });
       recordAuthAccountLogin();
     } catch (error) {

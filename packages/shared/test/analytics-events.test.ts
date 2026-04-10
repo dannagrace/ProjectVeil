@@ -193,6 +193,16 @@ test("createAnalyticsEvent: quest_complete event carries correct payload structu
   assert.equal(event.payload.reward.gems, 5);
 });
 
+test("createAnalyticsEvent: daily_login event carries streak and reward payload", () => {
+  const event = createAnalyticsEvent("daily_login", {
+    playerId: "player-1",
+    payload: { dateKey: "2026-04-11", streak: 2, reward: { gems: 5, gold: 75 } }
+  });
+  assert.equal(event.payload.dateKey, "2026-04-11");
+  assert.equal(event.payload.streak, 2);
+  assert.equal(event.payload.reward.gold, 75);
+});
+
 test("createAnalyticsEvent: experiment_exposure event carries all required fields", () => {
   const event = createAnalyticsEvent("experiment_exposure", {
     playerId: "player-1",
