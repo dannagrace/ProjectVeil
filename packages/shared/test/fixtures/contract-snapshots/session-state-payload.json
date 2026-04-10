@@ -100,6 +100,7 @@
         "id": "hero-2",
         "playerId": "player-2",
         "name": "霜牙掠影",
+        "level": 1,
         "position": {
           "x": 2,
           "y": 1
@@ -134,6 +135,7 @@
         "defense": 5,
         "minDamage": 1,
         "maxDamage": 3,
+        "attackRange": 1,
         "count": 12,
         "currentHp": 10,
         "maxHp": 10,
@@ -192,6 +194,7 @@
         "defense": 4,
         "minDamage": 2,
         "maxDamage": 4,
+        "attackRange": 1,
         "count": 8,
         "currentHp": 8,
         "maxHp": 8,
@@ -326,7 +329,7 @@
   ],
   "featureFlags": {
     "quest_system_enabled": true,
-    "battle_pass_enabled": false,
+    "battle_pass_enabled": true,
     "pve_enabled": true,
     "tutorial_enabled": true
   },

@@ -278,7 +278,10 @@ function isTrackClaimable(tier: BattlePassTierConfig, progress: CocosSeasonProgr
 }
 
 function resolveVisibleTiers(config: ReturnType<typeof getBattlePassConfig>, progress: CocosSeasonProgress): BattlePassTierConfig[] {
-  const startTier = Math.max(1, Math.min(progress.seasonPassTier, Math.max(1, config.tiers.length - 3)));
+  const earliestRelevantTier = config.tiers.find(
+    (tier) => tier.tier <= progress.seasonPassTier && !progress.seasonPassClaimedTiers.includes(tier.tier)
+  )?.tier ?? progress.seasonPassTier;
+  const startTier = Math.max(1, Math.min(earliestRelevantTier, Math.max(1, config.tiers.length - 3)));
   return config.tiers.filter((tier) => tier.tier >= startTier).slice(0, 4);
 }
 
@@ -305,7 +308,8 @@ function resolveProgressRatio(config: ReturnType<typeof getBattlePassConfig>, pr
 
 function resolveNextRewardLabel(config: ReturnType<typeof getBattlePassConfig>, progress: CocosSeasonProgress): string {
   const nextTier =
-    config.tiers.find((tier) => !progress.seasonPassClaimedTiers.includes(tier.tier) && tier.tier >= progress.seasonPassTier)
+    config.tiers.find((tier) => !progress.seasonPassClaimedTiers.includes(tier.tier) && tier.tier <= progress.seasonPassTier)
+    ?? config.tiers.find((tier) => !progress.seasonPassClaimedTiers.includes(tier.tier) && tier.tier > progress.seasonPassTier)
     ?? config.tiers.find((tier) => tier.tier > progress.seasonPassTier)
     ?? config.tiers[config.tiers.length - 1];
   if (!nextTier) {

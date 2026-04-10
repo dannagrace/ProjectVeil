@@ -175,6 +175,42 @@ test("battle pass premium rewards are withheld until premium unlock is purchased
   assert.deepEqual(archive?.hero.loadout.inventory ?? [], []);
 });
 
+test("battle pass claim grants premium rewards and persists them to the account", async () => {
+  const store = new MemoryRoomSnapshotStore();
+  await store.save("battle-pass-room", createBattlePassWorldSnapshot());
+  await store.savePlayerAccountProgress("battle-pass-player", {
+    seasonXpDelta: 2000,
+    seasonPassPremium: true
+  });
+  const payload = (await store.claimBattlePassTier("battle-pass-player", 5)) as {
+    tier: number;
+    granted: {
+      resources: { gold: number };
+      equipmentIds: string[];
+    };
+    seasonPassPremiumApplied: boolean;
+    account: {
+      seasonPassPremium: boolean;
+      seasonPassClaimedTiers: number[];
+      globalResources: { gold: number };
+    };
+  };
+  const account = await store.loadPlayerAccount("battle-pass-player");
+  const archive = (await store.loadPlayerHeroArchives(["battle-pass-player"]))[0];
+
+  assert.equal(payload.tier, 5);
+  assert.equal(payload.seasonPassPremiumApplied, true);
+  assert.equal(payload.granted.resources.gold, 500);
+  assert.deepEqual(payload.granted.equipmentIds, ["sunforged_spear"]);
+  assert.equal(payload.account.seasonPassPremium, true);
+  assert.deepEqual(payload.account.seasonPassClaimedTiers, [5]);
+  assert.equal(payload.account.globalResources.gold, 500);
+  assert.equal(account?.seasonPassPremium, true);
+  assert.deepEqual(account?.seasonPassClaimedTiers, [5]);
+  assert.equal(account?.globalResources.gold, 500);
+  assert.deepEqual(archive?.hero.loadout.inventory ?? [], ["sunforged_spear"]);
+});
+
 test("season pass premium shop purchase unlocks premium access", async (t) => {
   const port = 42540 + Math.floor(Math.random() * 1000);
   const store = new MemoryRoomSnapshotStore();

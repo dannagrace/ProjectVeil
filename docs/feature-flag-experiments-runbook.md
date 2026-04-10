@@ -6,6 +6,8 @@ Issue #893 adds a minimal experiment layer on top of `configs/feature-flags.json
 
 - `quest_system_enabled`: enabled by default as of 2026-04-08. Daily quest board, UTC daily rotation, progress tracking, and reward claims are live in the default config.
 - Roll back `quest_system_enabled` by setting `value: false` in `configs/feature-flags.json`, or use `VEIL_FEATURE_FLAGS_JSON` / `VEIL_DAILY_QUESTS_ENABLED=off` as an emergency override while investigating.
+- `battle_pass_enabled`: enabled by default as of 2026-04-10. The Cocos season pass panel, season progress sync, and reward claim flow are live in the default config.
+- Roll back `battle_pass_enabled` by setting `value: false` in `configs/feature-flags.json`, or use `VEIL_FEATURE_FLAGS_JSON` as an emergency override while investigating.
 
 ## Config Shape
 
