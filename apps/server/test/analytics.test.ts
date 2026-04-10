@@ -3,6 +3,8 @@ import { Readable } from "node:stream";
 import test, { afterEach } from "node:test";
 import {
   configureAnalyticsRuntimeDependencies,
+  flushAnalyticsEventsForTest,
+  getAnalyticsPipelineSnapshot,
   registerAnalyticsRoutes,
   resetAnalyticsRuntimeDependencies
 } from "../src/analytics";
@@ -111,7 +113,7 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   assert.equal(response.headers["Content-Type"], "application/json; charset=utf-8");
   assert.deepEqual(JSON.parse(response.body), { accepted: 2 });
   assert.equal(logs.length, 1);
-  assert.match(logs[0] ?? "", /"shop_open"/);
+  assert.match(logs[0] ?? "", /^\[Analytics\] accepted 2 event\(s\) into stdout sink$/);
 
   const getResponse = createResponse();
   await getHandler(createRequest("GET") as never, getResponse);
@@ -120,6 +122,100 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   assert.deepEqual(JSON.parse(getResponse.body), {
     events: [{ name: "shop_open" }, { name: "battle_start" }]
   });
+});
+
+test("registerAnalyticsRoutes queues accepted events for the configured analytics sink", async () => {
+  let handler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  const originalAnalyticsSink = process.env.ANALYTICS_SINK;
+  const originalAnalyticsEndpoint = process.env.ANALYTICS_ENDPOINT;
+  process.env.ANALYTICS_SINK = "http";
+  process.env.ANALYTICS_ENDPOINT = "https://analytics.projectveil.example/ingest";
+
+  configureAnalyticsRuntimeDependencies({
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    },
+    log: () => {}
+  });
+
+  registerAnalyticsRoutes({
+    use() {},
+    get() {},
+    post(_path, nextHandler) {
+      handler = nextHandler as never;
+    }
+  });
+
+  assert(handler);
+
+  const requestBody = JSON.stringify({
+    schemaVersion: 1,
+    emittedAt: "2026-04-11T08:00:00.000Z",
+    events: [
+      {
+        name: "session_start",
+        source: "cocos-client",
+        playerId: "player-1",
+        payload: { roomId: "room-1", authMode: "guest", platform: "wechat" }
+      },
+      {
+        name: "tutorial_step",
+        source: "cocos-client",
+        playerId: "player-1",
+        payload: { stepId: "tutorial_completed", status: "completed" }
+      }
+    ]
+  });
+  const request = createRequest("POST", requestBody);
+  const response = createResponse();
+
+  try {
+    await handler(request as never, response);
+    await flushAnalyticsEventsForTest();
+  } finally {
+    if (originalAnalyticsSink === undefined) {
+      delete process.env.ANALYTICS_SINK;
+    } else {
+      process.env.ANALYTICS_SINK = originalAnalyticsSink;
+    }
+
+    if (originalAnalyticsEndpoint === undefined) {
+      delete process.env.ANALYTICS_ENDPOINT;
+    } else {
+      process.env.ANALYTICS_ENDPOINT = originalAnalyticsEndpoint;
+    }
+  }
+
+  assert.equal(response.statusCode, 202);
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.input, "https://analytics.projectveil.example/ingest");
+  assert.match(String(fetchCalls[0]?.init?.body), /"tutorial_step"/);
+
+  const snapshot = getAnalyticsPipelineSnapshot({
+    ANALYTICS_SINK: "http",
+    ANALYTICS_ENDPOINT: "https://analytics.projectveil.example/ingest"
+  });
+  assert.equal(snapshot.delivery.ingestedEventsTotal, 2);
+  assert.equal(snapshot.delivery.flushedEventsTotal, 2);
+  assert.equal(snapshot.delivery.flushFailuresTotal, 0);
+  assert.equal(snapshot.delivery.events.find((event) => event.name === "session_start" && event.source === "cocos-client")?.flushedTotal, 1);
+});
+
+test("getAnalyticsPipelineSnapshot warns when http sink is requested without an endpoint", () => {
+  const snapshot = getAnalyticsPipelineSnapshot({
+    ANALYTICS_SINK: "http"
+  });
+
+  assert.equal(snapshot.status, "warn");
+  assert.equal(snapshot.sink, "stdout");
+  assert.match(snapshot.alerts[0] ?? "", /ANALYTICS_ENDPOINT/);
 });
 
 test("registerAnalyticsRoutes rejects malformed analytics payloads", async () => {

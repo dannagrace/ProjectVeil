@@ -115,6 +115,8 @@ npm run dev:client:h5
 
 如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每日 03:00 的 cron。恢复步骤见 `docs/db-restore-runbook.md`。
 
+如果你要把 analytics 事件接到生产环境，请配置 `ANALYTICS_SINK=http`、`ANALYTICS_ENDPOINT`、`ANALYTICS_WAREHOUSE_*`、`ANALYTICS_RAW_BUCKET`、`ANALYTICS_RETENTION_DAYS` 和 `ANALYTICS_DELETION_WORKFLOW`，然后用 `/api/runtime/analytics-pipeline` 与 `/metrics` 核对投递状态。完整流程、查询模板和合规删除说明见 `docs/analytics-pipeline-runbook.md`。
+
 如果你要验证 Redis-backed Colyseus scaling，可先启动根目录的 `docker-compose.redis.yml`，再用同一个 `REDIS_URL` 启两个服务节点：
 
 ```bash
