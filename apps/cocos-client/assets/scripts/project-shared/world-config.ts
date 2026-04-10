@@ -5,6 +5,7 @@ import defaultBuildingUpgradeConfig from "../../../../../configs/building-upgrad
 import defaultHeroSkillTreesConfig from "../../../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-objects-contested-basin.json";
 import frontierExpandedMapObjectsConfig from "../../../../../configs/phase2-map-objects-frontier-expanded.json";
+import verdantValeMapObjectsConfig from "../../../../../configs/phase2-map-objects-verdant-vale.json";
 import amberFieldsMapObjectsConfig from "../../../../../configs/phase1-map-objects-amber-fields.json";
 import ashpeakAscentMapObjectsConfig from "../../../../../configs/phase1-map-objects-ashpeak-ascent.json";
 import bogfenCrossingMapObjectsConfig from "../../../../../configs/phase1-map-objects-bogfen-crossing.json";
@@ -24,6 +25,7 @@ import ashpeakAscentWorldConfig from "../../../../../configs/phase1-world-ashpea
 import bogfenCrossingWorldConfig from "../../../../../configs/phase1-world-bogfen-crossing.json";
 import contestedBasinWorldConfig from "../../../../../configs/phase2-contested-basin.json";
 import frontierExpandedWorldConfig from "../../../../../configs/phase2-frontier-expanded.json";
+import verdantValeWorldConfig from "../../../../../configs/phase2-world-verdant-vale.json";
 import frontierBasinWorldConfig from "../../../../../configs/phase1-world-frontier-basin.json";
 import frostwatchRidgeWorldConfig from "../../../../../configs/phase1-world-frostwatch-ridge.json";
 import highlandReachWorldConfig from "../../../../../configs/phase1-world-highland-reach.json";
@@ -101,6 +103,7 @@ export const ASHPEAK_ASCENT_MAP_VARIANT_ID = "ashpeak_ascent";
 export const THORNWALL_DIVIDE_MAP_VARIANT_ID = "thornwall_divide";
 export const CONTESTED_BASIN_MAP_VARIANT_ID = "contested_basin";
 export const PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID = "phase2_frontier_expanded";
+export const PHASE2_VERDANT_VALE_MAP_VARIANT_ID = "phase2_verdant_vale";
 
 export interface RuntimeConfigBundle {
   world: WorldGenerationConfig;
@@ -820,7 +823,8 @@ function getAvailableMapVariantIds(): string[] {
     ASHPEAK_ASCENT_MAP_VARIANT_ID,
     THORNWALL_DIVIDE_MAP_VARIANT_ID,
     CONTESTED_BASIN_MAP_VARIANT_ID,
-    PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID
+    PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID,
+    PHASE2_VERDANT_VALE_MAP_VARIANT_ID
   ];
 }
 
@@ -848,7 +852,8 @@ export function resolveMapVariantIdForRoom(roomId: string, seed = 1001): string 
     requested === ASHPEAK_ASCENT_MAP_VARIANT_ID ||
     requested === THORNWALL_DIVIDE_MAP_VARIANT_ID ||
     requested === CONTESTED_BASIN_MAP_VARIANT_ID ||
-    requested === PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID
+    requested === PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID ||
+    requested === PHASE2_VERDANT_VALE_MAP_VARIANT_ID
   ) {
     return requested;
   }
@@ -890,6 +895,8 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneWorldConfig(contestedBasinWorldConfig as WorldGenerationConfig)
       : mapVariantId === PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID
         ? cloneWorldConfig(frontierExpandedWorldConfig as WorldGenerationConfig)
+      : mapVariantId === PHASE2_VERDANT_VALE_MAP_VARIANT_ID
+        ? cloneWorldConfig(verdantValeWorldConfig as WorldGenerationConfig)
         : getDefaultWorldConfig();
   const mapObjects =
     mapVariantId === FRONTIER_BASIN_MAP_VARIANT_ID
@@ -920,6 +927,8 @@ export function getRuntimeConfigBundleForRoom(roomId: string, seed = 1001): Room
         ? cloneMapObjectsConfig(contestedBasinMapObjectsConfig as MapObjectsConfig)
       : mapVariantId === PHASE2_FRONTIER_EXPANDED_MAP_VARIANT_ID
         ? cloneMapObjectsConfig(frontierExpandedMapObjectsConfig as MapObjectsConfig)
+      : mapVariantId === PHASE2_VERDANT_VALE_MAP_VARIANT_ID
+        ? cloneMapObjectsConfig(verdantValeMapObjectsConfig as MapObjectsConfig)
         : getDefaultMapObjectsConfig();
 
   validateWorldConfig(world);
