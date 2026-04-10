@@ -134,64 +134,7 @@ const UNIT_CONFIG = {
   ]
 };
 
-const BATTLE_SKILL_CONFIG = {
-  skills: [
-    {
-      id: "power_shot",
-      name: "投矛射击",
-      description: "远程压制目标，伤害略低，但不会触发反击。",
-      kind: "active" as const,
-      target: "enemy" as const,
-      cooldown: 2,
-      effects: {
-        damageMultiplier: 0.85,
-        allowRetaliation: false
-      }
-    },
-    {
-      id: "armor_spell",
-      name: "护甲术",
-      description: "为自己附加护甲术，在后续回合提升防御。",
-      kind: "active" as const,
-      target: "self" as const,
-      cooldown: 3,
-      effects: {
-        grantedStatusId: "arcane_armor"
-      }
-    },
-    {
-      id: "venomous_fangs",
-      name: "毒牙",
-      description: "命中后让目标陷入中毒，回合开始时持续掉血。",
-      kind: "passive" as const,
-      target: "enemy" as const,
-      cooldown: 0,
-      effects: {
-        onHitStatusId: "poisoned"
-      }
-    }
-  ],
-  statuses: [
-    {
-      id: "poisoned",
-      name: "中毒",
-      description: "回合开始时损失生命。",
-      duration: 2,
-      attackModifier: 0,
-      defenseModifier: 0,
-      damagePerTurn: 2
-    },
-    {
-      id: "arcane_armor",
-      name: "护甲术",
-      description: "临时提升防御。",
-      duration: 2,
-      attackModifier: 0,
-      defenseModifier: 3,
-      damagePerTurn: 0
-    }
-  ]
-};
+const BATTLE_SKILL_CONFIG = getDefaultBattleSkillCatalog();
 
 const BATTLE_BALANCE_CONFIG = {
   damage: {
@@ -422,6 +365,19 @@ test("config center schema validation reports missing and mistyped fields", asyn
   assert.equal(report.valid, false);
   assert.match(report.issues.map((issue) => issue.path).join(","), /statuses|skills\[0\]\.kind|skills\[0\]\.cooldown/);
   assert.equal(report.schema.id, "project-veil.config-center.battleSkills");
+});
+
+test("config center schema accepts ally-targeted battle skills", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument("battleSkills", JSON.stringify(BATTLE_SKILL_CONFIG));
+
+  assert.equal(report.valid, true);
+  assert.equal(report.issues.length, 0);
+  assert.equal(report.contentPack.valid, true);
+  assert.ok(BATTLE_SKILL_CONFIG.skills.some((skill) => skill.target === "ally"));
 });
 
 test("config center validates battle balance against thresholds and status references", async () => {

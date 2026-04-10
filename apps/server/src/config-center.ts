@@ -757,7 +757,7 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
             name: { type: "string", description: "技能名称。" },
             description: { type: "string", description: "技能描述。" },
             kind: { type: "string", enum: ["active", "passive"], description: "技能种类。" },
-            target: { type: "string", enum: ["enemy", "self"], description: "技能目标。" },
+            target: { type: "string", enum: ["enemy", "self", "ally"], description: "技能目标。" },
             cooldown: { type: "integer", minimum: 0, description: "冷却回合。" },
             effects: {
               type: "object",
