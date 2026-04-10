@@ -73,6 +73,8 @@ interface RehearsalArtifacts {
   phase1ReleaseEvidenceDriftGateMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
   phase1CandidateDossierMarkdownPath?: string;
+  goNoGoPacketPath?: string;
+  goNoGoPacketMarkdownPath?: string;
   summaryPath?: string;
   markdownPath?: string;
 }
@@ -508,6 +510,8 @@ function main(): void {
   );
   const phase1CandidateDossierPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.json`);
   const phase1CandidateDossierMarkdownPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.md`);
+  const goNoGoPacketPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.json`);
+  const goNoGoPacketMarkdownPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.md`);
   const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-${candidateSlug}-${revision.shortCommit}.json`);
   const markdownPath = path.join(outputDir, "SUMMARY.md");
 
@@ -531,6 +535,8 @@ function main(): void {
   artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
   artifacts.phase1CandidateDossierMarkdownPath = toRelative(phase1CandidateDossierMarkdownPath);
+  artifacts.goNoGoPacketPath = toRelative(goNoGoPacketPath);
+  artifacts.goNoGoPacketMarkdownPath = toRelative(goNoGoPacketMarkdownPath);
   artifacts.summaryPath = toRelative(summaryPath);
   artifacts.markdownPath = toRelative(markdownPath);
 
@@ -925,6 +931,37 @@ function main(): void {
           phase1CandidateDossierMarkdownPath
         ]);
       }
+    },
+    {
+      id: "go-no-go-packet",
+      title: "Build go/no-go decision packet",
+      run: () => {
+        const command = [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/release-go-no-go-decision-packet.ts",
+          "--candidate",
+          args.candidate,
+          "--candidate-revision",
+          revision.commit,
+          "--dossier",
+          phase1CandidateDossierPath,
+          "--release-gate-summary",
+          releaseGateSummaryPath,
+          "--output",
+          goNoGoPacketPath,
+          "--markdown-output",
+          goNoGoPacketMarkdownPath
+        ];
+        if (artifacts.stableWechatArtifactsDir) {
+          command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
+        }
+        return runCommandStage("go-no-go-packet", "Build go/no-go decision packet", command, [
+          goNoGoPacketPath,
+          goNoGoPacketMarkdownPath
+        ]);
+      }
     }
   ];
 
@@ -959,7 +996,9 @@ function main(): void {
     phase1ReleaseEvidenceDriftGatePath,
     phase1ReleaseEvidenceDriftGateMarkdownPath,
     phase1CandidateDossierPath,
-    phase1CandidateDossierMarkdownPath
+    phase1CandidateDossierMarkdownPath,
+    goNoGoPacketPath,
+    goNoGoPacketMarkdownPath
   ];
   if (args.serverUrl) {
     requiredArtifacts.push(runtimeObservabilityBundlePath, runtimeObservabilityBundleMarkdownPath);
