@@ -196,3 +196,52 @@ test("config center render prioritizes structural snapshot diffs in rollback rev
   assert.match(html, /删除字段/);
   assert.match(html, /世界预览/);
 });
+
+test("config center render shows field drift against the persisted snapshot baseline", () => {
+  const html = renderConfigCenterSnapshotDiffPanel({
+    selectedSnapshotId: "snapshot-world-3",
+    snapshotDiff: {
+      entries: [
+        {
+          path: "height",
+          change: "updated",
+          previousValue: "8",
+          nextValue: "10",
+          kind: "value",
+          required: true,
+          fieldType: "integer",
+          description: "地图高度",
+          blastRadius: ["世界预览"]
+        },
+        {
+          path: "width",
+          change: "updated",
+          previousValue: "8",
+          nextValue: "10",
+          kind: "value",
+          required: true,
+          fieldType: "integer",
+          description: "地图宽度",
+          blastRadius: ["配置台编辑器", "世界预览"]
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /当前展示 2 \/ 2 条差异/);
+  assert.match(html, /width/);
+  assert.match(html, /height/);
+  assert.match(html, /8 → 10/);
+  assert.match(html, /字段值变更/);
+});
+
+test("config center render marks snapshot comparison as in sync when there is no baseline drift", () => {
+  const html = renderConfigCenterSnapshotDiffPanel({
+    selectedSnapshotId: "snapshot-world-3",
+    snapshotDiff: {
+      entries: []
+    }
+  });
+
+  assert.match(html, /当前版本与该快照没有差异/);
+});
