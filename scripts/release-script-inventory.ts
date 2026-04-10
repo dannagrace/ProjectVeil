@@ -342,12 +342,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
   },
   "release:wechat:rehearsal": {
-    purpose: "Run the WeChat release rehearsal flow that chains prepare, package, verify, validate, and optional commercial verification steps into one summary.",
+    purpose: "Run the WeChat release rehearsal flow that chains prepare, package, verify, validate, and optional commercial verification plus go/no-go packet steps into one summary.",
     requiredInputs: [
-      "A WeChat build directory plus an artifacts directory; optional config/summary path overrides, install/smoke/manual-review inputs, and `--run-commercial-verification` / `--commercial-checks` when the rehearsal should also emit the commercial verification artifact.",
+      "A WeChat build directory plus an artifacts directory; optional config/summary path overrides, install/smoke/manual-review inputs, `--run-commercial-verification` / `--commercial-checks` for the commercial verification artifact, and `--run-go-no-go-packet` plus dossier/release-gate paths when the rehearsal should also emit the final decision packet.",
     ],
     producedArtifacts: [
-      "Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, commercial verification, and upload artifacts they reference.",
+      "Summary files under the selected artifacts dir, typically `artifacts/wechat-release/wechat-release-rehearsal-<candidate>.json` and `.md`, alongside the package, validation, smoke, commercial verification, go/no-go packet, and upload artifacts they reference.",
     ],
   },
   "smoke:client:release-candidate": {
