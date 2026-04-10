@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import {
   clearCachedFeatureFlagConfig,
   configureFeatureFlagRuntimeDependencies,
+  getFeatureFlagRuntimeSnapshot,
   loadFeatureFlagConfig,
   resetFeatureFlagRuntimeDependencies,
   resolveFeatureEntitlementsForPlayer,
@@ -26,6 +27,7 @@ function withCleanState(t: TestContext): void {
   const originalEnv: Record<string, string | undefined> = {
     VEIL_FEATURE_FLAGS_JSON: process.env.VEIL_FEATURE_FLAGS_JSON,
     VEIL_FEATURE_FLAGS_PATH: process.env.VEIL_FEATURE_FLAGS_PATH,
+    VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS: process.env.VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS,
     VEIL_DAILY_QUESTS_ENABLED: process.env.VEIL_DAILY_QUESTS_ENABLED
   };
   t.after(() => {
@@ -102,6 +104,36 @@ test("loadFeatureFlagConfig caches result on repeated calls", (t) => {
   assert.equal(first, second, "both calls should return the same cached object");
 });
 
+test("loadFeatureFlagConfig reloads the file after the refresh interval when mtime changes", (t) => {
+  withCleanState(t);
+  let nowMs = Date.parse("2026-04-11T00:00:00.000Z");
+  let mtimeMs = Date.parse("2026-04-11T00:00:00.000Z");
+  let fileConfig = makeMinimalFlagConfig({
+    battle_pass_enabled: { type: "boolean", value: true, defaultValue: false, enabled: true, rollout: 0.01 }
+  });
+
+  configureFeatureFlagRuntimeDependencies({
+    now: () => nowMs,
+    statSync: () => ({ mtimeMs } as never),
+    readFileSync: () => JSON.stringify(fileConfig)
+  });
+
+  const first = loadFeatureFlagConfig({ VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS: "1000" });
+  assert.equal(first.flags.battle_pass_enabled.rollout, 0.01);
+
+  nowMs += 500;
+  fileConfig = makeMinimalFlagConfig({
+    battle_pass_enabled: { type: "boolean", value: true, defaultValue: false, enabled: true, rollout: 0.5 }
+  });
+  const cached = loadFeatureFlagConfig({ VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS: "1000" });
+  assert.equal(cached.flags.battle_pass_enabled.rollout, 0.01);
+
+  nowMs += 1_500;
+  mtimeMs += 2_000;
+  const reloaded = loadFeatureFlagConfig({ VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS: "1000" });
+  assert.equal(reloaded.flags.battle_pass_enabled.rollout, 0.5);
+});
+
 test("clearCachedFeatureFlagConfig forces a fresh file read on next call", (t) => {
   withCleanState(t);
   let callCount = 0;
@@ -125,6 +157,7 @@ test("loadFeatureFlagConfig uses VEIL_FEATURE_FLAGS_PATH env to locate a custom 
   const customConfig = makeMinimalFlagConfig();
   let receivedPath = "";
   configureFeatureFlagRuntimeDependencies({
+    statSync: (filePath) => ({ mtimeMs: Date.parse("2026-04-11T00:00:00.000Z"), path: filePath } as never),
     readFileSync: (filePath) => {
       receivedPath = filePath;
       return JSON.stringify(customConfig);
@@ -210,4 +243,62 @@ test("resolveFeatureEntitlementsForPlayer leaves entitlements unchanged without 
 
   const entitlements = resolveFeatureEntitlementsForPlayer("player-1", {});
   assert.equal(entitlements.featureFlags.quest_system_enabled, true);
+});
+
+test("getFeatureFlagRuntimeSnapshot reports checksum, source timestamps, and rollout audit metadata", (t) => {
+  withCleanState(t);
+  const nowMs = Date.parse("2026-04-11T01:30:00.000Z");
+  const mtimeMs = Date.parse("2026-04-11T01:25:00.000Z");
+  configureFeatureFlagRuntimeDependencies({
+    now: () => nowMs,
+    statSync: () => ({ mtimeMs } as never),
+    readFileSync: () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        flags: {
+          ...DEFAULT_FEATURE_FLAG_CONFIG.flags
+        },
+        operations: {
+          rolloutPolicies: {
+            battle_pass_enabled: {
+              owner: "ops-oncall",
+              stages: [
+                { key: "canary-1", rollout: 0.01, holdMinutes: 30, monitorWindowMinutes: 30 },
+                { key: "full", rollout: 1, holdMinutes: 60, monitorWindowMinutes: 60 }
+              ],
+              alertThresholds: {
+                errorRate: 0.02,
+                sessionFailureRate: 0.01,
+                paymentFailureRate: 0.02
+              },
+              rollback: {
+                mode: "automatic",
+                maxConfigAgeMinutes: 5,
+                cooldownMinutes: 30
+              }
+            }
+          },
+          auditHistory: [
+            {
+              at: "2026-04-11T01:20:00.000Z",
+              actor: "ConfigOps",
+              summary: "battle pass canary plan approved",
+              flagKeys: ["battle_pass_enabled"],
+              ticket: "#1203"
+            }
+          ]
+        }
+      })
+  });
+
+  const snapshot = getFeatureFlagRuntimeSnapshot({ VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS: "1000" });
+
+  assert.equal(snapshot.metadata.source, "file");
+  assert.equal(snapshot.metadata.sourceUpdatedAt, "2026-04-11T01:25:00.000Z");
+  assert.equal(snapshot.metadata.loadedAt, "2026-04-11T01:30:00.000Z");
+  assert.equal(snapshot.metadata.lastCheckedAt, "2026-04-11T01:30:00.000Z");
+  assert.equal(snapshot.metadata.stale, false);
+  assert.equal(snapshot.config.operations?.auditHistory?.[0]?.ticket, "#1203");
+  assert.equal(snapshot.config.operations?.rolloutPolicies?.battle_pass_enabled?.rollback.mode, "automatic");
+  assert.match(snapshot.metadata.checksum, /^[a-f0-9]{64}$/);
 });

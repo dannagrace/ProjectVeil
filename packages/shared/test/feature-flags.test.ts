@@ -124,6 +124,57 @@ test("normalize experiment assignments drops malformed records", () => {
   );
 });
 
+test("feature flag config normalizes rollout policies and audit history", () => {
+  const config = normalizeFeatureFlagConfigDocument({
+    schemaVersion: 1,
+    flags: DEFAULT_FEATURE_FLAG_CONFIG.flags,
+    operations: {
+      rolloutPolicies: {
+        battle_pass_enabled: {
+          owner: "ops-oncall",
+          stages: [
+            { key: "full", rollout: 1, holdMinutes: 60, monitorWindowMinutes: 60 },
+            { key: "canary", rollout: 0.01, holdMinutes: 30, monitorWindowMinutes: 30 }
+          ],
+          alertThresholds: {
+            errorRate: 2,
+            sessionFailureRate: -1,
+            paymentFailureRate: 0.02
+          },
+          rollback: {
+            mode: "automatic",
+            maxConfigAgeMinutes: 0,
+            cooldownMinutes: -5
+          }
+        }
+      },
+      auditHistory: [
+        {
+          at: "2026-04-11T01:00:00.000Z",
+          actor: "ConfigOps",
+          summary: "approved canary rollout",
+          flagKeys: ["battle_pass_enabled"],
+          ticket: "#1203"
+        },
+        {
+          at: "invalid",
+          actor: "",
+          summary: "",
+          flagKeys: []
+        }
+      ]
+    }
+  });
+
+  assert.equal(config.operations?.rolloutPolicies?.battle_pass_enabled?.stages[0]?.key, "canary");
+  assert.equal(config.operations?.rolloutPolicies?.battle_pass_enabled?.alertThresholds.errorRate, 1);
+  assert.equal(config.operations?.rolloutPolicies?.battle_pass_enabled?.alertThresholds.sessionFailureRate, 0);
+  assert.equal(config.operations?.rolloutPolicies?.battle_pass_enabled?.rollback.maxConfigAgeMinutes, 1);
+  assert.equal(config.operations?.rolloutPolicies?.battle_pass_enabled?.rollback.cooldownMinutes, 0);
+  assert.equal(config.operations?.auditHistory?.length, 1);
+  assert.equal(config.operations?.auditHistory?.[0]?.ticket, "#1203");
+});
+
 test("analytics event catalog validates", () => {
   assert.deepEqual(validateAnalyticsEventCatalog(), {
     valid: true,

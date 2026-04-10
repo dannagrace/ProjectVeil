@@ -56,3 +56,51 @@ groups:
           summary: Project Veil HTTP latency is elevated
           description: The 95th percentile HTTP request latency has exceeded 750ms for 10 minutes. Inspect runtime saturation, downstream auth/config dependencies, and noisy operators.
           runbook_url: ./alerting-runbook.md#alert-veilhttprequestlatencyp95high
+
+      - alert: VeilFeatureFlagConfigStale
+        expr: max(veil_feature_flag_config_stale) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: project-veil-server
+          feature_flag: battle_pass_enabled
+        annotations:
+          summary: Feature flag config is stale on at least one Project Veil node
+          description: A node has not re-checked or reloaded `configs/feature-flags.json` inside the allowed freshness window. Freeze rollout promotion and compare `/api/runtime/feature-flags` checksums across nodes before proceeding.
+          runbook_url: ./feature-flag-experiments-runbook.md#audit-and-consistency
+
+      - alert: VeilFeatureFlagBattlePassSessionFailuresHigh
+        expr: (increase(veil_auth_session_failures_total[15m]) / clamp_min(increase(veil_auth_session_checks_total[15m]), 1)) > 0.01 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-server
+          feature_flag: battle_pass_enabled
+        annotations:
+          summary: Battle pass gray rollout is causing elevated session failures
+          description: Session failure rate has exceeded 1% for 10 minutes while `battle_pass_enabled` is live. Hold rollout promotion and roll back to the previous safe percentage if the error does not self-resolve immediately.
+          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop
+
+      - alert: VeilFeatureFlagBattlePassErrorRateHigh
+        expr: (increase(veil_action_validation_failures_total[15m]) / clamp_min(increase(veil_gameplay_action_messages_total[15m]), 1)) > 0.02 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-server
+          feature_flag: battle_pass_enabled
+        annotations:
+          summary: Battle pass gray rollout is exceeding gameplay error budget
+          description: Gameplay action validation failures have exceeded 2% for 10 minutes during a live battle pass rollout. Treat this as the generic rollout error-rate tripwire when a battle-pass-specific signal is not yet available.
+          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop
+
+      - alert: VeilFeatureFlagBattlePassPaymentFailuresHigh
+        expr: (increase(veil_runtime_error_events_total{feature_area="payment",severity="error"}[15m]) / clamp_min(increase(veil_runtime_error_events_total{feature_area="payment"}[15m]), 1)) > 0.02 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-server
+          feature_flag: battle_pass_enabled
+        annotations:
+          summary: Battle pass gray rollout is triggering payment-related runtime errors
+          description: Payment runtime error ratio has exceeded 2% for 10 minutes while `battle_pass_enabled` is active. Roll back to the previous safe stage and verify the payment callback / reward-claim path before retrying.
+          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import {
   DEFAULT_FEATURE_FLAG_CONFIG,
@@ -6,22 +7,61 @@ import {
   evaluateFeatureFlags,
   normalizeFeatureFlagConfigDocument,
   type FeatureFlagConfigDocument,
+  type FeatureFlagKey,
+  type FeatureFlagRolloutPolicy,
   type ResolvedFeatureEntitlements,
   type FeatureFlags
 } from "../../../packages/shared/src/index";
 
 const DEFAULT_FEATURE_FLAG_CONFIG_PATH = path.resolve(process.cwd(), "configs/feature-flags.json");
+const DEFAULT_FEATURE_FLAG_RELOAD_INTERVAL_MS = 30_000;
+const DEFAULT_FEATURE_FLAG_STALE_THRESHOLD_MS = 120_000;
 
 interface FeatureFlagRuntimeDependencies {
   readFileSync(filePath: string, encoding: BufferEncoding): string;
+  statSync(filePath: string): fs.Stats;
+  now(): number;
 }
 
 const defaultFeatureFlagRuntimeDependencies: FeatureFlagRuntimeDependencies = {
-  readFileSync: (filePath, encoding) => fs.readFileSync(filePath, encoding)
+  readFileSync: (filePath, encoding) => fs.readFileSync(filePath, encoding),
+  statSync: (filePath) => fs.statSync(filePath),
+  now: () => Date.now()
 };
 
 let featureFlagRuntimeDependencies = defaultFeatureFlagRuntimeDependencies;
-let cachedFeatureFlagConfig: FeatureFlagConfigDocument | null = null;
+
+export interface FeatureFlagRuntimeMetadata {
+  source: "env_override" | "file" | "default_fallback";
+  configuredPath: string;
+  checksum: string;
+  loadedAt: string;
+  lastCheckedAt: string;
+  reloadIntervalMs: number;
+  staleThresholdMs: number;
+  cacheAgeMs: number;
+  stale: boolean;
+  sourceUpdatedAt?: string;
+  lastError?: string;
+}
+
+export interface FeatureFlagRuntimeSnapshot {
+  config: FeatureFlagConfigDocument;
+  metadata: FeatureFlagRuntimeMetadata;
+}
+
+interface CachedFeatureFlagState {
+  config: FeatureFlagConfigDocument;
+  source: FeatureFlagRuntimeMetadata["source"];
+  configuredPath: string;
+  checksum: string;
+  loadedAtMs: number;
+  lastCheckedAtMs: number;
+  sourceUpdatedAtMs?: number;
+  lastError?: string;
+}
+
+let cachedFeatureFlagState: CachedFeatureFlagState | null = null;
 
 export function configureFeatureFlagRuntimeDependencies(
   overrides: Partial<FeatureFlagRuntimeDependencies>
@@ -37,7 +77,7 @@ export function resetFeatureFlagRuntimeDependencies(): void {
 }
 
 export function clearCachedFeatureFlagConfig(): void {
-  cachedFeatureFlagConfig = null;
+  cachedFeatureFlagState = null;
 }
 
 function parseFeatureFlagOverride(rawValue: string | undefined): FeatureFlagConfigDocument | null {
@@ -51,6 +91,114 @@ function parseFeatureFlagOverride(rawValue: string | undefined): FeatureFlagConf
     console.warn("[FeatureFlags] Failed to parse VEIL_FEATURE_FLAGS_JSON override", error);
     return null;
   }
+}
+
+function hashFeatureFlagConfig(config: FeatureFlagConfigDocument): string {
+  return crypto.createHash("sha256").update(JSON.stringify(config)).digest("hex");
+}
+
+function parseReloadIntervalMs(value: string | undefined): number {
+  const parsed = Number.parseInt(value?.trim() ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_FEATURE_FLAG_RELOAD_INTERVAL_MS;
+  }
+
+  return parsed;
+}
+
+function buildRuntimeSnapshot(
+  state: CachedFeatureFlagState,
+  reloadIntervalMs: number,
+  nowMs: number
+): FeatureFlagRuntimeSnapshot {
+  const staleThresholdMs = Math.max(DEFAULT_FEATURE_FLAG_STALE_THRESHOLD_MS, reloadIntervalMs * 2);
+
+  return {
+    config: state.config,
+    metadata: {
+      source: state.source,
+      configuredPath: state.configuredPath,
+      checksum: state.checksum,
+      loadedAt: new Date(state.loadedAtMs).toISOString(),
+      lastCheckedAt: new Date(state.lastCheckedAtMs).toISOString(),
+      reloadIntervalMs,
+      staleThresholdMs,
+      cacheAgeMs: Math.max(0, nowMs - state.loadedAtMs),
+      stale: nowMs - state.lastCheckedAtMs > staleThresholdMs,
+      ...(state.sourceUpdatedAtMs !== undefined ? { sourceUpdatedAt: new Date(state.sourceUpdatedAtMs).toISOString() } : {}),
+      ...(state.lastError ? { lastError: state.lastError } : {})
+    }
+  };
+}
+
+function loadFeatureFlagSnapshot(env: NodeJS.ProcessEnv = process.env): FeatureFlagRuntimeSnapshot {
+  const nowMs = featureFlagRuntimeDependencies.now();
+  const reloadIntervalMs = parseReloadIntervalMs(env.VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS);
+  const configuredPath = env.VEIL_FEATURE_FLAGS_PATH?.trim() || DEFAULT_FEATURE_FLAG_CONFIG_PATH;
+  const override = parseFeatureFlagOverride(env.VEIL_FEATURE_FLAGS_JSON);
+
+  if (override) {
+    const state: CachedFeatureFlagState = {
+      config: override,
+      source: "env_override",
+      configuredPath,
+      checksum: hashFeatureFlagConfig(override),
+      loadedAtMs: nowMs,
+      lastCheckedAtMs: nowMs
+    };
+    cachedFeatureFlagState = state;
+    return buildRuntimeSnapshot(state, reloadIntervalMs, nowMs);
+  }
+
+  if (
+    cachedFeatureFlagState &&
+    cachedFeatureFlagState.source !== "env_override" &&
+    cachedFeatureFlagState.configuredPath === configuredPath &&
+    nowMs - cachedFeatureFlagState.lastCheckedAtMs < reloadIntervalMs
+  ) {
+    return buildRuntimeSnapshot(cachedFeatureFlagState, reloadIntervalMs, nowMs);
+  }
+
+  try {
+    const stats = featureFlagRuntimeDependencies.statSync(configuredPath);
+    if (
+      cachedFeatureFlagState &&
+      cachedFeatureFlagState.source === "file" &&
+      cachedFeatureFlagState.configuredPath === configuredPath &&
+      cachedFeatureFlagState.sourceUpdatedAtMs === stats.mtimeMs
+    ) {
+      cachedFeatureFlagState = {
+        ...cachedFeatureFlagState,
+        lastCheckedAtMs: nowMs
+      };
+      return buildRuntimeSnapshot(cachedFeatureFlagState, reloadIntervalMs, nowMs);
+    }
+
+    const raw = featureFlagRuntimeDependencies.readFileSync(configuredPath, "utf8");
+    const config = normalizeFeatureFlagConfigDocument(JSON.parse(raw) as FeatureFlagConfigDocument);
+    cachedFeatureFlagState = {
+      config,
+      source: "file",
+      configuredPath,
+      checksum: hashFeatureFlagConfig(config),
+      loadedAtMs: nowMs,
+      lastCheckedAtMs: nowMs,
+      sourceUpdatedAtMs: stats.mtimeMs
+    };
+  } catch (error) {
+    console.warn(`[FeatureFlags] Falling back to defaults after failing to load ${configuredPath}`, error);
+    cachedFeatureFlagState = {
+      config: DEFAULT_FEATURE_FLAG_CONFIG,
+      source: "default_fallback",
+      configuredPath,
+      checksum: hashFeatureFlagConfig(DEFAULT_FEATURE_FLAG_CONFIG),
+      loadedAtMs: nowMs,
+      lastCheckedAtMs: nowMs,
+      lastError: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  return buildRuntimeSnapshot(cachedFeatureFlagState, reloadIntervalMs, nowMs);
 }
 
 function readLegacyBooleanEnv(value: string | undefined): boolean | null {
@@ -71,26 +219,7 @@ function readLegacyBooleanEnv(value: string | undefined): boolean | null {
 }
 
 export function loadFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): FeatureFlagConfigDocument {
-  const override = parseFeatureFlagOverride(env.VEIL_FEATURE_FLAGS_JSON);
-  if (override) {
-    return override;
-  }
-
-  if (cachedFeatureFlagConfig) {
-    return cachedFeatureFlagConfig;
-  }
-
-  const configuredPath = env.VEIL_FEATURE_FLAGS_PATH?.trim() || DEFAULT_FEATURE_FLAG_CONFIG_PATH;
-
-  try {
-    const raw = featureFlagRuntimeDependencies.readFileSync(configuredPath, "utf8");
-    cachedFeatureFlagConfig = normalizeFeatureFlagConfigDocument(JSON.parse(raw) as FeatureFlagConfigDocument);
-  } catch (error) {
-    console.warn(`[FeatureFlags] Falling back to defaults after failing to load ${configuredPath}`, error);
-    cachedFeatureFlagConfig = DEFAULT_FEATURE_FLAG_CONFIG;
-  }
-
-  return cachedFeatureFlagConfig;
+  return loadFeatureFlagSnapshot(env).config;
 }
 
 export function resolveFeatureFlagsForPlayer(
@@ -129,4 +258,37 @@ export function resolveFeatureEntitlementsForPlayer(
       quest_system_enabled: legacyDailyQuestOverride
     }
   };
+}
+
+export function getFeatureFlagRuntimeSnapshot(env: NodeJS.ProcessEnv = process.env): FeatureFlagRuntimeSnapshot {
+  return loadFeatureFlagSnapshot(env);
+}
+
+export interface FeatureFlagRuntimeSummary {
+  flagKey: FeatureFlagKey;
+  enabled: boolean;
+  rollout: number;
+  currentValue: boolean | string | number;
+  defaultValue: boolean | string | number;
+  owner?: string;
+  rolloutPolicy?: FeatureFlagRolloutPolicy;
+}
+
+export function listFeatureFlagRuntimeSummaries(env: NodeJS.ProcessEnv = process.env): FeatureFlagRuntimeSummary[] {
+  const snapshot = loadFeatureFlagSnapshot(env);
+  const rolloutPolicies = snapshot.config.operations?.rolloutPolicies ?? {};
+
+  return Object.entries(snapshot.config.flags)
+    .map(([flagKey, definition]) => {
+      const policy = rolloutPolicies[flagKey as FeatureFlagKey];
+      return {
+        flagKey: flagKey as FeatureFlagKey,
+        enabled: definition.enabled !== false,
+        rollout: definition.rollout ?? 1,
+        currentValue: definition.value,
+        defaultValue: definition.defaultValue,
+        ...(policy ? { owner: policy.owner, rolloutPolicy: policy } : {})
+      };
+    })
+    .sort((left, right) => left.flagKey.localeCompare(right.flagKey));
 }
