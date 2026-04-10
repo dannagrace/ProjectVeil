@@ -110,7 +110,21 @@ function createMySqlStore(retention: SnapshotRetentionPolicy, pruneImpl: () => P
 function createBaseDependencies() {
   const logger = createLogger();
   const process = createProcessStub();
-  const expressApp = { kind: "express-app" };
+  const expressApp = {
+    kind: "express-app",
+    middleware: [] as Array<unknown>,
+    getRoutes: [] as Array<{ path: string; handler: unknown }>,
+    postRoutes: [] as Array<{ path: string; handler: unknown }>,
+    use(handler: unknown) {
+      this.middleware.push(handler);
+    },
+    get(path: string, handler: unknown) {
+      this.getRoutes.push({ path, handler });
+    },
+    post(path: string, handler: unknown) {
+      this.postRoutes.push({ path, handler });
+    }
+  };
   const routeCalls: string[] = [];
   const transport = {
     getExpressApp() {
@@ -470,6 +484,13 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     user: "veil",
     password: "veil",
     database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
@@ -637,6 +658,13 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     user: "veil",
     password: "veil",
     database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
     retention
   };
   const scheduledTimers: TestTimer[] = [];
