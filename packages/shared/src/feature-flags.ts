@@ -46,6 +46,50 @@ export interface FeatureFlagConfigDocument {
   schemaVersion: 1;
   flags: FeatureFlagConfig;
   experiments?: ExperimentConfig;
+  operations?: FeatureFlagOperationsConfig;
+}
+
+export interface FeatureFlagRolloutStage {
+  key: string;
+  rollout: number;
+  holdMinutes: number;
+  monitorWindowMinutes: number;
+  notes?: string;
+}
+
+export interface FeatureFlagAlertThresholds {
+  errorRate: number;
+  sessionFailureRate: number;
+  paymentFailureRate?: number;
+}
+
+export interface FeatureFlagRollbackPolicy {
+  mode: "manual" | "automatic";
+  maxConfigAgeMinutes: number;
+  cooldownMinutes: number;
+}
+
+export interface FeatureFlagRolloutPolicy {
+  owner: string;
+  stages: FeatureFlagRolloutStage[];
+  alertThresholds: FeatureFlagAlertThresholds;
+  rollback: FeatureFlagRollbackPolicy;
+}
+
+export interface FeatureFlagAuditEntry {
+  at: string;
+  actor: string;
+  summary: string;
+  flagKeys: FeatureFlagKey[];
+  ticket?: string;
+  approvedBy?: string;
+  changeId?: string;
+  rollback?: boolean;
+}
+
+export interface FeatureFlagOperationsConfig {
+  rolloutPolicies?: Partial<Record<FeatureFlagKey, FeatureFlagRolloutPolicy>>;
+  auditHistory?: FeatureFlagAuditEntry[];
 }
 
 export interface ExperimentVariantDefinition {
@@ -123,6 +167,10 @@ export const DEFAULT_FEATURE_FLAG_CONFIG: FeatureFlagConfigDocument = {
       enabled: true,
       rollout: DEFAULT_ROLLOUT
     }
+  },
+  operations: {
+    rolloutPolicies: {},
+    auditHistory: []
   },
   experiments: {
     account_portal_copy: {
@@ -202,6 +250,157 @@ function normalizeExperimentVariantDefinition(input: Partial<ExperimentVariantDe
   return {
     key,
     allocation: normalizeExperimentAllocation(input?.allocation)
+  };
+}
+
+function normalizeFeatureFlagRolloutStage(
+  input: Partial<FeatureFlagRolloutStage> | undefined,
+  fallbackKey: string,
+  fallbackRollout: number
+): FeatureFlagRolloutStage | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const key = input.key?.trim() || fallbackKey;
+  if (!key) {
+    return null;
+  }
+
+  const holdMinutes = Number.isFinite(input.holdMinutes) ? Math.max(0, Math.floor(input.holdMinutes ?? 0)) : 0;
+  const monitorWindowMinutes = Number.isFinite(input.monitorWindowMinutes)
+    ? Math.max(0, Math.floor(input.monitorWindowMinutes ?? 0))
+    : holdMinutes;
+  const notes = input.notes?.trim();
+
+  return {
+    key,
+    rollout: clampRollout(input.rollout ?? fallbackRollout),
+    holdMinutes,
+    monitorWindowMinutes,
+    ...(notes ? { notes } : {})
+  };
+}
+
+function normalizeFeatureFlagAlertThresholds(
+  input: Partial<FeatureFlagAlertThresholds> | undefined
+): FeatureFlagAlertThresholds {
+  const normalizeRatio = (value: number | undefined, fallback: number): number => {
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+    return Math.min(1, Math.max(0, Number(value ?? fallback)));
+  };
+
+  const paymentFailureRate = Number.isFinite(input?.paymentFailureRate)
+    ? normalizeRatio(input?.paymentFailureRate, 0.02)
+    : undefined;
+
+  return {
+    errorRate: normalizeRatio(input?.errorRate, 0.02),
+    sessionFailureRate: normalizeRatio(input?.sessionFailureRate, 0.01),
+    ...(paymentFailureRate !== undefined ? { paymentFailureRate } : {})
+  };
+}
+
+function normalizeFeatureFlagRollbackPolicy(
+  input: Partial<FeatureFlagRollbackPolicy> | undefined
+): FeatureFlagRollbackPolicy {
+  const mode = input?.mode === "automatic" ? "automatic" : "manual";
+  return {
+    mode,
+    maxConfigAgeMinutes: Number.isFinite(input?.maxConfigAgeMinutes)
+      ? Math.max(1, Math.floor(input?.maxConfigAgeMinutes ?? 5))
+      : 5,
+    cooldownMinutes: Number.isFinite(input?.cooldownMinutes) ? Math.max(0, Math.floor(input?.cooldownMinutes ?? 30)) : 30
+  };
+}
+
+function normalizeFeatureFlagRolloutPolicy(
+  input: Partial<FeatureFlagRolloutPolicy> | undefined
+): FeatureFlagRolloutPolicy | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const owner = input.owner?.trim();
+  if (!owner) {
+    return undefined;
+  }
+
+  const stages = Array.isArray(input.stages)
+    ? input.stages
+        .map((stage, index) => normalizeFeatureFlagRolloutStage(stage, `stage-${index + 1}`, stage?.rollout ?? 0))
+        .filter((stage): stage is FeatureFlagRolloutStage => Boolean(stage))
+        .sort((left, right) => left.rollout - right.rollout)
+    : [];
+
+  return {
+    owner,
+    stages,
+    alertThresholds: normalizeFeatureFlagAlertThresholds(input.alertThresholds),
+    rollback: normalizeFeatureFlagRollbackPolicy(input.rollback)
+  };
+}
+
+function normalizeFeatureFlagAuditEntry(input: Partial<FeatureFlagAuditEntry> | undefined): FeatureFlagAuditEntry | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const actor = input.actor?.trim();
+  const summary = input.summary?.trim();
+  const timestamp = normalizeTimestamp(input.at);
+  const flagKeys = Array.isArray(input.flagKeys)
+    ? input.flagKeys.filter((flagKey): flagKey is FeatureFlagKey => typeof flagKey === "string" && flagKey in DEFAULT_FEATURE_FLAG_CONFIG.flags)
+    : [];
+
+  if (!actor || !summary || !timestamp || flagKeys.length === 0) {
+    return null;
+  }
+
+  const ticket = input.ticket?.trim();
+  const approvedBy = input.approvedBy?.trim();
+  const changeId = input.changeId?.trim();
+
+  return {
+    at: timestamp,
+    actor,
+    summary,
+    flagKeys,
+    ...(ticket ? { ticket } : {}),
+    ...(approvedBy ? { approvedBy } : {}),
+    ...(changeId ? { changeId } : {}),
+    ...(input.rollback === true ? { rollback: true } : {})
+  };
+}
+
+function normalizeFeatureFlagOperationsConfig(input: Partial<FeatureFlagOperationsConfig> | undefined): FeatureFlagOperationsConfig {
+  const rolloutPolicies = isPlainRecord(input?.rolloutPolicies)
+    ? Object.fromEntries(
+        Object.entries(DEFAULT_FEATURE_FLAG_CONFIG.flags)
+          .map(([flagKey]) => {
+            const policy = normalizeFeatureFlagRolloutPolicy(
+              isPlainRecord(input?.rolloutPolicies?.[flagKey as FeatureFlagKey])
+                ? (input?.rolloutPolicies?.[flagKey as FeatureFlagKey] as Partial<FeatureFlagRolloutPolicy>)
+                : undefined
+            );
+            return [flagKey, policy];
+          })
+          .filter(([, policy]) => Boolean(policy))
+      )
+    : {};
+  const auditHistory = Array.isArray(input?.auditHistory)
+    ? input.auditHistory
+        .map((entry) => normalizeFeatureFlagAuditEntry(entry))
+        .filter((entry): entry is FeatureFlagAuditEntry => Boolean(entry))
+        .sort((left, right) => right.at.localeCompare(left.at))
+        .slice(0, 25)
+    : [];
+
+  return {
+    rolloutPolicies,
+    auditHistory
   };
 }
 
@@ -322,6 +521,9 @@ export function normalizeFeatureFlagConfigDocument(
         DEFAULT_FEATURE_FLAG_CONFIG.flags.tutorial_enabled
       )
     },
+    operations: normalizeFeatureFlagOperationsConfig(
+      isPlainRecord(input?.operations) ? (input.operations as Partial<FeatureFlagOperationsConfig>) : undefined
+    ),
     experiments: {
       account_portal_copy: normalizeExperimentDefinition(
         isPlainRecord(experiments?.account_portal_copy) ? (experiments.account_portal_copy as Partial<ExperimentDefinition>) : undefined,
