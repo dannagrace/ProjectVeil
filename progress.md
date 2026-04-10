@@ -1618,3 +1618,28 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`13/13`）
+
+## Issue #1192 - Phase 1 candidate rehearsal go/no-go packet - 2026-04-10
+
+- 本轮把 `release:phase1:candidate-rehearsal` 继续收口成了“同一候选 revision 的最终决策彩排”：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 在既有 `phase1-candidate-dossier` 阶段后新增 `go-no-go-packet` 阶段
+    - 该阶段会复用同一次 rehearsal 产出的 dossier 与 release gate summary，并把 stable WeChat artifacts dir 透传给 `release:go-no-go-packet`
+    - rehearsal artifacts 现在会固定记录：
+      - `goNoGoPacketPath`
+      - `goNoGoPacketMarkdownPath`
+    - staged bundle 的 `requiredArtifacts` 也追加了最终 go/no-go packet，避免 `SUMMARY.md` 只收 dossier 不收最终决策附件
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 candidate rehearsal 现在会收口到 final go/no-go packet
+    - 补充 `release:go-no-go-packet` 属于该链路复用的核心命令
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 final go/no-go packet
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 新增 `go-no-go-packet` 阶段断言
+    - 锁住 `goNoGoPacketPath` 与 `goNoGoPacketMarkdownPath` 两个 staged artifact
+    - 校验生成的 `SUMMARY.md` 会显式列出 go/no-go packet
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`9/9`）

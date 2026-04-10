@@ -17,6 +17,7 @@ It keeps the implementation narrow by reusing the existing evidence commands ins
 - `npm run ci:trend-summary`
 - `npm run release:health:summary`
 - `npm run release:phase1:candidate-dossier`
+- `npm run release:go-no-go-packet`
 
 ## Workflow Contract
 
@@ -36,7 +37,7 @@ The bundle contains:
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
 - one same-revision evidence bundle manifest plus the paired drift-gate JSON / Markdown
 - one reviewer-facing runtime observability bundle directory with the staged evidence and gate files for the target environment
-- the candidate-scoped Cocos RC bundle and Phase 1 dossier
+- the candidate-scoped Cocos RC bundle, Phase 1 dossier, and final go/no-go packet
 - `SUMMARY.md`, which is also appended to `GITHUB_STEP_SUMMARY`
 
 The workflow fails when an evidence-generation stage regresses, when a required rehearsal artifact is missing from the final bundle, or when the same-revision drift gate reports candidate/revision mismatch across the assembled packet.
@@ -73,6 +74,6 @@ npm run release:phase1:candidate-rehearsal -- \
   --target-surface h5
 ```
 
-Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file links the stable artifact paths used for the rehearsal and records the release gate, release health, and dossier outcomes for the candidate revision.
+Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file links the stable artifact paths used for the rehearsal and records the release gate, release health, dossier, and final go/no-go packet outcomes for the candidate revision.
 
 For the standalone CI guard and explicit GitHub Actions inputs, see [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md).
