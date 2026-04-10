@@ -57,6 +57,17 @@ groups:
           description: The 95th percentile HTTP request latency has exceeded 750ms for 10 minutes. Inspect runtime saturation, downstream auth/config dependencies, and noisy operators.
           runbook_url: ./alerting-runbook.md#alert-veilhttprequestlatencyp95high
 
+      - alert: VeilWechatPaymentFraudSignalsHigh
+        expr: increase(veil_runtime_error_events_total{feature_area="payment",error_code="payment_fraud_signal"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: project-veil-server
+        annotations:
+          summary: Project Veil is detecting WeChat payment fraud or integrity anomalies
+          description: `payment_fraud_signal` fired within the last 15 minutes. Freeze risky compensation/refund actions, inspect duplicate callbacks or payer mismatches, and review the current candidate before continuing rollout.
+          runbook_url: ./wechat-pay-ops-runbook.md#payment-fraud-signal-alert
+
       - alert: VeilFeatureFlagConfigStale
         expr: max(veil_feature_flag_config_stale) > 0
         for: 2m

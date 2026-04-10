@@ -4,7 +4,7 @@
     "title": "WeChat payment end-to-end verified",
     "status": "pending",
     "required": true,
-    "notes": "Verify payment initiation, callback,到账、失败补偿和风控/完整性事件记录 against the packaged candidate revision.",
+    "notes": "Verify payment initiation, callback,到账、失败补偿、退款/争议 handoff 和风控/完整性事件记录 against the packaged candidate revision.",
     "owner": "<commerce-owner>",
     "recordedAt": "<2026-04-10T09:00:00.000Z>",
     "revision": "<git-sha>",
@@ -13,6 +13,7 @@
       "payment order create evidence",
       "callback / receipt evidence",
       "compensation / retry evidence",
+      "refund / dispute handoff note referencing docs/wechat-pay-ops-runbook.md",
       "payment_fraud_signal analytics capture"
     ],
     "acceptedRisks": [
