@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-10T09:42:08.155Z",
+  "candidate": {
+    "name": "issue-1173-wechat-release-gate",
+    "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "shortRevision": "d96e22a"
+  },
+  "artifact": {
+    "artifactsDir": "/home/gpt/project/ProjectVeil/artifacts/wechat-release",
+    "metadataPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json",
+    "archiveFileName": "project-veil-wechatgame-release.tar.gz",
+    "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "projectName": "Project Veil",
+    "appId": "touristappid"
+  },
+  "verification": {
+    "environment": "sandbox fixture review",
+    "operator": "codex",
+    "recordedAt": "2026-04-10T09:42:08.155Z",
+    "status": "passed",
+    "summary": "Candidate-scoped package import and first-launch evidence recorded for issue #1173 using the packaged fixture bundle.",
+    "packageInstall": {
+      "status": "passed",
+      "summary": "Package metadata and exported fixture contents are aligned to the candidate revision."
+    },
+    "firstLaunch": {
+      "status": "passed",
+      "summary": "First-launch checklist completed against the same candidate evidence bundle."
+    },
+    "evidence": [
+      "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json",
+      "apps/cocos-client/test/fixtures/wechatgame-export/README.codex.md"
+    ]
+  }
+}

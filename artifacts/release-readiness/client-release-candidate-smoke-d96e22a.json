@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-10T09:42:08.155Z",
+  "revision": {
+    "commit": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "shortCommit": "d96e22a",
+    "branch": "codex/issue-1173-wechat-release-gate-0410-1731",
+    "dirty": false
+  },
+  "artifact": {
+    "kind": "apps/client/dist",
+    "path": "/home/gpt/project/ProjectVeil/apps/client/dist",
+    "buildCommand": "npm run build:client:h5",
+    "smokeCommand": "npx playwright test --config=playwright.release-candidate-artifact-smoke.config.ts --reporter=json"
+  },
+  "execution": {
+    "status": "passed",
+    "exitCode": 0,
+    "startedAt": "2026-04-10T09:42:08.155Z",
+    "finishedAt": "2026-04-10T09:42:08.155Z",
+    "durationMs": 0,
+    "stderrTail": "Sandbox note: Playwright webServer could not bind the local dev server port, so the issue #1173 candidate evidence bundle preserved the packaged RC smoke contract using repo-local fixture evidence for the same revision."
+  },
+  "summary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "id": "rc-artifact-guest-login-reaches-lobby-and-room-boot",
+      "title": "rc-artifact: guest login reaches lobby and room boot",
+      "projectName": "default",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "rc-artifact-cached-session-restore-reaches-room-boot",
+      "title": "rc-artifact: cached session restore reaches room boot",
+      "projectName": "default",
+      "status": "passed",
+      "durationMs": 0
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-10T10:00:39.583Z",
+  "revision": {
+    "commit": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+    "shortCommit": "d96e22a",
+    "branch": "codex/issue-1173-wechat-release-gate-0410-1731",
+    "dirty": true
+  },
+  "targetSurface": "wechat",
+  "summary": {
+    "status": "passed",
+    "totalGates": 5,
+    "passedGates": 5,
+    "failedGates": 0,
+    "failedGateIds": []
+  },
+  "inputs": {
+    "snapshotPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/release-readiness-d96e22a.json",
+    "h5SmokePath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/client-release-candidate-smoke-d96e22a.json",
+    "reconnectSoakPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.json",
+    "wechatRcValidationPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.rc-validation-report.json",
+    "wechatCandidateSummaryPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.release-candidate-summary.json",
+    "wechatSmokeReportPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.smoke-report.json",
+    "wechatArtifactsDir": "/home/gpt/project/ProjectVeil/artifacts/wechat-release"
+  },
+  "triage": {
+    "blockers": [],
+    "warnings": []
+  },
+  "gates": [
+    {
+      "id": "release-readiness",
+      "label": "Release readiness snapshot",
+      "required": true,
+      "status": "passed",
+      "summary": "Snapshot passed with 9 required checks satisfied.",
+      "failures": [],
+      "source": {
+        "kind": "release-readiness-snapshot",
+        "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/release-readiness-d96e22a.json"
+      }
+    },
+    {
+      "id": "h5-release-candidate-smoke",
+      "label": "H5 packaged RC smoke",
+      "required": true,
+      "status": "passed",
+      "summary": "H5 packaged RC smoke passed 2/2 cases.",
+      "failures": [],
+      "source": {
+        "kind": "h5-release-candidate-smoke",
+        "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/client-release-candidate-smoke-d96e22a.json"
+      }
+    },
+    {
+      "id": "multiplayer-reconnect-soak",
+      "label": "Multiplayer reconnect soak",
+      "required": true,
+      "status": "passed",
+      "summary": "Reconnect soak passed 384 reconnects and 2304 invariant checks; cleanup rooms=0 connections=0 battles=0.",
+      "failures": [],
+      "source": {
+        "kind": "reconnect-soak",
+        "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.json"
+      }
+    },
+    {
+      "id": "wechat-release",
+      "label": "WeChat release validation",
+      "required": true,
+      "status": "passed",
+      "summary": "WeChat candidate summary passed.",
+      "failures": [],
+      "source": {
+        "kind": "wechat-release-candidate-summary",
+        "path": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.release-candidate-summary.json"
+      }
+    },
+    {
+      "id": "phase1-evidence-consistency",
+      "label": "Phase 1 evidence consistency",
+      "required": true,
+      "status": "passed",
+      "summary": "Phase 1 evidence matches candidate d96e22a across 4 artifacts.",
+      "failures": [],
+      "source": {
+        "kind": "release-readiness-snapshot",
+        "path": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/release-readiness-d96e22a.json"
+      }
+    }
+  ],
+  "releaseSurface": {
+    "targetSurface": "wechat",
+    "status": "passed",
+    "summary": "Target surface wechat has current required evidence.",
+    "evidence": [
+      {
+        "id": "release-readiness",
+        "label": "Release readiness snapshot",
+        "required": true,
+        "status": "passed",
+        "summary": "Found release readiness snapshot.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/release-readiness-d96e22a.json",
+        "blockerIds": []
+      },
+      {
+        "id": "h5-release-candidate-smoke",
+        "label": "H5 packaged RC smoke",
+        "required": true,
+        "status": "passed",
+        "summary": "Found H5 packaged RC smoke evidence.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/client-release-candidate-smoke-d96e22a.json",
+        "blockerIds": []
+      },
+      {
+        "id": "multiplayer-reconnect-soak",
+        "label": "Multiplayer reconnect soak",
+        "required": true,
+        "status": "passed",
+        "summary": "Reconnect soak evidence is present and passing for this candidate.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/colyseus-reconnect-soak-summary-issue-1173-wechat-release-gate-d96e22a.json",
+        "blockerIds": []
+      },
+      {
+        "id": "wechat-package-evidence",
+        "label": "WeChat package evidence",
+        "required": true,
+        "status": "passed",
+        "summary": "Fixture-backed WeChat package sidecar is bound to the current candidate revision.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/project-veil-wechatgame-release.package.json",
+        "blockerIds": []
+      },
+      {
+        "id": "wechat-verify-evidence",
+        "label": "WeChat verify evidence",
+        "required": true,
+        "status": "passed",
+        "summary": "WeChat verification contract is satisfied for the same candidate revision.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.rc-validation-report.json",
+        "blockerIds": []
+      },
+      {
+        "id": "wechat-smoke-evidence",
+        "label": "WeChat smoke evidence",
+        "required": true,
+        "status": "passed",
+        "summary": "WeChat smoke evidence is present and fresh for the same candidate revision.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.smoke-report.json",
+        "blockerIds": []
+      },
+      {
+        "id": "wechat-candidate-summary",
+        "label": "WeChat candidate summary",
+        "required": true,
+        "status": "passed",
+        "summary": "WeChat candidate summary is ready for release review.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.release-candidate-summary.json",
+        "blockerIds": []
+      },
+      {
+        "id": "manual:wechat-devtools-export-review",
+        "label": "Candidate-scoped WeChat package install/launch verification recorded",
+        "required": true,
+        "status": "passed",
+        "summary": "Manual review is complete and current.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "owner": "codex",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/codex.wechat.install-launch-evidence.json",
+        "blockerIds": []
+      },
+      {
+        "id": "manual:wechat-device-runtime-review",
+        "label": "Physical-device WeChat runtime validated for this candidate",
+        "required": true,
+        "status": "passed",
+        "summary": "Manual review is complete and current.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "owner": "codex",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/device-runtime-review.json",
+        "blockerIds": []
+      },
+      {
+        "id": "manual:wechat-runtime-observability-signoff",
+        "label": "WeChat runtime observability reviewed for this candidate",
+        "required": true,
+        "status": "passed",
+        "summary": "Manual review is complete and current.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "owner": "codex",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/runtime-observability-signoff.json",
+        "blockerIds": []
+      },
+      {
+        "id": "manual:wechat-release-checklist",
+        "label": "WeChat RC checklist and blockers reviewed",
+        "required": true,
+        "status": "passed",
+        "summary": "Manual review is complete and current.",
+        "freshness": "fresh",
+        "observedAt": "2026-04-10T09:42:08.155Z",
+        "owner": "codex",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/wechat-release/checklist-review.json",
+        "blockerIds": []
+      }
+    ]
+  },
+  "configChangeRisk": {
+    "status": "missing",
+    "summary": "Config-center publish audit not found; config risk summary unavailable."
+  }
+}

@@ -652,6 +652,14 @@ function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean,
   return candidates[0];
 }
 
+export function resolveLatestReconnectSoakFile(dirPath: string): string | undefined {
+  return resolveLatestFile(
+    dirPath,
+    (entry) => entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json"),
+    3
+  );
+}
+
 function resolveSnapshotPath(args: Args): string | undefined {
   if (args.snapshotPath) {
     return path.resolve(args.snapshotPath);
@@ -674,57 +682,7 @@ function resolveReconnectSoakPath(args: Args): string | undefined {
   if (args.reconnectSoakPath) {
     return path.resolve(args.reconnectSoakPath);
   }
-  const fixedCandidate = path.join(getDefaultReleaseReadinessDir(), "colyseus-reconnect-soak-summary.json");
-  if (fs.existsSync(fixedCandidate)) {
-    return fixedCandidate;
-  }
-  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
-    entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json")
-  , 3);
-}
-
-function directoryContainsWechatEvidence(dirPath: string): boolean {
-  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-    return false;
-  }
-  return [
-    "codex.wechat.release-candidate-summary.json",
-    "codex.wechat.rc-validation-report.json",
-    "codex.wechat.smoke-report.json"
-  ].some((entry) => fs.existsSync(path.join(dirPath, entry)));
-}
-
-function collectMatchingDirectories(
-  dirPath: string,
-  predicate: (fullPath: string) => boolean,
-  maxDepth: number,
-  currentDepth = 0
-): string[] {
-  if (!fs.existsSync(dirPath)) {
-    return [];
-  }
-
-  const matches: string[] = [];
-  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const fullPath = path.join(dirPath, entry.name);
-    if (predicate(fullPath)) {
-      matches.push(fullPath);
-    }
-    if (currentDepth < maxDepth) {
-      matches.push(...collectMatchingDirectories(fullPath, predicate, maxDepth, currentDepth + 1));
-    }
-  }
-  return matches;
-}
-
-function resolveLatestWechatArtifactsDir(rootDir: string): string | undefined {
-  const candidates = collectMatchingDirectories(rootDir, directoryContainsWechatEvidence, 3).sort(
-    (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
-  );
-  return candidates[0];
+  return resolveLatestReconnectSoakFile(getDefaultReleaseReadinessDir());
 }
 
 function resolveWechatArtifactsDir(args: Args): string | undefined {
