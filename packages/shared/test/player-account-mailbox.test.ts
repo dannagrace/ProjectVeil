@@ -131,3 +131,24 @@ test("summarizePlayerMailbox: mixed mailbox with 2 unread + 1 expired + 1 claima
   assert.equal(summary.claimableCount, 1); // msg-4 has grant
   assert.equal(summary.expiredCount, 1); // msg-3
 });
+
+test("summarizePlayerMailbox: all-expired mailbox → expiredCount equals totalCount, unread=0, claimable=0", () => {
+  const messages = [
+    makeMsg({ id: "msg-1", expiresAt: PAST }),
+    makeMsg({ id: "msg-2", expiresAt: PAST, grant: { gems: 50 } }),
+    makeMsg({ id: "msg-3", expiresAt: PAST })
+  ];
+  const summary = summarizePlayerMailbox(messages, NOW);
+  assert.equal(summary.totalCount, 3);
+  assert.equal(summary.expiredCount, 3);
+  assert.equal(summary.unreadCount, 0);
+  assert.equal(summary.claimableCount, 0);
+});
+
+test("summarizePlayerMailbox: message without expiresAt never expires → counted as non-expired", () => {
+  const messages = [makeMsg({ id: "msg-1" })]; // no expiresAt
+  const summary = summarizePlayerMailbox(messages, NOW);
+  assert.equal(summary.totalCount, 1);
+  assert.equal(summary.expiredCount, 0);
+  assert.equal(summary.unreadCount, 1);
+});
