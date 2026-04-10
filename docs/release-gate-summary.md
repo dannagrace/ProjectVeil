@@ -16,6 +16,8 @@ The summary now also records one explicit `targetSurface` contract. That contrac
 
 For reviewer handoff, treat the WeChat RC checklist and blocker register as the human-readable mirror of that same contract, not as optional notes. They should carry the same surface, revision, freshness, owner, blocker, and waiver story that the JSON report enforces.
 
+When the target surface is `wechat`, the summary also auto-discovers the latest `codex.wechat.commercial-verification-<short-sha>.json` from the selected WeChat artifacts dir and surfaces it as an advisory warning when it is missing, stale, or blocked. This does not change the hard technical gate semantics, but it keeps the external-launch checklist visible in the same handoff artifact instead of leaving it implicit in a separate PR comment or release note.
+
 ## Usage
 
 Use the latest local artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`:
@@ -128,6 +130,14 @@ When `--manual-evidence-ledger` is present, the summary now parses the ledger ta
 - row-level freshness or revision drift for the current candidate
 
 Those row-level findings are promoted into both the `Target Surface Contract` and the top-level `Triage Summary`, so reviewers can tell from the generated gate summary whether the candidate still has manual evidence handoff work outstanding before the release call.
+
+For `wechat`, the generated Markdown `Selected Inputs` section also records the currently selected commercial-verification artifact path, and the `Warnings` section will call out missing or blocked external-launch verification. Use that warning as the trigger to run:
+
+```bash
+npm run release:wechat:commercial-verification -- --artifacts-dir <wechat-artifacts-dir>
+```
+
+That warning stays advisory on purpose: it is there to prevent a technically green RC packet from being mistaken for an externally launch-ready packet.
 
 For `wechat`, the required surface evidence is:
 

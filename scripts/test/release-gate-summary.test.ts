@@ -40,6 +40,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
   const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+  const wechatCommercialVerificationPath = path.join(wechatArtifactsDir, "codex.wechat.commercial-verification-abc123.json");
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
 
   writeJson(snapshotPath, {
@@ -181,6 +182,22 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
     },
     blockers: []
   });
+  writeJson(wechatCommercialVerificationPath, {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    summary: {
+      status: "ready",
+      blockerCount: 0,
+      requiredPendingChecks: 0,
+      requiredFailedChecks: 0,
+      requiredMetadataFailures: 0,
+      acceptedRiskCount: 1,
+      conclusion: "Commercial verification is ready for external launch review."
+    }
+  });
   writeJson(configCenterLibraryPath, {
     publishAuditHistory: [
       {
@@ -276,6 +293,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
   assert.match(renderMarkdown(report), /Reconnect soak evidence is present and passing for this candidate/);
   assert.match(renderMarkdown(report), /codex\.wechat\.release-candidate-summary\.json/);
+  assert.match(renderMarkdown(report), /codex\.wechat\.commercial-verification-abc123\.json/);
   assert.match(renderMarkdown(report), /manual-release-evidence-owner-ledger-abc123\.md/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);
   assert.match(renderMarkdown(report), /owner=release-oncall/);
@@ -283,8 +301,141 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /WeChat package evidence: ok \[required=yes status=passed/);
   assert.match(renderMarkdown(report), /WeChat verify evidence: ok \[required=yes status=passed/);
   assert.match(renderMarkdown(report), /WeChat smoke evidence: ok \[required=yes status=passed/);
+  assert.match(
+    renderMarkdown(report),
+    /WeChat commercial verification: Commercial verification is ready for external launch review\. \[required=no status=passed/
+  );
   assert.match(renderMarkdown(report), /Config Change Risk Summary/);
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
+});
+
+test("buildReleaseGateSummaryReport warns when WeChat commercial verification is missing for the current candidate", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
+  const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0,
+      finishedAt: isoHoursAgo(1)
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 12,
+      invariantChecks: 48
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json")
+      },
+      smoke: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json")
+      },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  const report = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      wechatArtifactsDir,
+      targetSurface: "wechat"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(report.summary.status, "passed");
+  assert.ok(report.triage.warnings.some((entry) => entry.id === "wechat-commercial-verification:warning"));
+  assert.match(
+    report.triage.warnings.find((entry) => entry.id === "wechat-commercial-verification:warning")?.summary ?? "",
+    /not ready for external launch review/
+  );
+  assert.match(renderMarkdown(report), /WeChat commercial verification: `<missing>`/);
+  assert.match(
+    renderMarkdown(report),
+    /WeChat commercial verification: External-launch commercial verification is not attached yet\./
+  );
 });
 
 test("buildReleaseGateSummaryReport discovers nested candidate rehearsal evidence for wechat surface", () => {

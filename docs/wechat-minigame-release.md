@@ -66,6 +66,8 @@
 
 `npm run release:gate:summary -- --target-surface wechat` 的 `Target Surface Contract` 会显式列出 WeChat package、verify、smoke、candidate summary 与 manual review 的 `passed` / `failed` / `pending` 状态；只要 required manual review 仍是 `pending`，Phase 1 sign-off 就保持 blocked。
 
+同一个 summary 现在还会自动发现当前 artifacts dir 下最新的 `codex.wechat.commercial-verification-<short-sha>.json`。如果目标已经进入“外部放量 / 提审 / 正式商运”检查阶段，但这份 artifact 仍缺失、过旧或处于 `blocked`，`Warnings` 会直接提示补跑 `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir>`，避免技术 RC 绿色被误读成“可以直接外放”。
+
 WeChat checklist / blockers 至少要覆盖以下证据面：
 
 - package / verify / RC validation 产物
