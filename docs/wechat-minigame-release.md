@@ -30,6 +30,7 @@
 - 产出发布归档：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 记录 candidate-scoped 安装/启动证据：`npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`
 - 聚合校验 RC artifact：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`
+- 聚合商运闭环验证：`npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`
 - 发布彩排与汇总：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> [--summary <json>] [--markdown <md>] [--candidate <candidate-name> --environment wechat-devtools --operator <name> --status <passed|failed> --evidence <capture-or-note> --runtime-evidence <runtime-evidence.json> --manual-checks <manual-review.json>]`（顺序执行 prepare / package / verify，并可选补 install/launch evidence、smoke report、validate，输出结构化 + Markdown 摘要）
 - 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
@@ -47,6 +48,7 @@
 - RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - WeChat 手工复核 contract 示例：`docs/release-evidence/wechat-release-manual-review.example.json`
+- WeChat 商运闭环 contract 示例：`docs/release-evidence/wechat-commercial-verification.example.json`
 - 只做 CI 同款校验：`npm run check:cocos-release-readiness`
 - 校验真实导出目录：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 
@@ -124,6 +126,12 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 15. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
 16. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
 17. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+18. 当目标是外部放量、提审或正式商运，而不只是 RC 技术验收时，再运行 `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`。
+    - 该脚本会先读取同目录下的 `codex.wechat.release-candidate-summary.json`；如果技术 gate 仍是 `blocked`，商运摘要会直接保持 `blocked`。
+    - 商运 contract 默认覆盖 5 条 required checks：支付链路、订阅消息/触达、数据分析/埋点、合规/提审物料、真机体验。
+    - required checks 都要求 `owner`、`recordedAt`、`revision`、`artifactPath`；缺失、超 24h freshness window 或 revision 不匹配都会继续阻塞。
+    - 输出固定为 `codex.wechat.commercial-verification-<short-sha>.json` 和 `.md`，便于在 PR、提审记录或 release call 里直接引用。
+    - `acceptedRisks[]` 会被原样汇总进摘要，用来记录“可接受但需持续观察”的外放风险，而不是把它们埋在 notes 里。
 
 ## 发布彩排摘要
 
@@ -165,6 +173,14 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 - artifact 归档与 sidecar 是否仍能通过 `verify:wechat-release`
 - 若存在 `codex.wechat.smoke-report.json`，则复用 `smoke:wechat-release --check` 校验其结果；传 `--require-smoke-report` 时缺失也会直接失败
 - 若存在 `*.upload.json`，则校验其与 sidecar 的 archive / SHA / commit 一致；传 `--version <wechat-version>` 时会把 upload receipt 设为必需并校验版本号
+
+`release:wechat:commercial-verification` 则进一步把“技术候选包已 ready”提升到“是否适合外部放量/提审/正式上线”：
+
+- 默认依赖同一 `artifacts-dir` 下的 `codex.wechat.release-candidate-summary.json`，避免技术 gate 还未闭环就直接写商运结论
+- 默认读取 `docs/release-evidence/wechat-commercial-verification.example.json` 同结构的 JSON contract，也可通过 `--checks` 指向 candidate 自己的 review 文件
+- 会把 required check 的 `status`、owner/timestamp/revision/artifactPath 元数据、freshness、accepted risks 一起收口到一个 JSON / Markdown 摘要
+- 只要 required check 仍是 `pending` / `failed`，或者 evidence metadata 不完整 / 不新鲜，最终结论就保持 `blocked`
+- 适合把支付、触达、埋点、合规、真机体验这几类商运项统一挂到同一个 release call 记录里
 
 同时 `validate:wechat-rc` 现在会为 reviewer 生成一份 candidate summary：
 

@@ -205,6 +205,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
 - 微信小游戏 candidate install/launch 证据：`npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`（输出 `codex.wechat.install-launch-evidence.json` + `.md`，记录 candidate、revision、environment、operator、timestamp、pass/fail，并供 `validate:wechat-rc` / release gate summary 引用）
 - 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`（输出 `codex.wechat.rc-validation-report.json`、`codex.wechat.release-candidate-summary.json` 和 `.md`，并默认要求开发者工具真实导出复核、真机 runtime 复核、RC checklist）
+- 微信小游戏商运闭环验证：`npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`（在 `validate:wechat-rc` 之上收口支付、订阅消息、埋点、合规与真机体验结论，输出 candidate-scoped JSON / Markdown 商运签核摘要）
 - 微信小游戏发布彩排：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
 - Cocos RC candidate bundle：`npm run release:cocos-rc:bundle -- --candidate <candidate-name> [--build-surface creator_preview|wechat_preview|wechat_upload_candidate]`（自动补跑 primary-client canonical journey evidence，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 main-journey manifest、journey evidence / snapshot / checklist / blockers / JSON+Markdown bundle）
 - Cocos RC evidence consistency / freshness check：`node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts --candidate <candidate-name> [--expected-revision <git-sha>]`（校验 release-readiness snapshot、gate summary、primary journey evidence、RC snapshot、main-journey manifest、bundle manifest 是否仍对齐同一 candidate revision，并输出 JSON / Markdown 摘要）
@@ -251,6 +252,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 主运行时 / H5 调试壳 contract：`docs/runtime-contract-cocos-h5.md`
 - 微信小游戏构建 / 发布 / 回滚说明：`docs/wechat-minigame-release.md`
+- 微信小游戏商运闭环签核模板：`docs/release-evidence/wechat-commercial-verification.example.json`
 - 微信小游戏 runtime observability 签核：`docs/wechat-runtime-observability-signoff.md`
 - 微信小游戏 runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 - Redis-backed Colyseus 多节点部署：`docs/redis-colyseus-scaling.md`

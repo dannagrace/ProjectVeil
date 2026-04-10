@@ -214,12 +214,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
         reviewTreatment: "merge/release blocker",
       };
     case "validate:wechat-rc":
+    case "release:wechat:commercial-verification":
       return {
         owner: "wechat release owner",
         scope: "wechat-release",
         decisionRole: "authoritative gate",
         blockingSemantics:
-          "Canonical WeChat candidate validation and summary. Missing, blocked, or failed output is a release blocker for the shipped WeChat surface.",
+          script === "validate:wechat-rc"
+            ? "Canonical WeChat candidate validation and summary. Missing, blocked, or failed output is a release blocker for the shipped WeChat surface."
+            : "Canonical WeChat commercial-closure packet. Missing, blocked, or stale output is a release blocker before external rollout or submission.",
         reviewTreatment: "release blocker",
       };
     case "smoke:wechat-release":
