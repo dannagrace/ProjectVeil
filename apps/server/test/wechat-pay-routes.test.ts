@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { issueAccountAuthSession } from "../src/auth";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
 import {
   encryptWechatCallbackResourceForTest,
   registerWechatPayRoutes,
@@ -26,6 +27,10 @@ const TEST_PRODUCTS: Partial<ShopProduct>[] = [
     }
   }
 ];
+
+function buildFreshCallbackNow(): Date {
+  return new Date("2024-04-04T02:22:00Z");
+}
 
 class TestResponse extends EventEmitter {
   statusCode = 200;
@@ -392,6 +397,7 @@ test("wechat pay verify route grants a successful verified payment and stores th
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({
       out_trade_no: order.orderId
     })
@@ -458,6 +464,7 @@ test("wechat pay verify route rejects failed verification without granting rewar
 });
 
 test("wechat pay verify route rejects duplicate submissions with 409 and does not double-credit", async () => {
+  resetRuntimeObservability();
   const app = new TestApp();
   const store = await createVerifiedTestStore();
   const runtimeConfig = createWechatPayConfig();
@@ -471,6 +478,7 @@ test("wechat pay verify route rejects duplicate submissions with 409 and does no
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({
       out_trade_no: order.orderId
     })
@@ -497,11 +505,13 @@ test("wechat pay verify route rejects duplicate submissions with 409 and does no
   });
   const duplicatePayload = secondResponse.json as { error: { code: string } };
   const account = await store.loadPlayerAccount("wechat-player");
+  const metrics = buildPrometheusMetricsDocument();
 
-  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(firstResponse.statusCode, 200, JSON.stringify(firstResponse));
   assert.equal(secondResponse.statusCode, 409);
   assert.equal(duplicatePayload.error.code, "payment_already_verified");
   assert.equal(account?.gems, 120);
+  assert.match(metrics, /veil_runtime_error_events_total\{error_code="payment_fraud_signal",feature_area="payment",owner_area="commerce",severity="warn"\} 1/);
 });
 
 test("wechat pay verify route rejects amount mismatches", async () => {
@@ -556,6 +566,7 @@ test("wechat pay verify route rejects payer openid mismatches without granting r
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({
       out_trade_no: order.orderId,
       openid: "wx-openid-other-player"
@@ -681,6 +692,7 @@ test("wechat pay callback verifies, credits once, and ignores duplicate notifica
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({
       out_trade_no: order.orderId
     })
@@ -711,12 +723,14 @@ test("wechat pay callback verifies, credits once, and ignores duplicate notifica
     resource_type: "encrypt-resource",
     resource
   });
-  const timestamp = "1712197200";
-  const nonce = "signature-nonce-1";
-  const signature = signWechatCallbackForTest(runtimeConfig.platformPrivateKey, timestamp, nonce, body);
+  let callbackAttempt = 0;
+  const sendCallback = async () => {
+    const timestamp = String(Math.floor(buildFreshCallbackNow().getTime() / 1000) + callbackAttempt);
+    const nonce = `signature-nonce-${callbackAttempt + 1}`;
+    const signature = signWechatCallbackForTest(runtimeConfig.platformPrivateKey, timestamp, nonce, body);
+    callbackAttempt += 1;
 
-  const sendCallback = async () =>
-    app.invoke("/api/payments/wechat/callback", {
+    return app.invoke("/api/payments/wechat/callback", {
       headers: {
         "content-type": "application/json",
         "wechatpay-timestamp": timestamp,
@@ -726,6 +740,7 @@ test("wechat pay callback verifies, credits once, and ignores duplicate notifica
       },
       body
     });
+  };
 
   const firstResponse = await sendCallback();
   const secondResponse = await sendCallback();
@@ -755,6 +770,7 @@ test("wechat pay callback logs payer mismatches and does not grant rewards", asy
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({
       out_trade_no: order.orderId,
       openid: "wx-openid-other-player"
@@ -786,7 +802,7 @@ test("wechat pay callback logs payer mismatches and does not grant rewards", asy
     resource_type: "encrypt-resource",
     resource
   });
-  const timestamp = "1712197201";
+  const timestamp = String(Math.floor(buildFreshCallbackNow().getTime() / 1000));
   const nonce = "signature-nonce-2";
   const signature = signWechatCallbackForTest(runtimeConfig.platformPrivateKey, timestamp, nonce, body);
 
@@ -816,7 +832,8 @@ test("wechat pay callback rejects invalid signatures", async () => {
   const runtimeConfig = createWechatPayConfig();
   registerWechatPayRoutes(app as never, store, {
     products: TEST_PRODUCTS,
-    runtimeConfig
+    runtimeConfig,
+    now: buildFreshCallbackNow
   });
 
   const response = await app.invoke("/api/payments/wechat/callback", {
@@ -841,6 +858,43 @@ test("wechat pay callback rejects invalid signatures", async () => {
   assert.match(payload.message, /signature verification failed/);
 });
 
+test("wechat pay callback rejects timestamps outside the replay window", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = createWechatPayConfig();
+  registerWechatPayRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    now: () => new Date("2026-04-11T01:01:00Z")
+  });
+
+  const body = JSON.stringify({
+    id: "evt-stale",
+    event_type: "TRANSACTION.SUCCESS",
+    resource_type: "encrypt-resource",
+    resource: null
+  });
+  const staleTimestamp = String(Math.floor(new Date("2026-04-11T00:50:00Z").getTime() / 1000));
+  const nonce = "stale-signature-nonce";
+  const signature = signWechatCallbackForTest(runtimeConfig.platformPrivateKey, staleTimestamp, nonce, body);
+
+  const response = await app.invoke("/api/payments/wechat/callback", {
+    headers: {
+      "content-type": "application/json",
+      "wechatpay-timestamp": staleTimestamp,
+      "wechatpay-nonce": nonce,
+      "wechatpay-serial": runtimeConfig.platformCertificateSerial,
+      "wechatpay-signature": signature
+    },
+    body
+  });
+  const payload = response.json as { code: string; message: string };
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(payload.code, "FAIL");
+  assert.match(payload.message, /replay window/);
+});
+
 test("wechat pay callback rejects unsupported trade states", async () => {
   const store = new MemoryRoomSnapshotStore();
   const runtimeConfig = createWechatPayConfig();
@@ -848,6 +902,7 @@ test("wechat pay callback rejects unsupported trade states", async () => {
   registerWechatPayRoutes(callbackApp as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({})
   });
 
@@ -905,6 +960,7 @@ test("wechat pay callback rejects merchant mismatches", async () => {
   registerWechatPayRoutes(callbackApp as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({})
   });
 
@@ -962,6 +1018,7 @@ test("wechat pay callback rejects missing order ids, missing orders, and missing
   registerWechatPayRoutes(callbackApp as never, store, {
     products: TEST_PRODUCTS,
     runtimeConfig,
+    now: buildFreshCallbackNow,
     fetchImpl: buildVerifyFetch({})
   });
 

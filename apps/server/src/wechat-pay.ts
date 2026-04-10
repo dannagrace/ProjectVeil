@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createSign, createVerify, randomBytes
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
+import { recordRuntimeErrorEvent } from "./observability";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
 
@@ -78,6 +79,7 @@ interface WechatPayCallbackTransaction {
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
+const MAX_CALLBACK_TIMESTAMP_SKEW_SECONDS = 5 * 60;
 const SUCCESS_CALLBACK_BODY = { code: "SUCCESS", message: "success" };
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -253,7 +255,8 @@ function emitPaymentFraudSignal(
     orderId: string;
     productId: string;
     [key: string]: unknown;
-  }
+  },
+  route: "/api/payments/wechat/verify" | "/api/payments/wechat/callback"
 ): void {
   try {
     emitAnalyticsEvent("payment_fraud_signal", {
@@ -266,6 +269,34 @@ function emitPaymentFraudSignal(
   } catch {
     // Fraud logging must not break legitimate payment handling.
   }
+
+  recordRuntimeErrorEvent({
+    id: randomUUID(),
+    recordedAt: new Date().toISOString(),
+    source: "server",
+    surface: "wechat-pay",
+    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+    featureArea: "payment",
+    ownerArea: "commerce",
+    severity: "warn",
+    errorCode: "payment_fraud_signal",
+    message: `WeChat Pay fraud signal triggered: ${signal}`,
+    tags: ["wechat-pay", signal],
+    context: {
+      roomId: null,
+      playerId,
+      requestId: null,
+      route,
+      action: null,
+      statusCode: null,
+      crash: false,
+      detail: JSON.stringify({
+        orderId: payload.orderId,
+        productId: payload.productId,
+        signal
+      })
+    }
+  });
 }
 
 function verifyWechatCallbackSignature(
@@ -291,6 +322,20 @@ function verifyWechatCallbackSignature(
   verifier.update(`${timestamp}\n${nonce}\n${body}\n`);
   verifier.end();
   return verifier.verify(config.platformPublicKey, signature, "base64");
+}
+
+function isWechatCallbackTimestampFresh(headers: IncomingMessage["headers"], now: Date): boolean {
+  const timestamp = headers["wechatpay-timestamp"];
+  if (typeof timestamp !== "string") {
+    return false;
+  }
+
+  const parsedSeconds = Number.parseInt(timestamp, 10);
+  if (!Number.isFinite(parsedSeconds)) {
+    return false;
+  }
+
+  return Math.abs(Math.floor(now.getTime() / 1000) - parsedSeconds) <= MAX_CALLBACK_TIMESTAMP_SKEW_SECONDS;
 }
 
 function decryptWechatCallbackResource(config: WechatPayRuntimeConfig, envelope: WechatPayCallbackEnvelope): WechatPayCallbackTransaction {
@@ -664,7 +709,7 @@ export function registerWechatPayRoutes(
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
           productId: order.productId
-        });
+        }, "/api/payments/wechat/verify");
         sendJson(response, 409, {
           error: {
             code: "payment_already_verified",
@@ -700,7 +745,7 @@ export function registerWechatPayRoutes(
           expectedOpenId,
           receivedOpenId: verified.payerOpenId,
           transactionId: verified.transaction_id
-        });
+        }, "/api/payments/wechat/verify");
         sendJson(response, 409, {
           error: {
             code: "wechat_payment_openid_mismatch",
@@ -722,7 +767,7 @@ export function registerWechatPayRoutes(
           orderId: order.orderId,
           productId: order.productId,
           transactionId: verified.transaction_id
-        });
+        }, "/api/payments/wechat/verify");
         sendJson(response, 409, {
           error: {
             code: "payment_already_verified",
@@ -751,7 +796,7 @@ export function registerWechatPayRoutes(
           orderId: order.orderId,
           productId: order.productId,
           recentVerifiedCount
-        });
+        }, "/api/payments/wechat/verify");
       }
 
       sendJson(response, 200, {
@@ -779,7 +824,7 @@ export function registerWechatPayRoutes(
           orderId: order.orderId,
           productId: order.productId,
           expectedAmount: order.amount
-        });
+        }, "/api/payments/wechat/verify");
       }
       sendJson(response, statusCode, {
         error: {
@@ -809,6 +854,13 @@ export function registerWechatPayRoutes(
     try {
       const rawBody = await readRawBody(request);
       const bodyText = rawBody.toString("utf8");
+      if (!isWechatCallbackTimestampFresh(request.headers, now())) {
+        sendCallbackResponse(response, 401, {
+          code: "FAIL",
+          message: "callback timestamp is outside the allowed replay window"
+        });
+        return;
+      }
       if (!verifyWechatCallbackSignature(runtimeConfig, request.headers, bodyText)) {
         sendCallbackResponse(response, 401, {
           code: "FAIL",
@@ -868,7 +920,7 @@ export function registerWechatPayRoutes(
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
           productId: order.productId
-        });
+        }, "/api/payments/wechat/callback");
         sendCallbackResponse(response, 200);
         return;
       }
@@ -887,7 +939,7 @@ export function registerWechatPayRoutes(
           expectedOpenId,
           callbackOpenId: transaction.payer?.openid?.trim() || "",
           verifiedOpenId: verified.payerOpenId
-        });
+        }, "/api/payments/wechat/callback");
         sendCallbackResponse(response, 200);
         return;
       }
@@ -898,7 +950,7 @@ export function registerWechatPayRoutes(
           productId: order.productId,
           expectedAmount: order.amount,
           receivedAmount: resolveVerifiedPaidAmount(transaction.amount)
-        });
+        }, "/api/payments/wechat/callback");
       }
 
       const settlement = await store.completePaymentOrder(order.orderId, {

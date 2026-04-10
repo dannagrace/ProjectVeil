@@ -269,6 +269,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - PR 最小验证速查表（按常见改动类型查看 must run / recommended / can skip）：`docs/verification-matrix.md#contributor-quick-reference`
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
+- WeChat Pay 退款 / 争议 / 防欺诈运营手册：`docs/wechat-pay-ops-runbook.md`
 - Codex automation 分支审计与清理 runbook：`docs/codex-automation-branch-maintenance.md`
 - GitHub issue intake fallback runbook：`docs/github-issue-intake-fallback.md`
 - GitHub issue intake fallback smoke checklist：`docs/github-issue-intake-fallback-smoke-checklist.md`

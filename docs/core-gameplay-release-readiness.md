@@ -29,6 +29,7 @@
 - Cocos / WeChat RC blocker 模板：`docs/release-evidence/cocos-wechat-rc-blockers.template.md`
 - WeChat runtime observability 签核模板：`docs/release-evidence/wechat-runtime-observability-signoff.template.md`
 - 微信小游戏提审前冒烟：`docs/wechat-minigame-release.md`
+- WeChat Pay 退款 / 争议 / 防欺诈运营手册：`docs/wechat-pay-ops-runbook.md`
 
 ## 发布判断规则
 
@@ -143,6 +144,7 @@
 - [ ] 至少能看到活跃房间数、连接数、世界 / 战斗 action 计数、房间 create/dispose、reconnect success/failure、battle completion/abort，以及鉴权会话摘要。
 - [ ] 日志或接口输出足以区分登录失败、进房失败、同步失败和资源 / 配置失败。
 - [ ] WeChat release candidate / shipping candidate 已回填 candidate-scoped runtime observability sign-off，并记录 reviewer、`recordedAt`、target revision 与结论。
+- [ ] 如候选包承载 WeChat Pay，`payment_fraud_signal` 告警与退款 / 补偿值班流程已按 `docs/wechat-pay-ops-runbook.md` 确认，且至少演练一次未到账补偿或重复回调幂等路径。
 
 `P1 follow-up`
 
