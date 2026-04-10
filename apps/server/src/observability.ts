@@ -11,6 +11,7 @@ import {
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
 import { resetCapturedAnalyticsEventsForTest } from "./analytics";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
@@ -784,6 +785,7 @@ function buildFeatureFlagObservabilityPayload(service = "project-veil-server"): 
 export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
   const featureFlags = buildFeatureFlagObservabilityPayload();
+  const mysqlPools = getMySqlPoolMetricsSnapshot();
   const lines = [
     "# HELP veil_up Process health status.",
     "# TYPE veil_up gauge",
@@ -795,6 +797,35 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_connected_players gauge",
     `veil_connected_players ${health.runtime.connectionCount}`
   ];
+
+  lines.push(
+    "# HELP veil_mysql_pool_connection_limit Configured MySQL pool connection limit.",
+    "# TYPE veil_mysql_pool_connection_limit gauge",
+    "# HELP veil_mysql_pool_connections_active Active MySQL connections borrowed from the pool.",
+    "# TYPE veil_mysql_pool_connections_active gauge",
+    "# HELP veil_mysql_pool_connections_idle Idle MySQL connections retained by the pool.",
+    "# TYPE veil_mysql_pool_connections_idle gauge",
+    "# HELP veil_mysql_pool_queue_depth MySQL pool wait queue depth.",
+    "# TYPE veil_mysql_pool_queue_depth gauge",
+    "# HELP veil_mysql_pool_connection_utilization_ratio Ratio of active connections to configured connection limit.",
+    "# TYPE veil_mysql_pool_connection_utilization_ratio gauge"
+  );
+  if (mysqlPools.length === 0) {
+    lines.push("veil_mysql_pool_connection_limit 0");
+    lines.push("veil_mysql_pool_connections_active 0");
+    lines.push("veil_mysql_pool_connections_idle 0");
+    lines.push("veil_mysql_pool_queue_depth 0");
+    lines.push("veil_mysql_pool_connection_utilization_ratio 0");
+  } else {
+    for (const pool of mysqlPools) {
+      const labels = formatPrometheusLabels({ pool: pool.pool });
+      lines.push(`veil_mysql_pool_connection_limit${labels} ${pool.connectionLimit}`);
+      lines.push(`veil_mysql_pool_connections_active${labels} ${pool.activeConnections}`);
+      lines.push(`veil_mysql_pool_connections_idle${labels} ${pool.idleConnections}`);
+      lines.push(`veil_mysql_pool_queue_depth${labels} ${pool.queueDepth}`);
+      lines.push(`veil_mysql_pool_connection_utilization_ratio${labels} ${pool.utilizationRatio.toFixed(4)}`);
+    }
+  }
 
   lines.push(
     ...renderHistogramMetric(
@@ -1672,6 +1703,7 @@ export function recordReconnectWindowResolved(
 }
 
 export function resetRuntimeObservability(): void {
+  resetTrackedMySqlPools();
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
   runtimeObservability.errorEvents.length = 0;

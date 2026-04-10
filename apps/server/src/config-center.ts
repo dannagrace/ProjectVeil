@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
-import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import type { Pool, RowDataPacket } from "mysql2/promise";
 import * as XLSX from "xlsx";
 import amberFieldsMapObjectsConfig from "../../../configs/phase1-map-objects-amber-fields.json";
 import amberFieldsWorldConfig from "../../../configs/phase1-world-amber-fields.json";
@@ -52,6 +52,7 @@ import {
   type MySqlPersistenceConfig,
   readMySqlPersistenceConfig
 } from "./persistence";
+import { createTrackedMySqlPool } from "./mysql-pool";
 
 export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 
@@ -3404,15 +3405,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
   }
 
   static async create(config: MySqlPersistenceConfig, rootDir = resolve(process.cwd(), "configs")): Promise<MySqlConfigCenterStore> {
-    const pool = createPool({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password,
-      database: config.database,
-      connectionLimit: 4,
-      namedPlaceholders: true
-    });
+    const pool = createTrackedMySqlPool("config_center", config);
     await pool.query("SELECT 1");
 
     return new MySqlConfigCenterStore(pool, config.database, rootDir);

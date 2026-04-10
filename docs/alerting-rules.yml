@@ -57,6 +57,28 @@ groups:
           description: The 95th percentile HTTP request latency has exceeded 750ms for 10 minutes. Inspect runtime saturation, downstream auth/config dependencies, and noisy operators.
           runbook_url: ./alerting-runbook.md#alert-veilhttprequestlatencyp95high
 
+      - alert: VeilMySqlPoolPressureHigh
+        expr: max(veil_mysql_pool_queue_depth{pool=~"room_snapshot|config_center"}) > 0 or max(veil_mysql_pool_connection_utilization_ratio{pool=~"room_snapshot|config_center"}) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil MySQL connection pools are under sustained pressure
+          description: Either the MySQL pool queue is non-zero or pool utilization has exceeded 80 percent for 10 minutes. Expect persistence/config requests to back up before user-facing latency fully degrades.
+          runbook_url: ./alerting-runbook.md#alert-veilmysqlpoolpressurehigh
+
+      - alert: VeilMySqlReplicationLagHigh
+        expr: max(mysql_slave_status_seconds_behind_master{service="project-veil-mysql"}) > 30
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-mysql
+        annotations:
+          summary: Project Veil MySQL replica lag is above the RPO target
+          description: Replica lag has exceeded 30 seconds for 10 minutes. Freeze failover and backup promotion decisions until replication catches up or a deliberate recovery point is chosen.
+          runbook_url: ./alerting-runbook.md#alert-veilmysqlreplicationlaghigh
+
       - alert: VeilWechatPaymentFraudSignalsHigh
         expr: increase(veil_runtime_error_events_total{feature_area="payment",error_code="payment_fraud_signal"}[15m]) > 0
         for: 5m

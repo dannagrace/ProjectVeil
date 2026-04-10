@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createConnection, createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
+import { buildMySqlPoolOptions, type MySqlPoolConfig } from "./mysql-pool";
 
 export interface SchemaMigrationConfig {
   host: string;
@@ -9,6 +10,7 @@ export interface SchemaMigrationConfig {
   user: string;
   password: string;
   database: string;
+  pool?: MySqlPoolConfig;
 }
 
 export interface SchemaMigrationModule {
@@ -71,15 +73,22 @@ export function schemaMigrationTableName(): string {
 }
 
 export async function createSchemaMigrationPool(config: SchemaMigrationConfig): Promise<Pool> {
-  return createPool({
-    host: config.host,
-    port: config.port,
-    user: config.user,
-    password: config.password,
-    database: config.database,
-    connectionLimit: 4,
-    namedPlaceholders: true
-  });
+  return createPool(
+    buildMySqlPoolOptions({
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      pool: config.pool ?? {
+        connectionLimit: 4,
+        maxIdle: 4,
+        idleTimeoutMs: 60_000,
+        queueLimit: 0,
+        waitForConnections: true
+      }
+    })
+  );
 }
 
 export async function ensureSchemaMigrationDatabase(config: SchemaMigrationConfig): Promise<void> {

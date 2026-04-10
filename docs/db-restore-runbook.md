@@ -36,6 +36,15 @@ export RESTORE_MYSQL_DATABASE=project_veil_restore
 
 If your object storage uses a named AWS CLI profile, also export `VEIL_BACKUP_AWS_PROFILE`.
 
+For rehearsals, prefer the automatable wrapper first:
+
+```bash
+export VEIL_RESTORE_BACKUP_KEY="$VEIL_BACKUP_S3_PREFIX/daily/project_veil-20260403T030000Z.sql.gz"
+npm run db:restore:rehearsal
+```
+
+The remainder of this runbook explains the exact manual steps that wrapper executes so reviewers can audit or adapt the flow.
+
 ## 1. Pick The Backup To Restore
 
 Choose the most recent daily backup that predates the incident. For a weekly rollback or compliance restore, pick the matching object under `weekly/`.
@@ -159,3 +168,14 @@ Estimated RTO for a routine restore:
 - Validation and promotion checks: 10 to 15 minutes
 
 Practical target RTO: 20 to 45 minutes, assuming object storage and a standby MySQL host are both available.
+
+## Rehearsal Recording
+
+For production-readiness drills, capture these fields in the incident log or ops evidence bundle:
+
+- `VEIL_RESTORE_BACKUP_KEY` used for the rehearsal
+- restore host and schema name
+- checksum verification output
+- sanity-query row counts
+- `npm run test:phase1-release-persistence -- --storage mysql` result
+- measured start/end timestamps for the full rehearsal window
