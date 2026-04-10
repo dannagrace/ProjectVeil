@@ -2,6 +2,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  buildReleaseEvidenceIndexReport,
+  renderReleaseEvidenceIndexMarkdown
+} from "./release-evidence-index.ts";
+import {
+  buildSameCandidateEvidenceAuditReport,
+  renderMarkdown as renderCandidateEvidenceAuditMarkdown
+} from "./same-candidate-evidence-audit.ts";
+
 type StageStatus = "passed" | "failed" | "skipped";
 type TargetSurface = "h5" | "wechat";
 
@@ -71,6 +80,12 @@ interface RehearsalArtifacts {
   sameRevisionEvidenceBundleMarkdownPath?: string;
   phase1ReleaseEvidenceDriftGatePath?: string;
   phase1ReleaseEvidenceDriftGateMarkdownPath?: string;
+  manualEvidenceLedgerPath?: string;
+  releaseReadinessDashboardPath?: string;
+  candidateEvidenceAuditPath?: string;
+  candidateEvidenceAuditMarkdownPath?: string;
+  releaseEvidenceIndexPath?: string;
+  releaseEvidenceIndexMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
   phase1CandidateDossierMarkdownPath?: string;
   goNoGoPacketPath?: string;
@@ -102,6 +117,17 @@ interface RehearsalReport {
   artifactBundleDir: string;
   artifacts: RehearsalArtifacts;
   stages: StageResult[];
+}
+
+interface SameRevisionManifest {
+  artifacts?: {
+    manualEvidenceLedger?: {
+      path?: string;
+    };
+    releaseReadinessDashboard?: {
+      path?: string;
+    };
+  };
 }
 
 const OUTPUT_LIMIT = 4000;
@@ -384,6 +410,13 @@ function readRequiredJson<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
 }
 
+function resolveManifestArtifactPath(manifestPath: string, value: string | undefined): string | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+  return path.isAbsolute(value) ? value : path.resolve(value);
+}
+
 function findFirstMatching(outputDir: string, prefix: string, suffix: string): string | undefined {
   if (!fs.existsSync(outputDir)) {
     return undefined;
@@ -508,6 +541,14 @@ function main(): void {
     outputDir,
     `phase1-release-evidence-drift-gate-${candidateSlug}-${revision.shortCommit}.md`
   );
+  const manualEvidenceLedgerPath = path.join(outputDir, `manual-release-evidence-owner-ledger-${candidateSlug}-${revision.shortCommit}.md`);
+  const candidateEvidenceAuditPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.json`);
+  const candidateEvidenceAuditMarkdownPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const releaseEvidenceIndexPath = path.join(outputDir, `current-release-evidence-index-${candidateSlug}-${revision.shortCommit}.json`);
+  const releaseEvidenceIndexMarkdownPath = path.join(
+    outputDir,
+    `current-release-evidence-index-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const phase1CandidateDossierPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.json`);
   const phase1CandidateDossierMarkdownPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.md`);
   const goNoGoPacketPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.json`);
@@ -533,6 +574,10 @@ function main(): void {
   artifacts.sameRevisionEvidenceBundleMarkdownPath = toRelative(sameRevisionEvidenceBundleMarkdownPath);
   artifacts.phase1ReleaseEvidenceDriftGatePath = toRelative(phase1ReleaseEvidenceDriftGatePath);
   artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
+  artifacts.candidateEvidenceAuditPath = toRelative(candidateEvidenceAuditPath);
+  artifacts.candidateEvidenceAuditMarkdownPath = toRelative(candidateEvidenceAuditMarkdownPath);
+  artifacts.releaseEvidenceIndexPath = toRelative(releaseEvidenceIndexPath);
+  artifacts.releaseEvidenceIndexMarkdownPath = toRelative(releaseEvidenceIndexMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
   artifacts.phase1CandidateDossierMarkdownPath = toRelative(phase1CandidateDossierMarkdownPath);
   artifacts.goNoGoPacketPath = toRelative(goNoGoPacketPath);
@@ -885,6 +930,107 @@ function main(): void {
       }
     },
     {
+      id: "candidate-evidence-audit",
+      title: "Build candidate evidence audit",
+      run: () => {
+        if (!fs.existsSync(sameRevisionEvidenceBundleManifestPath)) {
+          return {
+            id: "candidate-evidence-audit",
+            title: "Build candidate evidence audit",
+            status: "failed",
+            summary: "Phase 1 same-revision evidence bundle manifest is missing, so the reviewer audit front-door could not be generated.",
+            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+          };
+        }
+
+        const manifest = readRequiredJson<SameRevisionManifest>(sameRevisionEvidenceBundleManifestPath);
+        const sourceManualEvidenceLedgerPath = resolveManifestArtifactPath(
+          sameRevisionEvidenceBundleManifestPath,
+          manifest.artifacts?.manualEvidenceLedger?.path
+        );
+        const releaseReadinessDashboardPath = resolveManifestArtifactPath(
+          sameRevisionEvidenceBundleManifestPath,
+          manifest.artifacts?.releaseReadinessDashboard?.path
+        );
+
+        if (sourceManualEvidenceLedgerPath) {
+          copyFileIfPresent(sourceManualEvidenceLedgerPath, manualEvidenceLedgerPath);
+          artifacts.manualEvidenceLedgerPath = toRelative(manualEvidenceLedgerPath);
+        }
+        if (releaseReadinessDashboardPath) {
+          artifacts.releaseReadinessDashboardPath = toRelative(releaseReadinessDashboardPath);
+        }
+
+        if (!sourceManualEvidenceLedgerPath || !fs.existsSync(sourceManualEvidenceLedgerPath)) {
+          return {
+            id: "candidate-evidence-audit",
+            title: "Build candidate evidence audit",
+            status: "failed",
+            summary: "Phase 1 same-revision evidence bundle did not provide a manual evidence owner ledger for the reviewer audit front-door.",
+            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+          };
+        }
+
+        const report = buildSameCandidateEvidenceAuditReport({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          targetSurface: args.targetSurface,
+          snapshotPath: releaseReadinessSnapshotPath,
+          releaseGateSummaryPath,
+          cocosRcBundlePath:
+            findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json"),
+          ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
+          ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
+          manualEvidenceLedgerPath,
+          ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
+          ...(artifacts.wechatCandidateSummaryPath
+            ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
+            : {}),
+          outputPath: candidateEvidenceAuditPath,
+          markdownOutputPath: candidateEvidenceAuditMarkdownPath,
+          maxAgeHours: 72
+        });
+
+        writeJsonFile(candidateEvidenceAuditPath, report);
+        writeFile(candidateEvidenceAuditMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
+
+        return {
+          id: "candidate-evidence-audit",
+          title: "Build candidate evidence audit",
+          status: "passed",
+          summary: `Audit verdict ${report.summary.status}; reviewer front-door artifact generated successfully.`,
+          outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+        };
+      }
+    },
+    {
+      id: "release-evidence-index",
+      title: "Build current release evidence index",
+      run: () => {
+        const report = buildReleaseEvidenceIndexReport(
+          {
+            releaseReadinessDir: outputDir,
+            wechatArtifactsDir: artifacts.stableWechatArtifactsDir ? stableWechatArtifactsDir : path.join(outputDir, "missing-wechat-artifacts"),
+            maxAgeHours: 72,
+            outputPath: releaseEvidenceIndexPath,
+            markdownOutputPath: releaseEvidenceIndexMarkdownPath
+          },
+          revision
+        );
+
+        writeJsonFile(releaseEvidenceIndexPath, report);
+        writeFile(releaseEvidenceIndexMarkdownPath, renderReleaseEvidenceIndexMarkdown(report));
+
+        return {
+          id: "release-evidence-index",
+          title: "Build current release evidence index",
+          status: report.summary.status === "failed" ? "failed" : "passed",
+          summary: `Evidence index verdict ${report.summary.status}; ${report.summary.summary}`,
+          outputs: [releaseEvidenceIndexPath, releaseEvidenceIndexMarkdownPath].map(toRelative)
+        };
+      }
+    },
+    {
       id: "phase1-candidate-dossier",
       title: "Build Phase 1 candidate dossier",
       run: () => {
@@ -995,6 +1141,10 @@ function main(): void {
     sameRevisionEvidenceBundleMarkdownPath,
     phase1ReleaseEvidenceDriftGatePath,
     phase1ReleaseEvidenceDriftGateMarkdownPath,
+    candidateEvidenceAuditPath,
+    candidateEvidenceAuditMarkdownPath,
+    releaseEvidenceIndexPath,
+    releaseEvidenceIndexMarkdownPath,
     phase1CandidateDossierPath,
     phase1CandidateDossierMarkdownPath,
     goNoGoPacketPath,
