@@ -38,6 +38,7 @@ The bundle contains:
 - stable copied inputs such as `client-release-candidate-smoke-phase1-mainline-<short-sha>.json`
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
 - one same-revision evidence bundle manifest plus the paired drift-gate JSON / Markdown
+- the same-revision bundle's manual evidence owner ledger and release-readiness dashboard restaged at the rehearsal bundle top level
 - one candidate-level evidence audit and one current release evidence index so reviewers have a front-door into the packet
 - one reviewer-facing runtime observability bundle directory with the staged evidence and gate files for the target environment
 - the candidate-scoped Cocos RC bundle, Phase 1 dossier, and final go/no-go packet
@@ -77,6 +78,6 @@ npm run release:phase1:candidate-rehearsal -- \
   --target-surface h5
 ```
 
-Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file links the stable artifact paths used for the rehearsal and records the reviewer front-door evidence index, candidate evidence audit, release gate, release health, dossier, and final go/no-go packet outcomes for the candidate revision.
+Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file has a dedicated reviewer front-door section for the current release evidence index, candidate evidence audit, restaged release-readiness dashboard, and manual evidence owner ledger, then records the release gate, release health, dossier, and final go/no-go packet outcomes for the candidate revision.
 
 For the standalone CI guard and explicit GitHub Actions inputs, see [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md).

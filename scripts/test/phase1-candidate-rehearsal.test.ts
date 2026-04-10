@@ -181,6 +181,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.phase1ReleaseEvidenceDriftGatePath ?? "", /phase1-release-evidence-drift-gate-phase1-mainline-/);
   assert.match(report.artifacts.manualEvidenceLedgerPath ?? "", /manual-release-evidence-owner-ledger-phase1-mainline-/);
+  assert.match(report.artifacts.releaseReadinessDashboardPath ?? "", /release-readiness-dashboard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceAuditPath ?? "", /candidate-evidence-audit-phase1-mainline-/);
   assert.match(report.artifacts.releaseEvidenceIndexPath ?? "", /current-release-evidence-index-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
@@ -192,6 +193,11 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
   assert.match(markdown, /Release gate summary: `passed`/);
   assert.match(markdown, /Phase 1 dossier summary: `passed`/);
+  assert.match(markdown, /## Reviewer Front Door/);
+  assert.match(markdown, /Current release evidence index:/);
+  assert.match(markdown, /Candidate evidence audit:/);
+  assert.match(markdown, /Release readiness dashboard:/);
+  assert.match(markdown, /Manual evidence owner ledger:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /releaseEvidenceIndexPath:/);
   assert.match(markdown, /goNoGoPacketPath:/);

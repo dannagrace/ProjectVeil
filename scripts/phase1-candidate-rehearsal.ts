@@ -82,6 +82,7 @@ interface RehearsalArtifacts {
   phase1ReleaseEvidenceDriftGateMarkdownPath?: string;
   manualEvidenceLedgerPath?: string;
   releaseReadinessDashboardPath?: string;
+  releaseReadinessDashboardMarkdownPath?: string;
   candidateEvidenceAuditPath?: string;
   candidateEvidenceAuditMarkdownPath?: string;
   releaseEvidenceIndexPath?: string;
@@ -461,6 +462,21 @@ function renderMarkdown(report: RehearsalReport): string {
     lines.push("");
   }
 
+  lines.push("## Reviewer Front Door", "");
+  if (report.artifacts.releaseEvidenceIndexPath) {
+    lines.push(`- Current release evidence index: \`${report.artifacts.releaseEvidenceIndexPath}\``);
+  }
+  if (report.artifacts.candidateEvidenceAuditPath) {
+    lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
+  }
+  if (report.artifacts.releaseReadinessDashboardPath) {
+    lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
+  }
+  if (report.artifacts.manualEvidenceLedgerPath) {
+    lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
+  }
+  lines.push("");
+
   lines.push("## Generated Outputs", "");
   const artifactEntries = Object.entries(report.artifacts)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
@@ -527,6 +543,7 @@ function main(): void {
   const releaseHealthSummaryPath = path.join(outputDir, `release-health-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseHealthMarkdownPath = path.join(outputDir, `release-health-summary-${candidateSlug}-${revision.shortCommit}.md`);
   const syntheticDashboardPath = path.join(outputDir, `release-readiness-dashboard-${candidateSlug}-${revision.shortCommit}.json`);
+  const releaseReadinessDashboardMarkdownPath = syntheticDashboardPath.replace(/\.json$/, ".md");
   const sameRevisionEvidenceBundleDir = path.join(outputDir, `phase1-same-revision-evidence-bundle-${candidateSlug}-${revision.shortCommit}`);
   const sameRevisionEvidenceBundleManifestPath = path.join(
     sameRevisionEvidenceBundleDir,
@@ -958,7 +975,12 @@ function main(): void {
           artifacts.manualEvidenceLedgerPath = toRelative(manualEvidenceLedgerPath);
         }
         if (releaseReadinessDashboardPath) {
-          artifacts.releaseReadinessDashboardPath = toRelative(releaseReadinessDashboardPath);
+          copyFileIfPresent(releaseReadinessDashboardPath, syntheticDashboardPath);
+          artifacts.releaseReadinessDashboardPath = toRelative(syntheticDashboardPath);
+          const sourceDashboardMarkdownPath = releaseReadinessDashboardPath.replace(/\.json$/, ".md");
+          if (copyFileIfPresent(sourceDashboardMarkdownPath, releaseReadinessDashboardMarkdownPath)) {
+            artifacts.releaseReadinessDashboardMarkdownPath = toRelative(releaseReadinessDashboardMarkdownPath);
+          }
         }
 
         if (!sourceManualEvidenceLedgerPath || !fs.existsSync(sourceManualEvidenceLedgerPath)) {
@@ -1143,6 +1165,7 @@ function main(): void {
     phase1ReleaseEvidenceDriftGateMarkdownPath,
     candidateEvidenceAuditPath,
     candidateEvidenceAuditMarkdownPath,
+    syntheticDashboardPath,
     releaseEvidenceIndexPath,
     releaseEvidenceIndexMarkdownPath,
     phase1CandidateDossierPath,
@@ -1164,6 +1187,9 @@ function main(): void {
   if (artifacts.stableWechatArtifactsDir) {
     requiredArtifacts.push(path.join(stableWechatArtifactsDir, "codex.wechat.release-candidate-summary.json"));
     requiredArtifacts.push(path.join(stableWechatArtifactsDir, "codex.wechat.release-candidate-summary.md"));
+  }
+  if (artifacts.releaseReadinessDashboardMarkdownPath) {
+    requiredArtifacts.push(releaseReadinessDashboardMarkdownPath);
   }
   if (cocosBundlePath) {
     requiredArtifacts.push(cocosBundlePath);
