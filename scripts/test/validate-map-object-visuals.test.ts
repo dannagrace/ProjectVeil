@@ -37,25 +37,63 @@ async function seedMapObjectVisualRoot(tempDir: string): Promise<void> {
       "phase1-map-objects-ashpeak-ascent.json",
       "phase1-map-objects-thornwall-divide.json",
       "phase2-map-objects-contested-basin.json",
-      "phase2-map-objects-frontier-expanded.json"
+      "phase2-map-objects-frontier-expanded.json",
+      "phase2-map-objects-verdant-vale.json"
     ].map((fileName) => copyConfigFixture(tempDir, fileName))
   );
 }
 
-test("validate-map-object-visuals covers the shipped Phase 1 and Phase 2 map packs", async () => {
+async function backfillPhase2VerdantValeCoverage(tempDir: string): Promise<void> {
+  const objectVisualsPath = join(tempDir, "object-visuals.json");
+  const phase2VerdantValePath = join(tempDir, "phase2-map-objects-verdant-vale.json");
+  const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {
+    phase2MapPackCoverage?: Record<
+      string,
+      {
+        neutralArmies: Record<string, string>;
+        buildings: Record<string, string>;
+        resources: Record<string, string>;
+      }
+    >;
+  };
+  const mapObjects = JSON.parse(await readFile(phase2VerdantValePath, "utf8")) as {
+    neutralArmies: Array<{ id: string }>;
+    buildings: Array<{ id: string; kind: string }>;
+    guaranteedResources: Array<{ position: { x: number; y: number }; resource: { kind: string } }>;
+  };
+
+  objectVisuals.phase2MapPackCoverage ??= {};
+  objectVisuals.phase2MapPackCoverage["phase2-verdant-vale"] = {
+    neutralArmies: Object.fromEntries(mapObjects.neutralArmies.map((entry) => [entry.id, "neutral"])),
+    buildings: Object.fromEntries(mapObjects.buildings.map((entry) => [entry.id, entry.kind])),
+    resources: Object.fromEntries(
+      mapObjects.guaranteedResources.map((entry) => [
+        `${entry.resource.kind}@${entry.position.x},${entry.position.y}`,
+        entry.resource.kind
+      ])
+    )
+  };
+
+  await writeFile(objectVisualsPath, `${JSON.stringify(objectVisuals, null, 2)}\n`, "utf8");
+}
+
+test("validate-map-object-visuals reports the current shipped missing Phase 2 coverage", async () => {
   const report = await buildMapObjectVisualCoverageReport({
     rootDir: configsDir
   });
 
-  assert.equal(report.mapPackCount, 15);
-  assert.equal(report.valid, true);
-  assert.equal(report.errorCount, 0);
+  assert.equal(report.mapPackCount, 16);
+  assert.equal(report.valid, false);
+  assert.equal(report.errorCount, 1);
   assert.equal(report.warningCount, 0);
+  assert.deepEqual(report.issues.map((issue) => issue.code), ["coverage_pack_missing"]);
+  assert.equal(report.issues[0]?.mapPackId, "phase2-verdant-vale");
 });
 
 test("validate-map-object-visuals fails when a shipped node loses coverage", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "veil-map-object-visuals-"));
   await seedMapObjectVisualRoot(tempDir);
+  await backfillPhase2VerdantValeCoverage(tempDir);
 
   const objectVisualsPath = join(tempDir, "object-visuals.json");
   const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {
@@ -77,9 +115,35 @@ test("validate-map-object-visuals fails when a shipped node loses coverage", asy
   );
 });
 
+test("validate-map-object-visuals fails when a shipped node references a missing visual definition", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "veil-map-object-visuals-"));
+  await seedMapObjectVisualRoot(tempDir);
+  await backfillPhase2VerdantValeCoverage(tempDir);
+
+  const objectVisualsPath = join(tempDir, "object-visuals.json");
+  const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {
+    buildings: Record<string, unknown>;
+  };
+
+  delete objectVisuals.buildings.recruitment_post;
+  await writeFile(objectVisualsPath, `${JSON.stringify(objectVisuals, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    execFileAsync("node", ["--import", "tsx", scriptPath, "--root-dir", tempDir], { cwd: repoRoot }),
+    (error: NodeJS.ErrnoException & { stdout?: string }) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout ?? "", /Result: FAIL/);
+      assert.match(error.stdout ?? "", /coverage_visual_key_unknown/);
+      assert.match(error.stdout ?? "", /frontier-basin buildings node recruit-post-2 references unknown visual key recruitment_post/);
+      return true;
+    }
+  );
+});
+
 test("validate-map-object-visuals warns on extra coverage without failing", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "veil-map-object-visuals-"));
   await seedMapObjectVisualRoot(tempDir);
+  await backfillPhase2VerdantValeCoverage(tempDir);
 
   const objectVisualsPath = join(tempDir, "object-visuals.json");
   const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {
@@ -104,6 +168,7 @@ test("validate-map-object-visuals warns on extra coverage without failing", asyn
 test("validate-map-object-visuals fails when a shipped Phase 2 pack loses coverage", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "veil-map-object-visuals-"));
   await seedMapObjectVisualRoot(tempDir);
+  await backfillPhase2VerdantValeCoverage(tempDir);
 
   const objectVisualsPath = join(tempDir, "object-visuals.json");
   const objectVisuals = JSON.parse(await readFile(objectVisualsPath, "utf8")) as {

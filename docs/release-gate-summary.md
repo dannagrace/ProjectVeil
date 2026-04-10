@@ -12,6 +12,8 @@ It intentionally reuses the current evidence instead of introducing a parallel g
 - `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` for WeChat release evidence
 - `configs/.config-center-library.json` for the latest applied config-center publish audit and config change risk summary
 
+Because the snapshot now executes `npm run validate:map-object-visuals` as a required automated check, the top-level release gate will also fail when shipped map objects reference missing visual definitions or coverage in `configs/object-visuals.json`.
+
 The summary now also records one explicit `targetSurface` contract. That contract is what makes `H5 passed` different from `WeChat passed`: WeChat release decisions now require a current `codex.wechat.release-candidate-summary.json` plus fresh manual/runtime review metadata, while H5-only release decisions can mark the WeChat gate as advisory.
 
 For reviewer handoff, treat the WeChat RC checklist and blocker register as the human-readable mirror of that same contract, not as optional notes. They should carry the same surface, revision, freshness, owner, blocker, and waiver story that the JSON report enforces.
@@ -84,6 +86,7 @@ The summary contains five release dimensions:
 
 - `release-readiness`
   - Fails when the snapshot is missing, when the snapshot summary is not `passed`, or when any required snapshot check is `failed` or `pending`.
+  - That includes `npm run validate:map-object-visuals`, so missing sprite/visual coverage now blocks release promotion through the same snapshot gate instead of relying on reviewers to run it separately.
 - `h5-release-candidate-smoke`
   - Fails when the packaged H5 smoke report is missing, the smoke execution status is not `passed`, or any smoke case failed.
 - `multiplayer-reconnect-soak`
