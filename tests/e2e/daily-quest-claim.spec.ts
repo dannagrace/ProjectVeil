@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
-import { buildRoomId, expectHeroMoveSpent, pressTile, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
+import { acceptLobbyPrivacyConsent, buildRoomId, expectHeroMoveSpent, pressTile, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
 
 const QUEST_ID = "smoke_resource_pickup";
 const QUEST_REWARD = { gems: 2, gold: 35 };
@@ -75,6 +75,7 @@ async function enterRoomThroughLobby(page: Page, roomId: string, playerId: strin
   await page.locator("[data-lobby-room-id]").fill(roomId);
   await page.locator("[data-lobby-player-id]").fill(playerId);
   await page.locator("[data-lobby-display-name]").fill(displayName);
+  await acceptLobbyPrivacyConsent(page);
   await page.locator("[data-enter-room]").click();
 
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));

@@ -214,6 +214,66 @@ function writeManualChecks(filePath: string, checks: ManualReviewCheckPayload[])
   fs.writeFileSync(filePath, `${JSON.stringify(checks, null, 2)}\n`, "utf8");
 }
 
+function buildPassingManualChecks(): ManualReviewCheckPayload[] {
+  return [
+    {
+      id: "wechat-devtools-export-review",
+      title: "Candidate-scoped WeChat package install/launch verification recorded",
+      status: "passed",
+      required: true,
+      notes: "Generated the install/launch verification artifact for the same revision.",
+      evidence: ["artifacts/wechat-release/codex.wechat.install-launch-evidence.json"],
+      owner: "release-oncall",
+      recordedAt: isoHoursAgo(2),
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/codex.wechat.install-launch-evidence.json"
+    },
+    {
+      id: "wechat-device-runtime-review",
+      title: "Physical-device WeChat runtime validated for this candidate",
+      status: "passed",
+      required: true,
+      notes: "Attached the smoke report and capture set from the device validation pass for the same revision.",
+      evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
+      owner: "release-oncall",
+      recordedAt: isoHoursAgo(2),
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/device-runtime-review.json"
+    },
+    {
+      id: "wechat-runtime-observability-signoff",
+      title: "WeChat runtime observability reviewed for this candidate",
+      status: "passed",
+      required: true,
+      notes: "Captured health, diagnostic snapshot, and metrics evidence for the release environment.",
+      evidence: [
+        "/api/runtime/health payload",
+        "/api/runtime/diagnostic-snapshot?format=text",
+        "/api/runtime/metrics scrape"
+      ],
+      owner: "release-oncall",
+      recordedAt: isoHoursAgo(2),
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/runtime-observability-signoff.json"
+    },
+    {
+      id: "wechat-release-checklist",
+      title: "WeChat RC checklist and blockers reviewed",
+      status: "passed",
+      required: true,
+      notes: "Checklist and blockers resolved for the packaged candidate.",
+      evidence: [
+        "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
+        "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
+      ],
+      owner: "release-oncall",
+      recordedAt: isoHoursAgo(2),
+      revision: sourceRevision,
+      artifactPath: "artifacts/wechat-release/checklist-review.json"
+    }
+  ];
+}
+
 test("verify:wechat-release supports explicit artifact paths and keep-extracted output", () => {
   const artifact = packageFixtureArtifact();
 
@@ -502,63 +562,7 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
   const summaryPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.json");
   const markdownPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.md");
   writePassingSmokeReport(artifact.metadataPath, smokeReportPath);
-  writeManualChecks(manualChecksPath, [
-    {
-      id: "wechat-devtools-export-review",
-      title: "Candidate-scoped WeChat package install/launch verification recorded",
-      status: "passed",
-      required: true,
-      notes: "Generated the install/launch verification artifact for the same revision.",
-      evidence: ["artifacts/wechat-release/codex.wechat.install-launch-evidence.json"],
-      owner: "release-oncall",
-      recordedAt: isoHoursAgo(2),
-      revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/codex.wechat.install-launch-evidence.json"
-    },
-    {
-      id: "wechat-device-runtime-review",
-      title: "Physical-device WeChat runtime validated for this candidate",
-      status: "passed",
-      required: true,
-      notes: "Attached the smoke report and capture set from the device validation pass for the same revision.",
-      evidence: ["artifacts/wechat-release/codex.wechat.smoke-report.json", "device-runtime.mp4"],
-      owner: "release-oncall",
-      recordedAt: isoHoursAgo(2),
-      revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/device-runtime-review.json"
-    },
-    {
-      id: "wechat-runtime-observability-signoff",
-      title: "WeChat runtime observability reviewed for this candidate",
-      status: "passed",
-      required: true,
-      notes: "Captured health, diagnostic snapshot, and metrics evidence for the release environment.",
-      evidence: [
-        "/api/runtime/health payload",
-        "/api/runtime/diagnostic-snapshot?format=text",
-        "/api/runtime/metrics scrape"
-      ],
-      owner: "release-oncall",
-      recordedAt: isoHoursAgo(2),
-      revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/runtime-observability-signoff.json"
-    },
-    {
-      id: "wechat-release-checklist",
-      title: "WeChat RC checklist and blockers reviewed",
-      status: "passed",
-      required: true,
-      notes: "Checklist and blockers resolved for the packaged candidate.",
-      evidence: [
-        "docs/release-evidence/cocos-wechat-rc-checklist.template.md",
-        "docs/release-evidence/cocos-wechat-rc-blockers.template.md"
-      ],
-      owner: "release-oncall",
-      recordedAt: isoHoursAgo(2),
-      revision: sourceRevision,
-      artifactPath: "artifacts/wechat-release/checklist-review.json"
-    }
-  ]);
+  writeManualChecks(manualChecksPath, buildPassingManualChecks());
 
   const output = execFileSync(
     "node",
@@ -624,6 +628,45 @@ test("validate:wechat-rc marks the candidate ready when smoke evidence and manua
   assert.match(fs.readFileSync(markdownPath, "utf8"), /## Device Runtime Evidence/);
   assert.match(fs.readFileSync(markdownPath, "utf8"), /reconnect details: roomId=room-alpha/);
   assert.match(fs.readFileSync(markdownPath, "utf8"), /share details: shareScene=lobby/);
+});
+
+test("validate:wechat-rc auto-detects candidate-scoped manual review evidence in the artifacts directory", () => {
+  const artifact = packageFixtureArtifact();
+  const smokeReportPath = path.join(artifact.artifactsDir, "codex.wechat.smoke-report.json");
+  const manualChecksPath = path.join(artifact.artifactsDir, "codex.wechat.manual-review.json");
+  const summaryPath = path.join(artifact.artifactsDir, "codex.wechat.release-candidate-summary.json");
+
+  writePassingSmokeReport(artifact.metadataPath, smokeReportPath);
+  writeManualChecks(manualChecksPath, buildPassingManualChecks());
+
+  const output = execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/validate-wechat-release-candidate.ts",
+      "--artifacts-dir",
+      artifact.artifactsDir,
+      "--expected-revision",
+      sourceRevision,
+      "--require-smoke-report"
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: "pipe"
+    }
+  );
+
+  const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+    candidate: { status: string };
+    evidence: { manualReview: { status: string; requiredPendingChecks: number } };
+  };
+
+  assert.match(output, /Candidate status: ready/);
+  assert.equal(summary.candidate.status, "ready");
+  assert.equal(summary.evidence.manualReview.status, "ready");
+  assert.equal(summary.evidence.manualReview.requiredPendingChecks, 0);
 });
 
 test("validate:wechat-rc blocks stale device runtime evidence in the candidate summary", () => {

@@ -369,9 +369,6 @@ interface ReleaseGateSummaryReport {
   configChangeRisk: ConfigChangeRiskSummary;
 }
 
-const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
-const DEFAULT_WECHAT_ARTIFACTS_DIR = path.resolve("artifacts", "wechat-release");
-const DEFAULT_CONFIG_CENTER_LIBRARY_PATH = path.resolve("configs", ".config-center-library.json");
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
 const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 72;
@@ -579,18 +576,46 @@ function writeJsonFile(filePath: string, payload: unknown): void {
   writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean): string | undefined {
+function getDefaultReleaseReadinessDir(): string {
+  return path.resolve("artifacts", "release-readiness");
+}
+
+function getDefaultWechatArtifactsDir(): string {
+  return path.resolve("artifacts", "wechat-release");
+}
+
+function getDefaultConfigCenterLibraryPath(): string {
+  return path.resolve("configs", ".config-center-library.json");
+}
+
+function collectMatchingFiles(
+  dirPath: string,
+  matcher: (entry: string) => boolean,
+  maxDepth: number,
+  currentDepth = 0
+): string[] {
   if (!fs.existsSync(dirPath)) {
-    return undefined;
+    return [];
   }
 
-  const candidates = fs
-    .readdirSync(dirPath)
-    .filter((entry) => matcher(entry))
-    .map((entry) => path.join(dirPath, entry))
-    .filter((entry) => fs.statSync(entry).isFile())
-    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+  const matches: string[] = [];
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isFile() && matcher(entry.name)) {
+      matches.push(fullPath);
+      continue;
+    }
+    if (entry.isDirectory() && currentDepth < maxDepth) {
+      matches.push(...collectMatchingFiles(fullPath, matcher, maxDepth, currentDepth + 1));
+    }
+  }
+  return matches;
+}
 
+function resolveLatestFile(dirPath: string, matcher: (entry: string) => boolean, maxDepth = 0): string | undefined {
+  const candidates = collectMatchingFiles(dirPath, matcher, maxDepth).sort(
+    (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
+  );
   return candidates[0];
 }
 
@@ -598,41 +623,86 @@ function resolveSnapshotPath(args: Args): string | undefined {
   if (args.snapshotPath) {
     return path.resolve(args.snapshotPath);
   }
-  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
-    entry.startsWith("release-readiness-") && entry.endsWith(".json")
-  );
+  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
+    entry.startsWith("release-readiness-") && !entry.startsWith("release-readiness-dashboard-") && entry.endsWith(".json")
+  , 3);
 }
 
 function resolveH5SmokePath(args: Args): string | undefined {
   if (args.h5SmokePath) {
     return path.resolve(args.h5SmokePath);
   }
-  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
     entry.startsWith("client-release-candidate-smoke-") && entry.endsWith(".json")
-  );
+  , 3);
 }
 
 function resolveReconnectSoakPath(args: Args): string | undefined {
   if (args.reconnectSoakPath) {
     return path.resolve(args.reconnectSoakPath);
   }
-  const fixedCandidate = path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json");
+  const fixedCandidate = path.join(getDefaultReleaseReadinessDir(), "colyseus-reconnect-soak-summary.json");
   if (fs.existsSync(fixedCandidate)) {
     return fixedCandidate;
   }
-  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
     entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json")
+  , 3);
+}
+
+function directoryContainsWechatEvidence(dirPath: string): boolean {
+  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+    return false;
+  }
+  return [
+    "codex.wechat.release-candidate-summary.json",
+    "codex.wechat.rc-validation-report.json",
+    "codex.wechat.smoke-report.json"
+  ].some((entry) => fs.existsSync(path.join(dirPath, entry)));
+}
+
+function collectMatchingDirectories(
+  dirPath: string,
+  predicate: (fullPath: string) => boolean,
+  maxDepth: number,
+  currentDepth = 0
+): string[] {
+  if (!fs.existsSync(dirPath)) {
+    return [];
+  }
+
+  const matches: string[] = [];
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const fullPath = path.join(dirPath, entry.name);
+    if (predicate(fullPath)) {
+      matches.push(fullPath);
+    }
+    if (currentDepth < maxDepth) {
+      matches.push(...collectMatchingDirectories(fullPath, predicate, maxDepth, currentDepth + 1));
+    }
+  }
+  return matches;
+}
+
+function resolveLatestWechatArtifactsDir(rootDir: string): string | undefined {
+  const candidates = collectMatchingDirectories(rootDir, directoryContainsWechatEvidence, 3).sort(
+    (left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
   );
+  return candidates[0];
 }
 
 function resolveWechatArtifactsDir(args: Args): string | undefined {
   if (args.wechatArtifactsDir) {
     return path.resolve(args.wechatArtifactsDir);
   }
-  if (fs.existsSync(DEFAULT_WECHAT_ARTIFACTS_DIR)) {
-    return DEFAULT_WECHAT_ARTIFACTS_DIR;
+  const defaultDir = getDefaultWechatArtifactsDir();
+  if (directoryContainsWechatEvidence(defaultDir)) {
+    return defaultDir;
   }
-  return undefined;
+  return resolveLatestWechatArtifactsDir(getDefaultReleaseReadinessDir());
 }
 
 function resolveWechatRcValidationPath(args: Args, wechatArtifactsDir?: string): string | undefined {
@@ -671,7 +741,7 @@ function resolveWechatSmokeReportPath(args: Args, wechatArtifactsDir?: string): 
 function resolveConfigCenterLibraryPath(args: Args): string | undefined {
   const candidate = args.configCenterLibraryPath
     ? path.resolve(args.configCenterLibraryPath)
-    : DEFAULT_CONFIG_CENTER_LIBRARY_PATH;
+    : getDefaultConfigCenterLibraryPath();
   return fs.existsSync(candidate) ? candidate : undefined;
 }
 
@@ -679,9 +749,9 @@ function resolveManualEvidenceLedgerPath(args: Args): string | undefined {
   if (args.manualEvidenceLedgerPath) {
     return path.resolve(args.manualEvidenceLedgerPath);
   }
-  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) =>
+  return resolveLatestFile(getDefaultReleaseReadinessDir(), (entry) =>
     entry.includes("manual-release-evidence-owner-ledger") && entry.endsWith(".md")
-  );
+  , 3);
 }
 
 function readGitValue(args: string[]): string {
@@ -2034,7 +2104,7 @@ function buildReleaseGateTriage(
             title: "Config change risk summary",
             impactedSurface: targetSurface,
             summary: `Config changes are ${configChangeRisk.overallRisk?.toUpperCase() ?? "UNKNOWN"} risk for ${targetSurface} and stay advisory until the suggested validation is complete.`,
-            nextStep: `Open \`${relativeReportPath(configChangeRisk.source?.path ?? DEFAULT_CONFIG_CENTER_LIBRARY_PATH)}\` and run ${(
+            nextStep: `Open \`${relativeReportPath(configChangeRisk.source?.path ?? getDefaultConfigCenterLibraryPath())}\` and run ${(
               configChangeRisk.suggestedValidationActions ?? []
             )
               .slice(0, 3)
@@ -2277,14 +2347,14 @@ function defaultOutputPath(args: Args, shortCommit: string): string {
   if (args.outputPath) {
     return path.resolve(args.outputPath);
   }
-  return path.resolve(DEFAULT_RELEASE_READINESS_DIR, `release-gate-summary-${shortCommit}.json`);
+  return path.resolve(getDefaultReleaseReadinessDir(), `release-gate-summary-${shortCommit}.json`);
 }
 
 function defaultMarkdownOutputPath(args: Args, shortCommit: string): string {
   if (args.markdownOutputPath) {
     return path.resolve(args.markdownOutputPath);
   }
-  return path.resolve(DEFAULT_RELEASE_READINESS_DIR, `release-gate-summary-${shortCommit}.md`);
+  return path.resolve(getDefaultReleaseReadinessDir(), `release-gate-summary-${shortCommit}.md`);
 }
 
 function main(): void {

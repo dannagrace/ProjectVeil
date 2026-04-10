@@ -9,6 +9,7 @@ import {
   getNeutralBattleRewardText
 } from "./config-fixtures";
 import {
+  acceptLobbyPrivacyConsent,
   attackOnce,
   buildRoomId,
   dismissBattleModal,
@@ -31,6 +32,7 @@ test("golden path player journey stays stable from lobby entry through world pro
       await page.locator("[data-lobby-room-id]").fill(roomId);
       await page.locator("[data-lobby-player-id]").fill("player-1");
       await page.locator("[data-lobby-display-name]").fill("Golden Path Guest");
+      await acceptLobbyPrivacyConsent(page);
       await page.locator("[data-enter-room]").click();
 
       await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));

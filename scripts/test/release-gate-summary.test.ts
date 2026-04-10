@@ -287,6 +287,197 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /Recommend rehearsal: yes/);
 });
 
+test("buildReleaseGateSummaryReport discovers nested candidate rehearsal evidence for wechat surface", () => {
+  const workspace = createTempWorkspace();
+  const rehearsalDir = path.join(workspace, "artifacts", "release-readiness", "phase1-candidate-rehearsal-local");
+  const snapshotPath = path.join(rehearsalDir, "release-readiness-phase1-mainline-abc123.json");
+  const dashboardPath = path.join(rehearsalDir, "release-readiness-dashboard-phase1-mainline-abc123.json");
+  const h5SmokePath = path.join(rehearsalDir, "client-release-candidate-smoke-phase1-mainline-abc123.json");
+  const reconnectSoakPath = path.join(rehearsalDir, "colyseus-reconnect-soak-summary-phase1-mainline-abc123.json");
+  const wechatArtifactsDir = path.join(rehearsalDir, "wechat-release-phase1-mainline-abc123");
+  const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
+  const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+  const wechatSmokeReportPath = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(dashboardPath, {
+    generatedAt: new Date().toISOString(),
+    summary: {
+      status: "warning"
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0,
+      finishedAt: isoHoursAgo(1)
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      name: "phase1-mainline",
+      revision: "abc123"
+    },
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    verdict: {
+      status: "passed",
+      summary: "same-revision reconnect soak ok"
+    },
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 96,
+      invariantChecks: 512
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(wechatRcValidationPath, {
+    generatedAt: isoHoursAgo(1),
+    commit: "abc123",
+    summary: {
+      status: "passed",
+      failedChecks: 0,
+      failureSummary: []
+    }
+  });
+  writeJson(wechatSmokeReportPath, {
+    artifact: {
+      sourceRevision: "abc123"
+    },
+    execution: {
+      executedAt: isoHoursAgo(1),
+      result: "passed",
+      summary: "same-revision smoke ok"
+    },
+    cases: [
+      {
+        id: "wechat-launch",
+        required: true,
+        status: "passed"
+      }
+    ]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "package ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "validation ok",
+        artifactPath: wechatRcValidationPath
+      },
+      smoke: {
+        status: "passed",
+        summary: "smoke ok",
+        artifactPath: wechatSmokeReportPath
+      },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: [
+          {
+            id: "wechat-devtools-export-review",
+            title: "Candidate-scoped WeChat package install/launch verification recorded",
+            required: true,
+            status: "passed",
+            owner: "release-oncall",
+            recordedAt: isoHoursAgo(1),
+            revision: "abc123",
+            artifactPath: path.join(wechatArtifactsDir, "codex.wechat.install-launch-evidence.json")
+          }
+        ]
+      }
+    },
+    blockers: []
+  });
+
+  const previousCwd = process.cwd();
+  process.chdir(workspace);
+  try {
+    const report = buildReleaseGateSummaryReport(
+      { targetSurface: "wechat" },
+      {
+        commit: "abc123",
+        shortCommit: "abc123",
+        branch: "test-branch",
+        dirty: false
+      }
+    );
+
+    assert.equal(report.summary.status, "passed");
+    assert.deepEqual(report.summary.failedGateIds, []);
+    assert.equal(report.inputs.snapshotPath && fs.realpathSync(report.inputs.snapshotPath), fs.realpathSync(snapshotPath));
+    assert.equal(report.inputs.h5SmokePath && fs.realpathSync(report.inputs.h5SmokePath), fs.realpathSync(h5SmokePath));
+    assert.equal(report.inputs.reconnectSoakPath && fs.realpathSync(report.inputs.reconnectSoakPath), fs.realpathSync(reconnectSoakPath));
+    assert.equal(report.inputs.wechatArtifactsDir && fs.realpathSync(report.inputs.wechatArtifactsDir), fs.realpathSync(wechatArtifactsDir));
+    assert.equal(
+      report.inputs.wechatCandidateSummaryPath && fs.realpathSync(report.inputs.wechatCandidateSummaryPath),
+      fs.realpathSync(wechatCandidateSummaryPath)
+    );
+    assert.equal(
+      report.inputs.wechatRcValidationPath && fs.realpathSync(report.inputs.wechatRcValidationPath),
+      fs.realpathSync(wechatRcValidationPath)
+    );
+    assert.equal(
+      report.inputs.wechatSmokeReportPath && fs.realpathSync(report.inputs.wechatSmokeReportPath),
+      fs.realpathSync(wechatSmokeReportPath)
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
 test("buildReleaseGateSummaryReport marks reconnect soak evidence stale when the artifact is old for the current candidate", () => {
   const workspace = createTempWorkspace();
   const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-stale.json");
@@ -347,6 +538,7 @@ test("buildReleaseGateSummaryReport surfaces stale manual evidence ledger owners
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
   const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const manualEvidenceLedgerPath = path.join(
     workspace,
     "artifacts",
@@ -417,6 +609,7 @@ test("buildReleaseGateSummaryReport surfaces stale manual evidence ledger owners
   });
 
   fs.mkdirSync(path.dirname(manualEvidenceLedgerPath), { recursive: true });
+  fs.mkdirSync(wechatArtifactsDir, { recursive: true });
   fs.writeFileSync(
     manualEvidenceLedgerPath,
     `# Manual Release Evidence Owner Ledger
@@ -443,6 +636,7 @@ test("buildReleaseGateSummaryReport surfaces stale manual evidence ledger owners
       snapshotPath,
       h5SmokePath,
       reconnectSoakPath,
+      wechatArtifactsDir,
       manualEvidenceLedgerPath,
       targetSurface: "h5"
     },
@@ -545,6 +739,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
   const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
   const wechatSmokeReportPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.smoke-report.json");
+  const wechatArtifactsDir = path.dirname(wechatSmokeReportPath);
 
   writeJson(snapshotPath, {
     generatedAt: isoHoursAgo(2),
@@ -640,6 +835,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
       snapshotPath,
       h5SmokePath,
       reconnectSoakPath,
+      wechatArtifactsDir,
       wechatSmokeReportPath,
       targetSurface: "wechat"
     },
@@ -661,7 +857,10 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates[3]?.summary ?? "", /blocked/i);
-  assert.match(report.gates[3]?.failures.join("\n") ?? "", /blocked pending device evidence|WeChat smoke case is blocked/);
+  assert.match(
+    report.gates[3]?.failures.join("\n") ?? "",
+    /blocked pending device evidence|WeChat smoke case is blocked|WeChat candidate summary status is "blocked"|Manual review pending/
+  );
   assert.match(renderMarkdown(report), /### Blockers \(2\)/);
   assert.match(renderMarkdown(report), /Release readiness snapshot blocked wechat/);
   assert.match(renderMarkdown(report), /### Manual Evidence Ownership/);

@@ -1,6 +1,7 @@
 import { test as base } from "@playwright/test";
 
 const SERVER_BASE_URL = "http://127.0.0.1:2567";
+const CLIENT_BASE_URL = "http://127.0.0.1:4173";
 const RESET_ENDPOINT = `${SERVER_BASE_URL}/api/test/reset-store`;
 
 /**
@@ -28,10 +29,12 @@ export const test = base.extend({
       console.warn("Failed to reset store:", error);
     }
 
-    // Clear browser storage to prevent auth token reuse
-    // We must do this AFTER server reset but BEFORE test navigates
-    // Navigate to any URL first to establish context, then clear storage
+    // Clear browser storage to prevent auth token reuse.
+    // We must establish the H5 origin first, otherwise localStorage/sessionStorage
+    // access will throw before the first navigation and stale reconnect tokens leak
+    // into the next test.
     try {
+      await page.goto(CLIENT_BASE_URL, { waitUntil: "domcontentloaded" });
       await page.evaluate(() => {
         localStorage.clear();
         sessionStorage.clear();

@@ -8,6 +8,7 @@ interface RoomSessionOptions {
   roomId: string;
   playerId: string;
   expectedMoveText?: RegExp | null;
+  requireDiagnosticsPanel?: boolean;
 }
 
 interface ReconnectOptions extends RoomSessionOptions {
@@ -107,6 +108,16 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
   });
 }
 
+export async function acceptLobbyPrivacyConsent(page: Page): Promise<void> {
+  await test.step("setup: accept lobby privacy consent", async () => {
+    const consentCheckbox = page.locator("[data-privacy-consent]").first();
+    await expect(consentCheckbox).toBeVisible();
+    if (!(await consentCheckbox.isChecked())) {
+      await consentCheckbox.check();
+    }
+  });
+}
+
 export async function expectHeroMove(page: Page, remaining: number, playerId = "player-1"): Promise<void> {
   await expect(page.getByTestId("hero-move")).toHaveText(moveTextPattern(remaining, playerId), { timeout: 10_000 });
 }
@@ -144,8 +155,10 @@ export async function openRoom(page: Page, options: RoomSessionOptions): Promise
 export async function expectRoomReady(page: Page, options: RoomSessionOptions): Promise<void> {
   await expect(page.getByTestId("session-meta")).toContainText(`Room: ${options.roomId}`);
   await expect(page.getByTestId("session-meta")).toContainText(`Player: ${options.playerId}`);
-  await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
-  await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
+  if (options.requireDiagnosticsPanel !== false) {
+    await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
+    await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
+  }
   await expect(page.getByTestId("room-connection-summary")).toContainText("已连接");
   if (options.expectedMoveText) {
     await expect(page.getByTestId("hero-move")).toHaveText(options.expectedMoveText, { timeout: 10_000 });
