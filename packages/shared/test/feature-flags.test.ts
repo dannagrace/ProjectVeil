@@ -52,6 +52,11 @@ test("feature flags fall back to defaults when disabled", () => {
   assert.equal(evaluateFeatureFlags("player-1", config).tutorial_enabled, false);
 });
 
+test("default feature flags keep pve enabled", () => {
+  const flags = evaluateFeatureFlags("player-1", DEFAULT_FEATURE_FLAG_CONFIG);
+  assert.equal(flags.pve_enabled, true);
+});
+
 test("experiments assign stable buckets, respect whitelist, and fall back outside allocation", () => {
   const config = normalizeFeatureFlagConfigDocument({
     schemaVersion: 1,

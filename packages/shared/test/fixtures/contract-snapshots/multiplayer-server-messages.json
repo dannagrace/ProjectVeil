@@ -332,7 +332,7 @@
       "featureFlags": {
         "quest_system_enabled": true,
         "battle_pass_enabled": false,
-        "pve_enabled": false,
+        "pve_enabled": true,
         "tutorial_enabled": true
       },
       "reason": "battle.started"

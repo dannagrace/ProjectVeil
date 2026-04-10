@@ -88,7 +88,7 @@ export interface ResolvedFeatureEntitlements {
 export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
   quest_system_enabled: true,
   battle_pass_enabled: false,
-  pve_enabled: false,
+  pve_enabled: true,
   tutorial_enabled: true
 };
 
@@ -111,8 +111,8 @@ export const DEFAULT_FEATURE_FLAG_CONFIG: FeatureFlagConfigDocument = {
     },
     pve_enabled: {
       type: "boolean",
-      value: false,
-      defaultValue: false,
+      value: true,
+      defaultValue: true,
       enabled: true,
       rollout: DEFAULT_ROLLOUT
     },
