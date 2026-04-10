@@ -43,6 +43,7 @@ interface AuthObservabilityCounters {
   refreshesTotal: number;
   logoutsTotal: number;
   rateLimitedTotal: number;
+  credentialStuffingBlockedTotal: number;
   invalidCredentialsTotal: number;
   tokenDeliveryRequestsTotal: number;
   tokenDeliverySuccessesTotal: number;
@@ -102,6 +103,7 @@ interface AuthObservabilityState {
   activeGuestSessionCount: number;
   activeAccountSessions: Map<string, { playerId: string; provider: string }>;
   activeAccountLockCount: number;
+  activeCredentialStuffingSourceCount: number;
   pendingRegistrationCount: number;
   pendingRecoveryCount: number;
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
@@ -197,6 +199,7 @@ interface RuntimeHealthPayload {
       activeAccountSessionCount: number;
       activeAccountSessionByProvider: Record<string, number>;
       activeAccountLockCount: number;
+      activeCredentialStuffingSourceCount: number;
       pendingRegistrationCount: number;
       pendingRecoveryCount: number;
       counters: AuthObservabilityCounters;
@@ -338,6 +341,7 @@ const runtimeObservability: RuntimeObservabilityState = {
       refreshesTotal: 0,
       logoutsTotal: 0,
       rateLimitedTotal: 0,
+      credentialStuffingBlockedTotal: 0,
       invalidCredentialsTotal: 0,
       tokenDeliveryRequestsTotal: 0,
       tokenDeliverySuccessesTotal: 0,
@@ -348,6 +352,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
     activeAccountLockCount: 0,
+    activeCredentialStuffingSourceCount: 0,
     pendingRegistrationCount: 0,
     pendingRecoveryCount: 0,
     sessionFailureReasons: {
@@ -507,6 +512,7 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         activeAccountSessionCount: runtimeObservability.auth.activeAccountSessions.size,
         activeAccountSessionByProvider,
         activeAccountLockCount: runtimeObservability.auth.activeAccountLockCount,
+        activeCredentialStuffingSourceCount: runtimeObservability.auth.activeCredentialStuffingSourceCount,
         pendingRegistrationCount: runtimeObservability.auth.pendingRegistrationCount,
         pendingRecoveryCount: runtimeObservability.auth.pendingRecoveryCount,
         counters: { ...runtimeObservability.auth.counters },
@@ -566,6 +572,10 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.activeAccountLockCount} account lockout(s) active`);
   }
 
+  if (health.runtime.auth.activeCredentialStuffingSourceCount > 0) {
+    alerts.push(`${health.runtime.auth.activeCredentialStuffingSourceCount} credential-stuffing source block(s) active`);
+  }
+
   if (health.runtime.auth.pendingRecoveryCount > 10) {
     alerts.push(`${health.runtime.auth.pendingRecoveryCount} password recovery tokens pending`);
   }
@@ -594,6 +604,7 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
       `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} ` +
       `account=${health.runtime.auth.activeAccountSessionCount} ` +
       `lockouts=${health.runtime.auth.activeAccountLockCount} ` +
+      `sourceBlocks=${health.runtime.auth.activeCredentialStuffingSourceCount} ` +
       `wechat=${wechatMode}/${wechatCredentialsStatus}`,
     alerts,
     auth: {
@@ -966,6 +977,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_account_locks Active account login lockouts.",
     "# TYPE veil_auth_account_locks gauge",
     `veil_auth_account_locks ${health.runtime.auth.activeAccountLockCount}`,
+    "# HELP veil_auth_credential_stuffing_sources Active source-IP blocks triggered by credential-stuffing detection.",
+    "# TYPE veil_auth_credential_stuffing_sources gauge",
+    `veil_auth_credential_stuffing_sources ${health.runtime.auth.activeCredentialStuffingSourceCount}`,
     "# HELP veil_auth_pending_registrations Pending account registration tokens.",
     "# TYPE veil_auth_pending_registrations gauge",
     `veil_auth_pending_registrations ${health.runtime.auth.pendingRegistrationCount}`,
@@ -999,6 +1013,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
+    "# TYPE veil_auth_credential_stuffing_blocked_total counter",
+    `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
@@ -1557,6 +1574,10 @@ export function setAuthAccountLockCount(count: number): void {
   runtimeObservability.auth.activeAccountLockCount = Math.max(0, Math.floor(count));
 }
 
+export function setAuthCredentialStuffingSourceCount(count: number): void {
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = Math.max(0, Math.floor(count));
+}
+
 export function setPendingAuthRegistrationCount(count: number): void {
   runtimeObservability.auth.pendingRegistrationCount = Math.max(0, Math.floor(count));
 }
@@ -1600,6 +1621,10 @@ export function recordAuthLogout(): void {
 
 export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
+}
+
+export function recordAuthCredentialStuffingBlocked(): void {
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal += 1;
 }
 
 export function recordMatchmakingRateLimited(): void {
@@ -1725,6 +1750,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.refreshesTotal = 0;
   runtimeObservability.auth.counters.logoutsTotal = 0;
   runtimeObservability.auth.counters.rateLimitedTotal = 0;
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal = 0;
   runtimeObservability.auth.counters.invalidCredentialsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryRequestsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliverySuccessesTotal = 0;
@@ -1734,6 +1760,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = 0;
   runtimeObservability.auth.pendingRegistrationCount = 0;
   runtimeObservability.auth.pendingRecoveryCount = 0;
   runtimeObservability.auth.sessionFailureReasons.unauthorized = 0;
