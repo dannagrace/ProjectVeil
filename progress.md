@@ -1594,3 +1594,27 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`7/7`）
+
+## Issue #1190 - WeChat rehearsal go/no-go packet stage - 2026-04-10
+
+- 本轮继续把 `release:wechat:rehearsal` 往最终决策附件推进了一步：
+  - `scripts/wechat-release-rehearsal.ts`
+    - 新增 `--run-go-no-go-packet`
+    - 新增 `--dossier <path>` 与 `--release-gate-summary <path>`，用于把同一 candidate revision 的 Phase 1 dossier 和 release gate summary 显式透传给 go/no-go packet
+    - 当启用该阶段时，rehearsal 会在 `commercial-verification` 之后追加 `release:go-no-go-packet`
+    - 产物固定收口到当前 artifacts dir 下：
+      - `codex.wechat.go-no-go-decision-packet.json`
+      - `codex.wechat.go-no-go-decision-packet.md`
+    - `DetectedArtifacts` 与 Markdown summary 现在也会自动列出 go/no-go packet
+- 文档与 inventory 已同步：
+  - `docs/wechat-minigame-release.md`
+    - 更新 `release:wechat:rehearsal` 的命令示例与发布彩排摘要，明确可选追加最终决策 packet
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 更新 `release:wechat:rehearsal` 的职责与产物说明，包含 go/no-go packet
+- 测试收口：
+  - `scripts/test/wechat-release-rehearsal.test.ts`
+    - 新增“rehearsal 可追加 go/no-go packet”的完整覆盖
+    - 锁住阶段序列：`prepare -> package -> verify -> install-launch-evidence -> smoke -> validate -> commercial-verification -> go-no-go-packet`
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/wechat-release-rehearsal.test.ts ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`13/13`）

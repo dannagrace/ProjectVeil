@@ -31,7 +31,7 @@
 - 记录 candidate-scoped 安装/启动证据：`npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`
 - 聚合校验 RC artifact：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`
 - 聚合商运闭环验证：`npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`
-- 发布彩排与汇总：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> [--summary <json>] [--markdown <md>] [--candidate <candidate-name> --environment wechat-devtools --operator <name> --status <passed|failed> --evidence <capture-or-note> --runtime-evidence <runtime-evidence.json> --manual-checks <manual-review.json> --run-commercial-verification --commercial-checks <commercial-review.json>]`（顺序执行 prepare / package / verify，并可选补 install/launch evidence、smoke report、validate、commercial verification，输出结构化 + Markdown 摘要）
+- 发布彩排与汇总：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> [--summary <json>] [--markdown <md>] [--candidate <candidate-name> --environment wechat-devtools --operator <name> --status <passed|failed> --evidence <capture-or-note> --runtime-evidence <runtime-evidence.json> --manual-checks <manual-review.json> --run-commercial-verification --commercial-checks <commercial-review.json> --run-go-no-go-packet --dossier <phase1-dossier.json> --release-gate-summary <release-gate-summary.json>]`（顺序执行 prepare / package / verify，并可选补 install/launch evidence、smoke report、validate、commercial verification、go/no-go packet，输出结构化 + Markdown 摘要）
 - 上传已打包产物：`npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`
 - 按 SHA 下载 CI artifact：`npm run download:wechat-release -- --sha <git-sha> [--output-dir artifacts/downloaded/wechat-release-<git-sha>]`
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
@@ -144,9 +144,10 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 - 当传入 `--runtime-evidence <json>` 时，会额外执行 `smoke:wechat-release -- --force`，直接生成同 revision 的 `codex.wechat.smoke-report.json`。
 - 当传入 `--manual-checks <json>` 时，最终 `validate:wechat-rc` 会复用这份 manual review JSON 生成 ready/blocked 的 candidate summary，而不是只停在 pending 模板。
 - 当传入 `--run-commercial-verification` 时，会在 `validate` 之后追加 `release:wechat:commercial-verification`；若再传 `--commercial-checks <json>`，会直接复用这份商运复核 contract。
+- 当传入 `--run-go-no-go-packet` 时，会在已有 candidate summary / commercial verification 之后追加 `release:go-no-go-packet`；推荐同时显式传入 `--dossier <phase1-dossier.json>` 与 `--release-gate-summary <release-gate-summary.json>`，这样 final decision packet 会稳定绑定到同一候选 revision。
 - 结构化摘要默认写到 `artifacts/wechat-release/wechat-release-rehearsal-<short-sha>.json`，Markdown 摘要写到同名 `.md`；可通过 `--summary` / `--markdown` 改写路径。
 - JSON 摘要包含阶段命令、耗时、stdout / stderr tail 以及首个失败阶段的诊断，Markdown 版本可直接贴到 CI Summary 或 PR。
-- `## Artifacts` 现在会自动列出 install/launch evidence、smoke report、candidate summary、commercial verification 等关键证据，方便 reviewer 直接校对同一个候选 revision。
+- `## Artifacts` 现在会自动列出 install/launch evidence、smoke report、candidate summary、commercial verification、go/no-go packet 等关键证据，方便 reviewer 直接校对同一个候选 revision。
 - `--source-revision`、`--expected-revision`、`--package-name`、`--version`、`--require-smoke-report` 会透传给对应脚本，方便对齐真实提审参数。
 - 适合在本地 release rehearsal、或在 CI 下载模板导出夹具时，一次性确认整个链路仍能跑通。
 

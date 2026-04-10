@@ -32,6 +32,9 @@ interface Args {
   runCommercialVerification: boolean;
   commercialChecksPath?: string;
   commercialFreshnessHours?: number;
+  runGoNoGoPacket: boolean;
+  dossierPath?: string;
+  releaseGateSummaryPath?: string;
   evidence: string[];
 }
 
@@ -92,6 +95,8 @@ interface DetectedArtifacts {
   candidateSummaryMarkdownPath?: string;
   commercialVerificationJsonPath?: string;
   commercialVerificationMarkdownPath?: string;
+  goNoGoPacketJsonPath?: string;
+  goNoGoPacketMarkdownPath?: string;
 }
 
 const OUTPUT_LIMIT = 4000;
@@ -133,6 +138,9 @@ function parseArgs(argv: string[]): Args {
   let runCommercialVerification = false;
   let commercialChecksPath: string | undefined;
   let commercialFreshnessHours: number | undefined;
+  let runGoNoGoPacket = false;
+  let dossierPath: string | undefined;
+  let releaseGateSummaryPath: string | undefined;
   const evidence: string[] = [];
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -272,6 +280,22 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--run-go-no-go-packet") {
+      runGoNoGoPacket = true;
+      continue;
+    }
+    if (arg === "--dossier" && next) {
+      dossierPath = next.trim() || undefined;
+      runGoNoGoPacket = true;
+      index += 1;
+      continue;
+    }
+    if (arg === "--release-gate-summary" && next) {
+      releaseGateSummaryPath = next.trim() || undefined;
+      runGoNoGoPacket = true;
+      index += 1;
+      continue;
+    }
     if (arg === "--evidence" && next) {
       const value = next.trim();
       if (value) {
@@ -311,6 +335,9 @@ function parseArgs(argv: string[]): Args {
     runCommercialVerification,
     ...(commercialChecksPath ? { commercialChecksPath } : {}),
     ...(commercialFreshnessHours ? { commercialFreshnessHours } : {}),
+    runGoNoGoPacket,
+    ...(dossierPath ? { dossierPath } : {}),
+    ...(releaseGateSummaryPath ? { releaseGateSummaryPath } : {}),
     evidence
   };
 }
@@ -447,6 +474,8 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
   const installLaunchEvidenceMarkdown = entries.find((entry) => entry === "codex.wechat.install-launch-evidence.md");
   const candidateSummaryJson = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.json");
   const candidateSummaryMarkdown = entries.find((entry) => entry === "codex.wechat.release-candidate-summary.md");
+  const goNoGoPacketJson = entries.find((entry) => entry === "codex.wechat.go-no-go-decision-packet.json");
+  const goNoGoPacketMarkdown = entries.find((entry) => entry === "codex.wechat.go-no-go-decision-packet.md");
   const commercialVerificationJson = entries
     .filter((entry) => entry.startsWith("codex.wechat.commercial-verification-") && entry.endsWith(".json"))
     .sort()[0];
@@ -465,6 +494,8 @@ function detectArtifacts(artifactsDir: string): DetectedArtifacts {
     ...(candidateSummaryMarkdown
       ? { candidateSummaryMarkdownPath: path.join(artifactsDir, candidateSummaryMarkdown) }
       : {}),
+    ...(goNoGoPacketJson ? { goNoGoPacketJsonPath: path.join(artifactsDir, goNoGoPacketJson) } : {}),
+    ...(goNoGoPacketMarkdown ? { goNoGoPacketMarkdownPath: path.join(artifactsDir, goNoGoPacketMarkdown) } : {}),
     ...(commercialVerificationJson
       ? { commercialVerificationJsonPath: path.join(artifactsDir, commercialVerificationJson) }
       : {}),
@@ -527,6 +558,12 @@ function renderMarkdown(summary: RehearsalSummary): string {
   if (artifacts.candidateSummaryMarkdownPath) {
     artifactLines.push(`- Candidate Summary (Markdown): \`${artifacts.candidateSummaryMarkdownPath}\``);
   }
+  if (artifacts.goNoGoPacketJsonPath) {
+    artifactLines.push(`- Go/No-Go Packet (JSON): \`${artifacts.goNoGoPacketJsonPath}\``);
+  }
+  if (artifacts.goNoGoPacketMarkdownPath) {
+    artifactLines.push(`- Go/No-Go Packet (Markdown): \`${artifacts.goNoGoPacketMarkdownPath}\``);
+  }
   if (artifacts.commercialVerificationJsonPath) {
     artifactLines.push(`- Commercial Verification (JSON): \`${artifacts.commercialVerificationJsonPath}\``);
   }
@@ -554,10 +591,14 @@ function main(): void {
   const resolvedRuntimeEvidencePath = args.runtimeEvidencePath ? path.resolve(repoRoot, args.runtimeEvidencePath) : undefined;
   const resolvedManualChecksPath = args.manualChecksPath ? path.resolve(repoRoot, args.manualChecksPath) : undefined;
   const resolvedCommercialChecksPath = args.commercialChecksPath ? path.resolve(repoRoot, args.commercialChecksPath) : undefined;
+  const resolvedDossierPath = args.dossierPath ? path.resolve(repoRoot, args.dossierPath) : undefined;
+  const resolvedReleaseGateSummaryPath = args.releaseGateSummaryPath ? path.resolve(repoRoot, args.releaseGateSummaryPath) : undefined;
   const summaryBaseName = revision.shortCommit ? `wechat-release-rehearsal-${revision.shortCommit}` : `wechat-release-rehearsal`;
   const summaryPath = path.resolve(repoRoot, args.summaryPath ?? path.join(args.artifactsDir, `${summaryBaseName}.json`));
   const markdownPath = path.resolve(repoRoot, args.markdownPath ?? path.join(args.artifactsDir, `${summaryBaseName}.md`));
   const smokeReportPath = path.join(resolvedArtifactsDir, "codex.wechat.smoke-report.json");
+  const goNoGoPacketJsonPath = path.join(resolvedArtifactsDir, "codex.wechat.go-no-go-decision-packet.json");
+  const goNoGoPacketMarkdownPath = path.join(resolvedArtifactsDir, "codex.wechat.go-no-go-decision-packet.md");
 
   const hasInstallLaunchOptions =
     Boolean(
@@ -729,6 +770,31 @@ function main(): void {
           ? ["--candidate-revision", (args.candidateRevision ?? expectedRevision)!.trim()]
           : []),
         ...(args.commercialFreshnessHours ? ["--freshness-hours", String(args.commercialFreshnessHours)] : [])
+      ]
+    });
+  }
+
+  if (args.runGoNoGoPacket) {
+    stageDefinitions.push({
+      id: "go-no-go-packet",
+      title: "Generate go/no-go decision packet",
+      command: [
+        nodeExec,
+        "--import",
+        "tsx",
+        "./scripts/release-go-no-go-decision-packet.ts",
+        "--wechat-artifacts-dir",
+        resolvedArtifactsDir,
+        ...(args.candidate?.trim() ? ["--candidate", args.candidate.trim()] : []),
+        ...((args.candidateRevision ?? expectedRevision)?.trim()
+          ? ["--candidate-revision", (args.candidateRevision ?? expectedRevision)!.trim()]
+          : []),
+        ...(resolvedDossierPath ? ["--dossier", resolvedDossierPath] : []),
+        ...(resolvedReleaseGateSummaryPath ? ["--release-gate-summary", resolvedReleaseGateSummaryPath] : []),
+        "--output",
+        goNoGoPacketJsonPath,
+        "--markdown-output",
+        goNoGoPacketMarkdownPath
       ]
     });
   }
