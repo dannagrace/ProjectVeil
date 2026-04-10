@@ -1549,3 +1549,27 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮定向验证结果：
   - `npm run typecheck:ops` 通过
   - `node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts` 通过（`4/4`）
+
+## Issue #1185 - Unify go/no-go packet with commercial verification artifacts - 2026-04-10
+
+- 本轮把 go/no-go packet 的商运输入统一到了正式产物链路：
+  - `scripts/release-go-no-go-decision-packet.ts`
+    - 新增 `--commercial-verification <path>`，同时继续兼容旧的 `--commercial-review <path>`
+    - 自动发现逻辑现在会优先读取 `codex.wechat.commercial-verification-<short-sha>.json`，缺失时才回退到旧 `commercial-review` 文件
+    - packet 可以直接解析 `release:wechat:commercial-verification` 的正式 JSON 产物，并把它归一到现有的 `commercialReadinessSummary / unresolvedCommercialChecks / blockerSummary`
+    - 对 verification report 中已有的 `metadataFailures` 继续原样吸收，避免 packet 侧再丢掉 `stale recordedAt` 这类商运阻塞信号
+- 文档主链路也改成了同一个来源：
+  - `docs/release-go-no-go-decision-packet.md`
+    - 改为推荐先跑 `npm run release:wechat:commercial-verification`
+    - 显式说明 go/no-go packet 会优先自动发现 `commercial-verification` 产物
+  - `docs/wechat-minigame-release.md`
+    - 在商运验证步骤后补上了 go/no-go packet 的直接消费说明，不再建议额外手填独立 review 文件
+  - `docs/release-script-inventory.md` 与 `scripts/release-script-inventory.ts`
+    - 同步更新 `release:go-no-go-packet` 的职责说明，避免 inventory 再回滚成旧描述
+- 测试收口：
+  - `scripts/test/release-go-no-go-decision-packet.test.ts`
+    - 新增自动发现 `codex.wechat.commercial-verification-abc1234.json` 的覆盖
+    - 旧 `commercial-review` 路径的兼容用例继续保留
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts ./scripts/test/wechat-commercial-verification.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`10/10`）

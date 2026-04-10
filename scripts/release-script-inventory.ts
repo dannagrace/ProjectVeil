@@ -99,9 +99,9 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
   },
   "release:go-no-go-packet": {
-    purpose: "Build the final go/no-go decision packet for a candidate by combining the dossier, gate summary, and WeChat summary.",
+    purpose: "Build the final go/no-go decision packet for a candidate by combining the dossier, gate summary, WeChat summary, and optional commercial verification evidence.",
     requiredInputs: [
-      "Phase 1 candidate dossier plus matching release-gate and WeChat candidate-summary artifacts, either auto-discovered or passed explicitly.",
+      "Phase 1 candidate dossier plus matching release-gate and WeChat candidate-summary artifacts, either auto-discovered or passed explicitly; commercial verification evidence is auto-discovered from the WeChat artifacts dir when available.",
     ],
     producedArtifacts: [
       "`artifacts/release-readiness/go-no-go-decision-packet-<candidate>-<short-sha>.json`",

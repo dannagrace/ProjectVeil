@@ -10,6 +10,8 @@ Use it after the lower-level evidence has already been generated. This command d
   - CI-facing pass/fail gate report and triage list.
 - `npm run validate:wechat-rc`
   - WeChat candidate summary, smoke/manual-review state, and blocker list.
+- `npm run release:wechat:commercial-verification`
+  - Candidate-scoped commercial verification report for payment, delivery, analytics, compliance, and device experience.
 
 Use the packet when the release owner, QA owner, or operator needs one final decision attachment instead of reading those artifacts separately.
 
@@ -51,7 +53,7 @@ npm run release:go-no-go-packet -- \
   --dossier artifacts/release-readiness/phase1-candidate-dossier-phase1-wechat-rc-abc1234/phase1-candidate-dossier.json \
   --release-gate-summary artifacts/release-readiness/release-gate-summary-abc1234.json \
   --wechat-candidate-summary artifacts/wechat-release/codex.wechat.release-candidate-summary.json \
-  --commercial-review artifacts/wechat-release/codex.wechat.commercial-review.json
+  --commercial-verification artifacts/wechat-release/codex.wechat.commercial-verification-abc1234.json
 ```
 
 Write to explicit output files:
@@ -72,12 +74,13 @@ The packet fails closed when required upstream evidence is missing:
 - release gate summary
 - WeChat candidate summary when the target surface is `wechat`
 
-When you are preparing an external WeChat release decision instead of a purely technical RC verdict, also attach a commercial review file:
+When you are preparing an external WeChat release decision instead of a purely technical RC verdict, also attach commercial verification evidence:
 
-- `docs/release-evidence/wechat-commercial-review.example.json`
-- recommended artifact path: `artifacts/wechat-release/codex.wechat.commercial-review.json`
+- preferred command: `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir>`
+- preferred artifact path: `artifacts/wechat-release/codex.wechat.commercial-verification-<short-sha>.json`
+- legacy compatibility input remains supported: `artifacts/wechat-release/codex.wechat.commercial-review.json`
 
-This review captures payment, subscription reachability, analytics, compliance, and device-experience conclusions for the same candidate revision. When present, unresolved required commercial checks are folded into the final packet decision.
+The packet will auto-discover a current `commercial-verification` artifact from the WeChat artifacts dir before falling back to the legacy `commercial-review` file. When present, unresolved required commercial checks are folded into the final packet decision.
 
 Those errors are intentional. The packet is the last-mile reviewer artifact, so it should not invent partial state when the underlying evidence set is incomplete.
 
@@ -86,7 +89,7 @@ Those errors are intentional. The packet is the last-mile reviewer artifact, so 
 1. Generate or refresh the underlying candidate evidence for one fixed revision.
 2. Build the candidate dossier and release gate summary for that same revision.
 3. Refresh the WeChat candidate summary and manual-review metadata when the target surface is `wechat`.
-4. For external release calls, copy `docs/release-evidence/wechat-commercial-review.example.json` into the candidate artifacts dir, fill in the current candidate revision, owner, timestamps, and evidence links, then pass it via `--commercial-review`.
+4. For external release calls, run `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--candidate <candidate-name>] [--candidate-revision <git-sha>]` to generate the formal commercial verification report for the same candidate revision.
 5. Run `npm run release:go-no-go-packet`.
 6. Run `npm run release:pr-summary -- --release-gate-summary <path> --release-health-summary <path> --go-no-go-packet <path>` to render the concise PR-visible summary markdown when you need to preview the exact reviewer digest locally.
 7. In CI pull-request runs, the `Build go/no-go decision packet artifact` plus `Comment PR with release summary` steps publish or update the single bot comment in place, so reruns refresh the same PR-visible summary instead of creating duplicates.
