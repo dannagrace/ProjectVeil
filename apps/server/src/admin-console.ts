@@ -27,9 +27,24 @@ type AdminApp = {
   get: (path: string, handler: AdminRouteHandler) => void;
   post: (path: string, handler: AdminRouteHandler) => void;
 };
+type AdminRole = "admin" | "support-moderator" | "support-supervisor";
+type BanApproval = {
+  approvedBy: string;
+  approvalReference: string;
+};
 
 function readAdminSecret(): string | null {
   const secret = process.env.ADMIN_SECRET?.trim();
+  return secret ? secret : null;
+}
+
+function readSupportModeratorSecret(): string | null {
+  const secret = process.env.SUPPORT_MODERATOR_SECRET?.trim();
+  return secret ? secret : null;
+}
+
+function readSupportSupervisorSecret(): string | null {
+  const secret = process.env.SUPPORT_SUPERVISOR_SECRET?.trim();
   return secret ? secret : null;
 }
 
@@ -37,9 +52,44 @@ function isAdminSecretConfigured(): boolean {
   return readAdminSecret() !== null;
 }
 
+function isSupportSecretConfigured(): boolean {
+  return Boolean(readAdminSecret() || readSupportModeratorSecret() || readSupportSupervisorSecret());
+}
+
+function readHeaderSecret(request: IncomingMessage): string | null {
+  const header = request.headers["x-veil-admin-secret"];
+  if (typeof header === "string") {
+    const trimmed = header.trim();
+    return trimmed ? trimmed : null;
+  }
+  return null;
+}
+
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
-  return adminSecret !== null && request.headers["x-veil-admin-secret"] === adminSecret;
+  return adminSecret !== null && readHeaderSecret(request) === adminSecret;
+}
+
+function readAdminRole(request: IncomingMessage): AdminRole | null {
+  const requestSecret = readHeaderSecret(request);
+  if (!requestSecret) {
+    return null;
+  }
+
+  if (requestSecret === readAdminSecret()) {
+    return "admin";
+  }
+  if (requestSecret === readSupportSupervisorSecret()) {
+    return "support-supervisor";
+  }
+  if (requestSecret === readSupportModeratorSecret()) {
+    return "support-moderator";
+  }
+  return null;
+}
+
+function hasRequiredRole(role: AdminRole | null, allowedRoles: AdminRole[]): boolean {
+  return role !== null && allowedRoles.includes(role);
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -59,8 +109,18 @@ function sendAdminSecretNotConfigured(response: ServerResponse): void {
   sendJson(response, 503, { error: "ADMIN_SECRET is not configured" });
 }
 
+function sendSupportSecretNotConfigured(response: ServerResponse): void {
+  sendJson(response, 503, {
+    error: "Player support secrets are not configured"
+  });
+}
+
 function sendStoreUnavailable(response: ServerResponse): void {
   sendJson(response, 503, { error: "Player moderation requires configured room persistence storage" });
+}
+
+function sendForbiddenRole(response: ServerResponse, message: string): void {
+  sendJson(response, 403, { error: message });
 }
 
 function hasBanModerationStore(
@@ -135,7 +195,41 @@ function parseIsoTimestamp(value: string, key: string): string {
   return parsed.toISOString();
 }
 
-function parseBanBody(value: unknown): { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string } {
+function parseApproval(
+  payload: Record<string, unknown>,
+  key = "approval",
+  required = false
+): BanApproval | undefined {
+  const value = payload[key];
+  if (value === undefined || value === null) {
+    if (required) {
+      throw new InvalidAdminPayloadError(`"${key}" is required`);
+    }
+    return undefined;
+  }
+
+  const approval = readRequiredObjectBody(value);
+  const approvedBy = readOptionalTrimmedString(approval, "approvedBy");
+  const approvalReference = readOptionalTrimmedString(approval, "approvalReference");
+  if (!approvedBy) {
+    throw new InvalidAdminPayloadError(`"${key}.approvedBy" must be a non-empty string`);
+  }
+  if (!approvalReference) {
+    throw new InvalidAdminPayloadError(`"${key}.approvalReference" must be a non-empty string`);
+  }
+  return { approvedBy, approvalReference };
+}
+
+function withApprovalSuffix(banReason: string, approval?: BanApproval): string {
+  if (!approval) {
+    return banReason;
+  }
+  return `${banReason} [approvedBy=${approval.approvedBy}; approvalReference=${approval.approvalReference}]`;
+}
+
+function parseBanBody(
+  value: unknown
+): { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string; approval?: BanApproval } {
   const payload = readRequiredObjectBody(value);
   const banStatus = readOptionalTrimmedString(payload, "banStatus");
   const banReason = readOptionalTrimmedString(payload, "banReason");
@@ -158,7 +252,14 @@ function parseBanBody(value: unknown): { banStatus: "temporary" | "permanent"; b
     return { banStatus, banReason, banExpiry: normalizedExpiry };
   }
 
-  return { banStatus, banReason };
+  return {
+    banStatus,
+    banReason,
+    ...(() => {
+      const approval = parseApproval(payload, "approval", true);
+      return approval ? { approval } : {};
+    })()
+  };
 }
 
 function parseUnbanBody(value: unknown): { reason?: string } {
@@ -219,19 +320,45 @@ function parseReportStatus(value: string | null | undefined, fallback: PlayerRep
   throw new InvalidAdminPayloadError('"status" must be "pending", "dismissed", "warned", or "banned"');
 }
 
-function parseResolveReportBody(value: unknown): PlayerReportResolveInput {
+function parseResolveReportBody(value: unknown): PlayerReportResolveInput & { approval?: BanApproval } {
   const payload = readRequiredObjectBody(value);
   const status = parseReportStatus(readOptionalTrimmedString(payload, "status"), "pending");
   if (status === "pending") {
     throw new InvalidAdminPayloadError('"status" must be "dismissed", "warned", or "banned"');
   }
 
-  return { status };
+  return {
+    status,
+    ...(status === "banned"
+      ? (() => {
+          const approval = parseApproval(payload, "approval", true);
+          return approval ? { approval } : {};
+        })()
+      : {})
+  };
 }
 
 function readReportStatusFilter(request: IncomingMessage): PlayerReportStatus {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   return parseReportStatus(url.searchParams.get("status"), "pending");
+}
+
+function requireSupportRole(response: ServerResponse, request: IncomingMessage, allowedRoles: AdminRole[]): AdminRole | null {
+  if (!isSupportSecretConfigured()) {
+    sendSupportSecretNotConfigured(response);
+    return null;
+  }
+
+  const role = readAdminRole(request);
+  if (!role) {
+    sendUnauthorized(response);
+    return null;
+  }
+  if (!hasRequiredRole(role, allowedRoles)) {
+    sendForbiddenRole(response, "Forbidden: support role does not allow this action");
+    return null;
+  }
+  return role;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -401,14 +528,21 @@ export function registerAdminRoutes(
   });
 
   app.post("/api/admin/players/:id/ban", async (request, response) => {
-    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
-    if (!isAuthorized(request)) return sendUnauthorized(response);
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
     if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
 
     try {
       const playerId = readRequiredParam(request, "id");
       const input = parseBanBody(await readJsonBody(request));
-      const account = await store.savePlayerBan(playerId, input);
+      if (input.banStatus === "permanent" && !hasRequiredRole(role, ["admin", "support-supervisor"])) {
+        sendForbiddenRole(response, "Forbidden: permanent bans require support-supervisor or admin credentials");
+        return;
+      }
+      const account = await store.savePlayerBan(playerId, {
+        ...input,
+        banReason: withApprovalSuffix(input.banReason, input.approval)
+      });
       let disconnectedClients = 0;
       for (const room of getActiveRoomInstances().values()) {
         disconnectedClients += room.disconnectPlayer(playerId, "account_banned");
@@ -428,12 +562,17 @@ export function registerAdminRoutes(
   });
 
   app.post("/api/admin/players/:id/unban", async (request, response) => {
-    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
-    if (!isAuthorized(request)) return sendUnauthorized(response);
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
     if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
 
     try {
       const playerId = readRequiredParam(request, "id");
+      const currentBan = await store.loadPlayerBan(playerId);
+      if (currentBan?.banStatus === "permanent" && !hasRequiredRole(role, ["admin", "support-supervisor"])) {
+        sendForbiddenRole(response, "Forbidden: permanent-ban reversals require support-supervisor or admin credentials");
+        return;
+      }
       const input = parseUnbanBody(await readJsonBody(request));
       const account = await store.clearPlayerBan(playerId, input);
       sendJson(response, 200, { ok: true, account });
@@ -451,8 +590,7 @@ export function registerAdminRoutes(
   });
 
   app.get("/api/admin/players/:id/ban-history", async (request, response) => {
-    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
-    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
     if (!hasBanModerationStore(store)) return sendStoreUnavailable(response);
 
     try {
@@ -470,8 +608,7 @@ export function registerAdminRoutes(
   });
 
   app.get("/api/admin/reports", async (request, response) => {
-    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
-    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
     if (!hasPlayerReportStore(store)) return sendStoreUnavailable(response);
 
     try {
@@ -488,13 +625,17 @@ export function registerAdminRoutes(
   });
 
   app.post("/api/admin/reports/:id/resolve", async (request, response) => {
-    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
-    if (!isAuthorized(request)) return sendUnauthorized(response);
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
     if (!hasPlayerReportStore(store)) return sendStoreUnavailable(response);
 
     try {
       const reportId = readRequiredParam(request, "id");
       const input = parseResolveReportBody(await readJsonBody(request));
+      if (input.status === "banned" && !hasRequiredRole(role, ["admin", "support-supervisor"])) {
+        sendForbiddenRole(response, "Forbidden: permanent bans require support-supervisor or admin credentials");
+        return;
+      }
       const report = await store.resolvePlayerReport(reportId, input);
       if (!report) {
         sendJson(response, 404, { error: "Report not found" });
@@ -505,7 +646,7 @@ export function registerAdminRoutes(
       if (input.status === "banned" && hasBanModerationStore(store)) {
         await store.savePlayerBan(report.targetId, {
           banStatus: "permanent",
-          banReason: `Resolved from player report ${report.reportId}`
+          banReason: withApprovalSuffix(`Resolved from player report ${report.reportId}`, input.approval)
         });
         for (const room of getActiveRoomInstances().values()) {
           disconnectedClients += room.disconnectPlayer(report.targetId, "account_banned");
@@ -518,6 +659,41 @@ export function registerAdminRoutes(
         sendInvalidJson(response);
         return;
       }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/export", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!store?.loadPlayerAccount) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, { error: "Player account not found" });
+        return;
+      }
+
+      const currentBan = hasBanModerationStore(store) ? await store.loadPlayerBan(playerId) : null;
+      const banHistory = hasBanModerationStore(store)
+        ? await store.listPlayerBanHistory(playerId, { limit: readLimit(request, 100) })
+        : [];
+
+      sendJson(response, 200, {
+        playerId,
+        exportedAt: new Date().toISOString(),
+        account,
+        moderation: {
+          currentBan,
+          banHistory
+        }
+      });
+    } catch (error) {
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
         return;
