@@ -178,9 +178,9 @@ Relevant scripts: 49
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/release-go-no-go-decision-packet.ts`
-- Purpose: Build the final go/no-go decision packet for a candidate by combining the dossier, gate summary, and WeChat summary.
+- Purpose: Build the final go/no-go decision packet for a candidate by combining the dossier, gate summary, WeChat summary, and optional commercial verification evidence.
 - Required inputs:
-  - Phase 1 candidate dossier plus matching release-gate and WeChat candidate-summary artifacts, either auto-discovered or passed explicitly.
+  - Phase 1 candidate dossier plus matching release-gate and WeChat candidate-summary artifacts, either auto-discovered or passed explicitly; commercial verification evidence is auto-discovered from the WeChat artifacts dir when available.
 - Produced artifacts:
   - `artifacts/release-readiness/go-no-go-decision-packet-<candidate>-<short-sha>.json`
   - `artifacts/release-readiness/go-no-go-decision-packet-<candidate>-<short-sha>.md`

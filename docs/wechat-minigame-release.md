@@ -132,6 +132,7 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
     - required checks 都要求 `owner`、`recordedAt`、`revision`、`artifactPath`；缺失、超 24h freshness window 或 revision 不匹配都会继续阻塞。
     - 输出固定为 `codex.wechat.commercial-verification-<short-sha>.json` 和 `.md`，便于在 PR、提审记录或 release call 里直接引用。
     - `acceptedRisks[]` 会被原样汇总进摘要，用来记录“可接受但需持续观察”的外放风险，而不是把它们埋在 notes 里。
+19. 生成商运验证产物后，直接运行 `npm run release:go-no-go-packet -- --candidate <candidate-name> --candidate-revision <git-sha>`；脚本会优先自动发现同一 artifacts dir 下最新的 `codex.wechat.commercial-verification-<short-sha>.json`，不需要再额外手填一份独立的 `commercial-review` 文件。
 
 ## 发布彩排摘要
 
@@ -181,6 +182,7 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 - 会把 required check 的 `status`、owner/timestamp/revision/artifactPath 元数据、freshness、accepted risks 一起收口到一个 JSON / Markdown 摘要
 - 只要 required check 仍是 `pending` / `failed`，或者 evidence metadata 不完整 / 不新鲜，最终结论就保持 `blocked`
 - 适合把支付、触达、埋点、合规、真机体验这几类商运项统一挂到同一个 release call 记录里
+- `release:go-no-go-packet` 现在会优先自动消费这份 `commercial-verification` 产物，并仅在缺失时回退到旧的 `commercial-review` 文件兼容路径
 
 同时 `validate:wechat-rc` 现在会为 reviewer 生成一份 candidate summary：
 

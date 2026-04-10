@@ -350,6 +350,170 @@ test("buildGoNoGoDecisionPacket folds commercial review blockers into the final 
   assert.match(markdown, /支付 - 支付链路端到端验证/);
 });
 
+test("buildGoNoGoDecisionPacket auto-detects wechat commercial verification artifacts", () => {
+  const workspace = createTempWorkspace();
+  const releaseDir = path.join(workspace, "artifacts", "release-readiness");
+  const dossierDir = path.join(releaseDir, "phase1-candidate-dossier-phase1-rc-abc1234");
+  const wechatDir = path.join(workspace, "artifacts", "wechat-release");
+  const dossierPath = path.join(dossierDir, "phase1-candidate-dossier.json");
+  const releaseGateSummaryPath = path.join(releaseDir, "release-gate-summary-abc1234.json");
+  const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+  const commercialVerificationPath = path.join(wechatDir, "codex.wechat.commercial-verification-abc1234.json");
+
+  writeJson(dossierPath, {
+    generatedAt: "2026-04-10T10:00:00.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc1234def5678",
+      shortRevision: "abc1234",
+      branch: "release/phase1",
+      dirty: false,
+      targetSurface: "wechat"
+    },
+    summary: {
+      status: "passed",
+      totalSections: 1,
+      requiredFailed: [],
+      requiredPending: [],
+      acceptedRiskCount: 0
+    },
+    phase1ExitEvidenceGate: {
+      result: "passed",
+      summary: "All required evidence passed.",
+      blockingSections: [],
+      pendingSections: [],
+      acceptedRiskSections: []
+    },
+    sections: [
+      {
+        id: "release-readiness",
+        label: "Release readiness",
+        required: true,
+        result: "passed",
+        summary: "Automated release readiness checks passed.",
+        artifactPath: path.join(releaseDir, "release-readiness-abc1234.json"),
+        freshness: "fresh"
+      }
+    ]
+  });
+
+  writeJson(releaseGateSummaryPath, {
+    generatedAt: "2026-04-10T10:05:00.000Z",
+    targetSurface: "wechat",
+    summary: {
+      status: "passed",
+      failedGateIds: []
+    },
+    inputs: {
+      wechatArtifactsDir: wechatDir,
+      wechatCandidateSummaryPath
+    },
+    triage: {
+      blockers: [],
+      warnings: []
+    },
+    releaseSurface: {
+      status: "passed",
+      summary: "Release surface evidence is passing for the selected wechat target.",
+      evidence: []
+    }
+  });
+
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-04-10T10:10:00.000Z",
+    candidate: {
+      revision: "abc1234def5678",
+      version: "1.2.3",
+      status: "ready"
+    },
+    evidence: {
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  writeJson(commercialVerificationPath, {
+    schemaVersion: 1,
+    generatedAt: "2026-04-10T10:12:00.000Z",
+    candidate: {
+      name: "phase1-rc",
+      revision: "abc1234def5678",
+      shortRevision: "abc1234",
+      version: "1.2.3",
+      status: "blocked"
+    },
+    technicalGate: {
+      status: "ready",
+      summary: "WeChat candidate summary is ready.",
+      artifactPath: "artifacts/wechat-release/codex.wechat.release-candidate-summary.json",
+      blockerCount: 0
+    },
+    summary: {
+      status: "blocked",
+      totalChecks: 5,
+      completedRequiredChecks: 4,
+      requiredPendingChecks: 1,
+      requiredFailedChecks: 0,
+      requiredMetadataFailures: 0,
+      blockerCount: 1,
+      acceptedRiskCount: 0,
+      conclusion: "Commercial verification is incomplete or blocked; do not use this candidate for external rollout yet."
+    },
+    blockers: [
+      {
+        id: "wechat-payment-e2e-pending",
+        summary: "WeChat payment end-to-end verified is still pending.",
+        artifactPath: "artifacts/wechat-release/payment-e2e.md",
+        nextStep: "Record owner, revision, artifact path, and the final verification result."
+      }
+    ],
+    acceptedRisks: [],
+    checks: [
+      {
+        id: "wechat-payment-e2e",
+        title: "WeChat payment end-to-end verified",
+        status: "pending",
+        required: true,
+        notes: "Waiting on live payment callback proof.",
+        evidence: ["payment order create evidence"],
+        owner: "release-commerce",
+        recordedAt: "2026-04-10T10:11:00.000Z",
+        revision: "abc1234def5678",
+        artifactPath: "artifacts/wechat-release/payment-e2e.md",
+        blockerIds: [],
+        acceptedRisks: [],
+        freshness: "fresh",
+        metadataStatus: "passed",
+        metadataFailures: []
+      }
+    ]
+  });
+
+  const packet = buildGoNoGoDecisionPacket({
+    dossierPath,
+    releaseGateSummaryPath,
+    wechatCandidateSummaryPath
+  });
+
+  assert.equal(packet.decision.status, "no_go");
+  assert.equal(packet.inputs.commercialReviewPath, commercialVerificationPath);
+  assert.equal(packet.sections.commercialReadinessSummary.status, "blocked");
+  assert.equal(packet.sections.commercialReadinessSummary.requiredPendingChecks, 1);
+  assert.equal(packet.sections.unresolvedCommercialChecks.length, 1);
+  assert.equal(packet.sections.blockerSummary.blockers.some((item) => item.id === "commercial:wechat-payment-e2e"), true);
+  assert.equal(packet.sections.blockerSummary.blockers.some((item) => item.id === "commercial:wechat-payment-e2e-pending"), true);
+
+  const markdown = renderMarkdown(packet);
+  assert.match(markdown, /Commercial evidence:/);
+  assert.match(markdown, /codex\.wechat\.commercial-verification-abc1234\.json/);
+});
+
 test("go/no-go packet CLI fails with an actionable error when the dossier is missing", () => {
   const workspace = createTempWorkspace();
   const result = spawnSync(
