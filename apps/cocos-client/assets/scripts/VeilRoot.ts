@@ -210,6 +210,13 @@ import {
   type ClientAnalyticsContext
 } from "./cocos-primary-client-telemetry.ts";
 import {
+  createClientPerfTelemetryMonitorState,
+  evaluateClientPerfTelemetry,
+  readClientPerfRuntimeMetadata,
+  recordClientPerfFrame,
+  type ClientPerfRuntimeMetadata
+} from "./cocos-client-perf-telemetry.ts";
+import {
   describeAccountAuthFailure,
   normalizeTutorialStep,
   type TutorialProgressAction,
@@ -496,6 +503,11 @@ export class VeilRoot extends Component {
   private analyticsSessionId: string | null = null;
   private emittedExperimentExposureKeys = new Set<string>();
   private emittedShopOpenSessionId: string | null = null;
+  private clientPerfTelemetry = createClientPerfTelemetryMonitorState();
+  private clientPerfRuntimeMetadata: ClientPerfRuntimeMetadata = {
+    deviceModel: "unknown",
+    wechatVersion: "unknown"
+  };
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
   private stopAssetLoadFailureSubscription: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
@@ -526,6 +538,7 @@ export class VeilRoot extends Component {
       }
     });
     this.hydrateRuntimePlatform();
+    this.hydrateClientPerfRuntimeMetadata();
     this.bindRuntimeMemoryWarnings();
     this.hydrateLaunchIdentity();
     this.hydrateSettings();
@@ -549,6 +562,10 @@ export class VeilRoot extends Component {
     if (this.autoConnect) {
       void this.connect();
     }
+  }
+
+  update(deltaTime: number): void {
+    this.trackClientPerfTelemetry(deltaTime);
   }
 
   onDestroy(): void {
@@ -3496,6 +3513,7 @@ export class VeilRoot extends Component {
     | "shop_open"
     | "purchase_initiated"
     | "asset_load_failed"
+    | "client_perf_degraded"
   >(
     name: Name,
     payload: Record<string, unknown>,
@@ -5467,6 +5485,14 @@ export class VeilRoot extends Component {
     }
   }
 
+  private hydrateClientPerfRuntimeMetadata(): void {
+    this.clientPerfRuntimeMetadata = readClientPerfRuntimeMetadata(globalThis as {
+      wx?: {
+        getSystemInfoSync?: (() => { model?: unknown; version?: unknown } | null | undefined) | undefined;
+      } | null;
+    });
+  }
+
   private bindRuntimeMemoryWarnings(): void {
     this.stopRuntimeMemoryWarnings?.();
     this.stopRuntimeMemoryWarnings = bindCocosRuntimeMemoryWarning((event) => {
@@ -5484,6 +5510,30 @@ export class VeilRoot extends Component {
     const snapshot = readCocosRuntimeMemorySnapshot();
     const summary = formatCocosRuntimeMemoryStatus(snapshot, getPlaceholderSpriteAssetUsageSummary());
     return this.runtimeMemoryNotice ? `${summary} · ${this.runtimeMemoryNotice}` : summary;
+  }
+
+  private trackClientPerfTelemetry(deltaTime: number): void {
+    const nowMs = Date.now();
+    recordClientPerfFrame(this.clientPerfTelemetry, deltaTime, nowMs);
+
+    const memorySnapshot = readCocosRuntimeMemorySnapshot();
+    const memoryUsageRatio =
+      memorySnapshot.heapUsedBytes != null && memorySnapshot.heapLimitBytes != null && memorySnapshot.heapLimitBytes > 0
+        ? memorySnapshot.heapUsedBytes / memorySnapshot.heapLimitBytes
+        : memorySnapshot.heapUsedBytes != null && memorySnapshot.heapTotalBytes != null && memorySnapshot.heapTotalBytes > 0
+          ? memorySnapshot.heapUsedBytes / memorySnapshot.heapTotalBytes
+          : null;
+
+    const payload = evaluateClientPerfTelemetry(this.clientPerfTelemetry, {
+      nowMs,
+      memoryUsageRatio,
+      metadata: this.clientPerfRuntimeMetadata
+    });
+    if (!payload) {
+      return;
+    }
+
+    this.trackClientAnalyticsEvent("client_perf_degraded", payload);
   }
 
   private hydrateLaunchIdentity(): void {

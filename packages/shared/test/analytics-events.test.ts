@@ -239,3 +239,25 @@ test("createAnalyticsEvent: asset_load_failed includes retry metadata and path",
   assert.equal(event.payload.finalFailure, true);
   assert.equal(event.source, "cocos-client");
 });
+
+test("createAnalyticsEvent: client_perf_degraded includes fps, latency, memory, and runtime metadata", () => {
+  const event = createAnalyticsEvent("client_perf_degraded", {
+    playerId: "player-1",
+    source: "cocos-client",
+    payload: {
+      reason: "fps_and_memory",
+      fpsAvg: 16.8,
+      latencyMsAvg: 59.5,
+      memoryUsageRatio: 0.84,
+      deviceModel: "iPhone 13 Pro Max",
+      wechatVersion: "8.0.50"
+    }
+  });
+
+  assert.equal(event.payload.reason, "fps_and_memory");
+  assert.equal(event.payload.fpsAvg, 16.8);
+  assert.equal(event.payload.latencyMsAvg, 59.5);
+  assert.equal(event.payload.memoryUsageRatio, 0.84);
+  assert.equal(event.payload.deviceModel, "iPhone 13 Pro Max");
+  assert.equal(event.payload.wechatVersion, "8.0.50");
+});

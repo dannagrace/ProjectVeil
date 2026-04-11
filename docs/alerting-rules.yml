@@ -198,3 +198,14 @@ groups:
           summary: Project Veil client asset load failures exceed the 1% budget
           description: Client `asset_load_failed` analytics have exceeded 1% of session starts over 15 minutes. Check CDN availability, asset manifest drift, and recent client revisions before widening rollout.
           runbook_url: ./incident-response-runbook.md#alert-veilassetloadfailureshigh
+
+      - alert: VeilClientPerfDegradedHigh
+        expr: increase(veil_analytics_events_flushed_total{name="client_perf_degraded",source="cocos-client"}[15m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-client
+        annotations:
+          summary: Project Veil client runtime performance degradation is above budget
+          description: Client `client_perf_degraded` analytics exceeded five flushed events in 15 minutes. Inspect the affected candidate revision, low-FPS windows, and memory pressure before expanding traffic.
+          runbook_url: ./alerting-runbook.md#alert-veilclientperfdegradedhigh

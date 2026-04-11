@@ -121,6 +121,19 @@ export const ANALYTICS_EVENT_CATALOG = {
     finalFailure: true,
     errorMessage: "missing sprite"
   }),
+  client_perf_degraded: defineAnalyticsEvent(
+    "client_perf_degraded",
+    1,
+    "Client runtime performance remained degraded long enough to cross the FPS or memory budget.",
+    {
+      reason: "fps",
+      fpsAvg: 18.4,
+      latencyMsAvg: 54.3,
+      memoryUsageRatio: 0.82,
+      deviceModel: "iPhone 13 Pro Max",
+      wechatVersion: "8.0.50"
+    }
+  ),
 } as const;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENT_CATALOG;
