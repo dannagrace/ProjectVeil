@@ -17,6 +17,8 @@ Use the packet when the release owner, QA owner, or operator needs one final dec
 
 Use the PR-visible summary when reviewers only need the verdict, counts, and artifact pointers in the pull request itself. Use the full packet artifact when release operators need the complete blocker, warning, and manual-review drill-down.
 
+If the candidate is blocked by a live production incident, route the operator response through [`docs/incident-response-runbook.md`](./incident-response-runbook.md) first. The go/no-go packet is the decision artifact; the incident runbook owns severity, escalation, rollback, and post-mortem handling while the incident is active.
+
 ## What It Emits
 
 The command writes both of these under `artifacts/release-readiness/`:
@@ -94,5 +96,6 @@ Those errors are intentional. The packet is the last-mile reviewer artifact, so 
 6. Run `npm run release:pr-summary -- --release-gate-summary <path> --release-health-summary <path> --go-no-go-packet <path>` to render the concise PR-visible summary markdown when you need to preview the exact reviewer digest locally.
 7. In CI pull-request runs, the `Build go/no-go decision packet artifact` plus `Comment PR with release summary` steps publish or update the single bot comment in place, so reruns refresh the same PR-visible summary instead of creating duplicates.
 8. Attach or inspect the Markdown packet itself when the release owner needs the full operator record.
+9. If any blocker is an active `P0/P1` incident, link the active war room, incident level, and rollback/hotfix decision from [`docs/incident-response-runbook.md`](./incident-response-runbook.md) in the packet review notes before resuming release review.
 
 If the packet still shows blocker items, clear those upstream artifacts first and regenerate the packet instead of editing the packet by hand.
