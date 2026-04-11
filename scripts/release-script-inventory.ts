@@ -149,12 +149,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
   },
   "release:phase1:candidate-rehearsal": {
     purpose:
-      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including Cocos primary journey evidence, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and the reviewer-facing release PR summary, into one release-readiness bundle directory.",
+      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and the reviewer-facing release PR summary, into one release-readiness bundle directory.",
     requiredInputs: [
       "Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.",
     ],
     producedArtifacts: [
-      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including Cocos primary journey evidence, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, the reviewer-facing release PR summary, and a top-level `SUMMARY.md`.",
+      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, the reviewer-facing release PR summary, and a top-level `SUMMARY.md`.",
     ],
   },
   "release:phase1:evidence-drift-gate": {

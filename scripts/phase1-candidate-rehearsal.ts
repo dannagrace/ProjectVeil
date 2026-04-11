@@ -86,6 +86,8 @@ interface RehearsalArtifacts {
   persistencePath?: string;
   cocosPrimaryJourneyEvidencePath?: string;
   cocosPrimaryJourneyEvidenceMarkdownPath?: string;
+  cocosMainJourneyReplayGatePath?: string;
+  cocosMainJourneyReplayGateMarkdownPath?: string;
   cocosPrimaryDiagnosticsPath?: string;
   cocosPrimaryDiagnosticsMarkdownPath?: string;
   candidateRevisionTriageInputPath?: string;
@@ -573,11 +575,14 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }
-  if (report.artifacts.cocosPrimaryDiagnosticsPath) {
-    lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
-  }
   if (report.artifacts.cocosPrimaryJourneyEvidencePath) {
     lines.push(`- Cocos primary journey evidence: \`${report.artifacts.cocosPrimaryJourneyEvidencePath}\``);
+  }
+  if (report.artifacts.cocosMainJourneyReplayGatePath) {
+    lines.push(`- Cocos main-journey replay gate: \`${report.artifacts.cocosMainJourneyReplayGatePath}\``);
+  }
+  if (report.artifacts.cocosPrimaryDiagnosticsPath) {
+    lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
   }
   if (report.artifacts.candidateRevisionTriageDigestPath) {
     lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
@@ -653,6 +658,14 @@ async function main(): Promise<void> {
   const cocosPrimaryJourneyEvidenceMarkdownPath = path.join(
     outputDir,
     `cocos-primary-journey-evidence-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const cocosMainJourneyReplayGatePath = path.join(
+    outputDir,
+    `cocos-main-journey-replay-gate-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const cocosMainJourneyReplayGateMarkdownPath = path.join(
+    outputDir,
+    `cocos-main-journey-replay-gate-${candidateSlug}-${revision.shortCommit}.md`
   );
   const cocosPrimaryDiagnosticsPath = path.join(
     outputDir,
@@ -743,6 +756,8 @@ async function main(): Promise<void> {
   artifacts.persistencePath = toRelative(persistencePath);
   artifacts.cocosPrimaryJourneyEvidencePath = toRelative(cocosPrimaryJourneyEvidencePath);
   artifacts.cocosPrimaryJourneyEvidenceMarkdownPath = toRelative(cocosPrimaryJourneyEvidenceMarkdownPath);
+  artifacts.cocosMainJourneyReplayGatePath = toRelative(cocosMainJourneyReplayGatePath);
+  artifacts.cocosMainJourneyReplayGateMarkdownPath = toRelative(cocosMainJourneyReplayGateMarkdownPath);
   artifacts.cocosPrimaryDiagnosticsPath = toRelative(cocosPrimaryDiagnosticsPath);
   artifacts.cocosPrimaryDiagnosticsMarkdownPath = toRelative(cocosPrimaryDiagnosticsMarkdownPath);
   artifacts.candidateRevisionTriageInputPath = toRelative(candidateRevisionTriageInputPath);
@@ -1011,6 +1026,31 @@ async function main(): Promise<void> {
           "--force"
         ];
         return runCommandStage("cocos-rc-bundle", "Build Cocos RC evidence bundle", command, [outputDir]);
+      }
+    },
+    {
+      id: "cocos-main-journey-replay-gate",
+      title: "Stage Cocos main-journey replay gate",
+      run: () => {
+        const outputs = [cocosMainJourneyReplayGatePath, cocosMainJourneyReplayGateMarkdownPath];
+        const missingOutputs = outputs.filter((filePath) => !fs.existsSync(filePath));
+        if (missingOutputs.length > 0) {
+          return {
+            id: "cocos-main-journey-replay-gate",
+            title: "Stage Cocos main-journey replay gate",
+            status: "failed",
+            summary: "Cocos RC bundle did not produce the expected main-journey replay gate artifacts.",
+            outputs: outputs.map(toRelative)
+          };
+        }
+
+        return {
+          id: "cocos-main-journey-replay-gate",
+          title: "Stage Cocos main-journey replay gate",
+          status: "passed",
+          summary: "Cocos RC bundle produced the main-journey replay gate artifacts for reviewer staging.",
+          outputs: outputs.map(toRelative)
+        };
       }
     },
     {
@@ -1570,6 +1610,8 @@ async function main(): Promise<void> {
     persistencePath,
     cocosPrimaryJourneyEvidencePath,
     cocosPrimaryJourneyEvidenceMarkdownPath,
+    cocosMainJourneyReplayGatePath,
+    cocosMainJourneyReplayGateMarkdownPath,
     cocosPrimaryDiagnosticsPath,
     cocosPrimaryDiagnosticsMarkdownPath,
     candidateRevisionTriageInputPath,
