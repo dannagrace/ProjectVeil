@@ -2055,7 +2055,8 @@ export async function loginCocosWechatAuthSession(
     authToken?: string | null;
     privacyConsentAccepted?: boolean;
     minorProtection?: {
-      isAdult: boolean;
+      birthdate?: string;
+      isAdult?: boolean;
     };
   }
 ): Promise<CocosStoredAuthSession> {
@@ -2092,7 +2093,8 @@ export async function loginCocosWechatAuthSession(
         displayName: profile.displayName,
         ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {}),
         ...(options?.privacyConsentAccepted ? { privacyConsentAccepted: true } : {}),
-        ...(options?.minorProtection ? { isAdult: options.minorProtection.isAdult } : {})
+        ...(options?.minorProtection?.birthdate ? { birthdate: options.minorProtection.birthdate } : {}),
+        ...(options?.minorProtection?.isAdult !== undefined ? { isAdult: options.minorProtection.isAdult } : {})
       })
     },
     options?.fetchImpl

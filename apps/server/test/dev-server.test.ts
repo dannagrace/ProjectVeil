@@ -254,10 +254,10 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       matchmakingStore = dependencies.store;
       base.routeCalls.push("matchmaking");
     },
-    registerMinorProtectionPreviewRoutes: (app, store) => {
+    registerMinorProtectionRoutes: (app, store) => {
       assert.equal(app, base.expressApp);
       assert.equal(store, memoryStore);
-      base.routeCalls.push("minor-protection-preview");
+      base.routeCalls.push("minor-protection");
     },
     registerPrometheusMetricsMiddleware: (app) => {
       assert.equal(app, base.expressApp);
@@ -320,7 +320,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "wechat-pay",
     "lobby",
     "matchmaking",
-    "minor-protection-preview",
+    "minor-protection",
     "leaderboard",
     "seasons",
     "runtime-observability",
@@ -395,7 +395,7 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -461,7 +461,7 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -557,7 +557,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -661,7 +661,7 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
         registerWechatPayRoutes: () => undefined,
         registerLobbyRoutes: () => undefined,
         registerMatchmakingRoutes: () => undefined,
-        registerMinorProtectionPreviewRoutes: () => undefined,
+        registerMinorProtectionRoutes: () => undefined,
         registerPrometheusMetricsMiddleware: () => undefined,
         registerPrometheusMetricsRoute: () => undefined,
         registerLeaderboardRoutes: () => undefined,
@@ -734,7 +734,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -835,7 +835,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -942,7 +942,7 @@ test("dev server warns loudly when backup storage is unreachable and exports the
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,

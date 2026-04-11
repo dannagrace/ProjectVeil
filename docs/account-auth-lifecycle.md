@@ -6,6 +6,8 @@
 
 - 游客登录：`POST /api/auth/guest-login`
 - 微信小游戏登录：`POST /api/auth/wechat-login`（`/api/auth/wechat-mini-game-login` 仍保留别名）
+- 微信小游戏年龄声明 / 未成年人保护：`POST /api/auth/wechat-login` 支持 `birthdate=YYYY-MM-DD` 自声明年龄校验；服务端会落库 `ageVerified/isMinor` 并在房间接入时执行未成年人限制
+- 运营与监护人说明：`docs/minor-protection-operations.md`
 - 游客档升级成口令账号：`POST /api/auth/account-bind`
 - 口令账号登录：`POST /api/auth/account-login`
 - 会话校验 / 刷新 / 退出：`GET /api/auth/session`、`POST /api/auth/refresh`、`POST /api/auth/logout`
@@ -24,7 +26,9 @@
 - [x] `POST /api/auth/account-login` 现在会按来源 IP 聚合短窗口内的跨账号口令失败；同一来源连续命中多个不同 `loginId` 失败后，会临时封禁该来源并返回 `429 credential_stuffing_blocked`。
 - [x] `/api/runtime/auth-readiness` 与 `/api/runtime/metrics` 已补充撞库源封禁态势，便于 ops 区分“单账号锁定”与“同源多账号扫描”。
 - [ ] 更外层的 DDoS 缓解仍属于 CDN / WAF / 基础设施侧工作，本次仓库切片未覆盖。
-- [ ] 未成年人保护沿用现有微信实名 / minor protection 读模型，本次切片未改动夜间限制与累计时长策略。
+- [x] 未成年人保护已接入生产命名的运营查询面 `/api/admin/minor-protection`，并在服务端按中国时区执行 `22:00-08:00` 宵禁、工作日 `90` 分钟 / 周末与节假日 `180` 分钟的累计时长限制。
+- [x] 当前仓库在缺少微信实名 SDK 脚手架时，采用 `birthdate=YYYY-MM-DD` 的自声明年龄校验作为生产兜底；服务端只持久化 `ageVerified/isMinor` 结果，不回存原始生日。
+- [ ] 仍缺少对接微信实名能力后的更强校验链路，以及面向存量账号的强制补录 / 追认流程。
 
 ## 微信小游戏 code2session
 

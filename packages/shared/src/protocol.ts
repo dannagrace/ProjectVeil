@@ -201,6 +201,27 @@ export type ServerMessage =
       type: "error";
       requestId: string;
       reason: string;
+      minorProtection?: {
+        enforced: boolean;
+        localDate: string;
+        normalizedDailyPlayMinutes: number;
+        dailyLimitMinutes: number;
+        restrictedHours: boolean;
+        dailyLimitReached: boolean;
+        wouldBlock: boolean;
+        reason: "minor_restricted_hours" | "minor_daily_limit_reached" | null;
+        currentServerTime: string;
+        currentLocalTime: string;
+        timeZone: string;
+        restrictedWindow: {
+          startHour: number;
+          endHour: number;
+        };
+        remainingDailyMinutes: number;
+        nextAllowedAt: string | null;
+        nextAllowedLocalTime: string | null;
+        nextAllowedCountdownSeconds: number | null;
+      };
     }
   | {
       type: "report.player";

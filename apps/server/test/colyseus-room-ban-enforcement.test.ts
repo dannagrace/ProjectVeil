@@ -211,6 +211,10 @@ test("room connect rejects minors during restricted hours", async (t) => {
     ageVerified: true,
     isMinor: true
   });
+  await store.savePlayerAccountProgress("minor-player", {
+    dailyPlayMinutes: 10,
+    lastPlayDate: "2026-04-03"
+  });
   const room = await createTestRoom(`minor-hours-${Date.now()}`);
   const client = createFakeClient("minor-hours-session");
 
@@ -229,7 +233,31 @@ test("room connect rejects minors during restricted hours", async (t) => {
     playerId: "minor-player"
   });
 
-  assert.equal(client.sent.some((message) => message.type === "error" && message.reason === "minor_restricted_hours"), true);
+  const curfewError = client.sent.find(
+    (message) => message.type === "error" && message.reason === "minor_restricted_hours"
+  );
+  assert.ok(curfewError);
+  assert.deepEqual(curfewError.minorProtection, {
+    enforced: true,
+    localDate: "2026-04-03",
+    normalizedDailyPlayMinutes: 10,
+    dailyLimitMinutes: 90,
+    restrictedHours: true,
+    dailyLimitReached: false,
+    wouldBlock: true,
+    reason: "minor_restricted_hours",
+    currentServerTime: "2026-04-03T14:30:00.000Z",
+    currentLocalTime: "22:30",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 80,
+    nextAllowedAt: "2026-04-04T00:00:00.000Z",
+    nextAllowedLocalTime: "08:00",
+    nextAllowedCountdownSeconds: 34200
+  });
   assert.equal(client.sent.some((message) => message.type === "session.state"), false);
 });
 
@@ -327,9 +355,30 @@ test("room timer kicks minors after reaching the daily playtime limit and blocks
     playerId: "minor-limit"
   });
 
-  assert.equal(
-    secondClient.sent.some((message) => message.type === "error" && message.reason === "minor_daily_limit_reached"),
-    true
+  const limitError = secondClient.sent.find(
+    (message) => message.type === "error" && message.reason === "minor_daily_limit_reached"
   );
+  assert.ok(limitError);
+  assert.deepEqual(limitError.minorProtection, {
+    enforced: true,
+    localDate: "2026-04-03",
+    normalizedDailyPlayMinutes: 90,
+    dailyLimitMinutes: 90,
+    restrictedHours: false,
+    dailyLimitReached: true,
+    wouldBlock: true,
+    reason: "minor_daily_limit_reached",
+    currentServerTime: "2026-04-03T01:01:00.000Z",
+    currentLocalTime: "09:01",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 0,
+    nextAllowedAt: "2026-04-04T00:00:00.000Z",
+    nextAllowedLocalTime: "08:00",
+    nextAllowedCountdownSeconds: 82740
+  });
   assert.equal(secondClient.sent.some((message) => message.type === "session.state"), false);
 });

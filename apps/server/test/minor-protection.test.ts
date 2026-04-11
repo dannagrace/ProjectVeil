@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMinorProtectionBlockDetails,
   deriveMinorProtectionState,
   deriveWechatMinorProtection,
   evaluateMinorProtectionState,
+  findNextAllowedMinorProtectionTime,
   getMinorProtectionDateKey,
+  normalizeMinorProtectionBirthdate,
   readMinorProtectionConfig
 } from "../src/minor-protection";
 
@@ -161,7 +164,32 @@ test("evaluateMinorProtectionState prefers restricted-hours reason when both rul
   assert.equal(evaluation.reason, "minor_restricted_hours");
 });
 
-test("deriveWechatMinorProtection prioritizes isAdult over other fields", () => {
+test("normalizeMinorProtectionBirthdate rejects impossible or future dates", () => {
+  assert.throws(() => normalizeMinorProtectionBirthdate("2026-02-30", new Date("2026-04-03T00:00:00.000Z")), {
+    message: 'Expected optional string field: birthdate in "YYYY-MM-DD" format'
+  });
+  assert.throws(() => normalizeMinorProtectionBirthdate("2026-04-04", new Date("2026-04-03T00:00:00.000Z")), {
+    message: "birthdate cannot be in the future"
+  });
+});
+
+test("deriveWechatMinorProtection derives minor status from self-declared birthdate", () => {
+  assert.deepEqual(
+    deriveWechatMinorProtection(
+      {
+        birthdate: "2009-04-04",
+        isAdult: true
+      },
+      new Date("2026-04-03T16:00:00.000Z")
+    ),
+    {
+      ageVerified: true,
+      isMinor: true
+    }
+  );
+});
+
+test("deriveWechatMinorProtection prioritizes isAdult over legacy fields", () => {
   assert.deepEqual(
     deriveWechatMinorProtection({
       ageVerified: false,
@@ -188,4 +216,62 @@ test("deriveWechatMinorProtection derives minor status from supported age ranges
     ageVerified: true
   });
   assert.deepEqual(deriveWechatMinorProtection({}), {});
+});
+
+test("findNextAllowedMinorProtectionTime resolves the next local 08:00 window during curfew", () => {
+  const config = readMinorProtectionConfig({
+    VEIL_MINOR_PROTECTION_TIME_ZONE: "Asia/Shanghai",
+    VEIL_MINOR_PROTECTION_HOLIDAY_DATES: ""
+  });
+
+  const nextAllowedAt = findNextAllowedMinorProtectionTime(
+    {
+      isMinor: true,
+      dailyPlayMinutes: 20,
+      lastPlayDate: "2026-04-03"
+    },
+    new Date("2026-04-03T14:30:00.000Z"),
+    config
+  );
+
+  assert.equal(nextAllowedAt?.toISOString(), "2026-04-04T00:00:00.000Z");
+});
+
+test("buildMinorProtectionBlockDetails includes countdown metadata", () => {
+  const config = readMinorProtectionConfig({
+    VEIL_MINOR_PROTECTION_TIME_ZONE: "Asia/Shanghai",
+    VEIL_MINOR_PROTECTION_HOLIDAY_DATES: ""
+  });
+
+  const details = buildMinorProtectionBlockDetails(
+    {
+      isMinor: true,
+      dailyPlayMinutes: 20,
+      lastPlayDate: "2026-04-03"
+    },
+    new Date("2026-04-03T14:30:00.000Z"),
+    config
+  );
+
+  assert.deepEqual(details, {
+    enforced: true,
+    localDate: "2026-04-03",
+    normalizedDailyPlayMinutes: 20,
+    dailyLimitMinutes: 90,
+    restrictedHours: true,
+    dailyLimitReached: false,
+    wouldBlock: true,
+    reason: "minor_restricted_hours",
+    currentServerTime: "2026-04-03T14:30:00.000Z",
+    currentLocalTime: "22:30",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 70,
+    nextAllowedAt: "2026-04-04T00:00:00.000Z",
+    nextAllowedLocalTime: "08:00",
+    nextAllowedCountdownSeconds: 34200
+  });
 });
