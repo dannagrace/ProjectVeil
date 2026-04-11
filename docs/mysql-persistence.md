@@ -11,6 +11,7 @@ The current persistence scope is:
 - Per-player room progress snapshot
 - Per-player account progression snapshot
 - Per-player append-only event history read model
+- Guild roster snapshots plus guild moderation audit history
 - Config center documents for `world`, `mapObjects`, and `units`
 
 Snapshots are stored as serialized JSON strings for compatibility with older MySQL versions.
@@ -131,6 +132,63 @@ The server appends only newly seen `recentEventLog` entries into this table when
 The event history routes support the existing `category` / `heroId` / `achievementId` / `worldEventType` filters, plus optional inclusive `since` and `until` ISO-8601 timestamps. MySQL-backed queries push those time-range predicates down into SQL so player history views can page within a bounded time window without scanning unrelated rows.
 
 Issue #27 follow-up note: event-log and achievement history queries now share a single normalization contract in `packages/shared/src/event-log.ts`. Route handlers and MySQL persistence both reuse that helper so trimming, pagination clamping, and ISO timestamp coercion stay consistent before full event-log persistence and richer achievement views land.
+
+### Table: `guilds`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `guild_id` | `VARCHAR(191)` | No | - | Guild id, primary key |
+| `name` | `VARCHAR(80)` | No | - | Latest guild name snapshot |
+| `tag` | `VARCHAR(8)` | No | - | Latest guild tag snapshot |
+| `description` | `VARCHAR(160)` | Yes | `NULL` | Latest guild description snapshot |
+| `owner_player_id` | `VARCHAR(191)` | Yes | `NULL` | Current owner player id |
+| `member_count` | `INT` | No | `0` | Current member count |
+| `state_json` | `LONGTEXT` | No | - | Serialized `GuildState`, including hidden moderation state |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | First persistence time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last persistence time |
+
+Recommended indexes:
+
+- `idx_guilds_updated_at` on `updated_at`
+- `uidx_guilds_tag` unique on `tag`
+
+### Table: `guild_memberships`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `guild_id` | `VARCHAR(191)` | No | - | Guild id |
+| `player_id` | `VARCHAR(191)` | No | - | Member player id |
+| `role` | `VARCHAR(16)` | No | - | Persisted guild role snapshot |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Membership row creation time |
+
+Primary key:
+
+- `(guild_id, player_id)`
+
+Recommended indexes:
+
+- `uidx_guild_memberships_player` unique on `player_id`
+
+### Table: `guild_audit_logs`
+
+Guild moderation and guild-create rate limits rely on an append-only audit table instead of mutable counters. The server counts recent `created` entries per `actor_player_id` to enforce the “2 creations per 24h” policy and keeps moderation actions after a guild is hidden or deleted.
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `audit_id` | `VARCHAR(191)` | No | - | Audit row id, primary key |
+| `guild_id` | `VARCHAR(191)` | No | - | Guild id referenced by the action |
+| `action` | `VARCHAR(32)` | No | - | One of `created`, `hidden`, `unhidden`, `deleted` |
+| `actor_player_id` | `VARCHAR(191)` | No | - | Moderator or creator actor id |
+| `occurred_at` | `DATETIME` | No | - | Logical action time |
+| `name` | `VARCHAR(80)` | No | - | Guild name snapshot at action time |
+| `tag` | `VARCHAR(8)` | No | - | Guild tag snapshot at action time |
+| `reason` | `VARCHAR(200)` | Yes | `NULL` | Optional moderation reason |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Row insertion time |
+
+Recommended indexes:
+
+- `idx_guild_audit_logs_guild_occurred` on `(guild_id, occurred_at DESC)`
+- `idx_guild_audit_logs_actor_occurred` on `(actor_player_id, occurred_at DESC)`
 
 ### Table: `config_documents`
 

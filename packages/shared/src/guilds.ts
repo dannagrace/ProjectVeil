@@ -3,6 +3,7 @@ import type {
   GuildInviteStatus,
   GuildJoinRequestState,
   GuildJoinRequestStatus,
+  GuildModerationState,
   GuildMemberState,
   GuildRole,
   GuildState
@@ -257,6 +258,27 @@ function normalizeGuildInvite(invite: Partial<GuildInviteState>): GuildInviteSta
   };
 }
 
+function normalizeGuildModeration(input?: Partial<GuildModerationState> | null): GuildModerationState | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  const isHidden = input.isHidden === true;
+  const hiddenAt = isHidden ? normalizeTimestamp(input.hiddenAt) : undefined;
+  const hiddenByPlayerId = isHidden ? input.hiddenByPlayerId?.trim() : undefined;
+  const hiddenReason = isHidden ? input.hiddenReason?.trim() : undefined;
+  if (!isHidden && !hiddenAt && !hiddenByPlayerId && !hiddenReason) {
+    return undefined;
+  }
+
+  return {
+    isHidden,
+    ...(hiddenAt ? { hiddenAt } : {}),
+    ...(hiddenByPlayerId ? { hiddenByPlayerId } : {}),
+    ...(hiddenReason ? { hiddenReason: hiddenReason.slice(0, 200) } : {})
+  };
+}
+
 export function normalizeGuildState(input?: Partial<GuildState> | null): GuildState {
   const id = input?.id?.trim() ?? "";
   const name = input?.name?.trim() ?? id;
@@ -289,6 +311,7 @@ export function normalizeGuildState(input?: Partial<GuildState> | null): GuildSt
         .map((invite) => [invite.inviteId, invite] as const)
     ).values()
   ).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.inviteId.localeCompare(right.inviteId));
+  const moderation = normalizeGuildModeration(input?.moderation);
 
   return {
     id,
@@ -300,6 +323,7 @@ export function normalizeGuildState(input?: Partial<GuildState> | null): GuildSt
     xp: Math.max(0, Math.floor(input?.xp ?? 0)),
     createdAt: normalizeTimestamp(input?.createdAt),
     updatedAt: normalizeTimestamp(input?.updatedAt),
+    ...(moderation ? { moderation } : {}),
     members,
     joinRequests,
     invites

@@ -252,6 +252,55 @@ PREPARE veil_guild_memberships_player_idx_stmt FROM @veil_guild_memberships_play
 EXECUTE veil_guild_memberships_player_idx_stmt;
 DEALLOCATE PREPARE veil_guild_memberships_player_idx_stmt;
 
+CREATE TABLE IF NOT EXISTS `guild_audit_logs` (
+  audit_id VARCHAR(191) NOT NULL,
+  guild_id VARCHAR(191) NOT NULL,
+  action VARCHAR(32) NOT NULL,
+  actor_player_id VARCHAR(191) NOT NULL,
+  occurred_at DATETIME NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  tag VARCHAR(8) NOT NULL,
+  reason VARCHAR(200) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (audit_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @veil_guild_audit_logs_guild_occurred_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guild_audit_logs'
+    AND INDEX_NAME = 'idx_guild_audit_logs_guild_occurred'
+);
+
+SET @veil_guild_audit_logs_guild_occurred_idx_sql := IF(
+  @veil_guild_audit_logs_guild_occurred_idx_exists = 0,
+  'CREATE INDEX `idx_guild_audit_logs_guild_occurred` ON `guild_audit_logs` (guild_id, occurred_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_guild_audit_logs_guild_occurred_idx_stmt FROM @veil_guild_audit_logs_guild_occurred_idx_sql;
+EXECUTE veil_guild_audit_logs_guild_occurred_idx_stmt;
+DEALLOCATE PREPARE veil_guild_audit_logs_guild_occurred_idx_stmt;
+
+SET @veil_guild_audit_logs_actor_occurred_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guild_audit_logs'
+    AND INDEX_NAME = 'idx_guild_audit_logs_actor_occurred'
+);
+
+SET @veil_guild_audit_logs_actor_occurred_idx_sql := IF(
+  @veil_guild_audit_logs_actor_occurred_idx_exists = 0,
+  'CREATE INDEX `idx_guild_audit_logs_actor_occurred` ON `guild_audit_logs` (actor_player_id, occurred_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_guild_audit_logs_actor_occurred_idx_stmt FROM @veil_guild_audit_logs_actor_occurred_idx_sql;
+EXECUTE veil_guild_audit_logs_actor_occurred_idx_stmt;
+DEALLOCATE PREPARE veil_guild_audit_logs_actor_occurred_idx_stmt;
+
 CREATE TABLE IF NOT EXISTS `config_documents` (
   document_id VARCHAR(64) NOT NULL,
   content_json LONGTEXT NOT NULL,
