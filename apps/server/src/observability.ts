@@ -11,6 +11,7 @@ import {
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import type { LeaderboardAlertEvent } from "./leaderboard-anti-abuse";
 import {
   getAnalyticsPipelineSnapshot,
   renderAnalyticsPipelineSnapshotText,
@@ -58,6 +59,10 @@ interface AuthObservabilityCounters {
 
 interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
+}
+
+interface LeaderboardAbuseObservabilityCounters {
+  alertsTotal: number;
 }
 
 type ActionValidationScope = "world" | "battle";
@@ -173,6 +178,10 @@ interface RuntimeObservabilityState {
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
   };
+  leaderboardAbuse: {
+    counters: LeaderboardAbuseObservabilityCounters;
+    recentAlerts: LeaderboardAlertEvent[];
+  };
 }
 
 export interface RuntimePersistenceHealth {
@@ -237,6 +246,10 @@ interface RuntimeHealthPayload {
     };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
+    };
+    leaderboardAbuse: {
+      counters: LeaderboardAbuseObservabilityCounters;
+      alertsTracked: number;
     };
   };
 }
@@ -411,6 +424,12 @@ const runtimeObservability: RuntimeObservabilityState = {
     counters: {
       rateLimitedTotal: 0
     }
+  },
+  leaderboardAbuse: {
+    counters: {
+      alertsTotal: 0
+    },
+    recentAlerts: []
   }
 };
 
@@ -503,7 +522,7 @@ function buildHealthPayload(
   );
 
   return {
-    status: persistence.status === "degraded" ? "warn" : "ok",
+    status: persistence.status === "degraded" || runtimeObservability.leaderboardAbuse.recentAlerts.length > 0 ? "warn" : "ok",
     service,
     checkedAt: new Date().toISOString(),
     startedAt: new Date(runtimeObservability.startedAt).toISOString(),
@@ -557,6 +576,10 @@ function buildHealthPayload(
       },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
+      },
+      leaderboardAbuse: {
+        counters: { ...runtimeObservability.leaderboardAbuse.counters },
+        alertsTracked: runtimeObservability.leaderboardAbuse.recentAlerts.length
       }
     }
   };
@@ -1088,6 +1111,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
+    "# HELP veil_leaderboard_abuse_alerts_total Total leaderboard anti-abuse alerts emitted by this process.",
+    "# TYPE veil_leaderboard_abuse_alerts_total counter",
+    `veil_leaderboard_abuse_alerts_total ${health.runtime.leaderboardAbuse.counters.alertsTotal}`,
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
@@ -1726,6 +1752,14 @@ export function recordMatchmakingRateLimited(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
 }
 
+export function recordLeaderboardAbuseAlert(alert: LeaderboardAlertEvent): void {
+  runtimeObservability.leaderboardAbuse.counters.alertsTotal += 1;
+  runtimeObservability.leaderboardAbuse.recentAlerts.unshift({ ...alert });
+  if (runtimeObservability.leaderboardAbuse.recentAlerts.length > 20) {
+    runtimeObservability.leaderboardAbuse.recentAlerts.length = 20;
+  }
+}
+
 export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
@@ -1886,6 +1920,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
+  runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
+  runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(
