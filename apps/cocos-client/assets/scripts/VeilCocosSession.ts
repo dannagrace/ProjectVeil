@@ -1,5 +1,6 @@
 import { sys } from "cc";
 import { classifyReconnectFailure, type ReconnectFailureReason } from "../../../../packages/shared/src/index.ts";
+import { resolveCocosClientVersion } from "./cocos-client-version.ts";
 import type { EquipmentType } from "./project-shared/index.ts";
 import { buildCocosAuthHeaders, resolveCocosApiBaseUrl } from "./cocos-lobby.ts";
 import {
@@ -559,6 +560,7 @@ export interface VeilCocosSessionOptions {
   onServerMessage?: (message: ServerMessage) => void;
   getDisplayName?: () => string | null;
   getAuthToken?: () => string | null;
+  getClientVersion?: () => string | null;
 }
 
 interface LeaderboardApiPayload {
@@ -696,6 +698,7 @@ type ClientMessage =
       requestId: string;
       roomId: string;
       playerId: string;
+      clientVersion?: string;
       displayName?: string;
       authToken?: string;
     }
@@ -1425,12 +1428,14 @@ class RemoteGameSession {
   async snapshot(): Promise<SessionUpdate> {
     const displayName = this.options?.getDisplayName?.()?.trim();
     const authToken = this.options?.getAuthToken?.()?.trim();
+    const clientVersion = this.options?.getClientVersion?.()?.trim() ?? resolveCocosClientVersion();
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
         type: "connect",
         requestId: this.nextRequestId(),
         roomId: this.roomId,
         playerId: this.playerId,
+        clientVersion,
         ...(displayName ? { displayName } : {}),
         ...(authToken ? { authToken } : {})
       },
@@ -1965,6 +1970,7 @@ class RecoverableRemoteGameSession {
       ...(this.options?.onServerMessage ? { onServerMessage: this.options.onServerMessage } : {}),
       ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
       ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
+      ...(this.options?.getClientVersion ? { getClientVersion: this.options.getClientVersion } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
     };
 
@@ -2040,7 +2046,8 @@ export class VeilCocosSession {
     private readonly playerId: string,
     private readonly remoteUrl?: string,
     private readonly getDisplayName?: (() => string | null) | undefined,
-    private readonly getAuthToken?: (() => string | null) | undefined
+    private readonly getAuthToken?: (() => string | null) | undefined,
+    private readonly getClientVersion?: (() => string | null) | undefined
   ) {}
 
   static readStoredReplay(roomId: string, playerId: string): SessionUpdate | null {
@@ -2054,7 +2061,14 @@ export class VeilCocosSession {
     options?: VeilCocosSessionOptions
   ): Promise<VeilCocosSession> {
     const remoteSession = await RecoverableRemoteGameSession.create(roomId, playerId, seed, options);
-    return new VeilCocosSession(remoteSession, playerId, options?.remoteUrl, options?.getDisplayName, options?.getAuthToken);
+    return new VeilCocosSession(
+      remoteSession,
+      playerId,
+      options?.remoteUrl,
+      options?.getDisplayName,
+      options?.getAuthToken,
+      options?.getClientVersion
+    );
   }
 
   static async fetchLeaderboard(remoteUrl?: string, limit = 50): Promise<LeaderboardEntry[]> {

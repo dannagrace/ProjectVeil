@@ -215,6 +215,37 @@ test("VeilRoot warm boot reuses the stored account session and cached replay dur
   assert.equal(root.lastUpdate?.world.meta.day, 3);
 });
 
+test("VeilRoot keeps forced-upgrade clients in the lobby and surfaces upgrade guidance", async () => {
+  const root = createVeilRootHarness();
+  let disposeCalls = 0;
+
+  root.roomId = "room-upgrade";
+  root.playerId = "player-upgrade";
+  root.displayName = "雾幕旅人";
+  root.showLobby = false;
+
+  installVeilRootRuntime({
+    createSession: async () =>
+      ({
+        async snapshot() {
+          throw new Error("upgrade_required");
+        },
+        async dispose() {
+          disposeCalls += 1;
+        }
+      }) as never
+  });
+
+  await root.connect();
+
+  assert.equal(root.session, null);
+  assert.equal(root.lastUpdate, null);
+  assert.equal(root.showLobby, true);
+  assert.equal(root.lobbyStatus, "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。");
+  assert.equal(root.predictionStatus, "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。");
+  assert.equal(disposeCalls, 1);
+});
+
 test("VeilRoot applies cosmetic push messages to lobby profile state and logs battle emotes", () => {
   const root = createVeilRootHarness();
   let renderCount = 0;

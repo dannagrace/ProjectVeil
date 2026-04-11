@@ -6,6 +6,7 @@ export * from "./battle.ts";
 export * from "./battle-report.ts";
 export * from "./battle-replay.ts";
 export * from "./campaign.ts";
+export * from "./client-version.ts";
 export * from "./competitive-season.ts";
 export * from "./config-cross-file-validation.ts";
 export * from "./analytics-events.ts";

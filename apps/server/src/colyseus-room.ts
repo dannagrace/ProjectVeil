@@ -3,12 +3,15 @@ import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   applyEloMatchResult,
   classifyReconnectFailure,
+  DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
+  isClientVersionSupported,
   createInitialWorldState,
   createPlayerWorldView,
   encodePlayerWorldView,
   filterWorldEventsForPlayer,
   getBattleBalanceConfig,
   listReachableTilesInPlayerView,
+  normalizeClientVersion,
   normalizeEloRating,
   planPlayerViewMovement,
   validateWorldAction,
@@ -236,6 +239,10 @@ function readWebSocketActionRateLimitConfig(env: NodeJS.ProcessEnv = process.env
   };
 }
 
+function readMinimumSupportedClientVersion(env: NodeJS.ProcessEnv = process.env): string {
+  return normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ?? DEFAULT_MIN_SUPPORTED_CLIENT_VERSION;
+}
+
 function sendMessage<T extends ServerMessage["type"]>(
   client: ColyseusClient,
   type: T,
@@ -414,6 +421,11 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
       recordConnectMessage();
+      if (!isClientVersionSupported(message.clientVersion, readMinimumSupportedClientVersion())) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "upgrade_required" });
+        return;
+      }
+
       const authSession = message.authToken ? resolveGuestAuthSession(message.authToken) : null;
       if (message.authToken && !authSession) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "unauthorized" });
