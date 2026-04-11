@@ -152,6 +152,17 @@ Recommended indexes:
 
 This append-only table records the initial display name and every subsequent rename accepted by the server. Admin/support tooling can query by `player_id` to inspect a single account timeline or by `normalized_name` to trace who previously used a suspicious name.
 
+## Guest Upgrade Transaction
+
+微信游客升级现在通过单个服务端事务完成，事务边界覆盖：
+
+- `player_accounts` 目标账号写入与旧 `guest-*` 账号 tombstone 标记（`guest_migrated_to_player_id`）
+- `player_hero_archives` 从游客档迁移到目标账号，或在保留正式档时直接清理旧游客档
+- `player_quest_states` 跟随同一策略迁移或保留
+- `player_account_sessions` 清理旧游客关联的持久化会话痕迹
+
+因此迁移失败时不会留下“账号已绑定但英雄/任务没迁完”的半完成状态。
+
 ### Table: `player_name_reservations`
 
 | Column | Type | Nullable | Default | Description |

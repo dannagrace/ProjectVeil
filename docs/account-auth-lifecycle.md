@@ -31,6 +31,9 @@
 - `POST /api/auth/wechat-login` 会用服务端环境变量 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` 调用微信 `jscode2session`。
 - 当同一个微信小游戏账号重复登录时，服务端会复用已经绑定过的 `playerId`，不会因为客户端再次提交不同的 `playerId` 而漂移。
 - 若当前请求已经带有正式账号会话，服务端会把该微信身份绑定到现有账号；后续该微信登录会继续命中同一个账号档。
+- 若当前请求带着游客会话，服务端会把游客进度原子迁移到微信账号档，并在响应里返回 `accountMigration.notice="您的游客进度将合并到新账号"` 供客户端展示。
+- 当同一微信号已绑定且目标账号已有进度时，接口返回 `409 wechat_guest_upgrade_conflict`，要求客户端显式传 `migrationChoice=keep_registered|keep_guest` 再继续。
+- 迁移完成后，旧游客档会记录 `guestMigratedToPlayerId`，旧游客 token 会返回 `401 session_revoked`，同一 `guest-*` ID 也不能再次通过 `POST /api/auth/guest-login` 复用。
 - 服务端只消费微信返回的 `openid` / `unionid` 做绑定，不会把 `session_key` 写入客户端响应。
 - mock code 仅保留给 `NODE_ENV=test` 的自动化测试；非测试环境即使显式配置 `VEIL_WECHAT_MINIGAME_LOGIN_MODE=mock` 也不会启用。
 
