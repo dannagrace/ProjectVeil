@@ -112,6 +112,7 @@ interface RehearsalArtifacts {
   phase1ExitDossierFreshnessGateMarkdownPath?: string;
   goNoGoPacketPath?: string;
   goNoGoPacketMarkdownPath?: string;
+  releasePrCommentPath?: string;
   summaryPath?: string;
   markdownPath?: string;
 }
@@ -529,6 +530,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }
+  if (report.artifacts.releasePrCommentPath) {
+    lines.push(`- Release PR summary: \`${report.artifacts.releasePrCommentPath}\``);
+  }
   lines.push("");
 
   lines.push("## Generated Outputs", "");
@@ -651,6 +655,7 @@ async function main(): Promise<void> {
   );
   const goNoGoPacketPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.json`);
   const goNoGoPacketMarkdownPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.md`);
+  const releasePrCommentPath = path.join(outputDir, `release-pr-comment-${candidateSlug}-${revision.shortCommit}.md`);
   const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-${candidateSlug}-${revision.shortCommit}.json`);
   const markdownPath = path.join(outputDir, "SUMMARY.md");
 
@@ -689,6 +694,7 @@ async function main(): Promise<void> {
   artifacts.phase1ExitDossierFreshnessGateMarkdownPath = toRelative(phase1ExitDossierFreshnessGateMarkdownPath);
   artifacts.goNoGoPacketPath = toRelative(goNoGoPacketPath);
   artifacts.goNoGoPacketMarkdownPath = toRelative(goNoGoPacketMarkdownPath);
+  artifacts.releasePrCommentPath = toRelative(releasePrCommentPath);
   artifacts.summaryPath = toRelative(summaryPath);
   artifacts.markdownPath = toRelative(markdownPath);
 
@@ -1356,6 +1362,25 @@ async function main(): Promise<void> {
           goNoGoPacketMarkdownPath
         ]);
       }
+    },
+    {
+      id: "release-pr-summary",
+      title: "Build release PR summary",
+      run: () =>
+        runCommandStage("release-pr-summary", "Build release PR summary", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/release-pr-comment.ts",
+          "--release-gate-summary",
+          releaseGateSummaryPath,
+          "--release-health-summary",
+          releaseHealthSummaryPath,
+          "--go-no-go-packet",
+          goNoGoPacketPath,
+          "--output",
+          releasePrCommentPath
+        ], [releasePrCommentPath])
     }
   ];
 
@@ -1406,7 +1431,8 @@ async function main(): Promise<void> {
     phase1ExitDossierFreshnessGatePath,
     phase1ExitDossierFreshnessGateMarkdownPath,
     goNoGoPacketPath,
-    goNoGoPacketMarkdownPath
+    goNoGoPacketMarkdownPath,
+    releasePrCommentPath
   ];
   if (args.serverUrl) {
     requiredArtifacts.push(runtimeObservabilityBundlePath, runtimeObservabilityBundleMarkdownPath);
