@@ -560,6 +560,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseGateSummaryPath) {
     lines.push(`- Release gate summary: \`${report.artifacts.releaseGateSummaryPath}\``);
   }
+  if (report.artifacts.releaseHealthSummaryPath) {
+    lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
+  }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
