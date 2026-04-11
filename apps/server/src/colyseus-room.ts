@@ -1,7 +1,6 @@
 import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
 import {
-  applyEloMatchResult,
   classifyReconnectFailure,
   DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
   isClientVersionSupported,
@@ -54,6 +53,7 @@ import { resolveGuestAuthSession } from "./auth";
 import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
+  recordLeaderboardAbuseAlert,
   recordBattleLifecycleResolved,
   recordConnectMessage,
   recordRoomCreated,
@@ -69,6 +69,7 @@ import {
 } from "./observability";
 import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
+import { settleLeaderboardMatch } from "./leaderboard-anti-abuse";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -1378,23 +1379,58 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const accounts = await store.loadPlayerAccounts(playerIds);
     const battlePassConfig = resolveBattlePassConfig();
 
-    // Compute ELO updates for PVP (hero vs hero) battles
-    const eloUpdates = new Map<string, number>();
+    // Compute ELO updates for PVP (hero vs hero) battles with anti-abuse caps.
+    const accountStateByPlayerId = new Map(accounts.map((account) => [account.playerId, account] as const));
+    const eloUpdates = new Map<string, { eloRating: number; leaderboardAbuseState?: PlayerAccountSnapshot["leaderboardAbuseState"] }>();
     for (const replay of completedReplays) {
       if (!replay.defenderPlayerId) continue;
       const attackerPlayerId = replay.attackerPlayerId;
       const defenderPlayerId = replay.defenderPlayerId;
-      const attackerAccount = accounts.find((a) => a.playerId === attackerPlayerId);
-      const defenderAccount = accounts.find((a) => a.playerId === defenderPlayerId);
-      const attackerRating = normalizeEloRating(attackerAccount?.eloRating);
-      const defenderRating = normalizeEloRating(defenderAccount?.eloRating);
+      const attackerAccount = accountStateByPlayerId.get(attackerPlayerId);
+      const defenderAccount = accountStateByPlayerId.get(defenderPlayerId);
       const attackerWon = replay.result === "attacker_victory";
-      const { winnerRating, loserRating } = applyEloMatchResult(
-        attackerWon ? attackerRating : defenderRating,
-        attackerWon ? defenderRating : attackerRating
-      );
-      eloUpdates.set(attackerPlayerId, attackerWon ? winnerRating : loserRating);
-      eloUpdates.set(defenderPlayerId, attackerWon ? loserRating : winnerRating);
+      const winnerPlayerId = attackerWon ? attackerPlayerId : defenderPlayerId;
+      const loserPlayerId = attackerWon ? defenderPlayerId : attackerPlayerId;
+      const winnerAccount = attackerWon ? attackerAccount : defenderAccount;
+      const loserAccount = attackerWon ? defenderAccount : attackerAccount;
+      const settlement = settleLeaderboardMatch({
+        winner: {
+          playerId: winnerPlayerId,
+          eloRating: normalizeEloRating(winnerAccount?.eloRating),
+          leaderboardAbuseState: winnerAccount?.leaderboardAbuseState,
+          leaderboardModerationState: winnerAccount?.leaderboardModerationState
+        },
+        loser: {
+          playerId: loserPlayerId,
+          eloRating: normalizeEloRating(loserAccount?.eloRating),
+          leaderboardAbuseState: loserAccount?.leaderboardAbuseState,
+          leaderboardModerationState: loserAccount?.leaderboardModerationState
+        }
+      });
+      for (const alert of settlement.alerts) {
+        recordLeaderboardAbuseAlert(alert);
+      }
+
+      const nextWinnerAccount = {
+        ...(winnerAccount ?? { playerId: winnerPlayerId }),
+        eloRating: settlement.winnerRating,
+        leaderboardAbuseState: settlement.winnerAbuseState
+      } as PlayerAccountSnapshot;
+      const nextLoserAccount = {
+        ...(loserAccount ?? { playerId: loserPlayerId }),
+        eloRating: settlement.loserRating,
+        leaderboardAbuseState: settlement.loserAbuseState
+      } as PlayerAccountSnapshot;
+      accountStateByPlayerId.set(winnerPlayerId, nextWinnerAccount);
+      accountStateByPlayerId.set(loserPlayerId, nextLoserAccount);
+      eloUpdates.set(winnerPlayerId, {
+        eloRating: settlement.winnerRating,
+        leaderboardAbuseState: settlement.winnerAbuseState
+      });
+      eloUpdates.set(loserPlayerId, {
+        eloRating: settlement.loserRating,
+        leaderboardAbuseState: settlement.loserAbuseState
+      });
     }
 
     try {
@@ -1416,7 +1452,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             applyPlayerEventLogAndAchievements(existingAccount, internalState, playerEvents),
             playerReplays
           );
-          const eloRating = eloUpdates.get(playerId);
+          const eloUpdate = eloUpdates.get(playerId);
           const seasonXpDelta = completedReplays
             .filter((replay) => replay.attackerPlayerId === playerId || replay.defenderPlayerId === playerId)
             .reduce(
@@ -1431,7 +1467,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             achievements: nextAccount.achievements,
             recentEventLog: nextAccount.recentEventLog,
             ...(playerReplays.length > 0 ? { recentBattleReplays: nextAccount.recentBattleReplays } : {}),
-            ...(eloRating !== undefined ? { eloRating } : {}),
+            ...(eloUpdate ? { eloRating: eloUpdate.eloRating, leaderboardAbuseState: eloUpdate.leaderboardAbuseState } : {}),
             ...(seasonXpDelta > 0 ? { seasonXpDelta } : {}),
             lastRoomId: this.metadata.logicalRoomId
           });
@@ -1510,18 +1546,33 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const accounts = await store.loadPlayerAccounts([winnerPlayerId, loserPlayerId]);
       const winnerAccount = accounts.find((account) => account.playerId === winnerPlayerId);
       const loserAccount = accounts.find((account) => account.playerId === loserPlayerId);
-      const { winnerRating, loserRating } = applyEloMatchResult(
-        normalizeEloRating(winnerAccount?.eloRating),
-        normalizeEloRating(loserAccount?.eloRating)
-      );
+      const settlement = settleLeaderboardMatch({
+        winner: {
+          playerId: winnerPlayerId,
+          eloRating: normalizeEloRating(winnerAccount?.eloRating),
+          leaderboardAbuseState: winnerAccount?.leaderboardAbuseState,
+          leaderboardModerationState: winnerAccount?.leaderboardModerationState
+        },
+        loser: {
+          playerId: loserPlayerId,
+          eloRating: normalizeEloRating(loserAccount?.eloRating),
+          leaderboardAbuseState: loserAccount?.leaderboardAbuseState,
+          leaderboardModerationState: loserAccount?.leaderboardModerationState
+        }
+      });
+      for (const alert of settlement.alerts) {
+        recordLeaderboardAbuseAlert(alert);
+      }
 
       await Promise.all([
         store.savePlayerAccountProgress(winnerPlayerId, {
-          eloRating: winnerRating,
+          eloRating: settlement.winnerRating,
+          leaderboardAbuseState: settlement.winnerAbuseState,
           lastRoomId: this.metadata.logicalRoomId
         }),
         store.savePlayerAccountProgress(loserPlayerId, {
-          eloRating: loserRating,
+          eloRating: settlement.loserRating,
+          leaderboardAbuseState: settlement.loserAbuseState,
           lastRoomId: this.metadata.logicalRoomId
         })
       ]);

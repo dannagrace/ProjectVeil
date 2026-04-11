@@ -512,6 +512,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       recentEventLog: existing?.recentEventLog ?? [],
       recentBattleReplays: existing?.recentBattleReplays ?? [],
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
+      ...(existing?.leaderboardAbuseState ? { leaderboardAbuseState: structuredClone(existing.leaderboardAbuseState) } : {}),
+      ...(existing?.leaderboardModerationState
+        ? { leaderboardModerationState: structuredClone(existing.leaderboardModerationState) }
+        : {}),
       ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
@@ -1538,6 +1542,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.dailyDungeonState
           ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
           : {}),
+      ...(patch.leaderboardAbuseState !== undefined
+        ? patch.leaderboardAbuseState
+          ? { leaderboardAbuseState: structuredClone(patch.leaderboardAbuseState) }
+          : {}
+        : existing.leaderboardAbuseState
+          ? { leaderboardAbuseState: structuredClone(existing.leaderboardAbuseState) }
+          : {}),
+      ...(patch.leaderboardModerationState !== undefined
+        ? patch.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(patch.leaderboardModerationState) }
+          : {}
+        : existing.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(existing.leaderboardModerationState) }
+          : {}),
       ...(patch.tutorialStep !== undefined
         ? { tutorialStep: patch.tutorialStep }
         : existing.tutorialStep !== undefined
@@ -1677,6 +1695,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
+        ...(previous?.leaderboardAbuseState ? { leaderboardAbuseState: structuredClone(previous.leaderboardAbuseState) } : {}),
+        ...(previous?.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(previous.leaderboardModerationState) }
+          : {}),
         ...(previous?.ageVerified ? { ageVerified: previous.ageVerified } : {}),
         ...(previous?.isMinor ? { isMinor: previous.isMinor } : {}),
         ...(previous?.dailyPlayMinutes ? { dailyPlayMinutes: previous.dailyPlayMinutes } : {}),

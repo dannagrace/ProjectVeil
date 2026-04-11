@@ -127,6 +127,7 @@ test("GET /api/leaderboard returns ranked players in elo order with competitive 
         eloRating: 1650,
         tier: "platinum",
         division: "platinum_i",
+        isFrozen: false,
         promotionSeries: {
           targetDivision: "platinum_i",
           wins: 2,
@@ -145,11 +146,59 @@ test("GET /api/leaderboard returns ranked players in elo order with competitive 
         eloRating: 1050,
         tier: "bronze",
         division: "bronze_i",
+        isFrozen: false,
         promotionSeries: null,
         demotionShield: null
       }
     ]
   });
+});
+
+test("GET /api/leaderboard hides removed players and marks frozen players", async () => {
+  const { gets, store } = registerRoutes();
+  const handler = gets.get("/api/leaderboard");
+  const response = createResponse();
+
+  await store.ensurePlayerAccount({ playerId: "player-visible", displayName: "Visible" });
+  await store.savePlayerAccountProgress("player-visible", {
+    eloRating: 1510,
+    rankDivision: "platinum_i",
+    leaderboardModerationState: {
+      frozenAt: "2026-04-11T08:00:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console"
+    }
+  });
+  await store.ensurePlayerAccount({ playerId: "player-hidden", displayName: "Hidden" });
+  await store.savePlayerAccountProgress("player-hidden", {
+    eloRating: 1800,
+    rankDivision: "diamond_i",
+    leaderboardModerationState: {
+      hiddenAt: "2026-04-11T08:05:00.000Z",
+      hiddenByPlayerId: "support-moderator:admin-console"
+    }
+  });
+
+  assert.ok(handler);
+  await handler(createRequest({ url: "/api/leaderboard" }), response);
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    players: Array<{
+      playerId: string;
+      displayName: string;
+      eloRating: number;
+      tier: string;
+      division: string;
+      isFrozen: boolean;
+    }>;
+  };
+  assert.equal(payload.players.length, 1);
+  assert.equal(payload.players[0]?.playerId, "player-visible");
+  assert.equal(payload.players[0]?.displayName, "Visible");
+  assert.equal(payload.players[0]?.eloRating, 1510);
+  assert.equal(payload.players[0]?.tier, "platinum");
+  assert.equal(payload.players[0]?.division, "platinum_i");
+  assert.equal(payload.players[0]?.isFrozen, true);
 });
 
 test("leaderboard route middleware responds to OPTIONS and applies CORS headers", async () => {

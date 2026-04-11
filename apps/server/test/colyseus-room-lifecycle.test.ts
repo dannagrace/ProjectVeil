@@ -2128,6 +2128,45 @@ test("surrender settles the room with the surrendering player as loser and persi
   assert.equal(await store.load(room.roomId), null);
 });
 
+test("surrender does not change ELO when a leaderboard-frozen player is involved", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  await store.savePlayerAccountProgress("player-2", {
+    leaderboardModerationState: {
+      frozenAt: "2026-04-11T08:00:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console"
+    }
+  });
+  const room = await createTestRoom(`lifecycle-surrender-frozen-${Date.now()}`);
+  const surrenderingClient = createFakeClient("session-surrender-frozen-loser");
+  const opponentClient = createFakeClient("session-surrender-frozen-winner");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, surrenderingClient, "player-1", "connect-surrender-frozen-loser");
+  await connectPlayer(room, opponentClient, "player-2", "connect-surrender-frozen-winner");
+
+  await emitRoomMessage(room, "world.action", surrenderingClient, {
+    type: "world.action",
+    requestId: "surrender-room-frozen",
+    action: {
+      type: "world.surrender",
+      heroId: "hero-1"
+    }
+  });
+
+  const loserAccount = await store.loadPlayerAccount("player-1");
+  const winnerAccount = await store.loadPlayerAccount("player-2");
+
+  assert.equal(loserAccount?.eloRating, 1000);
+  assert.equal(winnerAccount?.eloRating, 1000);
+});
+
 test("pvp settlement cleanup retires the room and clears connected player session state", async (t) => {
   resetLobbyRoomRegistry();
   const store = new InstrumentedRoomSnapshotStore();

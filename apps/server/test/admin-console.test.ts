@@ -270,7 +270,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         .filter((entry) => !options.guildId || entry.guildId === options.guildId)
         .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     },
-    async savePlayerAccountProgress(playerId: string, patch: { globalResources?: { gold: number; wood: number; ore: number } }) {
+    async savePlayerAccountProgress(
+      playerId: string,
+      patch: {
+        globalResources?: { gold: number; wood: number; ore: number };
+        leaderboardModerationState?: Record<string, unknown>;
+      }
+    ) {
       const account =
         (await this.loadPlayerAccount(playerId)) ??
         (await this.ensurePlayerAccount({
@@ -278,6 +284,12 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
           displayName: playerId
         }));
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
+      if (patch.leaderboardModerationState) {
+        account.leaderboardModerationState = {
+          ...(account.leaderboardModerationState ?? {}),
+          ...patch.leaderboardModerationState
+        };
+      }
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
     },
@@ -1333,6 +1345,70 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
   assert.deepEqual(payload.account.globalResources, { gold: 9, wood: 4, ore: 2 });
   assert.equal(payload.moderation.currentBan.banStatus, "temporary");
   assert.equal(payload.moderation.banHistory[0]?.action, "ban");
+});
+
+test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movement for a player", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/leaderboard/freeze");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-freeze" },
+      body: JSON.stringify({ reason: "Suspicious ELO spike" }),
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    account: { leaderboardModerationState?: { frozenByPlayerId?: string; freezeReason?: string; frozenAt?: string } };
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account.leaderboardModerationState?.frozenByPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.account.leaderboardModerationState?.freezeReason, "Suspicious ELO spike");
+  assert.ok(payload.account.leaderboardModerationState?.frozenAt);
+});
+
+test("POST /api/admin/players/:id/leaderboard/remove hides a player from leaderboard output", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/leaderboard/remove");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-hidden" },
+      body: JSON.stringify({ reason: "Leaderboard manipulation investigation" }),
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    account: { leaderboardModerationState?: { hiddenByPlayerId?: string; hiddenReason?: string; hiddenAt?: string } };
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account.leaderboardModerationState?.hiddenByPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.account.leaderboardModerationState?.hiddenReason, "Leaderboard manipulation investigation");
+  assert.ok(payload.account.leaderboardModerationState?.hiddenAt);
 });
 
 test("support moderators can hide and inspect guild moderation audit", async (t) => {

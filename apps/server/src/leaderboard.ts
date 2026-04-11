@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRankDivisionForRating, getTierForRating } from "../../../packages/shared/src/index";
 import { getCurrentAndPreviousWeeklyEntries } from "./competitive-season";
 import type { RoomSnapshotStore } from "./persistence";
+import { isLeaderboardFrozen, isLeaderboardHidden } from "./leaderboard-anti-abuse";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -59,15 +60,18 @@ export function registerLeaderboardRoutes(
       }
 
       const accounts = await store.listPlayerAccounts({ limit, orderBy: "eloRating" });
-      const players = accounts.map((account) => ({
+      const players = accounts
+        .filter((account) => !isLeaderboardHidden(account.leaderboardModerationState))
+        .map((account) => ({
         playerId: account.playerId,
         displayName: account.displayName,
         eloRating: account.eloRating,
         tier: getTierForRating(account.eloRating ?? 1000),
         division: account.rankDivision ?? getRankDivisionForRating(account.eloRating ?? 1000),
+        isFrozen: isLeaderboardFrozen(account.leaderboardModerationState),
         promotionSeries: account.promotionSeries ?? null,
         demotionShield: account.demotionShield ?? null
-      }));
+        }));
 
       sendJson(response, 200, { players });
     } catch (error) {
@@ -81,7 +85,9 @@ export function registerLeaderboardRoutes(
         sendJson(response, 200, { current: [], previous: [] });
         return;
       }
-      const accounts = await store.listPlayerAccounts({ limit: 500, orderBy: "eloRating" });
+      const accounts = (await store.listPlayerAccounts({ limit: 500, orderBy: "eloRating" })).filter(
+        (account) => !isLeaderboardHidden(account.leaderboardModerationState)
+      );
       const { current, previous } = getCurrentAndPreviousWeeklyEntries(accounts);
       sendJson(response, 200, { current, previous });
     } catch (error) {

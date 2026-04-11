@@ -276,6 +276,8 @@ interface PlayerAccountRow extends RowDataPacket {
   recent_event_log_json: string | EventLogEntry[] | null;
   recent_battle_replays_json: string | PlayerBattleReplaySummary[] | null;
   daily_dungeon_state_json: string | PlayerAccountSnapshot["dailyDungeonState"] | null;
+  leaderboard_abuse_state_json: string | PlayerAccountSnapshot["leaderboardAbuseState"] | null;
+  leaderboard_moderation_state_json: string | PlayerAccountSnapshot["leaderboardModerationState"] | null;
   tutorial_step: number | null;
   last_room_id: string | null;
   last_seen_at: Date | string | null;
@@ -736,6 +738,8 @@ export interface PlayerAccountProgressPatch {
   loginStreak?: number | null;
   lastRoomId?: string | null;
   eloRating?: number;
+  leaderboardAbuseState?: PlayerAccountSnapshot["leaderboardAbuseState"] | null;
+  leaderboardModerationState?: PlayerAccountSnapshot["leaderboardModerationState"] | null;
 }
 
 export interface PlayerAccountCredentialInput {
@@ -1870,6 +1874,8 @@ function normalizePlayerAccountSnapshot(account: {
   recentEventLog?: Partial<EventLogEntry>[] | null | undefined;
   recentBattleReplays?: Partial<PlayerBattleReplaySummary>[] | null | undefined;
   dailyDungeonState?: PlayerAccountSnapshot["dailyDungeonState"] | null | undefined;
+  leaderboardAbuseState?: PlayerAccountSnapshot["leaderboardAbuseState"] | null | undefined;
+  leaderboardModerationState?: PlayerAccountSnapshot["leaderboardModerationState"] | null | undefined;
   tutorialStep?: number | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
@@ -1934,6 +1940,8 @@ function normalizePlayerAccountSnapshot(account: {
       recentEventLog: account.recentEventLog,
       recentBattleReplays: appendPlayerBattleReplaySummaries([], account.recentBattleReplays),
       dailyDungeonState: account.dailyDungeonState,
+      leaderboardAbuseState: account.leaderboardAbuseState,
+      leaderboardModerationState: account.leaderboardModerationState,
       tutorialStep: account.tutorialStep,
       lastRoomId: account.lastRoomId,
       lastSeenAt: account.lastSeenAt,
@@ -2307,6 +2315,8 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   recent_event_log_json LONGTEXT NULL,
   recent_battle_replays_json LONGTEXT NULL,
   daily_dungeon_state_json LONGTEXT NULL,
+  leaderboard_abuse_state_json LONGTEXT NULL,
+  leaderboard_moderation_state_json LONGTEXT NULL,
   tutorial_step INT NULL DEFAULT NULL,
   last_room_id VARCHAR(191) NULL,
   last_seen_at DATETIME NULL DEFAULT NULL,
@@ -2827,6 +2837,42 @@ SET @veil_player_accounts_daily_dungeon_sql := IF(
 PREPARE veil_player_accounts_daily_dungeon_stmt FROM @veil_player_accounts_daily_dungeon_sql;
 EXECUTE veil_player_accounts_daily_dungeon_stmt;
 DEALLOCATE PREPARE veil_player_accounts_daily_dungeon_stmt;
+
+SET @veil_player_accounts_leaderboard_abuse_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'leaderboard_abuse_state_json'
+);
+
+SET @veil_player_accounts_leaderboard_abuse_sql := IF(
+  @veil_player_accounts_leaderboard_abuse_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`leaderboard_abuse_state_json\` LONGTEXT NULL AFTER \`daily_dungeon_state_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_leaderboard_abuse_stmt FROM @veil_player_accounts_leaderboard_abuse_sql;
+EXECUTE veil_player_accounts_leaderboard_abuse_stmt;
+DEALLOCATE PREPARE veil_player_accounts_leaderboard_abuse_stmt;
+
+SET @veil_player_accounts_leaderboard_moderation_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'leaderboard_moderation_state_json'
+);
+
+SET @veil_player_accounts_leaderboard_moderation_sql := IF(
+  @veil_player_accounts_leaderboard_moderation_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`leaderboard_moderation_state_json\` LONGTEXT NULL AFTER \`leaderboard_abuse_state_json\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_leaderboard_moderation_stmt FROM @veil_player_accounts_leaderboard_moderation_sql;
+EXECUTE veil_player_accounts_leaderboard_moderation_stmt;
+DEALLOCATE PREPARE veil_player_accounts_leaderboard_moderation_stmt;
 
 SET @veil_player_accounts_tutorial_step_exists := (
   SELECT COUNT(*)
@@ -3725,6 +3771,16 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     dailyDungeonState:
       row.daily_dungeon_state_json != null
         ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["dailyDungeonState"]>>(row.daily_dungeon_state_json)
+        : undefined,
+    leaderboardAbuseState:
+      row.leaderboard_abuse_state_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["leaderboardAbuseState"]>>(row.leaderboard_abuse_state_json)
+        : undefined,
+    leaderboardModerationState:
+      row.leaderboard_moderation_state_json != null
+        ? parseJsonColumn<NonNullable<PlayerAccountSnapshot["leaderboardModerationState"]>>(
+            row.leaderboard_moderation_state_json
+          )
         : undefined,
     ...(row.tutorial_step != null ? { tutorialStep: row.tutorial_step } : {}),
     ...(row.display_name ? { displayName: row.display_name } : {}),
@@ -6814,6 +6870,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       seasonHistory: patch.seasonHistory ?? existing.seasonHistory,
       rankedWeeklyProgress: patch.rankedWeeklyProgress ?? competitiveProgression.rankedWeeklyProgress,
       dailyDungeonState: patch.dailyDungeonState ?? existing.dailyDungeonState,
+      leaderboardAbuseState: patch.leaderboardAbuseState ?? existing.leaderboardAbuseState,
+      leaderboardModerationState: patch.leaderboardModerationState ?? existing.leaderboardModerationState,
       tutorialStep: patch.tutorialStep !== undefined ? patch.tutorialStep : existing.tutorialStep,
       dailyPlayMinutes:
         patch.dailyPlayMinutes !== undefined ? normalizeDailyPlayMinutes(patch.dailyPlayMinutes) : existing.dailyPlayMinutes,
@@ -6859,6 +6917,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         leaderboard_abuse_state_json,
+         leaderboard_moderation_state_json,
          tutorial_step,
          last_room_id,
          last_seen_at,
@@ -6868,7 +6928,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_play_date,
          login_streak
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = COALESCE(avatar_url, VALUES(avatar_url)),
@@ -6895,6 +6955,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json = VALUES(recent_event_log_json),
          recent_battle_replays_json = VALUES(recent_battle_replays_json),
          daily_dungeon_state_json = VALUES(daily_dungeon_state_json),
+         leaderboard_abuse_state_json = VALUES(leaderboard_abuse_state_json),
+         leaderboard_moderation_state_json = VALUES(leaderboard_moderation_state_json),
          tutorial_step = VALUES(tutorial_step),
          last_room_id = VALUES(last_room_id),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
@@ -6931,6 +6993,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.recentEventLog),
         JSON.stringify(nextAccount.recentBattleReplays),
         JSON.stringify(nextAccount.dailyDungeonState ?? null),
+        JSON.stringify(nextAccount.leaderboardAbuseState ?? null),
+        JSON.stringify(nextAccount.leaderboardModerationState ?? null),
         nextAccount.tutorialStep,
         nextAccount.lastRoomId ?? null,
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
@@ -7022,6 +7086,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          recent_event_log_json,
          recent_battle_replays_json,
          daily_dungeon_state_json,
+         leaderboard_abuse_state_json,
+         leaderboard_moderation_state_json,
          tutorial_step,
          last_room_id,
          last_seen_at,
