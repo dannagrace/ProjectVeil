@@ -6499,6 +6499,43 @@ test("validateBattleAction covers wait and skill rejection branches", () => {
     }
   );
 
+  const terrainLockedSkillState = {
+    ...cloneBattleState(initial),
+    activeUnitId: "pikeman-a",
+    turnOrder: ["pikeman-a", "wolf-d"],
+    battlefieldTerrain: "grass" as const,
+    units: {
+      ...cloneBattleState(initial).units,
+      "pikeman-a": {
+        ...cloneBattleState(initial).units["pikeman-a"]!,
+        skills: [
+          {
+            id: "bog_ambush",
+            name: "泥沼伏袭",
+            description: "只有在水泽地形中才能发动，伤害显著提升。",
+            kind: "active" as const,
+            target: "enemy" as const,
+            cooldown: 3,
+            remainingCooldown: 0
+          }
+        ]
+      }
+    }
+  };
+
+  assert.deepEqual(
+    validateBattleAction(terrainLockedSkillState, {
+      type: "battle.skill",
+      unitId: "pikeman-a",
+      skillId: "bog_ambush",
+      targetId: "wolf-d"
+    }),
+    {
+      valid: false,
+      reason: "skill_requires_water_terrain"
+    }
+  );
+
   assert.deepEqual(
     validateBattleAction(
       {

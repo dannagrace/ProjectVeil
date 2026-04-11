@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createDemoBattleState } from "../../../packages/shared/src/index";
 import { createRoom } from "../src/index";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
 
@@ -127,16 +128,17 @@ test("player battle actions are followed by automated defender turns until contr
 test("server rejects battle actions sent for non-player-controlled defender units", () => {
   resetRuntimeObservability();
   const room = createRoom("room-control-check", 1001);
-  room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  const battle = createDemoBattleState();
+  battle.id = "battle-control-check";
+  battle.worldHeroId = "hero-1";
+  battle.activeUnitId = "pikeman-a";
+  battle.turnOrder = ["pikeman-a", "wolf-d"];
+  (room as ReturnType<typeof createRoom> & { setBattle(battleState: typeof battle): void }).setBattle(battle);
 
   const result = room.dispatchBattle("player-1", {
     type: "battle.attack",
-    attackerId: "neutral-1-stack-1",
-    defenderId: "hero-1-stack"
+    attackerId: "wolf-d",
+    defenderId: "pikeman-a"
   });
 
   assert.equal(result.ok, false);
@@ -145,6 +147,58 @@ test("server rejects battle actions sent for non-player-controlled defender unit
   assert.match(
     buildPrometheusMetricsDocument(),
     /^veil_action_validation_failures_total\{reason="unit_not_player_controlled",scope="battle"\} 1$/m
+  );
+});
+
+test("server rejects terrain-locked battle skills before mutating authoritative battle state", () => {
+  resetRuntimeObservability();
+  const room = createRoom("room-terrain-locked-skill", 1001);
+  const battle = createDemoBattleState();
+  battle.id = "battle-terrain-locked-skill";
+  battle.worldHeroId = "hero-1";
+  battle.activeUnitId = "pikeman-a";
+  battle.turnOrder = ["pikeman-a", "wolf-d"];
+  battle.battlefieldTerrain = "grass";
+  battle.log = [];
+  const playerUnit = battle.units["pikeman-a"];
+  const opposingUnit = battle.units["wolf-d"];
+
+  assert.ok(battle);
+  assert.ok(playerUnit);
+  assert.ok(opposingUnit);
+
+  battle.units[playerUnit.id] = {
+    ...playerUnit,
+    skills: [
+      ...(playerUnit.skills ?? []),
+      {
+        id: "bog_ambush",
+        name: "泥沼伏袭",
+        description: "只有在水泽地形中才能发动，伤害显著提升。",
+        kind: "active",
+        target: "enemy",
+        cooldown: 3,
+        remainingCooldown: 0
+      }
+    ]
+  };
+  (room as ReturnType<typeof createRoom> & { setBattle(battleState: typeof battle): void }).setBattle(battle);
+
+  const result = room.dispatchBattle("player-1", {
+    type: "battle.skill",
+    unitId: playerUnit.id,
+    skillId: "bog_ambush",
+    targetId: opposingUnit.id
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "skill_requires_water_terrain");
+  assert.ok(result.battle);
+  assert.equal(result.battle?.log.includes("Action rejected: skill_requires_water_terrain"), false);
+  assert.equal(result.battle?.units[opposingUnit.id]?.count, opposingUnit.count);
+  assert.match(
+    buildPrometheusMetricsDocument(),
+    /^veil_action_validation_failures_total\{reason="skill_requires_water_terrain",scope="battle"\} 1$/m
   );
 });
 

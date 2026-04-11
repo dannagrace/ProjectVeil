@@ -1823,10 +1823,11 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
       return { valid: false, reason: "skill_disabled" };
     }
 
+    const skillDefinition = skillDefinitionFor(skill.id, getBattleCatalogIndex());
     if (normalizedCooldownValue(state.unitCooldowns[action.unitId]?.[action.skillId]) > 0) {
       return { valid: false, reason: "skill_on_cooldown" };
     }
-    if (!isSkillAvailableThisRound(skillDefinitionFor(skill.id, getBattleCatalogIndex()), state.round)) {
+    if (!isSkillAvailableThisRound(skillDefinition, state.round)) {
       return { valid: false, reason: "skill_round_expired" };
     }
 
@@ -1835,6 +1836,10 @@ export function validateBattleAction(state: BattleState, action: BattleAction): 
       if (skill.target !== "enemy" || action.targetId !== forcedTargetId) {
         return { valid: false, reason: "taunted_must_attack_source" };
       }
+    }
+
+    if (skillDefinition.id === "bog_ambush" && battlefieldTerrainOf(state) !== "water") {
+      return { valid: false, reason: "skill_requires_water_terrain" };
     }
 
     if (skill.target === "self") {
