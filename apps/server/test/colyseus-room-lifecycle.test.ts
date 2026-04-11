@@ -1469,6 +1469,96 @@ test("invalid world actions return a structured rejection only to the originatin
   assert.equal(observerPushCountAfter, observerPushCountBefore);
 });
 
+test("duplicate mine-claim requests replay the original success reply without granting resources twice", async (t) => {
+  resetRuntimeObservability();
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-claim-idempotency-${Date.now()}`);
+  const client = createFakeClient("session-claim-idempotency");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        resources: Record<string, { gold: number; wood: number; ore: number }>;
+      };
+    };
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-claim-idempotency");
+
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-to-mine",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 1 }
+    }
+  });
+
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "claim-mine",
+    action: {
+      type: "hero.claimMine",
+      heroId: "hero-1",
+      buildingId: "mine-wood-1"
+    }
+  });
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "claim-mine",
+    action: {
+      type: "hero.claimMine",
+      heroId: "hero-1",
+      buildingId: "mine-wood-1"
+    }
+  });
+
+  const claimReplies = client.sent.filter(
+    (message): message is Extract<ServerMessage, { type: "session.state" }> =>
+      message.type === "session.state" && message.delivery === "reply" && message.requestId === "claim-mine"
+  );
+  assert.equal(claimReplies.length, 2);
+  assert.deepEqual(claimReplies.map((reply) => reply.payload.reason), [undefined, undefined]);
+  assert.deepEqual(
+    claimReplies.map((reply) => reply.payload.events),
+    [
+      [
+        {
+          type: "hero.claimedMine",
+          heroId: "hero-1",
+          buildingId: "mine-wood-1",
+          buildingKind: "resource_mine",
+          resourceKind: "wood",
+          income: 5,
+          ownerPlayerId: "player-1"
+        }
+      ],
+      [
+        {
+          type: "hero.claimedMine",
+          heroId: "hero-1",
+          buildingId: "mine-wood-1",
+          buildingKind: "resource_mine",
+          resourceKind: "wood",
+          income: 5,
+          ownerPlayerId: "player-1"
+        }
+      ]
+    ]
+  );
+
+  const replyWorlds = claimReplies.map((reply) => decodePlayerWorldView(reply.payload.world));
+  assert.deepEqual(replyWorlds.map((world) => world.resources.wood), [5, 5]);
+  assert.equal(internalRoom.worldRoom.getInternalState().resources["player-1"]?.wood, 5);
+});
+
 test("repeated rejected movement actions emit an anti-cheat alert metric", async (t) => {
   resetRuntimeObservability();
   resetLobbyRoomRegistry();
