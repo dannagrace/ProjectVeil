@@ -73,6 +73,7 @@ export type ClientMessage =
       requestId: string;
       roomId: string;
       playerId: string;
+      clientVersion?: string;
       displayName?: string;
       authToken?: string;
       seed?: number;

@@ -158,6 +158,7 @@ import {
 } from "./cocos-session-launch.ts";
 import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
 import { buildCocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
+import { resolveCocosClientVersion } from "./cocos-client-version.ts";
 import {
   buildCocosBattlePassPanelView,
   buildCocosDailyDungeonPanelView,
@@ -243,6 +244,7 @@ const DEFAULT_MAP_WIDTH_TILES = 8;
 const DEFAULT_MAP_HEIGHT_TILES = 8;
 const BATTLE_FEEDBACK_DURATION_MS = 2600;
 const ACCOUNT_REVIEW_PAGE_SIZE = 3;
+const FORCE_UPGRADE_MESSAGE = "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。";
 
 interface BattleSettlementSnapshot {
   label: string;
@@ -411,6 +413,7 @@ export class VeilRoot extends Component {
   private showLobby = false;
   private lobbyRooms: CocosLobbyRoomSummary[] = [];
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
+  private upgradeRequired = false;
   private lobbyLoading = false;
   private lobbyEntering = false;
   private matchmakingStatus: MatchmakingStatusResponse = { status: "idle" };
@@ -587,6 +590,7 @@ export class VeilRoot extends Component {
     this.renderView();
 
     const sessionEpoch = this.bumpSessionEpoch();
+    this.upgradeRequired = false;
     let nextSession: VeilCocosSession | null = null;
     try {
       nextSession = await resolveVeilRootRuntime().createSession(
@@ -628,6 +632,12 @@ export class VeilRoot extends Component {
       const failureMessage = this.describeSessionError(error, "连接房间失败。");
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
+      if (error instanceof Error && error.message === "upgrade_required") {
+        this.upgradeRequired = true;
+        this.showLobby = true;
+        this.lastUpdate = null;
+        this.lobbyStatus = failureMessage;
+      }
       if (this.session) {
         await this.session.dispose().catch(() => undefined);
         this.session = null;
@@ -4168,6 +4178,11 @@ export class VeilRoot extends Component {
       this.renderView();
       await this.connect();
 
+      if (this.upgradeRequired) {
+        this.renderView();
+        return;
+      }
+
       if (!this.session && !this.lastUpdate) {
         this.showLobby = true;
         this.lobbyStatus = "进入房间失败，请稍后重试或刷新房间列表。";
@@ -5319,6 +5334,10 @@ export class VeilRoot extends Component {
       return "房间会话已失效，请点击刷新状态恢复。";
     }
 
+    if (error.message === "upgrade_required") {
+      return FORCE_UPGRADE_MESSAGE;
+    }
+
     if (
       error.message === "unsupported_player_world_view_encoding" ||
       error.message === "invalid_player_world_view_encoding_length" ||
@@ -5373,6 +5392,7 @@ export class VeilRoot extends Component {
       remoteUrl: this.remoteUrl,
       getDisplayName: () => this.displayName || this.playerId,
       getAuthToken: () => this.authToken,
+      getClientVersion: () => resolveCocosClientVersion(),
       onPushUpdate: (update) => {
         if (!this.isActiveSessionEpoch(epoch)) {
           return;

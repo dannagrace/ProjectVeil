@@ -361,6 +361,7 @@ test("VeilCocosSession includes display name and auth token in the authenticated
         requestId: "cocos-req-1",
         roomId: "room-alpha",
         playerId: "player-1",
+        clientVersion: "1.0.3",
         displayName: "暮潮守望",
         authToken: "account.token"
       }
