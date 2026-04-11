@@ -3,7 +3,7 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch:
-    /(multiplayer-sync|multiplayer-stress|reconnect-recovery|pvp-hero-encounter|pvp-reconnect-recovery|pvp-postbattle-reconnect|pvp-postbattle-continue|pvp-matchmaking-lifecycle|battle-replay-smoke)\.spec\.ts/,
+    /(multiplayer-sync|multiplayer-stress|reconnect-recovery|pvp-hero-encounter|pvp-reconnect-recovery|pvp-postbattle-reconnect|pvp-postbattle-continue|pvp-matchmaking-lifecycle|leaderboard-ranked-season|battle-replay-smoke)\.spec\.ts/,
   timeout: 30_000,
   fullyParallel: false,
   workers: 1,
