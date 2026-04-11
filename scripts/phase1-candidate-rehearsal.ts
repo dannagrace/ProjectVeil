@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  buildCandidateRevisionTriageDigestFromPaths,
+  renderMarkdown as renderCandidateRevisionTriageDigestMarkdown
+} from "./candidate-revision-triage-digest.ts";
+import {
   buildPhase1ExitDossierFreshnessGateReport,
   renderMarkdown as renderPhase1ExitDossierFreshnessGateMarkdown
 } from "./phase1-exit-dossier-freshness-gate.ts";
@@ -82,6 +86,9 @@ interface RehearsalArtifacts {
   persistencePath?: string;
   cocosPrimaryDiagnosticsPath?: string;
   cocosPrimaryDiagnosticsMarkdownPath?: string;
+  candidateRevisionTriageInputPath?: string;
+  candidateRevisionTriageDigestPath?: string;
+  candidateRevisionTriageDigestMarkdownPath?: string;
   cocosBundlePath?: string;
   cocosBundleMarkdownPath?: string;
   releaseGateSummaryPath?: string;
@@ -153,6 +160,14 @@ interface SameRevisionManifest {
       path?: string;
     };
   };
+}
+
+interface PrimaryDiagnosticsCheckpointArtifact {
+  checkpoints?: Array<{
+    diagnostics?: {
+      errorEvents?: unknown[];
+    };
+  }>;
 }
 
 interface Phase1CandidateDossierLinkedArtifacts {
@@ -351,6 +366,30 @@ function writeSyntheticReleaseReadinessDashboard(
   });
 }
 
+function buildCandidateRevisionTriageInput(
+  sourcePath: string
+): {
+  schemaVersion: 1;
+  generatedAt: string;
+  sourceArtifact: string;
+  checkpointCount: number;
+  errorEvents: unknown[];
+} {
+  const artifact = readRequiredJson<PrimaryDiagnosticsCheckpointArtifact>(sourcePath);
+  const checkpoints = Array.isArray(artifact.checkpoints) ? artifact.checkpoints : [];
+  const errorEvents = checkpoints.flatMap((checkpoint) =>
+    Array.isArray(checkpoint.diagnostics?.errorEvents) ? checkpoint.diagnostics.errorEvents : []
+  );
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    sourceArtifact: toRelative(sourcePath),
+    checkpointCount: checkpoints.length,
+    errorEvents
+  };
+}
+
 function toRelative(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
@@ -535,6 +574,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.cocosPrimaryDiagnosticsPath) {
     lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
   }
+  if (report.artifacts.candidateRevisionTriageDigestPath) {
+    lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
+  }
   if (report.artifacts.releasePrCommentPath) {
     lines.push(`- Release PR summary: \`${report.artifacts.releasePrCommentPath}\``);
   }
@@ -607,6 +649,18 @@ async function main(): Promise<void> {
     outputDir,
     `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.md`
   );
+  const candidateRevisionTriageInputPath = path.join(
+    outputDir,
+    `candidate-revision-triage-input-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateRevisionTriageDigestPath = path.join(
+    outputDir,
+    `candidate-revision-triage-digest-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateRevisionTriageDigestMarkdownPath = path.join(
+    outputDir,
+    `candidate-revision-triage-digest-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const releaseGateSummaryPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseGateMarkdownPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.md`);
   const ciTrendSummaryPath = path.join(outputDir, `ci-trend-summary-${candidateSlug}-${revision.shortCommit}.json`);
@@ -676,6 +730,9 @@ async function main(): Promise<void> {
   artifacts.persistencePath = toRelative(persistencePath);
   artifacts.cocosPrimaryDiagnosticsPath = toRelative(cocosPrimaryDiagnosticsPath);
   artifacts.cocosPrimaryDiagnosticsMarkdownPath = toRelative(cocosPrimaryDiagnosticsMarkdownPath);
+  artifacts.candidateRevisionTriageInputPath = toRelative(candidateRevisionTriageInputPath);
+  artifacts.candidateRevisionTriageDigestPath = toRelative(candidateRevisionTriageDigestPath);
+  artifacts.candidateRevisionTriageDigestMarkdownPath = toRelative(candidateRevisionTriageDigestMarkdownPath);
   artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
   artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
@@ -856,6 +913,47 @@ async function main(): Promise<void> {
           "--markdown-output",
           cocosPrimaryDiagnosticsMarkdownPath
         ], [cocosPrimaryDiagnosticsPath, cocosPrimaryDiagnosticsMarkdownPath])
+    },
+    {
+      id: "candidate-revision-triage-digest",
+      title: "Build candidate revision triage digest",
+      run: () => {
+        if (!fs.existsSync(cocosPrimaryDiagnosticsPath)) {
+          return {
+            id: "candidate-revision-triage-digest",
+            title: "Build candidate revision triage digest",
+            status: "failed",
+            summary: "Cocos primary diagnostics must exist before the candidate revision triage digest can be generated.",
+            outputs: [
+              candidateRevisionTriageInputPath,
+              candidateRevisionTriageDigestPath,
+              candidateRevisionTriageDigestMarkdownPath
+            ].map(toRelative)
+          };
+        }
+
+        const triageInput = buildCandidateRevisionTriageInput(cocosPrimaryDiagnosticsPath);
+        writeJsonFile(candidateRevisionTriageInputPath, triageInput);
+        const digest = buildCandidateRevisionTriageDigestFromPaths({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          inputPaths: [candidateRevisionTriageInputPath]
+        });
+        writeJsonFile(candidateRevisionTriageDigestPath, digest);
+        writeFile(candidateRevisionTriageDigestMarkdownPath, renderCandidateRevisionTriageDigestMarkdown(digest));
+
+        return {
+          id: "candidate-revision-triage-digest",
+          title: "Build candidate revision triage digest",
+          status: "passed",
+          summary: `Built triage digest from ${triageInput.errorEvents.length} error event(s) across ${triageInput.checkpointCount} Cocos diagnostic checkpoint(s).`,
+          outputs: [
+            candidateRevisionTriageInputPath,
+            candidateRevisionTriageDigestPath,
+            candidateRevisionTriageDigestMarkdownPath
+          ].map(toRelative)
+        };
+      }
     },
     {
       id: "cocos-rc-bundle",
@@ -1436,6 +1534,9 @@ async function main(): Promise<void> {
     persistencePath,
     cocosPrimaryDiagnosticsPath,
     cocosPrimaryDiagnosticsMarkdownPath,
+    candidateRevisionTriageInputPath,
+    candidateRevisionTriageDigestPath,
+    candidateRevisionTriageDigestMarkdownPath,
     releaseGateSummaryPath,
     releaseGateMarkdownPath,
     ciTrendSummaryPath,

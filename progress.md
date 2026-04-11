@@ -1785,3 +1785,23 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:ops` 通过
   - `npm run docs:release-script-inventory` 通过
   - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`4/4`）
+
+## Issue #1255 - Phase 1 rehearsal candidate triage digest - 2026-04-11
+
+- 本轮把 `release:candidate-triage:digest` 也收进了 `release:phase1:candidate-rehearsal` 的 candidate packet：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `candidate-revision-triage-digest` 阶段
+    - 会从 `cocos-primary-client-diagnostic-snapshots` 汇总 `checkpoints[].diagnostics.errorEvents`
+    - 生成并登记：
+      - `candidateRevisionTriageInputPath`
+      - `candidateRevisionTriageDigestPath`
+      - `candidateRevisionTriageDigestMarkdownPath`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出 candidate revision triage digest
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 现在包含基于 Cocos primary diagnostics 导出的 triage input/digest pair
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 triage digest
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `candidate-revision-triage-digest` 阶段、artifact path 与 summary 呈现
