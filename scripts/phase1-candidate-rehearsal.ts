@@ -15,8 +15,12 @@ import {
   renderReleaseEvidenceIndexMarkdown
 } from "./release-evidence-index.ts";
 import {
+  appendFreshnessHistory,
+  buildOwnerReminderReport,
   buildSameCandidateEvidenceAuditReport,
-  renderMarkdown as renderCandidateEvidenceAuditMarkdown
+  parseManualEvidenceOwnerLedger,
+  renderMarkdown as renderCandidateEvidenceAuditMarkdown,
+  renderOwnerReminderMarkdown
 } from "./same-candidate-evidence-audit.ts";
 
 type StageStatus = "passed" | "failed" | "skipped";
@@ -93,6 +97,9 @@ interface RehearsalArtifacts {
   releaseReadinessDashboardMarkdownPath?: string;
   candidateEvidenceAuditPath?: string;
   candidateEvidenceAuditMarkdownPath?: string;
+  candidateEvidenceOwnerReminderPath?: string;
+  candidateEvidenceOwnerReminderMarkdownPath?: string;
+  candidateEvidenceFreshnessHistoryPath?: string;
   releaseEvidenceIndexPath?: string;
   releaseEvidenceIndexMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
@@ -505,6 +512,12 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
+  if (report.artifacts.candidateEvidenceOwnerReminderPath) {
+    lines.push(`- Candidate owner reminder: \`${report.artifacts.candidateEvidenceOwnerReminderPath}\``);
+  }
+  if (report.artifacts.candidateEvidenceFreshnessHistoryPath) {
+    lines.push(`- Candidate freshness history: \`${report.artifacts.candidateEvidenceFreshnessHistoryPath}\``);
+  }
   if (report.artifacts.releaseReadinessDashboardPath) {
     lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
   }
@@ -597,6 +610,15 @@ async function main(): Promise<void> {
   const manualEvidenceLedgerPath = path.join(outputDir, `manual-release-evidence-owner-ledger-${candidateSlug}-${revision.shortCommit}.md`);
   const candidateEvidenceAuditPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.json`);
   const candidateEvidenceAuditMarkdownPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const candidateEvidenceOwnerReminderPath = path.join(
+    outputDir,
+    `candidate-evidence-owner-reminder-report-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateEvidenceOwnerReminderMarkdownPath = path.join(
+    outputDir,
+    `candidate-evidence-owner-reminder-report-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const candidateEvidenceFreshnessHistoryPath = path.join(outputDir, `candidate-evidence-freshness-history-${candidateSlug}.json`);
   const releaseEvidenceIndexPath = path.join(outputDir, `current-release-evidence-index-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseEvidenceIndexMarkdownPath = path.join(
     outputDir,
@@ -639,6 +661,9 @@ async function main(): Promise<void> {
   artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
   artifacts.candidateEvidenceAuditPath = toRelative(candidateEvidenceAuditPath);
   artifacts.candidateEvidenceAuditMarkdownPath = toRelative(candidateEvidenceAuditMarkdownPath);
+  artifacts.candidateEvidenceOwnerReminderPath = toRelative(candidateEvidenceOwnerReminderPath);
+  artifacts.candidateEvidenceOwnerReminderMarkdownPath = toRelative(candidateEvidenceOwnerReminderMarkdownPath);
+  artifacts.candidateEvidenceFreshnessHistoryPath = toRelative(candidateEvidenceFreshnessHistoryPath);
   artifacts.releaseEvidenceIndexPath = toRelative(releaseEvidenceIndexPath);
   artifacts.releaseEvidenceIndexMarkdownPath = toRelative(releaseEvidenceIndexMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
@@ -1006,7 +1031,13 @@ async function main(): Promise<void> {
             title: "Build candidate evidence audit",
             status: "failed",
             summary: "Phase 1 same-revision evidence bundle manifest is missing, so the reviewer audit front-door could not be generated.",
-            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+            outputs: [
+              candidateEvidenceAuditPath,
+              candidateEvidenceAuditMarkdownPath,
+              candidateEvidenceOwnerReminderPath,
+              candidateEvidenceOwnerReminderMarkdownPath,
+              candidateEvidenceFreshnessHistoryPath
+            ].map(toRelative)
           };
         }
 
@@ -1039,7 +1070,13 @@ async function main(): Promise<void> {
             title: "Build candidate evidence audit",
             status: "failed",
             summary: "Phase 1 same-revision evidence bundle did not provide a manual evidence owner ledger for the reviewer audit front-door.",
-            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+            outputs: [
+              candidateEvidenceAuditPath,
+              candidateEvidenceAuditMarkdownPath,
+              candidateEvidenceOwnerReminderPath,
+              candidateEvidenceOwnerReminderMarkdownPath,
+              candidateEvidenceFreshnessHistoryPath
+            ].map(toRelative)
           };
         }
 
@@ -1065,13 +1102,23 @@ async function main(): Promise<void> {
 
         writeJsonFile(candidateEvidenceAuditPath, report);
         writeFile(candidateEvidenceAuditMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
+        const ownerReminderReport = buildOwnerReminderReport(report, parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath));
+        writeJsonFile(candidateEvidenceOwnerReminderPath, ownerReminderReport);
+        writeFile(candidateEvidenceOwnerReminderMarkdownPath, renderOwnerReminderMarkdown(ownerReminderReport));
+        appendFreshnessHistory(candidateEvidenceFreshnessHistoryPath, report);
 
         return {
           id: "candidate-evidence-audit",
           title: "Build candidate evidence audit",
           status: "passed",
           summary: `Audit verdict ${report.summary.status}; reviewer front-door artifact generated successfully.`,
-          outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+          outputs: [
+            candidateEvidenceAuditPath,
+            candidateEvidenceAuditMarkdownPath,
+            candidateEvidenceOwnerReminderPath,
+            candidateEvidenceOwnerReminderMarkdownPath,
+            candidateEvidenceFreshnessHistoryPath
+          ].map(toRelative)
         };
       }
     },
@@ -1301,6 +1348,9 @@ async function main(): Promise<void> {
     phase1ReleaseEvidenceDriftGateMarkdownPath,
     candidateEvidenceAuditPath,
     candidateEvidenceAuditMarkdownPath,
+    candidateEvidenceOwnerReminderPath,
+    candidateEvidenceOwnerReminderMarkdownPath,
+    candidateEvidenceFreshnessHistoryPath,
     syntheticDashboardPath,
     releaseEvidenceIndexPath,
     releaseEvidenceIndexMarkdownPath,

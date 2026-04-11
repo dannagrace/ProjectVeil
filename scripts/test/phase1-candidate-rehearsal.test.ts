@@ -185,6 +185,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.manualEvidenceLedgerPath ?? "", /manual-release-evidence-owner-ledger-phase1-mainline-/);
   assert.match(report.artifacts.releaseReadinessDashboardPath ?? "", /release-readiness-dashboard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceAuditPath ?? "", /candidate-evidence-audit-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceOwnerReminderPath ?? "", /candidate-evidence-owner-reminder-report-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceOwnerReminderMarkdownPath ?? "", /candidate-evidence-owner-reminder-report-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceFreshnessHistoryPath ?? "", /candidate-evidence-freshness-history-phase1-mainline\.json/);
   assert.match(report.artifacts.releaseEvidenceIndexPath ?? "", /current-release-evidence-index-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitAuditPath ?? "", /phase1-exit-audit-phase1-mainline-/);
@@ -200,9 +203,13 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /## Reviewer Front Door/);
   assert.match(markdown, /Current release evidence index:/);
   assert.match(markdown, /Candidate evidence audit:/);
+  assert.match(markdown, /Candidate owner reminder:/);
+  assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
   assert.match(markdown, /Manual evidence owner ledger:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
+  assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
+  assert.match(markdown, /candidateEvidenceFreshnessHistoryPath:/);
   assert.match(markdown, /releaseEvidenceIndexPath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
