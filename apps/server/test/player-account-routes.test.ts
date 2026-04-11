@@ -15,6 +15,7 @@ import {
 import { loadDailyQuestBoard } from "../src/daily-quests";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { loadDailyQuestConfig } from "../src/daily-quest-config";
+import { assertDisplayNameAvailableOrThrow } from "../src/display-name-rules";
 import { rotateDailyQuests } from "../src/event-engine";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
@@ -106,12 +107,45 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
+  private readonly nameHistoryByPlayerId = new Map<string, Array<{
+    id: number;
+    playerId: string;
+    displayName: string;
+    normalizedName: string;
+    changedAt: string;
+  }>>();
+  private readonly activeReservations = new Map<string, {
+    id: number;
+    playerId: string;
+    displayName: string;
+    normalizedName: string;
+    reservedUntil: string;
+    reason: string;
+    createdAt: string;
+  }>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
   private readonly playerQuestStates = new Map<string, PlayerQuestState>();
   private readonly referrals = new Set<string>();
+  private nextNameHistoryId = 1;
+
+  private normalizeName(displayName: string): string {
+    return displayName.normalize("NFKC").toLowerCase().replace(/[\s\p{P}\p{S}_]+/gu, "");
+  }
+
+  private appendNameHistory(playerId: string, displayName: string, changedAt = new Date().toISOString()): void {
+    const history = this.nameHistoryByPlayerId.get(playerId) ?? [];
+    history.unshift({
+      id: this.nextNameHistoryId++,
+      playerId,
+      displayName,
+      normalizedName: this.normalizeName(displayName),
+      changedAt
+    });
+    this.nameHistoryByPlayerId.set(playerId, history);
+  }
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -144,6 +178,24 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   async loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null> {
     const playerId = this.playerIdByWechatOpenId.get(openId.trim());
     return playerId ? this.accounts.get(playerId) ?? null : null;
+  }
+
+  async listPlayerNameHistory(playerId: string, options: { limit?: number } = {}) {
+    return (this.nameHistoryByPlayerId.get(playerId.trim()) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async findPlayerNameHistoryByDisplayName(displayName: string, options: { limit?: number } = {}) {
+    const normalizedName = this.normalizeName(displayName);
+    return Array.from(this.nameHistoryByPlayerId.values())
+      .flat()
+      .filter((entry) => entry.normalizedName === normalizedName)
+      .sort((left, right) => right.changedAt.localeCompare(left.changedAt) || right.id - left.id)
+      .slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+  }
+
+  async findActivePlayerNameReservation(displayName: string) {
+    const reservation = this.activeReservations.get(this.normalizeName(displayName));
+    return reservation ? structuredClone(reservation) : null;
   }
 
   async loadPlayerEventHistory(
@@ -233,9 +285,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const existing = this.accounts.get(input.playerId);
+    const nextDisplayName = input.displayName?.trim() || existing?.displayName || input.playerId;
+    if (!existing || existing.displayName !== nextDisplayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, input.playerId);
+    }
     const account: PlayerAccountSnapshot = {
       playerId: input.playerId,
-      displayName: input.displayName?.trim() || existing?.displayName || input.playerId,
+      displayName: nextDisplayName,
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       gems: existing?.gems ?? 0,
       globalResources: existing?.globalResources ?? { gold: 0, wood: 0, ore: 0 },
@@ -273,6 +329,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(account.playerId, account);
+    if (!existing || existing.displayName !== account.displayName) {
+      this.appendNameHistory(account.playerId, account.displayName, account.updatedAt);
+    }
     return account;
   }
 
@@ -478,6 +537,20 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       createdAt: new Date().toISOString()
     });
     this.banHistoryByPlayerId.set(account.playerId, history);
+    const reservedUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    for (const displayName of Array.from(
+      new Set([account.displayName, ...(this.nameHistoryByPlayerId.get(account.playerId) ?? []).map((entry) => entry.displayName)])
+    )) {
+      this.activeReservations.set(this.normalizeName(displayName), {
+        id: this.nextNameHistoryId++,
+        playerId: account.playerId,
+        displayName,
+        normalizedName: this.normalizeName(displayName),
+        reservedUntil,
+        reason: "banned_account",
+        createdAt: new Date().toISOString()
+      });
+    }
     return account;
   }
 
@@ -645,9 +718,13 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const existing = await this.ensurePlayerAccount({ playerId });
+    const nextDisplayName = patch.displayName?.trim() || existing.displayName;
+    if (nextDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, playerId);
+    }
     const account: PlayerAccountSnapshot = {
       ...existing,
-      displayName: patch.displayName?.trim() || existing.displayName,
+      displayName: nextDisplayName,
       ...(patch.avatarUrl !== undefined
         ? patch.avatarUrl?.trim()
           ? { avatarUrl: patch.avatarUrl.trim() }
@@ -679,6 +756,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(playerId, account);
+    if (nextDisplayName !== existing.displayName) {
+      this.appendNameHistory(playerId, nextDisplayName, account.updatedAt);
+    }
     if (account.loginId) {
       const auth = this.authByLoginId.get(account.loginId);
       if (auth) {
@@ -2471,6 +2551,82 @@ test("player account profile updates by player id require auth and allow self-se
   assert.equal(unchanged?.lastRoomId, "room-bravo");
 });
 
+test("player account profile updates reject banned display names with a 400 error", async (t) => {
+  const port = 41020 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-rename",
+    displayName: "初始旅人"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-rename`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "G.M!"
+    })
+  });
+  const payload = (await response.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "invalid_display_name");
+  assert.match(payload.error.message, /reserved term/i);
+});
+
+test("player account profile updates reject names reserved from banned accounts", async (t) => {
+  const port = 41025 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "banned-player",
+    displayName: "影裔巡林"
+  });
+  await store.savePlayerBan("banned-player", {
+    banStatus: "permanent",
+    banReason: "impersonation"
+  });
+  await store.ensurePlayerAccount({
+    playerId: "other-player",
+    displayName: "其他旅人"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "other-player",
+    displayName: "其他旅人"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/player-accounts/other-player`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      displayName: "影裔巡林"
+    })
+  });
+  const payload = (await response.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "display_name_reserved");
+  assert.match(payload.error.message, /temporarily reserved/i);
+});
+
 test("player account update routes echo local-mode payloads when persistence is unavailable", async (t) => {
   const port = 41030 + Math.floor(Math.random() * 1000);
   const server = await startAccountRouteServer(port, null);
@@ -3990,6 +4146,63 @@ test("admin mailbox delivery route skips duplicate message ids for the same play
   assert.equal(secondResponse.status, 200);
   assert.equal(secondPayload.delivered, 0);
   assert.equal(secondPayload.skipped, 1);
+});
+
+test("admin player name-history routes expose rename traces and active reservations", async (t) => {
+  process.env.VEIL_ADMIN_TOKEN = "test-admin-token";
+  t.after(() => {
+    delete process.env.VEIL_ADMIN_TOKEN;
+  });
+
+  const port = 44960 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "ops-name-player",
+    displayName: "旧雾旅人"
+  });
+  await store.savePlayerAccountProfile("ops-name-player", {
+    displayName: "新雾旅人"
+  });
+  await store.savePlayerBan("ops-name-player", {
+    banStatus: "permanent",
+    banReason: "impersonation"
+  });
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const byPlayerResponse = await fetch(`http://127.0.0.1:${port}/api/admin/player-accounts/ops-name-player/name-history`, {
+    headers: {
+      "x-veil-admin-token": "test-admin-token"
+    }
+  });
+  const byPlayerPayload = (await byPlayerResponse.json()) as {
+    items: Array<{ displayName: string }>;
+  };
+
+  assert.equal(byPlayerResponse.status, 200);
+  assert.deepEqual(byPlayerPayload.items.map((entry) => entry.displayName), ["新雾旅人", "旧雾旅人"]);
+
+  const byNameResponse = await fetch(
+    `http://127.0.0.1:${port}/api/admin/player-accounts/name-history?displayName=${encodeURIComponent("旧雾旅人")}`,
+    {
+      headers: {
+        "x-veil-admin-token": "test-admin-token"
+      }
+    }
+  );
+  const byNamePayload = (await byNameResponse.json()) as {
+    items: Array<{ playerId: string; displayName: string }>;
+    reservation?: { playerId: string; reason: string };
+  };
+
+  assert.equal(byNameResponse.status, 200);
+  assert.equal(byNamePayload.items[0]?.playerId, "ops-name-player");
+  assert.equal(byNamePayload.items[0]?.displayName, "旧雾旅人");
+  assert.equal(byNamePayload.reservation?.playerId, "ops-name-player");
+  assert.equal(byNamePayload.reservation?.reason, "banned_account");
 });
 
 test("referral endpoint rejects double-claiming for the same referrer and new player", async (t) => {

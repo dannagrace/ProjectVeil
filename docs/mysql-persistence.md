@@ -34,6 +34,9 @@ The server reads these variables on startup:
 | `VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS` | No | `true` | Whether callers wait for a free pooled connection instead of failing immediately |
 | `VEIL_MYSQL_SNAPSHOT_TTL_HOURS` | No | `72` | Snapshot retention window in hours. Set `0` or a negative value to disable expiry |
 | `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES` | No | `30` | Periodic cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
+| `VEIL_DISPLAY_NAME_RULES_PATH` | No | `configs/display-name-rules.json` | Display-name moderation rules file path. The server hot-reloads this file without a redeploy |
+| `VEIL_DISPLAY_NAME_RULES_RELOAD_INTERVAL_MS` | No | `30000` | How often the server rechecks the display-name rules file for updates |
+| `VEIL_DISPLAY_NAME_RULES_JSON` | No | - | Optional JSON override for display-name moderation rules, useful for ops validation |
 
 ## Database And Table
 
@@ -130,6 +133,43 @@ Recommended index:
 The server appends only newly seen `recentEventLog` entries into this table when player account progress is saved. This keeps the existing compact snapshot read model intact while exposing a paged `/api/player-accounts/:playerId/event-history` API for player-facing history views.
 
 The event history routes support the existing `category` / `heroId` / `achievementId` / `worldEventType` filters, plus optional inclusive `since` and `until` ISO-8601 timestamps. MySQL-backed queries push those time-range predicates down into SQL so player history views can page within a bounded time window without scanning unrelated rows.
+
+### Table: `player_name_history`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `id` | `BIGINT UNSIGNED` | No | auto increment | Stable history row id |
+| `player_id` | `VARCHAR(191)` | No | - | Player id |
+| `display_name` | `VARCHAR(80)` | No | - | Display name snapshot before/after a rename |
+| `normalized_name` | `VARCHAR(191)` | No | - | NFKC + lowercase + punctuation-stripped lookup key for support tooling |
+| `changed_at` | `DATETIME` | No | - | Logical rename timestamp |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Row insertion time |
+
+Recommended indexes:
+
+- `idx_player_name_history_player_changed` on `(player_id, changed_at DESC)`
+- `idx_player_name_history_normalized_changed` on `(normalized_name, changed_at DESC)`
+
+This append-only table records the initial display name and every subsequent rename accepted by the server. Admin/support tooling can query by `player_id` to inspect a single account timeline or by `normalized_name` to trace who previously used a suspicious name.
+
+### Table: `player_name_reservations`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `id` | `BIGINT UNSIGNED` | No | auto increment | Stable reservation row id |
+| `player_id` | `VARCHAR(191)` | No | - | Source banned player id that caused the reservation |
+| `display_name` | `VARCHAR(80)` | No | - | Most recent reserved display name snapshot |
+| `normalized_name` | `VARCHAR(191)` | No | - | Lookup key used to block impersonation attempts |
+| `reserved_until` | `DATETIME` | No | - | Expiry timestamp; names from banned accounts are reserved for 7 days |
+| `reason` | `VARCHAR(64)` | No | - | Reservation reason, currently `banned_account` |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Row insertion time |
+
+Recommended indexes:
+
+- `uidx_player_name_reservations_normalized` unique on `normalized_name`
+- `idx_player_name_reservations_until` on `reserved_until`
+
+When an account is banned, the server copies its current and historical display names into this table and rejects attempts by other players to reuse those names until the reservation expires.
 
 Issue #27 follow-up note: event-log and achievement history queries now share a single normalization contract in `packages/shared/src/event-log.ts`. Route handlers and MySQL persistence both reuse that helper so trimming, pagination clamping, and ISO timestamp coercion stay consistent before full event-log persistence and richer achievement views land.
 
@@ -253,6 +293,13 @@ The repository also includes manual player profile management commands:
 - `npm run db:profiles:prune`
 
 These commands are useful when you want to inspect retained per-player room progress, delete a specific player profile row, or force profile cleanup immediately.
+
+Display-name moderation also includes an ops scan command:
+
+- `npm run player-names:scan -- --limit 500`
+- `npm run player-names:scan -- --limit 500 --json`
+
+This scans persisted player accounts against the hot-reloadable rules in `configs/display-name-rules.json` so existing violations can be cleaned up before release or moderation sweeps.
 
 ## Automated Backup To Object Storage
 

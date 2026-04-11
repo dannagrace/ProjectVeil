@@ -53,6 +53,7 @@ import {
   resolveSeasonalEvents
 } from "./event-engine";
 import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "./feature-flags";
+import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import {
   buildCampaignMissionStates,
   type CampaignAccessContext,
@@ -1311,6 +1312,92 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/admin/player-accounts/:playerId/name-history", async (request, response) => {
+    if (!isAdminAuthorized(request)) {
+      sendJson(response, 403, {
+        error: {
+          code: "forbidden",
+          message: "Invalid admin token"
+        }
+      });
+      return;
+    }
+
+    if (!store?.listPlayerNameHistory) {
+      sendJson(response, 503, {
+        error: {
+          code: "name_history_unavailable",
+          message: "Player name history requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    const playerId = request.params.playerId?.trim();
+    if (!playerId) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const account = await store.loadPlayerAccount(playerId);
+      const items = await store.listPlayerNameHistory(playerId, { limit: parseLimit(request) ?? 20 });
+      sendJson(response, 200, {
+        playerId,
+        ...(account ? { account } : {}),
+        items
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/admin/player-accounts/name-history", async (request, response) => {
+    if (!isAdminAuthorized(request)) {
+      sendJson(response, 403, {
+        error: {
+          code: "forbidden",
+          message: "Invalid admin token"
+        }
+      });
+      return;
+    }
+
+    if (!store?.findPlayerNameHistoryByDisplayName) {
+      sendJson(response, 503, {
+        error: {
+          code: "name_history_unavailable",
+          message: "Player name history requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const displayName = url.searchParams.get("displayName")?.trim();
+    if (!displayName) {
+      sendJson(response, 400, {
+        error: {
+          code: "invalid_display_name",
+          message: "displayName query parameter is required"
+        }
+      });
+      return;
+    }
+
+    try {
+      const items = await store.findPlayerNameHistoryByDisplayName(displayName, { limit: parseLimit(request) ?? 20 });
+      const reservation = await store.findActivePlayerNameReservation?.(displayName);
+      sendJson(response, 200, {
+        displayName,
+        items,
+        ...(reservation ? { reservation } : {})
+      });
+    } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
@@ -3432,6 +3519,9 @@ export function registerPlayerAccountRoutes(
       }
 
       if (!store) {
+        if (patch.displayName !== undefined) {
+          await assertDisplayNameAvailableOrThrow(null, patch.displayName, authSession.playerId);
+        }
         if (wantsPasswordChange) {
           sendJson(response, 501, {
             error: {
@@ -3603,6 +3693,9 @@ export function registerPlayerAccountRoutes(
       };
 
       if (!store) {
+        if (patch.displayName !== undefined) {
+          await assertDisplayNameAvailableOrThrow(null, patch.displayName, playerId);
+        }
         const account = createLocalModeAccount({
           playerId,
           displayName: patch.displayName ?? authSession?.displayName ?? playerId,
