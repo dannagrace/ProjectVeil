@@ -563,6 +563,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseHealthSummaryPath) {
     lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
   }
+  if (report.artifacts.releaseReadinessSnapshotPath) {
+    lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
+  }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
