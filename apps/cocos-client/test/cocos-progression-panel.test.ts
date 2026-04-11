@@ -64,7 +64,7 @@ test("VeilProgressionPanel renders battle pass rewards and routes taps to claim 
   pressNode(findNode(node, "BattlePassTrack-0-free"));
   pressNode(findNode(node, "BattlePassPremiumAction"));
 
-  assert.deepEqual(claimedTiers, [3]);
+  assert.deepEqual(claimedTiers, [2]);
   assert.equal(premiumPurchaseCount, 1);
 });
 
@@ -97,10 +97,29 @@ test("VeilProgressionPanel disables taps while a tier claim is pending", () => {
     })
   });
 
-  assert.match(readCardLabel(node, "BattlePassTrack-0-free"), /领取中/);
-  pressNode(findNode(node, "BattlePassTrack-0-free"));
+  assert.match(readCardLabel(node, "BattlePassTrack-1-free"), /领取中/);
+  pressNode(findNode(node, "BattlePassTrack-1-free"));
 
   assert.deepEqual(claimedTiers, []);
+});
+
+test("buildCocosBattlePassPanelView keeps earlier unlocked unclaimed tiers visible and prioritized", () => {
+  const view = buildCocosBattlePassPanelView({
+    progress: {
+      battlePassEnabled: true,
+      seasonXp: 2200,
+      seasonPassTier: 5,
+      seasonPassPremium: false,
+      seasonPassClaimedTiers: [1, 2, 5]
+    },
+    pendingClaimTier: null,
+    pendingPremiumPurchase: false,
+    statusLabel: "可领取历史段位奖励。"
+  });
+
+  assert.equal(view.tiers[0]?.tier, 3);
+  assert.equal(view.tiers[0]?.freeTrack.claimable, true);
+  assert.match(view.nextRewardLabel, /下一奖励 T3/);
 });
 
 test("buildCocosDailyDungeonPanelView surfaces claimable runs and leaderboard state", () => {

@@ -127,6 +127,12 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
     required: true
   },
   {
+    id: "map-object-visuals",
+    title: "Map-object visual coverage",
+    command: "npm run validate:map-object-visuals",
+    required: true
+  },
+  {
     id: "phase1-release-persistence",
     title: "Phase 1 persistence and shipped content regression",
     command:

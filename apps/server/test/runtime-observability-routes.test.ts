@@ -86,10 +86,56 @@ async function sendRequest<T extends ServerMessage["type"]>(
 
 test("runtime observability routes expose live room counts and gameplay traffic", async (t) => {
   const port = 44000 + Math.floor(Math.random() * 1000);
+  const originalFeatureFlagJson = process.env.VEIL_FEATURE_FLAGS_JSON;
+  process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
+    schemaVersion: 1,
+    flags: {
+      quest_system_enabled: { type: "boolean", value: true, defaultValue: true, enabled: true, rollout: 1 },
+      battle_pass_enabled: { type: "boolean", value: true, defaultValue: false, enabled: true, rollout: 0.1 },
+      pve_enabled: { type: "boolean", value: true, defaultValue: true, enabled: true, rollout: 1 },
+      tutorial_enabled: { type: "boolean", value: true, defaultValue: true, enabled: true, rollout: 1 }
+    },
+    operations: {
+      rolloutPolicies: {
+        battle_pass_enabled: {
+          owner: "ops-oncall",
+          stages: [
+            { key: "canary-1", rollout: 0.01, holdMinutes: 30, monitorWindowMinutes: 30 },
+            { key: "batch-10", rollout: 0.1, holdMinutes: 30, monitorWindowMinutes: 30 },
+            { key: "full", rollout: 1, holdMinutes: 60, monitorWindowMinutes: 60 }
+          ],
+          alertThresholds: {
+            errorRate: 0.02,
+            sessionFailureRate: 0.01,
+            paymentFailureRate: 0.02
+          },
+          rollback: {
+            mode: "automatic",
+            maxConfigAgeMinutes: 5,
+            cooldownMinutes: 30
+          }
+        }
+      },
+      auditHistory: [
+        {
+          at: "2026-04-11T01:20:00.000Z",
+          actor: "ConfigOps",
+          summary: "battle pass 10 percent canary approved",
+          flagKeys: ["battle_pass_enabled"],
+          ticket: "#1203"
+        }
+      ]
+    }
+  });
   const server = await startObservabilityServer(port);
   const room = await joinRoom(port, "room-observability-alpha", "player-1");
 
   t.after(async () => {
+    if (originalFeatureFlagJson === undefined) {
+      delete process.env.VEIL_FEATURE_FLAGS_JSON;
+    } else {
+      process.env.VEIL_FEATURE_FLAGS_JSON = originalFeatureFlagJson;
+    }
     await room.leave(true).catch(() => undefined);
     resetLobbyRoomRegistry();
     resetRuntimeObservability();
@@ -198,6 +244,37 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(readinessPayload.status, "ok");
   assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
 
+  const featureFlagResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/feature-flags`);
+  const featureFlagPayload = (await featureFlagResponse.json()) as {
+    status: string;
+    headline: string;
+    config: {
+      source: string;
+      checksum: string;
+      stale: boolean;
+    };
+    flags: Array<{
+      flagKey: string;
+      rollout: number;
+      owner?: string;
+      stages: Array<{ key: string }>;
+    }>;
+    auditHistory: Array<{
+      ticket?: string;
+    }>;
+  };
+
+  assert.equal(featureFlagResponse.status, 200);
+  assert.equal(featureFlagPayload.status, "ok");
+  assert.equal(featureFlagPayload.config.source, "env_override");
+  assert.equal(featureFlagPayload.config.stale, false);
+  assert.match(featureFlagPayload.config.checksum, /^[a-f0-9]{64}$/);
+  assert.match(featureFlagPayload.headline, /feature_flags checksum=/);
+  assert.equal(featureFlagPayload.flags.find((flag) => flag.flagKey === "battle_pass_enabled")?.rollout, 0.1);
+  assert.equal(featureFlagPayload.flags.find((flag) => flag.flagKey === "battle_pass_enabled")?.owner, "ops-oncall");
+  assert.equal(featureFlagPayload.flags.find((flag) => flag.flagKey === "battle_pass_enabled")?.stages[0]?.key, "canary-1");
+  assert.equal(featureFlagPayload.auditHistory[0]?.ticket, "#1203");
+
   const diagnosticResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`);
   const diagnosticPayload = (await diagnosticResponse.json()) as {
     source: {
@@ -273,6 +350,12 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
   assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
+  assert.match(metricsText, /^veil_feature_flag_config_stale 0$/m);
+  assert.match(metricsText, /^veil_feature_flag_rollout_ratio\{flag="battle_pass_enabled",owner="ops-oncall"\} 0\.1$/m);
+  assert.match(
+    metricsText,
+    /^veil_runtime_error_events_total\{error_code="wechat_pay_timeout",feature_area="payment",owner_area="commerce",severity="error"\} 1$/m
+  );
 
   const roomLifecycleResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary`);
   const roomLifecyclePayload = (await roomLifecycleResponse.json()) as {

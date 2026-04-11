@@ -26,6 +26,11 @@ The server reads these variables on startup:
 | `VEIL_MYSQL_USER` | Yes | - | MySQL username |
 | `VEIL_MYSQL_PASSWORD` | Yes | - | MySQL password |
 | `VEIL_MYSQL_DATABASE` | No | `project_veil` | Database name |
+| `VEIL_MYSQL_POOL_CONNECTION_LIMIT` | No | `4` | Max concurrent connections opened by each Project Veil MySQL pool (`room_snapshot`, `config_center`, migration tooling) |
+| `VEIL_MYSQL_POOL_MAX_IDLE` | No | `4` | Max idle connections retained by each MySQL pool |
+| `VEIL_MYSQL_POOL_IDLE_TIMEOUT_MS` | No | `60000` | Idle-connection timeout for each MySQL pool |
+| `VEIL_MYSQL_POOL_QUEUE_LIMIT` | No | `0` | Queue depth cap when the pool is saturated. `0` keeps mysql2's unbounded queue behavior |
+| `VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS` | No | `true` | Whether callers wait for a free pooled connection instead of failing immediately |
 | `VEIL_MYSQL_SNAPSHOT_TTL_HOURS` | No | `72` | Snapshot retention window in hours. Set `0` or a negative value to disable expiry |
 | `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES` | No | `30` | Periodic cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
 
@@ -200,6 +205,7 @@ The script performs:
 - `mysqldump` full export with `--single-transaction`
 - gzip compression
 - SHA-256 hash generation beside the archive
+- immediate checksum self-verification before upload
 - upload to a daily object prefix
 - weekly mirror upload on the configured weekday
 - retention pruning for daily backups older than 30 days and weekly backups older than 183 days
@@ -259,6 +265,26 @@ Recommended rollout:
 ### Restore
 
 Use [`docs/db-restore-runbook.md`](./db-restore-runbook.md) to download a timestamped backup, verify the hash, restore into a fresh instance, and validate the recovered data with the existing MySQL persistence regression.
+
+For a repeatable operator drill, run the new rehearsal wrapper:
+
+```bash
+VEIL_RESTORE_BACKUP_KEY="backups/mysql/daily/project_veil-20260403T030000Z.sql.gz" \
+RESTORE_MYSQL_HOST=127.0.0.1 \
+RESTORE_MYSQL_PORT=3306 \
+RESTORE_MYSQL_USER=root \
+RESTORE_MYSQL_PASSWORD=change_me \
+RESTORE_MYSQL_DATABASE=project_veil_restore \
+npm run db:restore:rehearsal
+```
+
+That flow downloads the archive and `.sha256`, verifies integrity before touching MySQL, restores into the target schema, runs the table-count sanity query, and then executes `npm run test:phase1-release-persistence -- --storage mysql` against the recovered instance unless `VEIL_RESTORE_SKIP_REGRESSION=1`.
+
+## MySQL Alerting
+
+`/metrics` now exports `veil_mysql_pool_connection_limit`, `veil_mysql_pool_connections_active`, `veil_mysql_pool_connections_idle`, `veil_mysql_pool_queue_depth`, and `veil_mysql_pool_connection_utilization_ratio` for the long-lived `room_snapshot` and `config_center` pools. Use those together with the `VeilMySqlPoolPressureHigh` alert in [`docs/alerting-rules.yml`](./alerting-rules.yml) when sizing the server-side pools.
+
+Replication lag alerting depends on your MySQL exporter exposing `mysql_slave_status_seconds_behind_master`. Project Veil documents the threshold and response flow in the same alerting bundle so HA drills and backup restore drills use one source of truth.
 
 ## Release Regression
 

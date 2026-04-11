@@ -48,6 +48,14 @@ export const ANALYTICS_EVENT_CATALOG = {
       gold: 50
     }
   }),
+  daily_login: defineAnalyticsEvent("daily_login", 1, "Daily first-login reward was issued to the player.", {
+    dateKey: "2026-04-11",
+    streak: 3,
+    reward: {
+      gems: 10,
+      gold: 100
+    }
+  }),
   QuestRotated: defineAnalyticsEvent("QuestRotated", 1, "Server rotated a new daily quest slate for the player.", {
     roomId: "daily-quests",
     dateKey: "2026-04-06",

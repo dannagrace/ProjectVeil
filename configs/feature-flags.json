@@ -10,15 +10,15 @@
     },
     "battle_pass_enabled": {
       "type": "boolean",
-      "value": false,
-      "defaultValue": false,
+      "value": true,
+      "defaultValue": true,
       "enabled": true,
       "rollout": 1
     },
     "pve_enabled": {
       "type": "boolean",
-      "value": false,
-      "defaultValue": false,
+      "value": true,
+      "defaultValue": true,
       "enabled": true,
       "rollout": 1
     },
@@ -29,6 +29,64 @@
       "enabled": true,
       "rollout": 1
     }
+  },
+  "operations": {
+    "rolloutPolicies": {
+      "battle_pass_enabled": {
+        "owner": "ops-oncall",
+        "stages": [
+          {
+            "key": "canary-1",
+            "rollout": 0.01,
+            "holdMinutes": 30,
+            "monitorWindowMinutes": 30,
+            "notes": "只放内部白名单和低风险流量，核对 battle pass 入口、赛季进度拉取和奖励领取链路。"
+          },
+          {
+            "key": "batch-10",
+            "rollout": 0.1,
+            "holdMinutes": 30,
+            "monitorWindowMinutes": 30,
+            "notes": "观察错误率、session 异常和支付失败率，确认没有节点 checksum 漂移。"
+          },
+          {
+            "key": "batch-50",
+            "rollout": 0.5,
+            "holdMinutes": 60,
+            "monitorWindowMinutes": 60,
+            "notes": "保持同一 revision，继续观察 battle pass claim / sync 的端到端错误。"
+          },
+          {
+            "key": "full",
+            "rollout": 1,
+            "holdMinutes": 120,
+            "monitorWindowMinutes": 120,
+            "notes": "进入全量前必须确认自动回滚卡点和 feature-flag runtime checksum 一致。"
+          }
+        ],
+        "alertThresholds": {
+          "errorRate": 0.02,
+          "sessionFailureRate": 0.01,
+          "paymentFailureRate": 0.02
+        },
+        "rollback": {
+          "mode": "automatic",
+          "maxConfigAgeMinutes": 5,
+          "cooldownMinutes": 30
+        }
+      }
+    },
+    "auditHistory": [
+      {
+        "at": "2026-04-11T00:30:00.000Z",
+        "actor": "ConfigOps",
+        "summary": "为 battle_pass_enabled 建立灰度发布安全网基线，补充阶段卡点、自动回滚阈值和 runtime checksum 审计要求。",
+        "flagKeys": ["battle_pass_enabled"],
+        "ticket": "#1203",
+        "approvedBy": "claude",
+        "changeId": "ff-battle-pass-guardrail-baseline"
+      }
+    ]
   },
   "experiments": {
     "account_portal_copy": {

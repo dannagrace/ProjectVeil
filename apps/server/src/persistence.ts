@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import {
   appendEventLogEntries,
   DEFAULT_TUTORIAL_STEP,
@@ -38,6 +38,15 @@ import {
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
+import {
+  createTrackedMySqlPool,
+  DEFAULT_MYSQL_POOL_CONNECTION_LIMIT,
+  DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS,
+  DEFAULT_MYSQL_POOL_MAX_IDLE,
+  DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
+  DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
+  type MySqlPoolConfig
+} from "./mysql-pool";
 import type { RoomPersistenceSnapshot } from "./index";
 import {
   claimAllPlayerMailboxMessages,
@@ -189,6 +198,7 @@ export interface MySqlPersistenceConfig {
   user: string;
   password: string;
   database: string;
+  pool: MySqlPoolConfig;
   retention: SnapshotRetentionPolicy;
 }
 
@@ -827,6 +837,47 @@ function readOptionalPositiveNumber(value: string | undefined, fallback: number)
   }
 
   return parsed;
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function readNonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function readBooleanFlag(value: string | undefined, fallback: boolean): boolean {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return fallback;
 }
 
 function timestampOf(value: Date | string): number {
@@ -2006,6 +2057,16 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
     user,
     password,
     database: env.VEIL_MYSQL_DATABASE ?? MYSQL_DEFAULT_DATABASE,
+    pool: {
+      connectionLimit: readPositiveInteger(env.VEIL_MYSQL_POOL_CONNECTION_LIMIT, DEFAULT_MYSQL_POOL_CONNECTION_LIMIT),
+      maxIdle: readPositiveInteger(env.VEIL_MYSQL_POOL_MAX_IDLE, DEFAULT_MYSQL_POOL_MAX_IDLE),
+      idleTimeoutMs: readPositiveInteger(env.VEIL_MYSQL_POOL_IDLE_TIMEOUT_MS, DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS),
+      queueLimit: readNonNegativeInteger(env.VEIL_MYSQL_POOL_QUEUE_LIMIT, DEFAULT_MYSQL_POOL_QUEUE_LIMIT),
+      waitForConnections: readBooleanFlag(
+        env.VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
+        DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS
+      )
+    },
     retention: {
       ttlHours: readOptionalPositiveNumber(env.VEIL_MYSQL_SNAPSHOT_TTL_HOURS, DEFAULT_SNAPSHOT_TTL_HOURS),
       cleanupIntervalMinutes: readOptionalPositiveNumber(
@@ -3929,15 +3990,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   static async create(config: MySqlPersistenceConfig): Promise<MySqlRoomSnapshotStore> {
-    const pool = createPool({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password,
-      database: config.database,
-      connectionLimit: 4,
-      namedPlaceholders: true
-    });
+    const pool = createTrackedMySqlPool("room_snapshot", config);
     await pool.query("SELECT 1");
 
     return new MySqlRoomSnapshotStore(pool, config.database, config.retention);

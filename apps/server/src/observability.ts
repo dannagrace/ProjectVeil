@@ -3,10 +3,15 @@ import {
   buildRuntimeDiagnosticsErrorEvent,
   renderRuntimeDiagnosticsSnapshotText,
   summarizeRuntimeDiagnosticsErrors,
+  type FeatureFlagAuditEntry,
+  type FeatureFlagKey,
+  type FeatureFlagRolloutPolicy,
   type ReconnectFailureReason,
   type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
+import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
 import { resetCapturedAnalyticsEventsForTest } from "./analytics";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
@@ -38,6 +43,7 @@ interface AuthObservabilityCounters {
   refreshesTotal: number;
   logoutsTotal: number;
   rateLimitedTotal: number;
+  credentialStuffingBlockedTotal: number;
   invalidCredentialsTotal: number;
   tokenDeliveryRequestsTotal: number;
   tokenDeliverySuccessesTotal: number;
@@ -97,6 +103,7 @@ interface AuthObservabilityState {
   activeGuestSessionCount: number;
   activeAccountSessions: Map<string, { playerId: string; provider: string }>;
   activeAccountLockCount: number;
+  activeCredentialStuffingSourceCount: number;
   pendingRegistrationCount: number;
   pendingRecoveryCount: number;
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
@@ -148,6 +155,7 @@ interface RuntimeObservabilityState {
     battleDurationSeconds: HistogramMetricState;
     httpRequestDurationSeconds: HistogramMetricState;
     actionValidationFailuresTotal: Map<string, number>;
+    runtimeErrorEventsTotal: Map<string, number>;
   };
   auth: AuthObservabilityState;
   reconnect: {
@@ -191,6 +199,7 @@ interface RuntimeHealthPayload {
       activeAccountSessionCount: number;
       activeAccountSessionByProvider: Record<string, number>;
       activeAccountLockCount: number;
+      activeCredentialStuffingSourceCount: number;
       pendingRegistrationCount: number;
       pendingRecoveryCount: number;
       counters: AuthObservabilityCounters;
@@ -246,6 +255,36 @@ interface AuthTokenDeliveryPayload {
   };
 }
 
+interface FeatureFlagObservabilityPayload {
+  status: "ok" | "warn";
+  service: string;
+  checkedAt: string;
+  headline: string;
+  config: {
+    source: "env_override" | "file" | "default_fallback";
+    configuredPath: string;
+    checksum: string;
+    loadedAt: string;
+    lastCheckedAt: string;
+    sourceUpdatedAt?: string;
+    reloadIntervalMs: number;
+    staleThresholdMs: number;
+    cacheAgeMs: number;
+    stale: boolean;
+    lastError?: string;
+  };
+  flags: Array<{
+    flagKey: FeatureFlagKey;
+    enabled: boolean;
+    rollout: number;
+    owner?: string;
+    alertThresholds?: FeatureFlagRolloutPolicy["alertThresholds"];
+    rollback?: FeatureFlagRolloutPolicy["rollback"];
+    stages: FeatureFlagRolloutPolicy["stages"];
+  }>;
+  auditHistory: FeatureFlagAuditEntry[];
+}
+
 export interface RoomLifecycleSummaryPayload {
   status: "ok" | "warn";
   service: string;
@@ -288,7 +327,8 @@ const runtimeObservability: RuntimeObservabilityState = {
   prometheus: {
     battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
     httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
-    actionValidationFailuresTotal: new Map<string, number>()
+    actionValidationFailuresTotal: new Map<string, number>(),
+    runtimeErrorEventsTotal: new Map<string, number>()
   },
   auth: {
     counters: {
@@ -301,6 +341,7 @@ const runtimeObservability: RuntimeObservabilityState = {
       refreshesTotal: 0,
       logoutsTotal: 0,
       rateLimitedTotal: 0,
+      credentialStuffingBlockedTotal: 0,
       invalidCredentialsTotal: 0,
       tokenDeliveryRequestsTotal: 0,
       tokenDeliverySuccessesTotal: 0,
@@ -311,6 +352,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
     activeAccountLockCount: 0,
+    activeCredentialStuffingSourceCount: 0,
     pendingRegistrationCount: 0,
     pendingRecoveryCount: 0,
     sessionFailureReasons: {
@@ -470,6 +512,7 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         activeAccountSessionCount: runtimeObservability.auth.activeAccountSessions.size,
         activeAccountSessionByProvider,
         activeAccountLockCount: runtimeObservability.auth.activeAccountLockCount,
+        activeCredentialStuffingSourceCount: runtimeObservability.auth.activeCredentialStuffingSourceCount,
         pendingRegistrationCount: runtimeObservability.auth.pendingRegistrationCount,
         pendingRecoveryCount: runtimeObservability.auth.pendingRecoveryCount,
         counters: { ...runtimeObservability.auth.counters },
@@ -529,6 +572,10 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.activeAccountLockCount} account lockout(s) active`);
   }
 
+  if (health.runtime.auth.activeCredentialStuffingSourceCount > 0) {
+    alerts.push(`${health.runtime.auth.activeCredentialStuffingSourceCount} credential-stuffing source block(s) active`);
+  }
+
   if (health.runtime.auth.pendingRecoveryCount > 10) {
     alerts.push(`${health.runtime.auth.pendingRecoveryCount} password recovery tokens pending`);
   }
@@ -557,6 +604,7 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
       `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} ` +
       `account=${health.runtime.auth.activeAccountSessionCount} ` +
       `lockouts=${health.runtime.auth.activeAccountLockCount} ` +
+      `sourceBlocks=${health.runtime.auth.activeCredentialStuffingSourceCount} ` +
       `wechat=${wechatMode}/${wechatCredentialsStatus}`,
     alerts,
     auth: {
@@ -720,8 +768,35 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
   };
 }
 
+function buildFeatureFlagObservabilityPayload(service = "project-veil-server"): FeatureFlagObservabilityPayload {
+  const snapshot = getFeatureFlagRuntimeSnapshot();
+  const flags = listFeatureFlagRuntimeSummaries().map((entry) => ({
+    flagKey: entry.flagKey,
+    enabled: entry.enabled,
+    rollout: entry.rollout,
+    ...(entry.owner ? { owner: entry.owner } : {}),
+    ...(entry.rolloutPolicy?.alertThresholds ? { alertThresholds: entry.rolloutPolicy.alertThresholds } : {}),
+    ...(entry.rolloutPolicy?.rollback ? { rollback: entry.rolloutPolicy.rollback } : {}),
+    stages: entry.rolloutPolicy?.stages ?? []
+  }));
+
+  return {
+    status: snapshot.metadata.stale ? "warn" : "ok",
+    service,
+    checkedAt: new Date().toISOString(),
+    headline: snapshot.metadata.stale
+      ? `feature_flags stale checksum=${snapshot.metadata.checksum.slice(0, 12)} age_ms=${snapshot.metadata.cacheAgeMs}`
+      : `feature_flags checksum=${snapshot.metadata.checksum.slice(0, 12)} source=${snapshot.metadata.source} flags=${flags.length}`,
+    config: { ...snapshot.metadata },
+    flags,
+    auditHistory: snapshot.config.operations?.auditHistory ?? []
+  };
+}
+
 export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
+  const featureFlags = buildFeatureFlagObservabilityPayload();
+  const mysqlPools = getMySqlPoolMetricsSnapshot();
   const lines = [
     "# HELP veil_up Process health status.",
     "# TYPE veil_up gauge",
@@ -733,6 +808,35 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_connected_players gauge",
     `veil_connected_players ${health.runtime.connectionCount}`
   ];
+
+  lines.push(
+    "# HELP veil_mysql_pool_connection_limit Configured MySQL pool connection limit.",
+    "# TYPE veil_mysql_pool_connection_limit gauge",
+    "# HELP veil_mysql_pool_connections_active Active MySQL connections borrowed from the pool.",
+    "# TYPE veil_mysql_pool_connections_active gauge",
+    "# HELP veil_mysql_pool_connections_idle Idle MySQL connections retained by the pool.",
+    "# TYPE veil_mysql_pool_connections_idle gauge",
+    "# HELP veil_mysql_pool_queue_depth MySQL pool wait queue depth.",
+    "# TYPE veil_mysql_pool_queue_depth gauge",
+    "# HELP veil_mysql_pool_connection_utilization_ratio Ratio of active connections to configured connection limit.",
+    "# TYPE veil_mysql_pool_connection_utilization_ratio gauge"
+  );
+  if (mysqlPools.length === 0) {
+    lines.push("veil_mysql_pool_connection_limit 0");
+    lines.push("veil_mysql_pool_connections_active 0");
+    lines.push("veil_mysql_pool_connections_idle 0");
+    lines.push("veil_mysql_pool_queue_depth 0");
+    lines.push("veil_mysql_pool_connection_utilization_ratio 0");
+  } else {
+    for (const pool of mysqlPools) {
+      const labels = formatPrometheusLabels({ pool: pool.pool });
+      lines.push(`veil_mysql_pool_connection_limit${labels} ${pool.connectionLimit}`);
+      lines.push(`veil_mysql_pool_connections_active${labels} ${pool.activeConnections}`);
+      lines.push(`veil_mysql_pool_connections_idle${labels} ${pool.idleConnections}`);
+      lines.push(`veil_mysql_pool_queue_depth${labels} ${pool.queueDepth}`);
+      lines.push(`veil_mysql_pool_connection_utilization_ratio${labels} ${pool.utilizationRatio.toFixed(4)}`);
+    }
+  }
 
   lines.push(
     ...renderHistogramMetric(
@@ -761,6 +865,27 @@ export function buildPrometheusMetricsDocument(): string {
     }
   }
 
+  lines.push("# HELP veil_runtime_error_events_total Total runtime error events captured by the server.");
+  lines.push("# TYPE veil_runtime_error_events_total counter");
+  const runtimeErrorEntries = Array.from(runtimeObservability.prometheus.runtimeErrorEventsTotal.entries()).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  if (runtimeErrorEntries.length === 0) {
+    lines.push("veil_runtime_error_events_total 0");
+  } else {
+    for (const [key, value] of runtimeErrorEntries) {
+      const [featureArea, ownerArea, severity, errorCode] = key.split("::");
+      lines.push(
+        `veil_runtime_error_events_total${formatPrometheusLabels({
+          error_code: errorCode ?? "unknown",
+          feature_area: featureArea ?? "unknown",
+          owner_area: ownerArea ?? "unknown",
+          severity: severity ?? "unknown"
+        })} ${value}`
+      );
+    }
+  }
+
   lines.push(
     ...renderHistogramMetric(
       "veil_http_request_duration_seconds",
@@ -770,6 +895,25 @@ export function buildPrometheusMetricsDocument(): string {
   );
 
   lines.push(
+    "# HELP veil_feature_flag_config_stale Whether the current feature-flag config snapshot is stale.",
+    "# TYPE veil_feature_flag_config_stale gauge",
+    `veil_feature_flag_config_stale ${featureFlags.config.stale ? 1 : 0}`,
+    "# HELP veil_feature_flag_config_cache_age_seconds Age of the loaded feature-flag config in seconds.",
+    "# TYPE veil_feature_flag_config_cache_age_seconds gauge",
+    `veil_feature_flag_config_cache_age_seconds ${(featureFlags.config.cacheAgeMs / 1_000).toFixed(3)}`,
+    "# HELP veil_feature_flag_config_reload_interval_seconds Expected feature-flag file recheck interval in seconds.",
+    "# TYPE veil_feature_flag_config_reload_interval_seconds gauge",
+    `veil_feature_flag_config_reload_interval_seconds ${(featureFlags.config.reloadIntervalMs / 1_000).toFixed(3)}`,
+    "# HELP veil_feature_flag_config_last_loaded_timestamp_seconds Unix timestamp for the last successful feature-flag load.",
+    "# TYPE veil_feature_flag_config_last_loaded_timestamp_seconds gauge",
+    `veil_feature_flag_config_last_loaded_timestamp_seconds ${Math.floor(new Date(featureFlags.config.loadedAt).getTime() / 1_000)}`,
+    "# HELP veil_feature_flag_config_last_checked_timestamp_seconds Unix timestamp for the last feature-flag source freshness check.",
+    "# TYPE veil_feature_flag_config_last_checked_timestamp_seconds gauge",
+    `veil_feature_flag_config_last_checked_timestamp_seconds ${Math.floor(new Date(featureFlags.config.lastCheckedAt).getTime() / 1_000)}`,
+    "# HELP veil_feature_flag_enabled Whether a feature flag is enabled at the definition level.",
+    "# TYPE veil_feature_flag_enabled gauge",
+    "# HELP veil_feature_flag_rollout_ratio Rollout ratio for a feature flag.",
+    "# TYPE veil_feature_flag_rollout_ratio gauge",
     "# HELP veil_active_room_count Active room count.",
     "# TYPE veil_active_room_count gauge",
     `veil_active_room_count ${health.runtime.activeRoomCount}`,
@@ -833,6 +977,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_account_locks Active account login lockouts.",
     "# TYPE veil_auth_account_locks gauge",
     `veil_auth_account_locks ${health.runtime.auth.activeAccountLockCount}`,
+    "# HELP veil_auth_credential_stuffing_sources Active source-IP blocks triggered by credential-stuffing detection.",
+    "# TYPE veil_auth_credential_stuffing_sources gauge",
+    `veil_auth_credential_stuffing_sources ${health.runtime.auth.activeCredentialStuffingSourceCount}`,
     "# HELP veil_auth_pending_registrations Pending account registration tokens.",
     "# TYPE veil_auth_pending_registrations gauge",
     `veil_auth_pending_registrations ${health.runtime.auth.pendingRegistrationCount}`,
@@ -866,6 +1013,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
+    "# TYPE veil_auth_credential_stuffing_blocked_total counter",
+    `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
@@ -936,6 +1086,15 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_auth_session_failures_session_revoked_total counter",
     `veil_auth_session_failures_session_revoked_total ${health.runtime.auth.sessionFailureReasons.session_revoked}`
   );
+
+  for (const flag of featureFlags.flags) {
+    const labels = formatPrometheusLabels({
+      flag: flag.flagKey,
+      owner: flag.owner ?? "unassigned"
+    });
+    lines.push(`veil_feature_flag_enabled${labels} ${flag.enabled ? 1 : 0}`);
+    lines.push(`veil_feature_flag_rollout_ratio${labels} ${flag.rollout}`);
+  }
 
   return lines.join("\n");
 }
@@ -1273,10 +1432,16 @@ export function recordRuntimeRoom(snapshot: RuntimeRoomSnapshot): void {
 export function recordRuntimeErrorEvent(
   input: Omit<RuntimeDiagnosticsErrorEvent, "fingerprint" | "tags"> & { fingerprint?: string; tags?: string[] }
 ): void {
-  runtimeObservability.errorEvents.unshift(buildRuntimeDiagnosticsErrorEvent(input));
+  const event = buildRuntimeDiagnosticsErrorEvent(input);
+  runtimeObservability.errorEvents.unshift(event);
   if (runtimeObservability.errorEvents.length > 100) {
     runtimeObservability.errorEvents.length = 100;
   }
+  const counterKey = [event.featureArea, event.ownerArea, event.severity, event.errorCode].join("::");
+  runtimeObservability.prometheus.runtimeErrorEventsTotal.set(
+    counterKey,
+    (runtimeObservability.prometheus.runtimeErrorEventsTotal.get(counterKey) ?? 0) + 1
+  );
 }
 
 export function removeRuntimeRoom(roomId: string): void {
@@ -1409,6 +1574,10 @@ export function setAuthAccountLockCount(count: number): void {
   runtimeObservability.auth.activeAccountLockCount = Math.max(0, Math.floor(count));
 }
 
+export function setAuthCredentialStuffingSourceCount(count: number): void {
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = Math.max(0, Math.floor(count));
+}
+
 export function setPendingAuthRegistrationCount(count: number): void {
   runtimeObservability.auth.pendingRegistrationCount = Math.max(0, Math.floor(count));
 }
@@ -1452,6 +1621,10 @@ export function recordAuthLogout(): void {
 
 export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
+}
+
+export function recordAuthCredentialStuffingBlocked(): void {
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal += 1;
 }
 
 export function recordMatchmakingRateLimited(): void {
@@ -1555,6 +1728,7 @@ export function recordReconnectWindowResolved(
 }
 
 export function resetRuntimeObservability(): void {
+  resetTrackedMySqlPools();
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
   runtimeObservability.errorEvents.length = 0;
@@ -1566,6 +1740,7 @@ export function resetRuntimeObservability(): void {
   resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
   resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
   runtimeObservability.prometheus.actionValidationFailuresTotal.clear();
+  runtimeObservability.prometheus.runtimeErrorEventsTotal.clear();
   runtimeObservability.auth.counters.sessionChecksTotal = 0;
   runtimeObservability.auth.counters.sessionFailuresTotal = 0;
   runtimeObservability.auth.counters.guestLoginsTotal = 0;
@@ -1575,6 +1750,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.refreshesTotal = 0;
   runtimeObservability.auth.counters.logoutsTotal = 0;
   runtimeObservability.auth.counters.rateLimitedTotal = 0;
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal = 0;
   runtimeObservability.auth.counters.invalidCredentialsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryRequestsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliverySuccessesTotal = 0;
@@ -1584,6 +1760,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = 0;
   runtimeObservability.auth.pendingRegistrationCount = 0;
   runtimeObservability.auth.pendingRecoveryCount = 0;
   runtimeObservability.auth.sessionFailureReasons.unauthorized = 0;
@@ -1709,6 +1886,14 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/account-token-delivery", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/feature-flags", async (_request, response) => {
+    try {
+      sendJson(response, 200, buildFeatureFlagObservabilityPayload(serviceName));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

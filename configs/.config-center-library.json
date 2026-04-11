@@ -1,0 +1,172 @@
+{
+  "filesystemVersions": {},
+  "filesystemExports": {},
+  "snapshots": {
+    "world": [
+      {
+        "id": "snapshot-mnsqv9h6-w37cjv",
+        "label": "世界配置 v1（发布前回滚点）",
+        "createdAt": "2026-04-10T10:09:45.390Z",
+        "version": 1,
+        "content": "{\n  \"width\": 8,\n  \"height\": 8,\n  \"heroes\": [\n    {\n      \"id\": \"hero-1\",\n      \"playerId\": \"player-1\",\n      \"name\": \"凯琳\",\n      \"position\": {\n        \"x\": 1,\n        \"y\": 1\n      },\n      \"vision\": 2,\n      \"move\": {\n        \"total\": 6,\n        \"remaining\": 6\n      },\n      \"stats\": {\n        \"attack\": 2,\n        \"defense\": 2,\n        \"power\": 1,\n        \"knowledge\": 1,\n        \"hp\": 30,\n        \"maxHp\": 30\n      },\n      \"progression\": {\n        \"level\": 1,\n        \"experience\": 0,\n        \"battlesWon\": 0,\n        \"neutralBattlesWon\": 0,\n        \"pvpBattlesWon\": 0\n      },\n      \"loadout\": {\n        \"inventory\": [\n          \"militia_pike\",\n          \"vanguard_blade\",\n          \"padded_gambeson\",\n          \"scout_compass\"\n        ]\n      },\n      \"armyTemplateId\": \"hero_guard_basic\",\n      \"armyCount\": 12\n    },\n    {\n      \"id\": \"hero-2\",\n      \"playerId\": \"player-2\",\n      \"name\": \"罗安\",\n      \"position\": {\n        \"x\": 6,\n        \"y\": 6\n      },\n      \"vision\": 2,\n      \"move\": {\n        \"total\": 6,\n        \"remaining\": 6\n      },\n      \"stats\": {\n        \"attack\": 2,\n        \"defense\": 2,\n        \"power\": 1,\n        \"knowledge\": 1,\n        \"hp\": 30,\n        \"maxHp\": 30\n      },\n      \"progression\": {\n        \"level\": 1,\n        \"experience\": 0,\n        \"battlesWon\": 0,\n        \"neutralBattlesWon\": 0,\n        \"pvpBattlesWon\": 0\n      },\n      \"loadout\": {\n        \"inventory\": [\n          \"oak_longbow\",\n          \"tower_shield_mail\",\n          \"scribe_charm\",\n          \"captains_insignia\"\n        ]\n      },\n      \"armyTemplateId\": \"hero_guard_basic\",\n      \"armyCount\": 10\n    }\n  ],\n  \"resourceSpawn\": {\n    \"goldChance\": 0.06,\n    \"woodChance\": 0.06,\n    \"oreChance\": 0.06\n  }\n}\n"
+      }
+    ],
+    "mapObjects": [
+      {
+        "id": "snapshot-mnsqv9h7-4d1z8i",
+        "label": "地图物件 v1（发布前回滚点）",
+        "createdAt": "2026-04-10T10:09:45.390Z",
+        "version": 1,
+        "content": "{\n  \"neutralArmies\": [\n    {\n      \"id\": \"neutral-1\",\n      \"position\": {\n        \"x\": 5,\n        \"y\": 4\n      },\n      \"reward\": {\n        \"kind\": \"gold\",\n        \"amount\": 300\n      },\n      \"stacks\": [\n        {\n          \"templateId\": \"wolf_pack\",\n          \"count\": 8\n        }\n      ],\n      \"behavior\": {\n        \"mode\": \"patrol\",\n        \"patrolRadius\": 4,\n        \"detectionRadius\": 5,\n        \"chaseDistance\": 10,\n        \"speed\": 2\n      }\n    }\n  ],\n  \"guaranteedResources\": [\n    {\n      \"position\": {\n        \"x\": 2,\n        \"y\": 1\n      },\n      \"resource\": {\n        \"kind\": \"wood\",\n        \"amount\": 5\n      }\n    }\n  ],\n  \"buildings\": [\n    {\n      \"id\": \"recruit-post-1\",\n      \"kind\": \"recruitment_post\",\n      \"position\": {\n        \"x\": 1,\n        \"y\": 3\n      },\n      \"label\": \"前线招募所\",\n      \"unitTemplateId\": \"hero_guard_basic\",\n      \"recruitCount\": 4,\n      \"cost\": {\n        \"gold\": 240,\n        \"wood\": 0,\n        \"ore\": 0\n      },\n      \"maxTier\": 3\n    },\n    {\n      \"id\": \"shrine-attack-1\",\n      \"kind\": \"attribute_shrine\",\n      \"position\": {\n        \"x\": 3,\n        \"y\": 2\n      },\n      \"label\": \"战旗圣坛\",\n      \"bonus\": {\n        \"attack\": 2,\n        \"defense\": 0,\n        \"power\": 0,\n        \"knowledge\": 0\n      }\n    },\n    {\n      \"id\": \"mine-wood-1\",\n      \"kind\": \"resource_mine\",\n      \"position\": {\n        \"x\": 3,\n        \"y\": 1\n      },\n      \"label\": \"前线伐木场\",\n      \"resourceKind\": \"wood\",\n      \"income\": 5,\n      \"maxTier\": 2\n    }\n  ]\n}\n"
+      }
+    ],
+    "units": [
+      {
+        "id": "snapshot-mnsqv9h9-cwxrje",
+        "label": "兵种配置 v1（发布前回滚点）",
+        "createdAt": "2026-04-10T10:09:45.390Z",
+        "version": 1,
+        "content": "{\n  \"templates\": [\n    {\n      \"id\": \"hero_guard_basic\",\n      \"stackName\": \"凯琳卫队\",\n      \"faction\": \"crown\",\n      \"rarity\": \"common\",\n      \"initiative\": 9,\n      \"attack\": 4,\n      \"defense\": 4,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"maxHp\": 10,\n      \"battleSkills\": [\n        \"power_shot\",\n        \"armor_spell\",\n        \"battle_focus\",\n        \"sundering_spear\"\n      ]\n    },\n    {\n      \"id\": \"crown_heavy_cavalry\",\n      \"stackName\": \"皇家重骑\",\n      \"faction\": \"crown\",\n      \"rarity\": \"elite\",\n      \"initiative\": 6,\n      \"attack\": 7,\n      \"defense\": 6,\n      \"minDamage\": 3,\n      \"maxDamage\": 6,\n      \"maxHp\": 16,\n      \"battleSkills\": [\n        \"royal_charge\",\n        \"guardian_oath\"\n      ]\n    },\n    {\n      \"id\": \"crown_field_chaplain\",\n      \"stackName\": \"战场牧师\",\n      \"faction\": \"crown\",\n      \"rarity\": \"common\",\n      \"initiative\": 8,\n      \"attack\": 3,\n      \"defense\": 4,\n      \"minDamage\": 1,\n      \"maxDamage\": 3,\n      \"maxHp\": 11,\n      \"battleSkills\": [\n        \"field_mending\",\n        \"rally_morale\"\n      ]\n    },\n    {\n      \"id\": \"crown_crossbowman\",\n      \"stackName\": \"十字弩手\",\n      \"faction\": \"crown\",\n      \"rarity\": \"common\",\n      \"initiative\": 8,\n      \"attack\": 6,\n      \"defense\": 3,\n      \"minDamage\": 3,\n      \"maxDamage\": 5,\n      \"attackRange\": 2,\n      \"maxHp\": 8,\n      \"battleSkills\": [\n        \"power_shot\",\n        \"sundering_spear\"\n      ]\n    },\n    {\n      \"id\": \"crown_light_outrider\",\n      \"stackName\": \"轻骑斥候\",\n      \"faction\": \"crown\",\n      \"rarity\": \"common\",\n      \"initiative\": 12,\n      \"attack\": 4,\n      \"defense\": 3,\n      \"minDamage\": 1,\n      \"maxDamage\": 2,\n      \"maxHp\": 8,\n      \"battleSkills\": [\n        \"pinning_javelin\",\n        \"battle_focus\"\n      ]\n    },\n    {\n      \"id\": \"wolf_pack\",\n      \"stackName\": \"恶狼\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 10,\n      \"attack\": 6,\n      \"defense\": 4,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"maxHp\": 8,\n      \"battleSkills\": [\n        \"venomous_fangs\",\n        \"crippling_howl\"\n      ]\n    },\n    {\n      \"id\": \"moss_stalker\",\n      \"stackName\": \"苔痕潜猎者\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 11,\n      \"attack\": 5,\n      \"defense\": 3,\n      \"minDamage\": 2,\n      \"maxDamage\": 5,\n      \"maxHp\": 7,\n      \"battleSkills\": [\n        \"ambush_pounce\",\n        \"bog_veil\"\n      ]\n    },\n    {\n      \"id\": \"iron_walker\",\n      \"stackName\": \"铁卫行者\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 7,\n      \"attack\": 6,\n      \"defense\": 7,\n      \"minDamage\": 3,\n      \"maxDamage\": 5,\n      \"maxHp\": 14,\n      \"battleSkills\": [\n        \"shield_bash\",\n        \"watcher_stance\"\n      ]\n    },\n    {\n      \"id\": \"wild_cave_bear\",\n      \"stackName\": \"洞穴巨熊\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 6,\n      \"attack\": 7,\n      \"defense\": 5,\n      \"minDamage\": 3,\n      \"maxDamage\": 6,\n      \"maxHp\": 18,\n      \"battleSkills\": [\n        \"cave_bear_cleave\"\n      ]\n    },\n    {\n      \"id\": \"wild_serpent\",\n      \"stackName\": \"毒蛇猎手\",\n      \"faction\": \"wild\",\n      \"rarity\": \"common\",\n      \"initiative\": 14,\n      \"attack\": 6,\n      \"defense\": 2,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"maxHp\": 6,\n      \"battleSkills\": [\n        \"serpent_venom\"\n      ]\n    },\n    {\n      \"id\": \"wild_hawk_rider\",\n      \"stackName\": \"鹰击骑兵\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 13,\n      \"attack\": 5,\n      \"defense\": 4,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"maxHp\": 9,\n      \"battleSkills\": [\n        \"skybound\",\n        \"pinning_javelin\"\n      ]\n    },\n    {\n      \"id\": \"wild_cave_troll\",\n      \"stackName\": \"洞穴巨魔\",\n      \"faction\": \"wild\",\n      \"rarity\": \"elite\",\n      \"initiative\": 5,\n      \"attack\": 5,\n      \"defense\": 8,\n      \"minDamage\": 3,\n      \"maxDamage\": 5,\n      \"maxHp\": 20,\n      \"battleSkills\": [\n        \"taunt_shout\",\n        \"watcher_stance\"\n      ]\n    },\n    {\n      \"id\": \"shadow_skeleton\",\n      \"stackName\": \"枯骨兵\",\n      \"faction\": \"shadow\",\n      \"rarity\": \"common\",\n      \"initiative\": 8,\n      \"attack\": 4,\n      \"defense\": 3,\n      \"minDamage\": 2,\n      \"maxDamage\": 3,\n      \"maxHp\": 9,\n      \"battleSkills\": [\n        \"death_resilience\"\n      ]\n    },\n    {\n      \"id\": \"shadow_wraith\",\n      \"stackName\": \"幽灵游侠\",\n      \"faction\": \"shadow\",\n      \"rarity\": \"common\",\n      \"initiative\": 11,\n      \"attack\": 5,\n      \"defense\": 3,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"attackRange\": 2,\n      \"maxHp\": 7,\n      \"battleSkills\": [\n        \"power_shot\",\n        \"armor_pierce\"\n      ]\n    },\n    {\n      \"id\": \"shadow_hexer\",\n      \"stackName\": \"尸巫\",\n      \"faction\": \"shadow\",\n      \"rarity\": \"elite\",\n      \"initiative\": 7,\n      \"attack\": 4,\n      \"defense\": 4,\n      \"minDamage\": 2,\n      \"maxDamage\": 4,\n      \"maxHp\": 10,\n      \"battleSkills\": [\n        \"grave_silence\",\n        \"crippling_howl\"\n      ]\n    },\n    {\n      \"id\": \"shadow_death_knight\",\n      \"stackName\": \"影魔骑士\",\n      \"faction\": \"shadow\",\n      \"rarity\": \"elite\",\n      \"initiative\": 9,\n      \"attack\": 8,\n      \"defense\": 6,\n      \"minDamage\": 4,\n      \"maxDamage\": 7,\n      \"maxHp\": 17,\n      \"battleSkills\": [\n        \"battle_focus\",\n        \"life_drain\"\n      ]\n    }\n  ]\n}\n"
+      }
+    ],
+    "battleBalance": [
+      {
+        "id": "snapshot-mnsqv9hb-gqfl16",
+        "label": "战斗平衡 v1（发布前回滚点）",
+        "createdAt": "2026-04-10T10:09:45.390Z",
+        "version": 1,
+        "content": "{\n  \"damage\": {\n    \"defendingDefenseBonus\": 5,\n    \"offenseAdvantageStep\": 0.05,\n    \"minimumOffenseMultiplier\": 0.3,\n    \"varianceBase\": 0.9,\n    \"varianceRange\": 0.2\n  },\n  \"environment\": {\n    \"blockerSpawnThreshold\": 0.62,\n    \"blockerDurability\": 1,\n    \"trapSpawnThreshold\": 0.58,\n    \"trapDamage\": 1,\n    \"trapCharges\": 1,\n    \"trapGrantedStatusId\": \"weakened\"\n  },\n  \"turnTimerSeconds\": 90,\n  \"afkStrikesBeforeForfeit\": 2,\n  \"pvp\": {\n    \"eloK\": 32\n  }\n}\n"
+      }
+    ]
+  },
+  "presets": {},
+  "stagedDraft": null,
+  "publishHistory": {
+    "world": [
+      {
+        "id": "publish-mnsqv9gu-nmjr5m",
+        "documentId": "world",
+        "author": "codex",
+        "summary": "Align valid config-center documents with issue #1175 candidate evidence for HEAD revision.",
+        "candidate": "issue-1175-cocos-rc",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "publishedAt": "2026-04-10T10:09:45.390Z",
+        "fromVersion": 1,
+        "toVersion": 1,
+        "changeCount": 0,
+        "structuralChangeCount": 0
+      }
+    ],
+    "mapObjects": [
+      {
+        "id": "publish-mnsqv9gu-nmjr5m",
+        "documentId": "mapObjects",
+        "author": "codex",
+        "summary": "Align valid config-center documents with issue #1175 candidate evidence for HEAD revision.",
+        "candidate": "issue-1175-cocos-rc",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "publishedAt": "2026-04-10T10:09:45.390Z",
+        "fromVersion": 1,
+        "toVersion": 1,
+        "changeCount": 0,
+        "structuralChangeCount": 0
+      }
+    ],
+    "units": [
+      {
+        "id": "publish-mnsqv9gu-nmjr5m",
+        "documentId": "units",
+        "author": "codex",
+        "summary": "Align valid config-center documents with issue #1175 candidate evidence for HEAD revision.",
+        "candidate": "issue-1175-cocos-rc",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "publishedAt": "2026-04-10T10:09:45.390Z",
+        "fromVersion": 1,
+        "toVersion": 1,
+        "changeCount": 0,
+        "structuralChangeCount": 0
+      }
+    ],
+    "battleBalance": [
+      {
+        "id": "publish-mnsqv9gu-nmjr5m",
+        "documentId": "battleBalance",
+        "author": "codex",
+        "summary": "Align valid config-center documents with issue #1175 candidate evidence for HEAD revision.",
+        "candidate": "issue-1175-cocos-rc",
+        "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+        "publishedAt": "2026-04-10T10:09:45.390Z",
+        "fromVersion": 1,
+        "toVersion": 1,
+        "changeCount": 0,
+        "structuralChangeCount": 0
+      }
+    ]
+  },
+  "publishAuditHistory": [
+    {
+      "id": "publish-mnsqv9gu-nmjr5m",
+      "author": "codex",
+      "summary": "Align valid config-center documents with issue #1175 candidate evidence for HEAD revision.",
+      "candidate": "issue-1175-cocos-rc",
+      "revision": "d96e22a047cbcce902ff9c536565fdfee3fd8878",
+      "publishedAt": "2026-04-10T10:09:45.390Z",
+      "resultStatus": "applied",
+      "resultMessage": "运行时配置已刷新",
+      "changes": [
+        {
+          "documentId": "world",
+          "title": "世界配置",
+          "fromVersion": 1,
+          "toVersion": 1,
+          "changeCount": 0,
+          "structuralChangeCount": 0,
+          "snapshotId": "snapshot-mnsqv9h6-w37cjv",
+          "runtimeStatus": "applied",
+          "runtimeMessage": "运行时已刷新",
+          "diffSummary": [],
+          "impactSummary": null
+        },
+        {
+          "documentId": "mapObjects",
+          "title": "地图物件",
+          "fromVersion": 1,
+          "toVersion": 1,
+          "changeCount": 0,
+          "structuralChangeCount": 0,
+          "snapshotId": "snapshot-mnsqv9h7-4d1z8i",
+          "runtimeStatus": "applied",
+          "runtimeMessage": "运行时已刷新",
+          "diffSummary": [],
+          "impactSummary": null
+        },
+        {
+          "documentId": "units",
+          "title": "兵种配置",
+          "fromVersion": 1,
+          "toVersion": 1,
+          "changeCount": 0,
+          "structuralChangeCount": 0,
+          "snapshotId": "snapshot-mnsqv9h9-cwxrje",
+          "runtimeStatus": "applied",
+          "runtimeMessage": "运行时已刷新",
+          "diffSummary": [],
+          "impactSummary": null
+        },
+        {
+          "documentId": "battleBalance",
+          "title": "战斗平衡",
+          "fromVersion": 1,
+          "toVersion": 1,
+          "changeCount": 0,
+          "structuralChangeCount": 0,
+          "snapshotId": "snapshot-mnsqv9hb-gqfl16",
+          "runtimeStatus": "applied",
+          "runtimeMessage": "运行时已刷新",
+          "diffSummary": [],
+          "impactSummary": null
+        }
+      ]
+    }
+  ]
+}

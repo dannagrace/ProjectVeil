@@ -149,12 +149,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
   },
   "release:phase1:candidate-rehearsal": {
     purpose:
-      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, and final go/no-go packet, into one release-readiness bundle directory.",
+      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, and the final go/no-go packet, into one release-readiness bundle directory.",
     requiredInputs: [
       "Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.",
     ],
     producedArtifacts: [
-      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, final go/no-go packet, and a top-level `SUMMARY.md`.",
+      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and a top-level `SUMMARY.md`.",
     ],
   },
   "release:phase1:evidence-drift-gate": {
@@ -269,9 +269,10 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
   },
   "release:readiness:snapshot": {
-    purpose: "Capture the branch-level release-readiness snapshot that records required checks and manual evidence status.",
+    purpose:
+      "Capture the branch-level release-readiness snapshot that records required checks and manual evidence status, including the blocking map-object visual coverage validation.",
     requiredInputs: [
-      "Current revision plus any prerequisite automated/manual evidence; optional `--output` for a stable filename.",
+      "Current revision plus any prerequisite automated/manual evidence; by default the automated gate now runs `npm run validate:map-object-visuals` alongside the existing regression/build checks. Optional `--output` pins a stable filename.",
     ],
     producedArtifacts: [
       "`artifacts/release-readiness/release-readiness-<timestamp>.json`",
@@ -417,12 +418,13 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
   },
   "validate:map-object-visuals": {
-    purpose: "Cross-check the 13 shipped Phase 1 map-object packs against `configs/object-visuals.json` coverage entries.",
+    purpose:
+      "Cross-check the shipped Phase 1 and Phase 2 map-object packs against `configs/object-visuals.json` coverage entries and fail when a referenced visual key is missing.",
     requiredInputs: [
-      "Phase 1 map-object config files plus `configs/object-visuals.json`; optional `--root-dir`, `--object-visuals`, and `--report-path`.",
+      "Shipped Phase 1/Phase 2 map-object config files plus `configs/object-visuals.json`; optional `--root-dir`, `--object-visuals`, and `--report-path`.",
     ],
     producedArtifacts: [
-      "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step with warnings printed to stdout.",
+      "Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only blocking validation step with warnings printed to stdout.",
     ],
   },
   "validate:content-pack:all": {

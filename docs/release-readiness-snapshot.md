@@ -14,6 +14,7 @@ The default automated checks are:
 - `npm run typecheck:ci`
 - `npm run test:e2e:smoke`
 - `npm run test:e2e:multiplayer:smoke`
+- `npm run validate:map-object-visuals`
 - `npm run test:phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json`
 - `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
 - `npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
@@ -23,6 +24,8 @@ The Phase 1 persistence regression intentionally keeps config/content validation
 
 - it validates the shipped default `phase1` pack, all 12 additional Phase 1 presets, and both `phase2` validation presets
 - it exercises persistence-backed player/account/world carryover with representative resources, hero growth, replay history, and event history
+
+`npm run validate:map-object-visuals` now runs inside the default snapshot gate before downstream release aggregation. Treat any `FAIL` result as a release blocker: it means at least one shipped map object points at missing or mismatched visual coverage in `configs/object-visuals.json`, so a content/config update would otherwise ship with broken object presentation.
 
 For candidate review of the additional Phase 1 packs:
 
@@ -223,6 +226,12 @@ Sample output:
       "kind": "automated",
       "status": "passed",
       "command": "npm run smoke:cocos:canonical-journey"
+    },
+    {
+      "id": "map-object-visuals",
+      "kind": "automated",
+      "status": "passed",
+      "command": "npm run validate:map-object-visuals"
     },
     {
       "id": "wechat-device-smoke",

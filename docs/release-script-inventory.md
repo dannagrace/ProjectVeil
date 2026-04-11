@@ -29,7 +29,7 @@ Relevant scripts: 49
 | `release:health:trend-baseline` | release | `artifacts/release-readiness/release-health-trend-baseline.json` |
 | `release:health:trend-compare` | release | `artifacts/release-readiness/release-health-trend-compare.json` |
 | `release:phase1:candidate-dossier` | release | Bundle directory `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/` with `phase1-candidate-dossier.json/.md`, `runtime-observability-dossier.json/.md`, `release-gate-summary.json/.md`, and `release-health-summary.json/.md`. |
-| `release:phase1:candidate-rehearsal` | release | Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, final go/no-go packet, and a top-level `SUMMARY.md`. |
+| `release:phase1:candidate-rehearsal` | release | Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and a top-level `SUMMARY.md`. |
 | `release:phase1:evidence-drift-gate` | release | `artifacts/release-readiness/phase1-release-evidence-drift-gate-<candidate>-<short-sha>.json` |
 | `release:phase1:exit-audit` | release | `artifacts/release-readiness/phase1-exit-audit-<candidate>-<short-sha>.json` |
 | `release:phase1:exit-dossier-freshness-gate` | release | `artifacts/release-readiness/phase1-exit-dossier-freshness-gate-<candidate>-<short-sha>.json` |
@@ -57,7 +57,7 @@ Relevant scripts: 49
 | `validate:content-pack:all` | validate | Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step. |
 | `validate:content-smoke` | validate | No tracked artifact; exits non-zero when the content smoke gate detects missing or invalid shipped content. |
 | `validate:e2e:fixtures` | validate | No tracked artifact; exits non-zero when fixture metadata drifts. |
-| `validate:map-object-visuals` | validate | Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step with warnings printed to stdout. |
+| `validate:map-object-visuals` | validate | Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only blocking validation step with warnings printed to stdout. |
 | `validate:quickstart` | validate | No tracked artifact; this is a workflow gate driven by exit status and console output. |
 | `validate:quickstart:contract` | validate | `artifacts/release-readiness/contributor-quickstart-contract-<short-sha>.json` |
 | `validate:redis-scaling` | validate | No tracked artifact; exits non-zero if the scaling validation fails. |
@@ -232,11 +232,11 @@ Relevant scripts: 49
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/phase1-candidate-rehearsal.ts`
-- Purpose: Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, and final go/no-go packet, into one release-readiness bundle directory.
+- Purpose: Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, and the final go/no-go packet, into one release-readiness bundle directory.
 - Required inputs:
   - Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.
 - Produced artifacts:
-  - Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the candidate evidence audit, current evidence index, Phase 1 exit audit, exit-dossier freshness gate, final go/no-go packet, and a top-level `SUMMARY.md`.
+  - Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and a top-level `SUMMARY.md`.
 
 ## `release:phase1:evidence-drift-gate`
 
@@ -306,9 +306,9 @@ Relevant scripts: 49
 
 - Family: `release`
 - Command: `node --import tsx ./scripts/release-readiness-snapshot.ts`
-- Purpose: Capture the branch-level release-readiness snapshot that records required checks and manual evidence status.
+- Purpose: Capture the branch-level release-readiness snapshot that records required checks and manual evidence status, including the blocking map-object visual coverage validation.
 - Required inputs:
-  - Current revision plus any prerequisite automated/manual evidence; optional `--output` for a stable filename.
+  - Current revision plus any prerequisite automated/manual evidence; by default the automated gate now runs `npm run validate:map-object-visuals` alongside the existing regression/build checks. Optional `--output` pins a stable filename.
 - Produced artifacts:
   - `artifacts/release-readiness/release-readiness-<timestamp>.json`
 
@@ -526,11 +526,11 @@ Relevant scripts: 49
 
 - Family: `validate`
 - Command: `node --import tsx ./scripts/validate-map-object-visuals.ts`
-- Purpose: Cross-check the 13 shipped Phase 1 map-object packs against `configs/object-visuals.json` coverage entries.
+- Purpose: Cross-check the shipped Phase 1 and Phase 2 map-object packs against `configs/object-visuals.json` coverage entries and fail when a referenced visual key is missing.
 - Required inputs:
-  - Phase 1 map-object config files plus `configs/object-visuals.json`; optional `--root-dir`, `--object-visuals`, and `--report-path`.
+  - Shipped Phase 1/Phase 2 map-object config files plus `configs/object-visuals.json`; optional `--root-dir`, `--object-visuals`, and `--report-path`.
 - Produced artifacts:
-  - Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only validation step with warnings printed to stdout.
+  - Optional JSON report at the requested `--report-path`; otherwise this is an exit-code-only blocking validation step with warnings printed to stdout.
 
 ## `validate:quickstart`
 
