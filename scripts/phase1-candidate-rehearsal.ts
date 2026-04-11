@@ -97,6 +97,8 @@ interface RehearsalArtifacts {
   releaseReadinessDashboardMarkdownPath?: string;
   candidateEvidenceAuditPath?: string;
   candidateEvidenceAuditMarkdownPath?: string;
+  candidateEvidenceFreshnessGuardPath?: string;
+  candidateEvidenceFreshnessGuardMarkdownPath?: string;
   candidateEvidenceOwnerReminderPath?: string;
   candidateEvidenceOwnerReminderMarkdownPath?: string;
   candidateEvidenceFreshnessHistoryPath?: string;
@@ -512,6 +514,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
+  if (report.artifacts.candidateEvidenceFreshnessGuardPath) {
+    lines.push(`- Candidate freshness guard: \`${report.artifacts.candidateEvidenceFreshnessGuardPath}\``);
+  }
   if (report.artifacts.candidateEvidenceOwnerReminderPath) {
     lines.push(`- Candidate owner reminder: \`${report.artifacts.candidateEvidenceOwnerReminderPath}\``);
   }
@@ -610,6 +615,14 @@ async function main(): Promise<void> {
   const manualEvidenceLedgerPath = path.join(outputDir, `manual-release-evidence-owner-ledger-${candidateSlug}-${revision.shortCommit}.md`);
   const candidateEvidenceAuditPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.json`);
   const candidateEvidenceAuditMarkdownPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const candidateEvidenceFreshnessGuardPath = path.join(
+    outputDir,
+    `candidate-evidence-freshness-guard-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateEvidenceFreshnessGuardMarkdownPath = path.join(
+    outputDir,
+    `candidate-evidence-freshness-guard-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const candidateEvidenceOwnerReminderPath = path.join(
     outputDir,
     `candidate-evidence-owner-reminder-report-${candidateSlug}-${revision.shortCommit}.json`
@@ -661,6 +674,8 @@ async function main(): Promise<void> {
   artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
   artifacts.candidateEvidenceAuditPath = toRelative(candidateEvidenceAuditPath);
   artifacts.candidateEvidenceAuditMarkdownPath = toRelative(candidateEvidenceAuditMarkdownPath);
+  artifacts.candidateEvidenceFreshnessGuardPath = toRelative(candidateEvidenceFreshnessGuardPath);
+  artifacts.candidateEvidenceFreshnessGuardMarkdownPath = toRelative(candidateEvidenceFreshnessGuardMarkdownPath);
   artifacts.candidateEvidenceOwnerReminderPath = toRelative(candidateEvidenceOwnerReminderPath);
   artifacts.candidateEvidenceOwnerReminderMarkdownPath = toRelative(candidateEvidenceOwnerReminderMarkdownPath);
   artifacts.candidateEvidenceFreshnessHistoryPath = toRelative(candidateEvidenceFreshnessHistoryPath);
@@ -676,6 +691,25 @@ async function main(): Promise<void> {
   artifacts.goNoGoPacketMarkdownPath = toRelative(goNoGoPacketMarkdownPath);
   artifacts.summaryPath = toRelative(summaryPath);
   artifacts.markdownPath = toRelative(markdownPath);
+
+  const buildCandidateEvidenceReport = () =>
+    buildSameCandidateEvidenceAuditReport({
+      candidate: args.candidate,
+      candidateRevision: revision.commit,
+      targetSurface: args.targetSurface,
+      snapshotPath: releaseReadinessSnapshotPath,
+      releaseGateSummaryPath,
+      cocosRcBundlePath:
+        findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json"),
+      ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
+      ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
+      manualEvidenceLedgerPath,
+      ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
+      ...(artifacts.wechatCandidateSummaryPath
+        ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
+        : {}),
+      maxAgeHours: 72
+    });
 
   const stageDefinitions: StageDefinition[] = [
     {
@@ -1080,25 +1114,7 @@ async function main(): Promise<void> {
           };
         }
 
-        const report = buildSameCandidateEvidenceAuditReport({
-          candidate: args.candidate,
-          candidateRevision: revision.commit,
-          targetSurface: args.targetSurface,
-          snapshotPath: releaseReadinessSnapshotPath,
-          releaseGateSummaryPath,
-          cocosRcBundlePath:
-            findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json"),
-          ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
-          ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
-          manualEvidenceLedgerPath,
-          ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
-          ...(artifacts.wechatCandidateSummaryPath
-            ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
-            : {}),
-          outputPath: candidateEvidenceAuditPath,
-          markdownOutputPath: candidateEvidenceAuditMarkdownPath,
-          maxAgeHours: 72
-        });
+        const report = buildCandidateEvidenceReport();
 
         writeJsonFile(candidateEvidenceAuditPath, report);
         writeFile(candidateEvidenceAuditMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
@@ -1119,6 +1135,33 @@ async function main(): Promise<void> {
             candidateEvidenceOwnerReminderMarkdownPath,
             candidateEvidenceFreshnessHistoryPath
           ].map(toRelative)
+        };
+      }
+    },
+    {
+      id: "candidate-evidence-freshness-guard",
+      title: "Build candidate evidence freshness guard",
+      run: () => {
+        if (!fs.existsSync(candidateEvidenceAuditPath)) {
+          return {
+            id: "candidate-evidence-freshness-guard",
+            title: "Build candidate evidence freshness guard",
+            status: "failed",
+            summary: "Candidate evidence audit must exist before the dedicated freshness guard can be staged.",
+            outputs: [candidateEvidenceFreshnessGuardPath, candidateEvidenceFreshnessGuardMarkdownPath].map(toRelative)
+          };
+        }
+
+        const report = buildCandidateEvidenceReport();
+        writeJsonFile(candidateEvidenceFreshnessGuardPath, report);
+        writeFile(candidateEvidenceFreshnessGuardMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
+
+        return {
+          id: "candidate-evidence-freshness-guard",
+          title: "Build candidate evidence freshness guard",
+          status: "passed",
+          summary: `Freshness guard verdict ${report.summary.status}; reviewer gate artifact generated successfully.`,
+          outputs: [candidateEvidenceFreshnessGuardPath, candidateEvidenceFreshnessGuardMarkdownPath].map(toRelative)
         };
       }
     },
@@ -1348,6 +1391,8 @@ async function main(): Promise<void> {
     phase1ReleaseEvidenceDriftGateMarkdownPath,
     candidateEvidenceAuditPath,
     candidateEvidenceAuditMarkdownPath,
+    candidateEvidenceFreshnessGuardPath,
+    candidateEvidenceFreshnessGuardMarkdownPath,
     candidateEvidenceOwnerReminderPath,
     candidateEvidenceOwnerReminderMarkdownPath,
     candidateEvidenceFreshnessHistoryPath,

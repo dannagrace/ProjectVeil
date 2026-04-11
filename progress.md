@@ -1720,3 +1720,25 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:ops` 通过
   - `npm run docs:release-script-inventory` 通过
   - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`4/4`）
+
+## Issue #1245 - Phase 1 rehearsal freshness guard - 2026-04-11
+
+- 本轮把 `release:phase1:candidate-rehearsal` 的 authoritative same-candidate gate 也收进了同一个 reviewer packet：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `candidate-evidence-freshness-guard` 阶段
+    - rehearsal artifacts 现在会显式登记：
+      - `candidateEvidenceFreshnessGuardPath`
+      - `candidateEvidenceFreshnessGuardMarkdownPath`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出 candidate freshness guard
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal reviewer front door 现在包含 candidate freshness guard
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 dedicated freshness guard
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 freshness guard 阶段、artifact path 与 summary 呈现
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `npm run docs:release-script-inventory` 通过
+  - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`4/4`）
