@@ -578,6 +578,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseReadinessDashboardPath) {
     lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
   }
+  if (report.artifacts.sameRevisionEvidenceBundleManifestPath) {
+    lines.push(`- Same-revision evidence bundle manifest: \`${report.artifacts.sameRevisionEvidenceBundleManifestPath}\``);
+  }
   if (report.artifacts.phase1ReleaseEvidenceDriftGatePath) {
     lines.push(`- Phase 1 release evidence drift gate: \`${report.artifacts.phase1ReleaseEvidenceDriftGatePath}\``);
   }

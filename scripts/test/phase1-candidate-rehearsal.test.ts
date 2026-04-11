@@ -229,6 +229,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Candidate owner reminder:/);
   assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
+  assert.match(markdown, /Same-revision evidence bundle manifest:/);
   assert.match(markdown, /Phase 1 release evidence drift gate:/);
   assert.match(markdown, /Phase 1 exit audit:/);
   assert.match(markdown, /Phase 1 exit dossier freshness gate:/);
@@ -255,6 +256,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /releaseEvidenceIndexPath:/);
   assert.match(markdown, /releaseGateSummaryPath:/);
   assert.match(markdown, /releaseHealthSummaryPath:/);
+  assert.match(markdown, /sameRevisionEvidenceBundleManifestPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
