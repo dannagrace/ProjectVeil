@@ -578,6 +578,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.phase1ExitAuditPath) {
     lines.push(`- Phase 1 exit audit: \`${report.artifacts.phase1ExitAuditPath}\``);
   }
+  if (report.artifacts.phase1ExitDossierFreshnessGatePath) {
+    lines.push(`- Phase 1 exit dossier freshness gate: \`${report.artifacts.phase1ExitDossierFreshnessGatePath}\``);
+  }
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }
