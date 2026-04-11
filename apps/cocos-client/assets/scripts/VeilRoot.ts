@@ -177,6 +177,11 @@ import {
   type CocosBattlePresentationState
 } from "./cocos-battle-presentation-controller.ts";
 import { createCocosAudioRuntime } from "./cocos-audio-runtime.ts";
+import {
+  setAssetLoadFailureReporter,
+  subscribeAssetLoadFailures,
+  type AssetLoadFailureEvent
+} from "./cocos-asset-load-resilience.ts";
 import { createCocosAudioAssetBridge } from "./cocos-audio-resources.ts";
 import {
   applySettingsUpdate,
@@ -489,6 +494,7 @@ export class VeilRoot extends Component {
   private emittedExperimentExposureKeys = new Set<string>();
   private emittedShopOpenSessionId: string | null = null;
   private stopRuntimeMemoryWarnings: (() => void) | null = null;
+  private stopAssetLoadFailureSubscription: (() => void) | null = null;
   private battlePresentation = createCocosBattlePresentationController();
   private lastBattleSettlementSnapshot: BattleSettlementSnapshot | null = null;
   private reportDialogOpen = false;
@@ -499,9 +505,17 @@ export class VeilRoot extends Component {
   private surrenderStatusMessage: string | null = null;
   private launchReferrerId: string | null = null;
   private lastReferralClaimKey: string | null = null;
+  private lastAssetFailureNoticeKey: string | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
+    this.stopAssetLoadFailureSubscription?.();
+    setAssetLoadFailureReporter((event) => {
+      this.trackAssetLoadFailureAnalytics(event);
+    });
+    this.stopAssetLoadFailureSubscription = subscribeAssetLoadFailures((event) => {
+      this.handleAssetLoadFailure(event);
+    });
     this.audioRuntime = createCocosAudioRuntime(cocosPresentationConfig.audio, {
       assetBridge: createCocosAudioAssetBridge(this.node),
       onStateChange: () => {
@@ -538,6 +552,9 @@ export class VeilRoot extends Component {
     this.unscheduleAllCallbacks();
     this.stopMatchmakingPolling();
     this.audioRuntime.dispose();
+    this.stopAssetLoadFailureSubscription?.();
+    this.stopAssetLoadFailureSubscription = null;
+    setAssetLoadFailureReporter(null);
     this.stopRuntimeMemoryWarnings?.();
     this.stopRuntimeMemoryWarnings = null;
     if (this.hudActionBinding) {
@@ -3468,12 +3485,45 @@ export class VeilRoot extends Component {
     | "experiment_exposure"
     | "shop_open"
     | "purchase_initiated"
+    | "asset_load_failed"
   >(
     name: Name,
     payload: Record<string, unknown>,
     roomId = this.roomId
   ): void {
     emitClientAnalyticsEvent(name, this.createClientAnalyticsContext(roomId), payload as never);
+  }
+
+  private trackAssetLoadFailureAnalytics(event: AssetLoadFailureEvent): void {
+    this.trackClientAnalyticsEvent("asset_load_failed", {
+      assetType: event.assetType,
+      assetPath: event.assetPath,
+      retryCount: event.retryCount,
+      critical: event.critical,
+      finalFailure: event.finalFailure,
+      errorMessage: event.errorMessage
+    });
+  }
+
+  private handleAssetLoadFailure(event: AssetLoadFailureEvent): void {
+    if (!event.finalFailure || !event.critical) {
+      return;
+    }
+
+    const noticeKey = `${event.assetType}:${event.assetPath}`;
+    if (this.lastAssetFailureNoticeKey === noticeKey) {
+      return;
+    }
+
+    this.lastAssetFailureNoticeKey = noticeKey;
+    this.achievementNotice = {
+      eventId: noticeKey,
+      title: "资源加载异常",
+      detail: "部分资源加载失败，建议重新进入游戏",
+      expiresAt: Date.now() + 6000
+    };
+    this.pushLog(`资源加载失败：${event.assetPath}（已重试 ${event.retryCount} 次）`);
+    this.renderView();
   }
 
   private createTelemetryContext(heroId?: string | null): { roomId: string; playerId: string; heroId?: string } {

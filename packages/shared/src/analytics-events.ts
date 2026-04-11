@@ -112,7 +112,15 @@ export const ANALYTICS_EVENT_CATALOG = {
       conversion: "account_bound",
       owner: "growth"
     }
-  )
+  ),
+  asset_load_failed: defineAnalyticsEvent("asset_load_failed", 1, "Client asset load failed after one or more attempts.", {
+    assetType: "sprite",
+    assetPath: "pixel/terrain/grass-1",
+    retryCount: 3,
+    critical: true,
+    finalFailure: true,
+    errorMessage: "missing sprite"
+  }),
 } as const;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENT_CATALOG;

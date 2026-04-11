@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ImageAsset, SpriteFrame, resources } from "cc";
 import {
+  configureAssetLoadResilienceRuntimeDependencies,
+  resetAssetLoadResilienceRuntimeForTests
+} from "../assets/scripts/cocos-asset-load-resilience.ts";
+import { resetPlaceholderSpriteAssetsForTests } from "../assets/scripts/cocos-placeholder-sprites.ts";
+import {
   getPixelSpriteAssets,
   getPixelSpriteLoadStatus,
   loadPixelSpriteAssets,
@@ -29,6 +34,8 @@ function installFrameFactoryDouble(): void {
 function restoreCcDoubles(): void {
   resources.load = originalLoad;
   SpriteFrame.createWithImage = originalCreateWithImage;
+  resetAssetLoadResilienceRuntimeForTests();
+  resetPlaceholderSpriteAssetsForTests();
   resetPixelSpriteRuntimeForTests();
 }
 
@@ -104,7 +111,7 @@ test("loadPixelSpriteAssets reuses inflight and cached boot loads", async (t) =>
   assert.equal(loadCallCount, bootPaths.length);
 });
 
-test("loadPixelSpriteAssets caches failed loads as null fallbacks", async (t) => {
+test("loadPixelSpriteAssets replaces failed non-critical sprites with placeholder frames", async (t) => {
   const failedPath = pixelSpriteManifest.icons.hud;
   let loadCallCount = 0;
   resources.load = ((path: string, _type: typeof ImageAsset, callback: PendingLoad["callback"]) => {
@@ -124,13 +131,47 @@ test("loadPixelSpriteAssets caches failed loads as null fallbacks", async (t) =>
   const bootPaths = resolvePixelSpritePreloadPaths("boot");
 
   const firstAssets = await loadPixelSpriteAssets("boot");
-  assert.equal(firstAssets.icons.hud, null);
-  assert.equal(getPixelSpriteAssets()?.icons.hud, null);
+  assert.equal(firstAssets.icons.hud?.name, "placeholder/icons/hud");
+  assert.equal(getPixelSpriteAssets()?.icons.hud?.name, "placeholder/icons/hud");
 
   const readyStatus = getPixelSpriteLoadStatus();
   assert.equal(readyStatus.phase, "ready");
   assert.equal(readyStatus.loadedResourceCount, bootPaths.length);
 
   await loadPixelSpriteAssets("boot");
-  assert.equal(loadCallCount, bootPaths.length);
+  assert.equal(loadCallCount, bootPaths.length + 2);
+});
+
+test("loadPixelSpriteAssets retries critical sprite loads before falling back to placeholders", async (t) => {
+  const failedPath = pixelSpriteManifest.tiles.grass[0]!;
+  const attempts = new Map<string, number>();
+  const retryDelays: number[] = [];
+  configureAssetLoadResilienceRuntimeDependencies({
+    setTimeout: (handler, delayMs) => {
+      retryDelays.push(delayMs);
+      handler();
+      return { delayMs } as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: () => {}
+  });
+  resources.load = ((path: string, _type: typeof ImageAsset, callback: PendingLoad["callback"]) => {
+    const nextAttempt = (attempts.get(path) ?? 0) + 1;
+    attempts.set(path, nextAttempt);
+    if (path === failedPath && nextAttempt <= 4) {
+      callback(new Error(`missing sprite ${nextAttempt}`), new ImageAsset());
+      return;
+    }
+
+    const asset = new ImageAsset();
+    asset.name = path;
+    callback(null, asset);
+  }) as typeof resources.load;
+  installFrameFactoryDouble();
+  t.after(restoreCcDoubles);
+
+  const assets = await loadPixelSpriteAssets("boot");
+
+  assert.equal(attempts.get(failedPath), 4);
+  assert.deepEqual(retryDelays, [1000, 2000, 4000]);
+  assert.equal((assets.tiles.grass[0]?.texture as ImageAsset | undefined)?.name, "placeholder/tiles/grass-1");
 });

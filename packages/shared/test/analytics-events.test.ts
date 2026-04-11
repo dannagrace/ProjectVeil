@@ -219,3 +219,23 @@ test("createAnalyticsEvent: experiment_exposure event carries all required field
   assert.equal(event.payload.variant, "control");
   assert.equal(event.payload.bucket, 17);
 });
+
+test("createAnalyticsEvent: asset_load_failed includes retry metadata and path", () => {
+  const event = createAnalyticsEvent("asset_load_failed", {
+    playerId: "player-1",
+    source: "cocos-client",
+    payload: {
+      assetType: "sprite",
+      assetPath: "pixel/terrain/grass-1",
+      retryCount: 3,
+      critical: true,
+      finalFailure: true,
+      errorMessage: "missing sprite"
+    }
+  });
+
+  assert.equal(event.payload.assetPath, "pixel/terrain/grass-1");
+  assert.equal(event.payload.retryCount, 3);
+  assert.equal(event.payload.finalFailure, true);
+  assert.equal(event.source, "cocos-client");
+});

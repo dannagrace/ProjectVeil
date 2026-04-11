@@ -1,4 +1,6 @@
 import { ImageAsset, SpriteFrame, resources } from "cc";
+import { retryAssetLoad } from "./cocos-asset-load-resilience.ts";
+import { getPlaceholderSpriteAssets, loadPlaceholderSpriteAssets } from "./cocos-placeholder-sprites.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import {
   pixelSpriteManifest,
@@ -295,24 +297,153 @@ function loadSpriteFrame(path: string): Promise<SpriteFrame | null> {
     return inflight;
   }
 
-  const promise = new Promise<SpriteFrame | null>((resolve) => {
-    resources.load(path, ImageAsset, (err, asset) => {
-      if (err) {
-        loadedFrames.set(path, null);
-        inflightFrameLoads.delete(path);
-        syncLoadStatusCollections();
-        resolve(null);
-        return;
-      }
+  const promise = retryAssetLoad({
+    assetType: "sprite",
+    assetPath: path,
+    critical: isCriticalPixelSpritePath(path),
+    load: () =>
+      new Promise<SpriteFrame>((resolve, reject) => {
+        resources.load(path, ImageAsset, (err, asset) => {
+          if (err) {
+            reject(err);
+            return;
+          }
 
-      const frame = SpriteFrame.createWithImage(asset);
-      loadedFrames.set(path, frame);
-      inflightFrameLoads.delete(path);
-      syncLoadStatusCollections();
-      resolve(frame);
-    });
+          resolve(SpriteFrame.createWithImage(asset));
+        });
+      }),
+    fallback: () => resolveFallbackSpriteFrame(path)
+  }).then((frame) => {
+    loadedFrames.set(path, frame);
+    inflightFrameLoads.delete(path);
+    syncLoadStatusCollections();
+    return frame;
   });
 
   inflightFrameLoads.set(path, promise);
   return promise;
+}
+
+function isCriticalPixelSpritePath(path: string): boolean {
+  return (
+    Object.values(pixelSpriteManifest.tiles).some((variants) => variants.includes(path))
+    || Object.values(pixelSpriteManifest.heroes).includes(path)
+  );
+}
+
+async function resolveFallbackSpriteFrame(path: string): Promise<SpriteFrame | null> {
+  const scope = resolveFallbackScope(path);
+  const assets = getPlaceholderSpriteAssets() ?? (await loadPlaceholderSpriteAssets(scope));
+  return mapPlaceholderFrame(path, assets);
+}
+
+function resolveFallbackScope(path: string): "map" | "hud" | "timeline" {
+  if (path === pixelSpriteManifest.icons.timeline) {
+    return "timeline";
+  }
+
+  if (
+    Object.values(pixelSpriteManifest.tiles).some((variants) => variants.includes(path))
+    || Object.values(pixelSpriteManifest.showcaseTerrain).includes(path)
+    || path === pixelSpriteManifest.icons.wood
+    || path === pixelSpriteManifest.icons.gold
+    || path === pixelSpriteManifest.icons.ore
+    || path === pixelSpriteManifest.icons.neutral
+    || path === pixelSpriteManifest.icons.recruitment
+    || path === pixelSpriteManifest.icons.shrine
+    || path === pixelSpriteManifest.icons.mine
+  ) {
+    return "map";
+  }
+
+  return "hud";
+}
+
+function mapPlaceholderFrame(
+  path: string,
+  assets: NonNullable<ReturnType<typeof getPlaceholderSpriteAssets>>
+): SpriteFrame | null {
+  const terrainEntry = (
+    Object.entries(pixelSpriteManifest.tiles) as Array<[keyof PixelTileSprites, string[]]>
+  ).find(([, variants]) => variants.includes(path));
+  if (terrainEntry) {
+    const [kind, variants] = terrainEntry;
+    const fallbackFrames = assets.tiles[kind];
+    const variantIndex = Math.max(0, variants.indexOf(path));
+    return fallbackFrames[variantIndex % fallbackFrames.length] ?? fallbackFrames[0] ?? null;
+  }
+
+  if (path === pixelSpriteManifest.icons.wood) {
+    return assets.icons.wood;
+  }
+  if (path === pixelSpriteManifest.icons.gold) {
+    return assets.icons.gold;
+  }
+  if (path === pixelSpriteManifest.icons.ore) {
+    return assets.icons.ore;
+  }
+  if (path === pixelSpriteManifest.icons.neutral) {
+    return assets.icons.neutral;
+  }
+  if (path === pixelSpriteManifest.icons.hero) {
+    return assets.icons.hero;
+  }
+  if (path === pixelSpriteManifest.icons.recruitment) {
+    return assets.icons.recruitment;
+  }
+  if (path === pixelSpriteManifest.icons.shrine) {
+    return assets.icons.shrine;
+  }
+  if (path === pixelSpriteManifest.icons.mine || path === pixelSpriteManifest.icons.tower) {
+    return assets.icons.mine;
+  }
+  if (path === pixelSpriteManifest.icons.hud || path === pixelSpriteManifest.icons.battle) {
+    return assets.icons.hud;
+  }
+  if (path === pixelSpriteManifest.icons.timeline) {
+    return assets.icons.timeline;
+  }
+
+  if (Object.values(pixelSpriteManifest.heroes).includes(path)) {
+    return assets.icons.hero;
+  }
+
+  if (
+    Object.values(pixelSpriteManifest.units).some((unit) =>
+      [unit.idle, unit.selected, unit.hit, unit.frame].includes(path)
+    )
+    || Object.values(pixelSpriteManifest.showcaseUnits).some((unit) =>
+      [unit.idle, unit.selected, unit.hit, unit.frame].includes(path)
+    )
+  ) {
+    return assets.icons.hero;
+  }
+
+  const showcaseTerrainId = Object.entries(pixelSpriteManifest.showcaseTerrain).find(([, assetPath]) => assetPath === path)?.[0];
+  if (showcaseTerrainId && showcaseTerrainId in assets.tiles) {
+    return assets.tiles[showcaseTerrainId as keyof PixelTileSprites][0] ?? assets.tiles.unknown[0] ?? null;
+  }
+
+  const showcaseBuildingId = Object.entries(pixelSpriteManifest.showcaseBuildings).find(([, assetPath]) => assetPath === path)?.[0] ?? "";
+  if (showcaseBuildingId.includes("mine") || showcaseBuildingId.includes("tower")) {
+    return assets.icons.mine;
+  }
+  if (showcaseBuildingId.includes("shrine")) {
+    return assets.icons.shrine;
+  }
+  if (showcaseBuildingId.length > 0) {
+    return assets.icons.recruitment;
+  }
+
+  if (Object.values(pixelSpriteManifest.badges.factions).includes(path)) {
+    return assets.icons.hero;
+  }
+  if (Object.values(pixelSpriteManifest.badges.rarities).includes(path)) {
+    return assets.icons.gold;
+  }
+  if (Object.values(pixelSpriteManifest.badges.interactions).includes(path)) {
+    return assets.icons.neutral;
+  }
+
+  return assets.icons.hero ?? assets.icons.hud ?? null;
 }
