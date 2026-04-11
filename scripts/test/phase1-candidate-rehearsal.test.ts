@@ -233,6 +233,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Cocos main-journey replay gate:/);
   assert.match(markdown, /Cocos primary diagnostics:/);
   assert.match(markdown, /Candidate revision triage digest:/);
+  assert.match(markdown, /Go\/no-go packet:/);
   assert.match(markdown, /Release PR summary:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidencePath:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidenceMarkdownPath:/);

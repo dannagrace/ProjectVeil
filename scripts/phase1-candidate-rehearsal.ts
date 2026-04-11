@@ -596,6 +596,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateRevisionTriageDigestPath) {
     lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
   }
+  if (report.artifacts.goNoGoPacketPath) {
+    lines.push(`- Go/no-go packet: \`${report.artifacts.goNoGoPacketPath}\``);
+  }
   if (report.artifacts.releasePrCommentPath) {
     lines.push(`- Release PR summary: \`${report.artifacts.releasePrCommentPath}\``);
   }
