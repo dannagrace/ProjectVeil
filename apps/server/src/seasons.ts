@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "./persistence";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -15,7 +16,7 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
 }
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
-  const adminToken = process.env.VEIL_ADMIN_TOKEN;
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   if (!adminToken) {
     return false;
   }
@@ -120,7 +121,7 @@ export function registerSeasonRoutes(
 
   app.get("/api/admin/seasons", async (request, response) => {
     try {
-      const adminToken = process.env.VEIL_ADMIN_TOKEN;
+      const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
       if (!adminToken) {
         sendJson(response, 503, { error: { code: "not_configured", message: "Admin token not configured" } });
         return;
@@ -150,7 +151,7 @@ export function registerSeasonRoutes(
 
   app.post("/api/admin/seasons/create", async (request, response) => {
     try {
-      const adminToken = process.env.VEIL_ADMIN_TOKEN;
+      const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
       if (!adminToken) {
         sendJson(response, 503, { error: { code: "not_configured", message: "Admin token not configured" } });
         return;
@@ -176,7 +177,7 @@ export function registerSeasonRoutes(
 
   app.post("/api/admin/seasons/close", async (request, response) => {
     try {
-      const adminToken = process.env.VEIL_ADMIN_TOKEN;
+      const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
       if (!adminToken) {
         sendJson(response, 503, { error: { code: "not_configured", message: "Admin token not configured" } });
         return;

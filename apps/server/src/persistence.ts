@@ -78,6 +78,7 @@ import {
   type BattlePassRewardGrant
 } from "./battle-pass";
 import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "./competitive-season";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
 
 export interface SeasonSnapshot {
@@ -2427,7 +2428,7 @@ export function applyPlayerHeroArchivesToWorldState(
 export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env): MySqlPersistenceConfig | null {
   const host = env.VEIL_MYSQL_HOST;
   const user = env.VEIL_MYSQL_USER;
-  const password = env.VEIL_MYSQL_PASSWORD;
+  const password = readRuntimeSecret("VEIL_MYSQL_PASSWORD", env);
   if (!host || !user || !password) {
     return null;
   }

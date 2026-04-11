@@ -31,6 +31,7 @@ import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotS
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
 import { registerRetentionSummaryRoute } from "./retention-summary";
+import { loadRuntimeSecrets } from "./runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
@@ -101,6 +102,7 @@ interface SchemaMigrationStatusSummary {
 }
 
 export interface DevServerBootstrapDependencies {
+  loadRuntimeSecrets(): Promise<void>;
   readMySqlPersistenceConfig(): MySqlPersistenceConfig | null;
   getSchemaMigrationStatus(config: MySqlPersistenceConfig): Promise<SchemaMigrationStatusSummary>;
   formatSchemaMigrationWarning(status: SchemaMigrationStatusSummary): string;
@@ -175,6 +177,7 @@ export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
 
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
   return {
+    loadRuntimeSecrets: () => loadRuntimeSecrets(),
     readMySqlPersistenceConfig,
     getSchemaMigrationStatus,
     formatSchemaMigrationWarning,
@@ -236,7 +239,6 @@ export async function startDevServer(
   };
   const isProductionEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "production";
 
-  const mysqlConfig = deps.readMySqlPersistenceConfig();
   let snapshotStore: DevServerMySqlSnapshotStore | null = null;
   let configCenterStore = deps.createFileSystemConfigCenterStore();
   let persistenceHealth: RuntimePersistenceHealth = {
@@ -253,6 +255,14 @@ export async function startDevServer(
     deps.process.exit(1);
     throw error instanceof Error ? error : new Error(message);
   };
+
+  try {
+    await deps.loadRuntimeSecrets();
+  } catch (error) {
+    await failStartup("Runtime secret bootstrap failed", error);
+  }
+
+  const mysqlConfig = deps.readMySqlPersistenceConfig();
 
   if (mysqlConfig) {
     try {

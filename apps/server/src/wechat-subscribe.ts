@@ -1,4 +1,5 @@
 import type { RoomSnapshotStore } from "./persistence";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { getNotificationPreferenceValue } from "./wechat-social";
 
 export type WechatSubscribeTemplateKey = "match_found" | "turn_reminder";
@@ -45,7 +46,7 @@ function normalizeConfigValue(value: string | undefined): string | null {
 
 function readWechatSubscribeRuntimeConfig(env: NodeJS.ProcessEnv = process.env): WechatSubscribeRuntimeConfig | null {
   const appId = normalizeConfigValue(env.WECHAT_APP_ID);
-  const appSecret = normalizeConfigValue(env.WECHAT_APP_SECRET);
+  const appSecret = normalizeConfigValue(readRuntimeSecret("WECHAT_APP_SECRET", env));
   const matchFoundTemplateId = normalizeConfigValue(env.VEIL_WECHAT_MATCH_FOUND_TMPL_ID);
   const turnReminderTemplateId = normalizeConfigValue(env.VEIL_WECHAT_TURN_REMINDER_TMPL_ID);
   if (!appId || !appSecret || !matchFoundTemplateId || !turnReminderTemplateId) {

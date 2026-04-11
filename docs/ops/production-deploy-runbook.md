@@ -5,7 +5,8 @@ Issue #1299 closes the gap between the existing local-dev Compose setup and a re
 - `Dockerfile.server` builds the Colyseus + API server container.
 - `apps/client/Dockerfile` builds and serves the H5 client on Nginx.
 - `docker-compose.prod.yml` runs MySQL, Redis, the server, and the H5 client with named volumes and restart policies.
-- `ops/env/production.env.example` defines the 27-variable production env contract.
+- `ops/env/production.env.example` defines the non-sensitive production env contract plus the Secrets Manager bootstrap settings.
+- `docs/ops/secrets-inventory.md` documents the managed secret bundle, service ownership, and rotation cadence.
 - `npm run validate:production-env -- --env-file ops/env/production.env` verifies that contract before any deploy.
 
 This runbook assumes a VM or bare-metal host using Docker Compose. For zero-downtime deploys, run two identical app hosts behind the same L4/L7 load balancer and roll them one host at a time while both point at the same MySQL and Redis.
@@ -24,26 +25,29 @@ Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](
 ## 2. Pre-Deploy Checklist
 
 1. Start from the release commit you plan to deploy and record its git SHA plus intended image tag.
-2. Copy `ops/env/production.env.example` to `ops/env/production.env` on the host and fill in all 27 values.
+2. Copy `ops/env/production.env.example` to `ops/env/production.env` on the host and fill in the non-sensitive values plus the Secrets Manager bootstrap settings.
+3. Confirm the AWS IAM role or instance profile attached to the host can call `secretsmanager:GetSecretValue` on the configured secret.
+4. Confirm the AWS secret payload includes every key listed in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
 3. Run `npm run validate:production-env -- --env-file ops/env/production.env`.
-4. Confirm MySQL resolves from the deploy host:
+5. Confirm MySQL resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm migrate`
-5. Confirm Redis resolves from the deploy host:
+6. Confirm Redis resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm server node --input-type=module -e "const Redis=(await import('ioredis')).default; const url=process.env.REDIS_URL||'redis://redis:6379/0'; const client=new Redis(url); console.log(await client.ping(), url); await client.quit();"`
-6. Review disk headroom for the persistent volumes used by MySQL and Redis.
-7. Confirm you have the previous image tag and previous git SHA available for rollback.
-8. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
+7. Review disk headroom for the persistent volumes used by MySQL and Redis.
+8. Confirm you have the previous image tag and previous git SHA available for rollback.
+9. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
 
 ## 3. Production Env Contract
 
-The deploy validator expects these 27 variables in `ops/env/production.env`:
+The deploy validator expects these 28 variables in `ops/env/production.env`:
 
-`VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_MYSQL_USER`, `VEIL_MYSQL_PASSWORD`, `VEIL_MYSQL_DATABASE`, `VEIL_MYSQL_SNAPSHOT_TTL_HOURS`, `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES`, `VEIL_BACKUP_S3_BUCKET`, `VEIL_BACKUP_S3_PREFIX`, `VEIL_BACKUP_S3_ENDPOINT`, `VEIL_BACKUP_S3_REGION`, `VEIL_BACKUP_AWS_PROFILE`, `VEIL_BACKUP_KEEP_DAILY_DAYS`, `VEIL_BACKUP_KEEP_WEEKLY_DAYS`, `VEIL_BACKUP_WEEKLY_DAY`, `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`, `VEIL_RATE_LIMIT_AUTH_MAX`, `VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS`, `VEIL_RATE_LIMIT_WS_ACTION_MAX`, `VEIL_AUTH_LOCKOUT_THRESHOLD`, `VEIL_AUTH_LOCKOUT_DURATION_MINUTES`, `VEIL_MAX_GUEST_SESSIONS`, `VEIL_AUTH_SECRET`, `VEIL_AUTH_ACCESS_TTL_SECONDS`, `VEIL_AUTH_REFRESH_TTL_SECONDS`, `VEIL_AUTH_GUEST_TTL_SECONDS`, `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`
+`VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_MYSQL_USER`, `VEIL_MYSQL_DATABASE`, `VEIL_MYSQL_SNAPSHOT_TTL_HOURS`, `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES`, `VEIL_SECRET_PROVIDER`, `VEIL_AWS_SECRETS_MANAGER_SECRET_ID`, `VEIL_AWS_SECRETS_MANAGER_REGION`, `VEIL_BACKUP_S3_BUCKET`, `VEIL_BACKUP_S3_PREFIX`, `VEIL_BACKUP_S3_ENDPOINT`, `VEIL_BACKUP_S3_REGION`, `VEIL_BACKUP_AWS_PROFILE`, `VEIL_BACKUP_KEEP_DAILY_DAYS`, `VEIL_BACKUP_KEEP_WEEKLY_DAYS`, `VEIL_BACKUP_WEEKLY_DAY`, `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`, `VEIL_RATE_LIMIT_AUTH_MAX`, `VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS`, `VEIL_RATE_LIMIT_WS_ACTION_MAX`, `VEIL_AUTH_LOCKOUT_THRESHOLD`, `VEIL_AUTH_LOCKOUT_DURATION_MINUTES`, `VEIL_MAX_GUEST_SESSIONS`, `VEIL_AUTH_ACCESS_TTL_SECONDS`, `VEIL_AUTH_REFRESH_TTL_SECONDS`, `VEIL_AUTH_GUEST_TTL_SECONDS`, `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`
 
 Notes:
 
 - `REDIS_URL` is optional in the env file because `docker-compose.prod.yml` defaults it to `redis://redis:6379/0`.
-- `VEIL_AUTH_SECRET` must be set to a production secret. Do not reuse the dev default embedded in code.
+- `VEIL_SECRET_PROVIDER` must be `aws-secrets-manager` in production. The server aborts startup if the AWS secret cannot be fetched or if the managed bundle is missing required keys.
+- Keep credentials out of `ops/env/production.env`; place them in the AWS secret JSON documented in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
 - If you use managed MySQL or Redis, point `VEIL_MYSQL_HOST` and `REDIS_URL` at those services and leave the local `mysql` / `redis` services disabled by policy or removed in an override file.
 
 ## 4. First-Time Host Bootstrap
