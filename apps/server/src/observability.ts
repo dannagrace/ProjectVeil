@@ -171,13 +171,20 @@ interface RuntimeObservabilityState {
   };
 }
 
+export interface RuntimePersistenceHealth {
+  status: "ok" | "degraded";
+  storage: "memory" | "mysql";
+  message: string;
+}
+
 interface RuntimeHealthPayload {
-  status: "ok";
+  status: "ok" | "warn";
   service: string;
   checkedAt: string;
   startedAt: string;
   uptimeSeconds: number;
   runtime: {
+    persistence: RuntimePersistenceHealth;
     activeRoomCount: number;
     connectionCount: number;
     activeBattleCount: number;
@@ -468,7 +475,14 @@ function renderHistogramMetric(name: string, help: string, state: HistogramMetri
   return lines;
 }
 
-function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPayload {
+function buildHealthPayload(
+  service = "project-veil-server",
+  persistence: RuntimePersistenceHealth = {
+    status: "ok",
+    storage: "mysql",
+    message: "Persistent room storage available."
+  }
+): RuntimeHealthPayload {
   const roomSnapshots = Array.from(runtimeObservability.rooms.values());
   const activeRoomCount = roomSnapshots.length;
   const connectionCount = roomSnapshots.reduce((total, room) => total + room.connectedPlayers, 0);
@@ -485,12 +499,13 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
   );
 
   return {
-    status: "ok",
+    status: persistence.status === "degraded" ? "warn" : "ok",
     service,
     checkedAt: new Date().toISOString(),
     startedAt: new Date(runtimeObservability.startedAt).toISOString(),
     uptimeSeconds: Number(((Date.now() - runtimeObservability.startedAt) / 1_000).toFixed(3)),
     runtime: {
+      persistence: { ...persistence },
       activeRoomCount,
       connectionCount,
       activeBattleCount,
@@ -1802,10 +1817,12 @@ export function registerRuntimeObservabilityRoutes(
   options?: {
     serviceName?: string;
     store?: { clearAll?: () => void };
+    persistence?: RuntimePersistenceHealth;
   }
 ): void {
   const serviceName = options?.serviceName ?? "project-veil-server";
   const store = options?.store;
+  const persistence = options?.persistence;
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -1823,7 +1840,8 @@ export function registerRuntimeObservabilityRoutes(
 
   app.get("/api/runtime/health", async (_request, response) => {
     try {
-      sendJson(response, 200, buildHealthPayload(serviceName));
+      const payload = buildHealthPayload(serviceName, persistence);
+      sendJson(response, payload.status === "ok" ? 200 : 503, payload);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

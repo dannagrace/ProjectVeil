@@ -21,7 +21,8 @@ import { registerMinorProtectionPreviewRoutes } from "./minor-protection-preview
 import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
-  registerRuntimeObservabilityRoutes
+  registerRuntimeObservabilityRoutes,
+  type RuntimePersistenceHealth
 } from "./observability";
 import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotStore, readMySqlPersistenceConfig, type SnapshotRetentionPolicy } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
@@ -123,7 +124,10 @@ export interface DevServerBootstrapDependencies {
   registerMinorProtectionPreviewRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
-  registerRuntimeObservabilityRoutes(app: unknown, options?: { store?: DevServerRoomSnapshotStore }): void;
+  registerRuntimeObservabilityRoutes(
+    app: unknown,
+    options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth }
+  ): void;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
@@ -225,18 +229,65 @@ export async function startDevServer(
     ...createDefaultDevServerBootstrapDependencies(),
     ...dependencies
   };
+  const isProductionEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "production";
 
   const mysqlConfig = deps.readMySqlPersistenceConfig();
   let snapshotStore: DevServerMySqlSnapshotStore | null = null;
   let configCenterStore = deps.createFileSystemConfigCenterStore();
+  let persistenceHealth: RuntimePersistenceHealth = {
+    status: "degraded",
+    storage: "memory",
+    message: "In-memory room persistence active; room data will not survive process restarts."
+  };
+
+  const failStartup = async (message: string, error?: unknown): Promise<never> => {
+    deps.logger.error(message, error ?? new Error(message));
+    await configCenterStore.close().catch((closeError) => {
+      deps.logger.error("Failed to close config center store during startup abort", closeError);
+    });
+    deps.process.exit(1);
+    throw error instanceof Error ? error : new Error(message);
+  };
 
   if (mysqlConfig) {
-    const migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
-    if (migrationStatus.pending.length > 0) {
-      deps.logger.warn(deps.formatSchemaMigrationWarning(migrationStatus));
-    } else {
-      snapshotStore = await deps.createMySqlRoomSnapshotStore(mysqlConfig);
-      configCenterStore = await deps.createMySqlConfigCenterStore(mysqlConfig);
+    try {
+      const migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
+      if (migrationStatus.pending.length > 0) {
+        const warning = deps.formatSchemaMigrationWarning(migrationStatus);
+        if (isProductionEnvironment) {
+          await failStartup(
+            "Refusing to start with in-memory persistence in production while schema migrations are pending",
+            new Error(warning)
+          );
+        }
+        deps.logger.warn(warning);
+      } else {
+        const mysqlSnapshotStore = await deps.createMySqlRoomSnapshotStore(mysqlConfig);
+        try {
+          const mysqlConfigCenterStore = await deps.createMySqlConfigCenterStore(mysqlConfig);
+          snapshotStore = mysqlSnapshotStore;
+          configCenterStore = mysqlConfigCenterStore;
+          persistenceHealth = {
+            status: "ok",
+            storage: "mysql",
+            message: "MySQL room persistence active."
+          };
+        } catch (error) {
+          await mysqlSnapshotStore.close().catch((closeError) => {
+            deps.logger.error("Failed to close MySQL snapshot store after startup error", closeError);
+          });
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (isProductionEnvironment) {
+        await failStartup("MySQL migration/bootstrap failed during production startup", error);
+      }
+      deps.logger.warn(
+        `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -267,7 +318,10 @@ export async function startDevServer(
   deps.registerMinorProtectionPreviewRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerRuntimeObservabilityRoutes(expressApp, { store: effectiveSnapshotStore });
+  deps.registerRuntimeObservabilityRoutes(expressApp, {
+    store: effectiveSnapshotStore,
+    persistence: persistenceHealth
+  });
   if ("get" in (expressApp as object)) {
     deps.registerRetentionSummaryRoute(expressApp, effectiveSnapshotStore);
   }
@@ -303,9 +357,10 @@ export async function startDevServer(
     deps.logger.log("Local in-memory Colyseus presence/driver enabled");
   }
   if (snapshotStore) {
-    deps.logger.log("MySQL room persistence enabled");
+    deps.logger.log("Persistence mode: production/mysql");
   } else {
-    deps.logger.log("Local in-memory room persistence enabled");
+    deps.logger.log("Persistence mode: degraded/in-memory");
+    deps.logger.log(persistenceHealth.message);
   }
 
   let cleanupTimer: CleanupTimerHandle | null = null;

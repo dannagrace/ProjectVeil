@@ -158,6 +158,15 @@ Validation is complete when:
 - Record the restored backup timestamp, object key, and validation output in the incident log.
 - Only repoint application traffic after the restored instance has passed the regression above.
 
+## Migration Failure Handling
+
+If a production rollout fails during DB migration/bootstrap, the server must not stay up in in-memory mode.
+
+- Treat startup failure plus a non-zero exit code as the expected safeguard, not as a transient warning to ignore.
+- Confirm `/api/runtime/health` is not reporting a degraded in-memory persistence status before reopening traffic.
+- Fix MySQL reachability or apply the missing migration, then restart the service and recheck health.
+- If the release window is at risk, roll back to the previous good build and continue recovery from a controlled host.
+
 ## Estimated RTO
 
 Estimated RTO for a routine restore:
