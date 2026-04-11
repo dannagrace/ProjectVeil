@@ -54,6 +54,7 @@ import { resolveGuestAuthSession } from "./auth";
 import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
+  recordAntiCheatAlert,
   recordLeaderboardAbuseAlert,
   recordBattleLifecycleResolved,
   recordConnectMessage,
@@ -93,6 +94,8 @@ const MAP_SYNC_CHUNK_SIZE = 8;
 const MAP_SYNC_CHUNK_PADDING = 1;
 const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
 const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
+const DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS = 60_000;
+const DEFAULT_SUSPICIOUS_ACTION_THRESHOLD = 5;
 const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 const MINOR_PROTECTION_TICK_MS = 60_000;
 const TURN_TIMER_TICK_MS = 5_000;
@@ -151,6 +154,16 @@ let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDepende
 interface WebSocketActionRateLimitConfig {
   windowMs: number;
   max: number;
+}
+
+interface SuspiciousActionAlertConfig {
+  windowMs: number;
+  threshold: number;
+}
+
+interface SuspiciousActionTracker {
+  timestamps: number[];
+  lastAlertAt: number | null;
 }
 
 function hasPlayerReportStore(
@@ -276,6 +289,19 @@ function readWebSocketActionRateLimitConfig(env: NodeJS.ProcessEnv = process.env
   };
 }
 
+function readSuspiciousActionAlertConfig(env: NodeJS.ProcessEnv = process.env): SuspiciousActionAlertConfig {
+  return {
+    windowMs: parseEnvNumber(env.VEIL_ANTI_CHEAT_SUSPICIOUS_ACTION_WINDOW_MS, DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS, {
+      minimum: 1,
+      integer: true
+    }),
+    threshold: parseEnvNumber(env.VEIL_ANTI_CHEAT_SUSPICIOUS_ACTION_THRESHOLD, DEFAULT_SUSPICIOUS_ACTION_THRESHOLD, {
+      minimum: 1,
+      integer: true
+    })
+  };
+}
+
 function readMinimumSupportedClientVersion(env: NodeJS.ProcessEnv = process.env): string {
   return normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ?? DEFAULT_MIN_SUPPORTED_CLIENT_VERSION;
 }
@@ -391,12 +417,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   public worldRoom!: AuthoritativeWorldRoom;
   private readonly wsActionRateLimitConfig = readWebSocketActionRateLimitConfig();
+  private readonly suspiciousActionAlertConfig = readSuspiciousActionAlertConfig();
   private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly disconnectedAtByPlayerId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
   private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
+  private readonly suspiciousActionTrackerBySessionId = new Map<string, SuspiciousActionTracker>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
   private turnTimerHandle: RoomTimerHandle | null = null;
   private turnOwnerPlayerId: string | null = null;
@@ -593,6 +621,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatch(playerId, message.action);
       if (!result.ok) {
+        this.recordSuspiciousAction(client, playerId, result.rejection);
         sendMessage(client, "session.state", {
           requestId: message.requestId,
           delivery: "reply",
@@ -659,6 +688,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
       const result = this.worldRoom.dispatchBattle(playerId, message.action);
       if (!result.ok) {
+        this.recordSuspiciousAction(client, playerId, result.rejection);
         sendMessage(client, "session.state", {
           requestId: message.requestId,
           delivery: "reply",
@@ -903,6 +933,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   onLeave(client: ColyseusClient): void {
     const playerId = this.playerIdBySessionId.get(client.sessionId);
     this.playerIdBySessionId.delete(client.sessionId);
+    this.suspiciousActionTrackerBySessionId.delete(client.sessionId);
     if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
       this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
     }
@@ -915,6 +946,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
     this.wsActionTimestampsByPlayerId.clear();
+    this.suspiciousActionTrackerBySessionId.clear();
     if (this.turnTimerHandle) {
       roomRuntimeDependencies.clearInterval(this.turnTimerHandle);
       this.turnTimerHandle = null;
@@ -939,6 +971,46 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     timestamps.push(now);
     this.wsActionTimestampsByPlayerId.set(playerId, timestamps);
     return true;
+  }
+
+  private recordSuspiciousAction(
+    client: ColyseusClient,
+    playerId: string,
+    rejection?: ActionValidationFailure
+  ): void {
+    if (!rejection) {
+      return;
+    }
+
+    const now = roomRuntimeDependencies.now();
+    const windowStart = now - this.suspiciousActionAlertConfig.windowMs;
+    const tracker = this.suspiciousActionTrackerBySessionId.get(client.sessionId) ?? {
+      timestamps: [],
+      lastAlertAt: null
+    };
+    const timestamps = tracker.timestamps.filter((timestamp) => timestamp > windowStart);
+    timestamps.push(now);
+    tracker.timestamps = timestamps;
+
+    if (
+      timestamps.length >= this.suspiciousActionAlertConfig.threshold &&
+      (tracker.lastAlertAt == null || now - tracker.lastAlertAt >= this.suspiciousActionAlertConfig.windowMs)
+    ) {
+      tracker.lastAlertAt = now;
+      recordAntiCheatAlert({
+        roomId: this.metadata.logicalRoomId,
+        playerId,
+        sessionId: client.sessionId,
+        scope: rejection.scope,
+        actionType: rejection.actionType,
+        reason: rejection.reason,
+        rejectionCount: timestamps.length,
+        windowMs: this.suspiciousActionAlertConfig.windowMs,
+        recordedAt: new Date(now).toISOString()
+      });
+    }
+
+    this.suspiciousActionTrackerBySessionId.set(client.sessionId, tracker);
   }
 
   private getConnectedPlayerIds(): string[] {
