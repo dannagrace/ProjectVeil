@@ -53,6 +53,7 @@ import {
   readMySqlPersistenceConfig
 } from "./persistence";
 import { createTrackedMySqlPool } from "./mysql-pool";
+import { countRuntimeErrorEventsSince } from "./observability";
 
 export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 
@@ -463,9 +464,50 @@ interface JsonSchemaNode {
   minItems?: number;
 }
 
+interface ConfigHotReloadRoomState {
+  roomId: string;
+  activeBattles: number;
+}
+
+interface ConfigHotReloadRuntimeSnapshot {
+  rooms: ConfigHotReloadRoomState[];
+  activeBattleCount: number;
+}
+
+interface ConfigCenterTimerHandle {
+  unref?(): void;
+}
+
+interface ConfigCenterRuntimeDependencies {
+  now(): number;
+  setTimeout(handler: () => void, delayMs: number): ConfigCenterTimerHandle;
+  clearTimeout(handle: ConfigCenterTimerHandle): void;
+}
+
+interface ConfigRuntimeApplyResult {
+  status: "applied" | "pending";
+  message: string;
+}
+
+interface PendingRuntimeBundleState {
+  bundle: RuntimeConfigBundle;
+  queuedAt: string;
+  previousBundle: RuntimeConfigBundle | null;
+  delayedRooms: ConfigHotReloadRoomState[];
+}
+
+interface ConfigRollbackMonitorState {
+  previousBundle: RuntimeConfigBundle;
+  appliedAtMs: number;
+  appliedAt: string;
+  handle: ConfigCenterTimerHandle;
+}
+
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
 const MAX_STAGE_DOCUMENTS = 5;
 const MAX_PUBLISH_HISTORY_ENTRIES = 20;
+const CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS = 30_000;
+const CONFIG_HOT_RELOAD_ERROR_THRESHOLD = 3;
 const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
 const BUILTIN_WORLD_LAYOUT_PRESETS = [
   "layout_phase1",
@@ -2228,6 +2270,156 @@ function buildRuntimeConfigBundle(
 }
 
 const configUpdateListeners = new Set<(bundle: RuntimeConfigBundle) => void>();
+const defaultConfigCenterRuntimeDependencies: ConfigCenterRuntimeDependencies = {
+  now: () => Date.now(),
+  setTimeout: (handler, delayMs) => globalThis.setTimeout(handler, delayMs),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>)
+};
+
+let configCenterRuntimeDependencies = defaultConfigCenterRuntimeDependencies;
+let configHotReloadRuntimeSnapshotProvider: () => ConfigHotReloadRuntimeSnapshot = () => ({
+  rooms: [],
+  activeBattleCount: 0
+});
+let appliedRuntimeBundle: RuntimeConfigBundle | null = null;
+let pendingRuntimeBundleState: PendingRuntimeBundleState | null = null;
+let configRollbackMonitorState: ConfigRollbackMonitorState | null = null;
+let lastConfigRuntimeApplyResult: ConfigRuntimeApplyResult | null = null;
+
+function serializeBundleDocument(bundle: RuntimeConfigBundle, id: ConfigDocumentId): string {
+  return normalizeJsonContent(contentForDocumentId(bundle, id));
+}
+
+function runtimeRoomsWithActiveBattles(): ConfigHotReloadRoomState[] {
+  const snapshot = configHotReloadRuntimeSnapshotProvider();
+  return snapshot.rooms.filter((room) => room.activeBattles > 0);
+}
+
+function clearConfigRollbackMonitor(): void {
+  if (!configRollbackMonitorState) {
+    return;
+  }
+
+  configCenterRuntimeDependencies.clearTimeout(configRollbackMonitorState.handle);
+  configRollbackMonitorState = null;
+}
+
+function notifyConfigUpdateListeners(bundle: RuntimeConfigBundle): void {
+  for (const listener of configUpdateListeners) {
+    try {
+      listener(bundle);
+    } catch (error) {
+      console.error("[config-center] Error notifying config update listener", error);
+    }
+  }
+}
+
+function rollbackRuntimeBundleIfNeeded(): void {
+  if (!configRollbackMonitorState) {
+    return;
+  }
+
+  const monitor = configRollbackMonitorState;
+  configRollbackMonitorState = null;
+  const recentErrorCount = countRuntimeErrorEventsSince(monitor.appliedAtMs, {
+    ownerArea: "multiplayer",
+    severity: "error"
+  });
+  if (recentErrorCount < CONFIG_HOT_RELOAD_ERROR_THRESHOLD) {
+    return;
+  }
+
+  pendingRuntimeBundleState = null;
+  appliedRuntimeBundle = monitor.previousBundle;
+  replaceRuntimeConfigs(monitor.previousBundle);
+  notifyConfigUpdateListeners(monitor.previousBundle);
+  lastConfigRuntimeApplyResult = {
+    status: "applied",
+    message: `热更新后 30 秒内捕获 ${recentErrorCount} 个房间错误，已自动回滚到上一版本。`
+  };
+  console.error("[config-center] Rolled back config hot reload after runtime error spike", {
+    appliedAt: monitor.appliedAt,
+    recentErrorCount
+  });
+}
+
+function startConfigRollbackMonitor(previousBundle: RuntimeConfigBundle | null): void {
+  clearConfigRollbackMonitor();
+  if (!previousBundle) {
+    return;
+  }
+
+  const appliedAtMs = configCenterRuntimeDependencies.now();
+  const handle = configCenterRuntimeDependencies.setTimeout(
+    () => rollbackRuntimeBundleIfNeeded(),
+    CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS
+  );
+  handle.unref?.();
+  configRollbackMonitorState = {
+    previousBundle,
+    appliedAtMs,
+    appliedAt: new Date(appliedAtMs).toISOString(),
+    handle
+  };
+}
+
+function assertRuntimeBundleHotReloadCompatible(bundle: RuntimeConfigBundle): void {
+  if (!appliedRuntimeBundle) {
+    return;
+  }
+
+  const currentBundle = appliedRuntimeBundle;
+  const incompatibleEntries = (["world", "mapObjects", "units", "battleSkills", "battleBalance"] as const)
+    .flatMap((documentId) =>
+      buildConfigDiffEntries(
+        documentId,
+        serializeBundleDocument(currentBundle, documentId),
+        serializeBundleDocument(bundle, documentId)
+      )
+        .filter((entry) => ["field_removed", "type_changed", "enum_changed"].includes(entry.kind))
+        .map((entry) => ({ documentId, entry }))
+    );
+
+  if (incompatibleEntries.length === 0) {
+    return;
+  }
+
+  const summary = incompatibleEntries
+    .slice(0, 3)
+    .map(({ documentId, entry }) => `${documentId}.${entry.path} (${entry.kind})`)
+    .join("、");
+  throw new Error(`配置热更新被拒绝：检测到不兼容的 Schema 变更：${summary}`);
+}
+
+function applyRuntimeBundle(bundle: RuntimeConfigBundle): ConfigRuntimeApplyResult {
+  const roomsWithActiveBattles = runtimeRoomsWithActiveBattles();
+  if (roomsWithActiveBattles.length > 0) {
+    pendingRuntimeBundleState = {
+      bundle,
+      queuedAt: new Date(configCenterRuntimeDependencies.now()).toISOString(),
+      previousBundle: appliedRuntimeBundle,
+      delayedRooms: roomsWithActiveBattles
+    };
+    clearConfigRollbackMonitor();
+    lastConfigRuntimeApplyResult = {
+      status: "pending",
+      message: `检测到 ${roomsWithActiveBattles.length} 个进行中房间，配置已延迟到战斗结束后应用。`
+    };
+    return lastConfigRuntimeApplyResult;
+  }
+
+  pendingRuntimeBundleState = null;
+  const previousBundle = appliedRuntimeBundle;
+  appliedRuntimeBundle = bundle;
+  replaceRuntimeConfigs(bundle);
+  notifyConfigUpdateListeners(bundle);
+  startConfigRollbackMonitor(previousBundle);
+  lastConfigRuntimeApplyResult = {
+    status: "applied",
+    message: "运行时配置已刷新。"
+  };
+  return lastConfigRuntimeApplyResult;
+}
 
 export function registerConfigUpdateListener(
   callback: (bundle: RuntimeConfigBundle) => void
@@ -2238,15 +2430,53 @@ export function registerConfigUpdateListener(
   };
 }
 
-function applyRuntimeBundle(bundle: RuntimeConfigBundle): void {
-  replaceRuntimeConfigs(bundle);
-  for (const listener of configUpdateListeners) {
-    try {
-      listener(bundle);
-    } catch (error) {
-      console.error("[config-center] Error notifying config update listener", error);
-    }
+export function configureConfigRuntimeStatusProvider(provider: () => ConfigHotReloadRuntimeSnapshot): void {
+  configHotReloadRuntimeSnapshotProvider = provider;
+}
+
+export function configureConfigCenterRuntimeDependencies(overrides: Partial<ConfigCenterRuntimeDependencies>): void {
+  configCenterRuntimeDependencies = {
+    ...configCenterRuntimeDependencies,
+    ...overrides
+  };
+}
+
+export function resetConfigCenterRuntimeDependencies(): void {
+  clearConfigRollbackMonitor();
+  configCenterRuntimeDependencies = defaultConfigCenterRuntimeDependencies;
+}
+
+export function resetConfigHotReloadState(): void {
+  clearConfigRollbackMonitor();
+  pendingRuntimeBundleState = null;
+  appliedRuntimeBundle = null;
+  lastConfigRuntimeApplyResult = null;
+}
+
+export function flushPendingConfigUpdate(): ConfigRuntimeApplyResult | null {
+  if (!pendingRuntimeBundleState) {
+    return null;
   }
+
+  if (runtimeRoomsWithActiveBattles().length > 0) {
+    return lastConfigRuntimeApplyResult;
+  }
+
+  const pendingBundle = pendingRuntimeBundleState.bundle;
+  pendingRuntimeBundleState = null;
+  return applyRuntimeBundle(pendingBundle);
+}
+
+function synchronizePendingRuntimeBundle(bundle: RuntimeConfigBundle): void {
+  if (!pendingRuntimeBundleState) {
+    return;
+  }
+
+  pendingRuntimeBundleState.bundle = bundle;
+}
+
+function currentConfigRuntimeApplyResult(): ConfigRuntimeApplyResult | null {
+  return lastConfigRuntimeApplyResult;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -2881,7 +3111,15 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       ) as Partial<RuntimeConfigBundle>
     );
 
-    applyRuntimeBundle(bundle);
+    clearConfigRollbackMonitor();
+    pendingRuntimeBundleState = null;
+    appliedRuntimeBundle = bundle;
+    replaceRuntimeConfigs(bundle);
+    notifyConfigUpdateListeners(bundle);
+    lastConfigRuntimeApplyResult = {
+      status: "applied",
+      message: "运行时配置已初始化。"
+    };
     await Promise.all([
       this.exportDocumentToFile("world", normalizeJsonContent(bundle.world)),
       this.exportDocumentToFile("mapObjects", normalizeJsonContent(bundle.mapObjects)),
@@ -3068,6 +3306,10 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
           diffEntries
         )
       });
+
+      assertRuntimeBundleHotReloadCompatible(
+        buildRuntimeBundleWithParsedDocument(stagedDocument.id, parseConfigDocument(stagedDocument.id, stagedDocument.content))
+      );
     }
 
     try {
@@ -3081,8 +3323,6 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         const toVersion = saved.version ?? auditChange.fromVersion;
 
         auditChange.toVersion = toVersion;
-        auditChange.runtimeStatus = "applied";
-        auditChange.runtimeMessage = "运行时已刷新";
         publishChanges.push({
           documentId: auditChange.documentId,
           title: auditChange.title,
@@ -3106,6 +3346,19 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         });
       }
 
+      if (auditChanges.length > 1 && currentConfigRuntimeApplyResult()?.status === "pending") {
+        synchronizePendingRuntimeBundle(await this.loadRuntimeBundleFromStore());
+      }
+
+      const runtimeApplyResult = currentConfigRuntimeApplyResult();
+      const runtimeStatus = runtimeApplyResult?.status === "pending" ? "pending" : "applied";
+      const runtimeMessage =
+        runtimeApplyResult?.message ?? (runtimeStatus === "pending" ? "等待运行时应用" : "运行时已刷新");
+      for (const auditChange of auditChanges) {
+        auditChange.runtimeStatus = runtimeStatus;
+        auditChange.runtimeMessage = runtimeMessage;
+      }
+
       state.stagedDraft = null;
       state.publishHistory = state.publishHistory ?? {};
       for (const entry of historyEntries) {
@@ -3120,7 +3373,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         revision,
         publishedAt,
         resultStatus: "applied",
-        resultMessage: "运行时配置已刷新",
+        resultMessage: runtimeMessage,
         changes: auditChanges
       };
       state.publishAuditHistory = [appliedAuditEvent, ...(state.publishAuditHistory ?? [])].slice(
@@ -3333,6 +3586,15 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
   async importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument> {
     const content = parseWorkbookToContent(workbook);
     return this.saveDocument(id, content);
+  }
+
+  protected async loadRuntimeBundleFromStore(): Promise<RuntimeConfigBundle> {
+    const documents = await Promise.all(CONFIG_DEFINITIONS.map((definition) => this.loadDocument(definition.id)));
+    return buildRuntimeConfigBundle(
+      Object.fromEntries(
+        documents.map((document) => [document.id, parseConfigDocument(document.id, document.content)])
+      ) as Partial<RuntimeConfigBundle>
+    );
   }
 
   abstract loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;

@@ -8,6 +8,8 @@ If you want a single human-readable Phase 1 dashboard on top of the snapshot plu
 
 If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release:gate:summary` and see `docs/release-gate-summary.md`.
 
+For config publishes, follow [`docs/config-deployment-safety.md`](./config-deployment-safety.md): prefer the 03:00-05:00 low-traffic window, verify active battles are drained or allow the runtime gate to defer the apply, and watch the 30 second rollback window before treating the deploy as complete.
+
 The default automated checks are:
 
 - `npm test`
