@@ -228,6 +228,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Release health summary:/);
   assert.match(markdown, /Release readiness snapshot:/);
   assert.match(markdown, /WeChat candidate summary:/);
+  assert.match(markdown, /Runtime observability gate:/);
   assert.match(markdown, /Candidate evidence audit:/);
   assert.match(markdown, /Candidate freshness guard:/);
   assert.match(markdown, /Candidate owner reminder:/);
@@ -263,6 +264,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /releaseReadinessSnapshotPath:/);
   assert.match(markdown, /wechatCandidateSummaryPath:/);
   assert.match(markdown, /wechatCandidateMarkdownPath:/);
+  assert.match(markdown, /runtimeObservabilityGatePath:/);
   assert.match(markdown, /sameRevisionEvidenceBundleManifestPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
