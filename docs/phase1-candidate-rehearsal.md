@@ -41,6 +41,7 @@ The bundle contains:
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
 - one same-revision evidence bundle manifest plus the paired drift-gate JSON / Markdown
 - one Cocos primary-client diagnostic snapshot pair so the runtime milestone packet is staged with the candidate bundle
+- one candidate-revision triage input/digest pair derived from the Cocos primary diagnostics checkpoints so reviewers get a revision-scoped error summary without hand-scanning raw checkpoints
 - the same-revision bundle's manual evidence owner ledger and release-readiness dashboard restaged at the rehearsal bundle top level
 - one candidate-level evidence audit plus the dedicated freshness guard, its owner-reminder and freshness-history companions, along with one current release evidence index, so reviewers have a front-door into the packet
 - one Phase 1 exit audit plus the paired exit-dossier freshness gate so the final reviewer call stays in the same candidate packet
@@ -83,6 +84,6 @@ npm run release:phase1:candidate-rehearsal -- \
   --target-surface h5
 ```
 
-Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file has a dedicated reviewer front-door section for the current release evidence index, candidate evidence audit, candidate freshness guard, candidate owner reminder, candidate freshness history, restaged release-readiness dashboard, manual evidence owner ledger, Cocos primary diagnostics, and release PR summary, then records the release gate, release health, dossier, exit audit, exit-dossier freshness gate, and final go/no-go packet outcomes for the candidate revision.
+Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file has a dedicated reviewer front-door section for the current release evidence index, candidate evidence audit, candidate freshness guard, candidate owner reminder, candidate freshness history, restaged release-readiness dashboard, manual evidence owner ledger, Cocos primary diagnostics, the candidate revision triage digest, and the release PR summary, then records the release gate, release health, dossier, exit audit, exit-dossier freshness gate, and final go/no-go packet outcomes for the candidate revision.
 
 For the standalone CI guard and explicit GitHub Actions inputs, see [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md).
