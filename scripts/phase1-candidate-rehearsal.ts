@@ -80,6 +80,8 @@ interface RehearsalArtifacts {
   wechatCandidateSummaryPath?: string;
   wechatCandidateMarkdownPath?: string;
   persistencePath?: string;
+  cocosPrimaryDiagnosticsPath?: string;
+  cocosPrimaryDiagnosticsMarkdownPath?: string;
   cocosBundlePath?: string;
   cocosBundleMarkdownPath?: string;
   releaseGateSummaryPath?: string;
@@ -530,6 +532,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }
+  if (report.artifacts.cocosPrimaryDiagnosticsPath) {
+    lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
+  }
   if (report.artifacts.releasePrCommentPath) {
     lines.push(`- Release PR summary: \`${report.artifacts.releasePrCommentPath}\``);
   }
@@ -594,6 +599,14 @@ async function main(): Promise<void> {
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
+  const cocosPrimaryDiagnosticsPath = path.join(
+    outputDir,
+    `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.json`
+  );
+  const cocosPrimaryDiagnosticsMarkdownPath = path.join(
+    outputDir,
+    `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.md`
+  );
   const releaseGateSummaryPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseGateMarkdownPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.md`);
   const ciTrendSummaryPath = path.join(outputDir, `ci-trend-summary-${candidateSlug}-${revision.shortCommit}.json`);
@@ -661,6 +674,8 @@ async function main(): Promise<void> {
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.cocosPrimaryDiagnosticsPath = toRelative(cocosPrimaryDiagnosticsPath);
+  artifacts.cocosPrimaryDiagnosticsMarkdownPath = toRelative(cocosPrimaryDiagnosticsMarkdownPath);
   artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
   artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
@@ -826,6 +841,21 @@ async function main(): Promise<void> {
           "--output",
           persistencePath
         ], [persistencePath])
+    },
+    {
+      id: "cocos-primary-diagnostics",
+      title: "Build Cocos primary diagnostics",
+      run: () =>
+        runCommandStage("cocos-primary-diagnostics", "Build Cocos primary diagnostics", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/cocos-primary-client-diagnostic-snapshots.ts",
+          "--output",
+          cocosPrimaryDiagnosticsPath,
+          "--markdown-output",
+          cocosPrimaryDiagnosticsMarkdownPath
+        ], [cocosPrimaryDiagnosticsPath, cocosPrimaryDiagnosticsMarkdownPath])
     },
     {
       id: "cocos-rc-bundle",
@@ -1404,6 +1434,8 @@ async function main(): Promise<void> {
   const requiredArtifacts = [
     releaseReadinessSnapshotPath,
     persistencePath,
+    cocosPrimaryDiagnosticsPath,
+    cocosPrimaryDiagnosticsMarkdownPath,
     releaseGateSummaryPath,
     releaseGateMarkdownPath,
     ciTrendSummaryPath,

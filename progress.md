@@ -1763,3 +1763,25 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:ops` 通过
   - `npm run docs:release-script-inventory` 通过
   - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`4/4`）
+
+## Issue #1249 - Phase 1 rehearsal primary diagnostics - 2026-04-11
+
+- 本轮把 `release:cocos:primary-diagnostics` 也收进了 `release:phase1:candidate-rehearsal` 的 candidate packet：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `cocos-primary-diagnostics` 阶段
+    - rehearsal artifacts 现在会显式登记：
+      - `cocosPrimaryDiagnosticsPath`
+      - `cocosPrimaryDiagnosticsMarkdownPath`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出 Cocos primary diagnostics
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 现在包含 Cocos primary-client diagnostic snapshots
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 Cocos primary diagnostics
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `cocos-primary-diagnostics` 阶段、artifact path 与 summary 呈现
+- 本轮定向验证结果：
+  - `npm run typecheck:ops` 通过
+  - `npm run docs:release-script-inventory` 通过
+  - `node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts ./scripts/test/release-script-inventory.test.ts` 通过（`4/4`）
