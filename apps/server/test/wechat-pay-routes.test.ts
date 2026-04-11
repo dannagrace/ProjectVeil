@@ -28,6 +28,21 @@ const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   }
 ];
 
+const FAILING_GRANT_PRODUCTS: Partial<ShopProduct>[] = [
+  {
+    productId: "gem-pack-equipment-retry",
+    name: "Equipment Retry Crate",
+    type: "gem_pack",
+    price: 0,
+    wechatPriceFen: 600,
+    enabled: false,
+    grant: {
+      gems: 120,
+      equipmentIds: ["militia_pike"]
+    }
+  }
+];
+
 function buildFreshCallbackNow(): Date {
   return new Date("2024-04-04T02:22:00Z");
 }
@@ -51,20 +66,30 @@ class TestResponse extends EventEmitter {
 
 class TestApp {
   private readonly middlewares: Array<(request: never, response: never, next: () => void) => void> = [];
+  private readonly getHandlers = new Map<string, (request: never, response: never) => void | Promise<void>>();
   private readonly postHandlers = new Map<string, (request: never, response: never) => void | Promise<void>>();
 
   use(handler: (request: never, response: never, next: () => void) => void): void {
     this.middlewares.push(handler);
   }
 
+  get(path: string, handler: (request: never, response: never) => void | Promise<void>): void {
+    this.getHandlers.set(path, handler);
+  }
+
   post(path: string, handler: (request: never, response: never) => void | Promise<void>): void {
     this.postHandlers.set(path, handler);
   }
 
-  async invoke(path: string, options: { body?: string; headers?: Record<string, string> } = {}) {
-    const routeHandler = this.postHandlers.get(path);
+  async invoke(
+    path: string,
+    options: { body?: string; headers?: Record<string, string>; method?: "GET" | "POST" } = {}
+  ) {
+    const method = options.method ?? "POST";
+    const routePath = new URL(path, "http://test.local").pathname;
+    const routeHandler = (method === "GET" ? this.getHandlers : this.postHandlers).get(routePath);
     if (!routeHandler) {
-      throw new Error(`No POST handler registered for ${path}`);
+      throw new Error(`No ${method} handler registered for ${routePath}`);
     }
 
     const request = Readable.from(options.body ? [Buffer.from(options.body, "utf8")] : []) as Readable & {
@@ -75,7 +100,7 @@ class TestApp {
     request.headers = Object.fromEntries(
       Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
     );
-    request.method = "POST";
+    request.method = method;
     request.url = path;
 
     const response = new TestResponse();
@@ -258,9 +283,10 @@ test("wechat pay create route creates a pending order and returns JSAPI payment 
     orderId: payload.orderId,
     playerId: "wechat-player",
     productId: "gem-pack-premium",
-    status: "pending",
+    status: "created",
     amount: 600,
     gemAmount: 120,
+    grantAttemptCount: 0,
     createdAt: order?.createdAt,
     updatedAt: order?.updatedAt
   });
@@ -419,7 +445,7 @@ test("wechat pay verify route grants a successful verified payment and stores th
 
   assert.equal(response.statusCode, 200);
   assert.equal(account?.gems, 120);
-  assert.equal(paidOrder?.status, "paid");
+  assert.equal(paidOrder?.status, "settled");
   assert.equal(paidOrder?.wechatOrderId, "wechat-transaction-123");
   assert.equal(paidOrder?.paidAt, "2026-04-04T01:02:03.000Z");
   assert.equal(receipt?.transactionId, "wechat-transaction-123");
@@ -591,7 +617,7 @@ test("wechat pay verify route rejects payer openid mismatches without granting r
   assert.equal(response.statusCode, 409);
   assert.equal(payload.error.code, "wechat_payment_openid_mismatch");
   assert.equal(account?.gems ?? 0, 0);
-  assert.equal(paidOrder?.status, "pending");
+  assert.equal(paidOrder?.status, "created");
   assert.equal(receipt, null);
 });
 
@@ -751,7 +777,7 @@ test("wechat pay callback verifies, credits once, and ignores duplicate notifica
   assert.equal(firstResponse.statusCode, 200);
   assert.equal(secondResponse.statusCode, 200);
   assert.equal(account?.gems, 120);
-  assert.equal(paidOrder?.status, "paid");
+  assert.equal(paidOrder?.status, "settled");
   assert.equal(paidOrder?.wechatOrderId, "wechat-transaction-123");
   assert.equal(receipt?.transactionId, "wechat-transaction-123");
 });
@@ -822,7 +848,7 @@ test("wechat pay callback logs payer mismatches and does not grant rewards", asy
 
   assert.equal(response.statusCode, 200);
   assert.equal(account?.gems ?? 0, 0);
-  assert.equal(paidOrder?.status, "pending");
+  assert.equal(paidOrder?.status, "created");
   assert.equal(receipt, null);
 });
 
@@ -1166,4 +1192,179 @@ test("wechat pay callback rejects missing order ids, missing orders, and missing
   const missingBindingPayload = missingBinding.json as { message: string };
   assert.equal(missingBinding.statusCode, 400);
   assert.equal(missingBindingPayload.message, "payer validation failed");
+});
+
+test("wechat pay verify persists grant_pending failures and admin retry can settle the order", async () => {
+  const previousAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "wechat-admin-token";
+  try {
+    resetRuntimeObservability();
+    const app = new TestApp();
+    const store = await createVerifiedTestStore();
+    const runtimeConfig = createWechatPayConfig();
+    const order = await store.createPaymentOrder({
+      orderId: "wechat-order-retry",
+      playerId: "wechat-player",
+      productId: "gem-pack-equipment-retry",
+      amount: 600,
+      gemAmount: 120
+    });
+    registerWechatPayRoutes(app as never, store, {
+      products: FAILING_GRANT_PRODUCTS,
+      runtimeConfig,
+      now: buildFreshCallbackNow,
+      fetchImpl: buildVerifyFetch({
+        out_trade_no: order.orderId
+      })
+    });
+    const session = issueWechatSession();
+
+    const verifyResponse = await app.invoke("/api/payments/wechat/verify", {
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.token}`
+      },
+      body: JSON.stringify({
+        orderId: order.orderId
+      })
+    });
+    const verifyPayload = verifyResponse.json as { status: string; credited: boolean; nextGrantRetryAt?: string; lastGrantError?: string };
+    const queuedOrder = await store.loadPaymentOrder(order.orderId);
+    const receipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+    const accountBeforeRetry = await store.loadPlayerAccount("wechat-player");
+
+    assert.equal(verifyResponse.statusCode, 200);
+    assert.equal(verifyPayload.status, "grant_pending");
+    assert.equal(verifyPayload.credited, false);
+    assert.ok(verifyPayload.nextGrantRetryAt);
+    assert.match(String(verifyPayload.lastGrantError), /player hero archive not found/);
+    assert.equal(queuedOrder?.status, "grant_pending");
+    assert.equal(queuedOrder?.grantAttemptCount, 1);
+    assert.equal(receipt?.transactionId, "wechat-transaction-123");
+    assert.equal(accountBeforeRetry?.gems ?? 0, 0);
+
+    const runtimeBeforeRetry = await app.invoke("/api/runtime/wechat-payment-grants", { method: "GET" });
+    const runtimeBeforeRetryPayload = runtimeBeforeRetry.json as { queueCount: number; deadLetterCount: number; pendingOrders: Array<{ orderId: string }> };
+    assert.equal(runtimeBeforeRetry.statusCode, 200);
+    assert.equal(runtimeBeforeRetryPayload.queueCount, 1);
+    assert.equal(runtimeBeforeRetryPayload.deadLetterCount, 0);
+    assert.equal(runtimeBeforeRetryPayload.pendingOrders[0]?.orderId, order.orderId);
+
+    (
+      store as unknown as {
+        heroArchives: Map<string, { playerId: string; heroId: string; hero: { loadout: { inventory: unknown[] } } }>;
+      }
+    ).heroArchives.set("wechat-player:hero-1", {
+      playerId: "wechat-player",
+      heroId: "hero-1",
+      hero: {
+        loadout: {
+          inventory: []
+        }
+      }
+    });
+
+    const retryResponse = await app.invoke("/api/admin/payments/wechat/retry", {
+      headers: {
+        "content-type": "application/json",
+        "x-veil-admin-token": "wechat-admin-token"
+      },
+      body: JSON.stringify({
+        orderId: order.orderId
+      })
+    });
+    const retryPayload = retryResponse.json as { credited: boolean; order: { status: string; grantAttemptCount: number } };
+    const settledOrder = await store.loadPaymentOrder(order.orderId);
+    const accountAfterRetry = await store.loadPlayerAccount("wechat-player");
+
+    assert.equal(retryResponse.statusCode, 200);
+    assert.equal(retryPayload.credited, true);
+    assert.equal(retryPayload.order.status, "settled");
+    assert.equal(retryPayload.order.grantAttemptCount, 2);
+    assert.equal(settledOrder?.status, "settled");
+    assert.equal(accountAfterRetry?.gems, 120);
+
+    const runtimeAfterRetry = await app.invoke("/api/runtime/wechat-payment-grants", { method: "GET" });
+    const runtimeAfterRetryPayload = runtimeAfterRetry.json as { queueCount: number; deadLetterCount: number };
+    assert.equal(runtimeAfterRetryPayload.queueCount, 0);
+    assert.equal(runtimeAfterRetryPayload.deadLetterCount, 0);
+  } finally {
+    if (previousAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = previousAdminToken;
+    }
+  }
+});
+
+test("wechat pay admin retry exhausts grant failures into dead_letter and exposes metrics", async () => {
+  const previousAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "wechat-admin-token";
+  try {
+    resetRuntimeObservability();
+    const app = new TestApp();
+    const store = await createVerifiedTestStore();
+    const runtimeConfig = createWechatPayConfig();
+    const order = await store.createPaymentOrder({
+      orderId: "wechat-order-dead-letter",
+      playerId: "wechat-player",
+      productId: "gem-pack-equipment-retry",
+      amount: 600,
+      gemAmount: 120
+    });
+    registerWechatPayRoutes(app as never, store, {
+      products: FAILING_GRANT_PRODUCTS,
+      runtimeConfig,
+      now: buildFreshCallbackNow,
+      fetchImpl: buildVerifyFetch({
+        out_trade_no: order.orderId
+      })
+    });
+    const session = issueWechatSession();
+
+    await app.invoke("/api/payments/wechat/verify", {
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.token}`
+      },
+      body: JSON.stringify({
+        orderId: order.orderId
+      })
+    });
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const retryResponse = await app.invoke("/api/admin/payments/wechat/retry", {
+        headers: {
+          "content-type": "application/json",
+          "x-veil-admin-token": "wechat-admin-token"
+        },
+        body: JSON.stringify({
+          orderId: order.orderId,
+          includeDeadLetter: true
+        })
+      });
+      assert.equal(retryResponse.statusCode, 200);
+    }
+
+    const deadLetterOrder = await store.loadPaymentOrder(order.orderId);
+    const runtimePayload = (
+      await app.invoke("/api/runtime/wechat-payment-grants", {
+        method: "GET"
+      })
+    ).json as { queueCount: number; deadLetterCount: number; deadLetterOrders: Array<{ orderId: string }> };
+    const metrics = buildPrometheusMetricsDocument();
+
+    assert.equal(deadLetterOrder?.status, "dead_letter");
+    assert.equal(deadLetterOrder?.grantAttemptCount, 5);
+    assert.equal(runtimePayload.queueCount, 0);
+    assert.equal(runtimePayload.deadLetterCount, 1);
+    assert.equal(runtimePayload.deadLetterOrders[0]?.orderId, order.orderId);
+    assert.match(metrics, /veil_payment_dead_letter_total 1/);
+  } finally {
+    if (previousAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = previousAdminToken;
+    }
+  }
 });

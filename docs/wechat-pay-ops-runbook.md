@@ -41,7 +41,7 @@
 操作步骤：
 
 1. 先在 `payment_orders` 和 `payment_receipts` 中按 `orderId`、`playerId`、`transactionId` 检索交易事实，不要仅凭工单文本做判断。
-2. 再核对 `apps/server/src/wechat-pay.ts` 当前版本是否已把该订单标记为 `paid`，以及是否已经完成发货。
+2. 再核对 `apps/server/src/wechat-pay.ts` 当前版本是否已把该订单标记为 `settled`；若状态为 `grant_pending` / `dead_letter`，说明支付已确认但发货链路需要补偿或人工介入。
 3. 若微信已扣款但游戏未到账，优先走补偿 SOP；只有补偿风险高、证据不一致或玩家明确要求原路退回时才发起退款。
 4. 若确认重复扣款，先冻结该玩家的后续人工补单，再按 finance reviewer 审批结果执行退款。
 5. 若为争议单，必须记录内部结论、审批人、执行人、执行时间、外部单号，并在 1 个工作日内回填工单。
@@ -51,15 +51,48 @@
 未到账：
 
 1. 用 `/api/payments/wechat/verify` 或回调对应的 `out_trade_no` 查明是否已验单成功。
-2. 如果微信订单成功、`payment_receipts` 缺失、且商品金额与 `openid` 一致，先由 backend on-call 确认是否可以安全重试补偿。
-3. 重试成功后，在工单和审计日志中记录补偿方式、操作者、时间、关联 `orderId`。
-4. 若 30 分钟内无法安全补偿，转为退款审批流。
+2. 打开 `/api/runtime/wechat-payment-grants` 或带 `x-veil-admin-token` 的 `/api/admin/payments/wechat/orders?status=grant_pending,dead_letter`，确认订单是否已进入补偿队列或 dead-letter。
+3. 如果微信订单成功、`payment_receipts` 存在、且状态为 `grant_pending` / `dead_letter`，优先使用 `/api/admin/payments/wechat/retry` 触发单笔或批量补偿重试。
+4. 重试成功后，在工单和审计日志中记录补偿方式、操作者、时间、关联 `orderId`。
+5. 若 30 分钟内无法安全补偿，转为退款审批流。
 
 重复扣款：
 
 1. 检查同一玩家是否存在多个不同 `orderId` 指向相同支付动作，或同一 `orderId` 被重复回调。
 2. 如果只是相同 `out_trade_no` 的重复通知，当前服务端会幂等返回成功，不做二次发货。
 3. 如果是两笔真实成功交易且只应成交一次，按退款审批流处理，并把重复交易窗口内的所有 `transactionId` 记入审计日志。
+
+## 发货重试 / Dead Letter
+
+当前支付订单状态机：
+
+- `created`：已创建订单，尚未确认微信支付成功
+- `paid`：事务内已确认支付成功，准备发货；该状态只应短暂出现
+- `grant_pending`：支付成功但发货失败，已写入重试队列
+- `settled`：支付成功且发货完成
+- `dead_letter`：达到最大重试次数，需人工介入
+
+运维入口：
+
+- `GET /api/runtime/wechat-payment-grants`：查看当前 `grant_pending` / `dead_letter` 汇总与明细
+- `GET /api/admin/payments/wechat/orders?status=grant_pending,dead_letter`：管理员分页查看支付补偿队列
+- `POST /api/admin/payments/wechat/retry`：管理员触发重试
+
+`POST /api/admin/payments/wechat/retry` 常见用法：
+
+```json
+{ "orderId": "wechat-order-123" }
+```
+
+```json
+{ "limit": 20 }
+```
+
+处理要求：
+
+1. `grant_pending` 订单优先走批量重试；确认是单笔环境修复后再重试的，使用单笔 `orderId`。
+2. `dead_letter` 订单必须先确认根因，再带 `includeDeadLetter: true` 执行人工重试。
+3. 每次人工重试后都要抓取 `/api/runtime/wechat-payment-grants` 和 `/metrics`，确认队列数、dead-letter 数是否回落。
 
 ## 回调重放攻击检测与防御
 
@@ -85,10 +118,11 @@
 收到告警后执行：
 
 1. 抓取 `/metrics`，确认 `veil_runtime_error_events_total{feature_area="payment",error_code="payment_fraud_signal"}` 的增长窗口和数量。
-2. 打开 `/api/runtime/diagnostic-snapshot`，检查最近的 payment runtime error 与相关 `playerId`。
-3. 在 analytics 或日志侧按 `signal` 聚合，优先识别 `duplicate_out_trade_no`、`openid_mismatch`、`amount_mismatch`、`high_velocity_purchases`。
-4. 若是单个玩家异常，先冻结该玩家的人工补偿和高风险道具发放。
-5. 若是候选版本级异常，暂停该 candidate 的继续提审 / 放量，并要求 backend on-call 审核最近支付变更。
+2. 若是未到账类告警，同时检查 `veil_payment_grant_queue_count`、`veil_payment_grant_dead_letter_count`、`veil_payment_dead_letter_total`。
+3. 打开 `/api/runtime/diagnostic-snapshot`，检查最近的 payment runtime error 与相关 `playerId`。
+4. 在 analytics 或日志侧按 `signal` 聚合，优先识别 `duplicate_out_trade_no`、`openid_mismatch`、`amount_mismatch`、`high_velocity_purchases`。
+5. 若是单个玩家异常，先冻结该玩家的人工补偿和高风险道具发放。
+6. 若是候选版本级异常，暂停该 candidate 的继续提审 / 放量，并要求 backend on-call 审核最近支付变更。
 
 ## 支付流水审计日志格式
 

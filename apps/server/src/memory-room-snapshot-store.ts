@@ -26,6 +26,8 @@ import {
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type PaymentOrderCompleteInput,
   type PaymentOrderCreateInput,
+  type PaymentOrderGrantRetryInput,
+  type PaymentOrderListOptions,
   type PaymentReceiptSnapshot,
   type PaymentOrderSettlement,
   type PaymentOrderSnapshot,
@@ -96,6 +98,23 @@ function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
 
 function cloneArchive(archive: PlayerHeroArchiveSnapshot): PlayerHeroArchiveSnapshot {
   return structuredClone(archive);
+}
+
+function normalizePaymentRetryPolicy(input?: PaymentOrderCompleteInput["retryPolicy"] | PaymentOrderGrantRetryInput["retryPolicy"]) {
+  return {
+    maxAttempts: Math.max(1, Math.floor(input?.maxAttempts ?? 5)),
+    baseDelayMs: Math.max(1_000, Math.floor(input?.baseDelayMs ?? 60_000))
+  };
+}
+
+function computePaymentRetryDelayMs(attemptCount: number, baseDelayMs: number): number {
+  const exponent = Math.max(0, Math.min(6, Math.floor(attemptCount) - 1));
+  return Math.max(1_000, baseDelayMs * 2 ** exponent);
+}
+
+function normalizePaymentGrantError(value: unknown): string {
+  const normalized = (value instanceof Error ? value.message : String(value)).trim();
+  return (normalized || "grant_failed").slice(0, 512);
 }
 
 function normalizePlayerId(playerId: string): string {
@@ -286,6 +305,26 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const order = this.paymentOrders.get(normalizedOrderId);
     return order ? structuredClone(order) : null;
+  }
+
+  async listPaymentOrders(options: PaymentOrderListOptions = {}): Promise<PaymentOrderSnapshot[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+    const statusSet = options.statuses?.length ? new Set(options.statuses) : null;
+    const dueBeforeMs =
+      options.dueBefore && !Number.isNaN(new Date(options.dueBefore).getTime()) ? new Date(options.dueBefore).getTime() : null;
+
+    return Array.from(this.paymentOrders.values())
+      .filter((order) => (statusSet ? statusSet.has(order.status) : true))
+      .filter((order) =>
+        dueBeforeMs == null ? true : order.nextGrantRetryAt != null && new Date(order.nextGrantRetryAt).getTime() <= dueBeforeMs
+      )
+      .sort((left, right) => {
+        const leftRetryAt = left.nextGrantRetryAt ? new Date(left.nextGrantRetryAt).getTime() : Number.POSITIVE_INFINITY;
+        const rightRetryAt = right.nextGrantRetryAt ? new Date(right.nextGrantRetryAt).getTime() : Number.POSITIVE_INFINITY;
+        return leftRetryAt - rightRetryAt || right.updatedAt.localeCompare(left.updatedAt) || left.orderId.localeCompare(right.orderId);
+      })
+      .slice(0, safeLimit)
+      .map((order) => structuredClone(order));
   }
 
   async loadPaymentReceiptByOrderId(orderId: string): Promise<PaymentReceiptSnapshot | null> {
@@ -878,6 +917,95 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return result;
   }
 
+  private applyVerifiedPaymentGrant(
+    account: PlayerAccountSnapshot,
+    order: PaymentOrderSnapshot,
+    input: {
+      productName: string;
+      grant: PaymentOrderCompleteInput["grant"];
+      processedAt: string;
+    }
+  ): PlayerAccountSnapshot {
+    const normalizedGrant = {
+      gems: Math.max(0, Math.floor(input.grant.gems ?? order.gemAmount ?? 0)),
+      resources: {
+        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)),
+        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)),
+        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0))
+      },
+      seasonPassPremium: input.grant.seasonPassPremium === true,
+      cosmeticIds: (input.grant.cosmeticIds ?? []).map((cosmeticId) => {
+        const normalizedCosmeticId = cosmeticId.trim();
+        if (!normalizedCosmeticId || !resolveCosmeticCatalog().some((entry) => entry.id === normalizedCosmeticId)) {
+          throw new Error(`unknown cosmetic grant: ${cosmeticId}`);
+        }
+        return normalizedCosmeticId;
+      }),
+      equipmentIds: (input.grant.equipmentIds ?? []).map((equipmentId) => {
+        const normalizedEquipmentId = equipmentId.trim();
+        if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
+          throw new Error(`unknown equipment grant: ${equipmentId}`);
+        }
+        return normalizedEquipmentId;
+      })
+    };
+
+    if (normalizedGrant.equipmentIds.length > 0) {
+      const currentArchive = Array.from(this.heroArchives.values())
+        .filter((archive) => archive.playerId === order.playerId)
+        .sort((left, right) => left.heroId.localeCompare(right.heroId))[0];
+      if (!currentArchive) {
+        throw new Error("player hero archive not found");
+      }
+
+      let nextInventory = [...currentArchive.hero.loadout.inventory];
+      for (const equipmentId of normalizedGrant.equipmentIds) {
+        const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+        if (!inventoryUpdate.stored) {
+          throw new Error("equipment inventory full");
+        }
+        nextInventory = inventoryUpdate.inventory;
+      }
+
+      this.heroArchives.set(`${currentArchive.playerId}:${currentArchive.heroId}`, {
+        ...cloneArchive(currentArchive),
+        hero: {
+          ...cloneArchive(currentArchive).hero,
+          loadout: {
+            ...cloneArchive(currentArchive).hero.loadout,
+            inventory: nextInventory
+          }
+        }
+      });
+    }
+
+    return {
+      ...account,
+      gems: (account.gems ?? 0) + normalizedGrant.gems,
+      seasonPassPremium: account.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
+      cosmeticInventory: normalizeCosmeticInventory({
+        ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
+      }),
+      globalResources: normalizeResourceLedger({
+        gold: (account.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
+        wood: (account.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
+        ore: (account.globalResources.ore ?? 0) + normalizedGrant.resources.ore
+      }),
+      recentEventLog: appendEventLogEntries(account.recentEventLog, [
+        {
+          id: `${order.playerId}:${input.processedAt}:shop:${order.productId}:1`,
+          timestamp: input.processedAt,
+          roomId: "shop",
+          playerId: order.playerId,
+          category: "account",
+          description: `Purchased ${input.productName} x1.`,
+          rewards: []
+        }
+      ]),
+      updatedAt: input.processedAt
+    };
+  }
+
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
     const orderId = input.orderId.trim();
     const playerId = normalizePlayerId(input.playerId);
@@ -903,11 +1031,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       orderId,
       playerId,
       productId,
-      status: "pending",
+      status: "created",
       amount,
       gemAmount,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      grantAttemptCount: 0
     };
     this.paymentOrders.set(orderId, structuredClone(order));
     return structuredClone(order);
@@ -934,7 +1063,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
     const existingReceipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
-    if (existingOrder.status === "paid" || existingReceipt) {
+    if (existingOrder.status !== "created" || existingReceipt) {
       return {
         order: structuredClone(existingOrder),
         account,
@@ -956,49 +1085,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const paidAt = new Date(input.paidAt ?? Date.now()).toISOString();
     const verifiedAt = new Date(input.verifiedAt ?? paidAt).toISOString();
-    const normalizedGrant = {
-      gems: Math.max(0, Math.floor(input.grant.gems ?? existingOrder.gemAmount ?? 0)),
-      resources: {
-        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)),
-        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)),
-        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0))
-      },
-      seasonPassPremium: input.grant.seasonPassPremium === true,
-      cosmeticIds: (input.grant.cosmeticIds ?? []).map((cosmeticId) => cosmeticId.trim()).filter(Boolean),
-      equipmentIds: (input.grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean)
-    };
-    const nextOrder: PaymentOrderSnapshot = {
-      ...structuredClone(existingOrder),
-      status: "paid",
-      wechatOrderId: normalizedWechatOrderId,
-      paidAt,
-      updatedAt: paidAt
-    };
-    const nextAccount: PlayerAccountSnapshot = {
-      ...account,
-      gems: (account.gems ?? 0) + normalizedGrant.gems,
-      seasonPassPremium: account.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
-      cosmeticInventory: normalizeCosmeticInventory({
-        ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
-      }),
-      globalResources: normalizeResourceLedger({
-        gold: (account.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
-        wood: (account.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
-        ore: (account.globalResources.ore ?? 0) + normalizedGrant.resources.ore
-      }),
-      recentEventLog: appendEventLogEntries(account.recentEventLog, [
-        {
-          id: `${existingOrder.playerId}:${paidAt}:shop:${existingOrder.productId}:1`,
-          timestamp: paidAt,
-          roomId: "shop",
-          playerId: existingOrder.playerId,
-          category: "account",
-          description: `Purchased ${normalizedProductName} x1.`,
-          rewards: []
-        }
-      ]),
-      updatedAt: paidAt
-    };
+    const retryPolicy = normalizePaymentRetryPolicy(input.retryPolicy);
     const receipt: PaymentReceiptSnapshot = {
       transactionId: normalizedWechatOrderId,
       orderId: normalizedOrderId,
@@ -1007,17 +1094,157 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       amount: existingOrder.amount,
       verifiedAt
     };
-    this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
     this.paymentReceiptsByOrderId.set(normalizedOrderId, structuredClone(receipt));
     this.paymentReceiptOrderIdByTransactionId.set(normalizedWechatOrderId, normalizedOrderId);
-    this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
-
-    return {
-      order: structuredClone(nextOrder),
-      account: cloneAccount(nextAccount),
-      credited: true,
-      receipt: structuredClone(receipt)
+    const processingOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      status: "paid",
+      wechatOrderId: normalizedWechatOrderId,
+      paidAt,
+      lastGrantAttemptAt: paidAt,
+      grantAttemptCount: 1,
+      updatedAt: paidAt
     };
+    this.paymentOrders.set(normalizedOrderId, structuredClone(processingOrder));
+
+    try {
+      const nextAccount = this.applyVerifiedPaymentGrant(account, processingOrder, {
+        productName: normalizedProductName,
+        grant: input.grant,
+        processedAt: paidAt
+      });
+      const settledOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: "settled",
+        settledAt: paidAt,
+        updatedAt: paidAt
+      };
+      this.paymentOrders.set(normalizedOrderId, structuredClone(settledOrder));
+      this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+      return {
+        order: structuredClone(settledOrder),
+        account: cloneAccount(nextAccount),
+        credited: true,
+        receipt: structuredClone(receipt)
+      };
+    } catch (error) {
+      const grantError = normalizePaymentGrantError(error);
+      const deadLetter = 1 >= retryPolicy.maxAttempts;
+      const nextRetryAt = new Date(new Date(paidAt).getTime() + computePaymentRetryDelayMs(1, retryPolicy.baseDelayMs)).toISOString();
+      const nextOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: deadLetter ? "dead_letter" : "grant_pending",
+        lastGrantError: grantError,
+        ...(deadLetter ? { deadLetteredAt: paidAt } : { nextGrantRetryAt: nextRetryAt }),
+        updatedAt: paidAt
+      };
+      this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+
+      return {
+        order: structuredClone(nextOrder),
+        account,
+        credited: false,
+        receipt: structuredClone(receipt)
+      };
+    }
+  }
+
+  async retryPaymentOrderGrant(orderId: string, input: PaymentOrderGrantRetryInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = orderId.trim();
+    const normalizedProductName = input.productName.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+    if (!normalizedProductName) {
+      throw new Error("productName must not be empty");
+    }
+
+    const existingOrder = this.paymentOrders.get(normalizedOrderId);
+    if (!existingOrder) {
+      throw new Error("payment_order_not_found");
+    }
+    if (existingOrder.status === "settled") {
+      return {
+        order: structuredClone(existingOrder),
+        account: await this.ensurePlayerAccount({ playerId: existingOrder.playerId }),
+        credited: false,
+        ...(this.paymentReceiptsByOrderId.get(normalizedOrderId)
+          ? { receipt: structuredClone(this.paymentReceiptsByOrderId.get(normalizedOrderId)!) }
+          : {})
+      };
+    }
+    if (existingOrder.status !== "grant_pending" && existingOrder.status !== "dead_letter" && existingOrder.status !== "paid") {
+      throw new Error("payment_order_not_retryable");
+    }
+    if (existingOrder.status === "dead_letter" && input.allowDeadLetter !== true) {
+      throw new Error("payment_order_retry_requires_override");
+    }
+
+    const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
+    const receipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
+    if (!receipt) {
+      throw new Error("payment_receipt_not_found");
+    }
+
+    const retriedAt = new Date(input.retriedAt ?? Date.now()).toISOString();
+    const retryPolicy = normalizePaymentRetryPolicy(input.retryPolicy);
+    const attemptCount = existingOrder.grantAttemptCount + 1;
+    const processingOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      lastGrantAttemptAt: retriedAt,
+      grantAttemptCount: attemptCount,
+      updatedAt: retriedAt
+    };
+
+    try {
+      const nextAccount = this.applyVerifiedPaymentGrant(account, processingOrder, {
+        productName: normalizedProductName,
+        grant: input.grant,
+        processedAt: retriedAt
+      });
+      const settledOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: "settled",
+        settledAt: retriedAt,
+        updatedAt: retriedAt
+      };
+      delete settledOrder.nextGrantRetryAt;
+      delete settledOrder.lastGrantError;
+      delete settledOrder.deadLetteredAt;
+      this.paymentOrders.set(normalizedOrderId, structuredClone(settledOrder));
+      this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+      return {
+        order: structuredClone(settledOrder),
+        account: cloneAccount(nextAccount),
+        credited: true,
+        receipt: structuredClone(receipt)
+      };
+    } catch (error) {
+      const grantError = normalizePaymentGrantError(error);
+      const deadLetter = attemptCount >= retryPolicy.maxAttempts;
+      const nextRetryAt = new Date(new Date(retriedAt).getTime() + computePaymentRetryDelayMs(attemptCount, retryPolicy.baseDelayMs))
+        .toISOString();
+      const nextOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: deadLetter ? "dead_letter" : "grant_pending",
+        lastGrantError: grantError,
+        ...(deadLetter ? { deadLetteredAt: retriedAt } : { nextGrantRetryAt: nextRetryAt }),
+        updatedAt: retriedAt
+      };
+      if (deadLetter) {
+        delete nextOrder.nextGrantRetryAt;
+      }
+      this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+
+      return {
+        order: structuredClone(nextOrder),
+        account,
+        credited: false,
+        receipt: structuredClone(receipt)
+      };
+    }
   }
 
   async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
