@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   appendEventLogEntries,
   DEFAULT_TUTORIAL_STEP,
@@ -16,6 +17,9 @@ import {
 } from "../../../packages/shared/src/index";
 import {
   createPlayerAccountsFromWorldState,
+  type GuildAuditLogCreateInput,
+  type GuildAuditLogListOptions,
+  type GuildAuditLogRecord,
   type GuildListOptions,
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
@@ -131,6 +135,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
+  private readonly guildAuditLogs: GuildAuditLogRecord[] = [];
   private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
   private readonly paymentReceiptsByOrderId = new Map<string, PaymentReceiptSnapshot>();
   private readonly paymentReceiptOrderIdByTransactionId = new Map<string, string>();
@@ -169,6 +174,34 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return this.loadGuild(guildId);
+  }
+
+  async listGuildAuditLogs(options: GuildAuditLogListOptions = {}): Promise<GuildAuditLogRecord[]> {
+    const sinceMs =
+      options.since && !Number.isNaN(new Date(options.since).getTime()) ? new Date(options.since).getTime() : null;
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    return this.guildAuditLogs
+      .filter((entry) => !options.guildId || entry.guildId === options.guildId.trim())
+      .filter((entry) => !options.actorPlayerId || entry.actorPlayerId === normalizePlayerId(options.actorPlayerId))
+      .filter((entry) => sinceMs === null || new Date(entry.occurredAt).getTime() >= sinceMs)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.auditId.localeCompare(left.auditId))
+      .slice(0, safeLimit)
+      .map((entry) => structuredClone(entry));
+  }
+
+  async appendGuildAuditLog(input: GuildAuditLogCreateInput): Promise<GuildAuditLogRecord> {
+    const entry: GuildAuditLogRecord = {
+      auditId: randomUUID(),
+      guildId: input.guildId.trim(),
+      action: input.action,
+      actorPlayerId: normalizePlayerId(input.actorPlayerId),
+      occurredAt: new Date(input.occurredAt ?? Date.now()).toISOString(),
+      name: input.name.trim().slice(0, 40),
+      tag: input.tag.trim().toUpperCase().slice(0, 4),
+      ...(input.reason?.trim() ? { reason: input.reason.trim().slice(0, 200) } : {})
+    };
+    this.guildAuditLogs.push(entry);
+    return structuredClone(entry);
   }
 
   async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {

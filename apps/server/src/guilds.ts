@@ -4,14 +4,15 @@ import {
   createGuild,
   createGuildRosterView,
   createGuildSummaryView,
+  findDisplayNameModerationViolation,
   joinGuild,
   leaveGuild,
   type GuildCreateAction,
+  type GuildState,
   type GuildMembershipEvent,
-  type GuildState
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
-import type { RoomSnapshotStore } from "./persistence";
+import type { GuildAuditLogRecord, RoomSnapshotStore } from "./persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -27,6 +28,8 @@ class PayloadTooLargeError extends Error {
 }
 
 const MAX_JSON_BODY_BYTES = 16 * 1024;
+const GUILD_CREATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const GUILD_CREATE_MAX_PER_WINDOW = 2;
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
@@ -100,7 +103,7 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
 
   if (
     error instanceof SyntaxError ||
-    /guild_create_.*required|guild_join_player_required|guild_leave_player_required|payload_too_large|Unexpected token/.test(
+    /guild_create_.*required|guild_create_.*blocked|guild_join_player_required|guild_leave_player_required|payload_too_large|Unexpected token/.test(
       message
     )
   ) {
@@ -118,15 +121,42 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
   if (/guild_store_unavailable/.test(message)) {
     return { status: 503, code: "guild_store_unavailable", message };
   }
+  if (/guild_create_rate_limited/.test(message)) {
+    return { status: 429, code: "guild_create_rate_limited", message };
+  }
 
   return { status: 500, code: "guild_error", message };
 }
 
-class GuildService {
+function isGuildHidden(guild: GuildState): boolean {
+  return guild.moderation?.isHidden === true;
+}
+
+function ensureGuildPubliclyVisible(guild: GuildState): GuildState {
+  if (isGuildHidden(guild)) {
+    throw new Error("guild_not_found");
+  }
+  return guild;
+}
+
+function validateGuildCreateModeration(action: GuildCreateAction): void {
+  const nameViolation = findDisplayNameModerationViolation(action.name);
+  if (nameViolation) {
+    throw new Error(`guild_create_name_blocked: Guild name contains blocked content (${nameViolation.term})`);
+  }
+  const tagViolation = findDisplayNameModerationViolation(action.tag);
+  if (tagViolation) {
+    throw new Error(`guild_create_tag_blocked: Guild tag contains blocked content (${tagViolation.term})`);
+  }
+}
+
+export class GuildService {
   constructor(private readonly store: RoomSnapshotStore | null) {}
 
   private requireStore(): {
     ensurePlayerAccount: RoomSnapshotStore["ensurePlayerAccount"];
+    appendGuildAuditLog: NonNullable<RoomSnapshotStore["appendGuildAuditLog"]>;
+    listGuildAuditLogs: NonNullable<RoomSnapshotStore["listGuildAuditLogs"]>;
     loadGuild: NonNullable<RoomSnapshotStore["loadGuild"]>;
     loadGuildByMemberPlayerId: NonNullable<RoomSnapshotStore["loadGuildByMemberPlayerId"]>;
     listGuilds: NonNullable<RoomSnapshotStore["listGuilds"]>;
@@ -135,6 +165,8 @@ class GuildService {
   } {
     if (
       !this.store ||
+      !this.store.appendGuildAuditLog ||
+      !this.store.listGuildAuditLogs ||
       !this.store.loadGuild ||
       !this.store.loadGuildByMemberPlayerId ||
       !this.store.listGuilds ||
@@ -146,6 +178,8 @@ class GuildService {
 
     return {
       ensurePlayerAccount: this.store.ensurePlayerAccount.bind(this.store),
+      appendGuildAuditLog: this.store.appendGuildAuditLog.bind(this.store),
+      listGuildAuditLogs: this.store.listGuildAuditLogs.bind(this.store),
       loadGuild: this.store.loadGuild.bind(this.store),
       loadGuildByMemberPlayerId: this.store.loadGuildByMemberPlayerId.bind(this.store),
       listGuilds: this.store.listGuilds.bind(this.store),
@@ -156,7 +190,7 @@ class GuildService {
 
   async listGuilds(limit?: number): Promise<GuildState[]> {
     const store = this.requireStore();
-    return store.listGuilds({ ...(limit != null ? { limit } : {}) });
+    return (await store.listGuilds({ ...(limit != null ? { limit } : {}) })).filter((guild) => !isGuildHidden(guild));
   }
 
   async getGuild(guildId: string): Promise<GuildState> {
@@ -166,7 +200,25 @@ class GuildService {
       throw new Error("guild_not_found");
     }
 
+    return ensureGuildPubliclyVisible(guild);
+  }
+
+  async getGuildForAdmin(guildId: string): Promise<GuildState> {
+    const store = this.requireStore();
+    const guild = await store.loadGuild(guildId);
+    if (!guild) {
+      throw new Error("guild_not_found");
+    }
+
     return guild;
+  }
+
+  async listGuildAuditLogs(guildId: string, limit?: number): Promise<GuildAuditLogRecord[]> {
+    const store = this.requireStore();
+    return store.listGuildAuditLogs({
+      guildId,
+      ...(limit != null ? { limit } : {})
+    });
   }
 
   async createGuildForPlayer(
@@ -174,6 +226,7 @@ class GuildService {
     action: GuildCreateAction
   ): Promise<GuildState> {
     const store = this.requireStore();
+    validateGuildCreateModeration(action);
     await store.ensurePlayerAccount({
       playerId: authSession.playerId,
       displayName: authSession.displayName
@@ -182,6 +235,18 @@ class GuildService {
     const existingGuild = await store.loadGuildByMemberPlayerId(authSession.playerId);
     if (existingGuild) {
       throw new Error("guild_already_member");
+    }
+
+    const recentCreations = await store.listGuildAuditLogs({
+      actorPlayerId: authSession.playerId,
+      since: new Date(Date.now() - GUILD_CREATE_WINDOW_MS).toISOString(),
+      limit: GUILD_CREATE_MAX_PER_WINDOW + 1
+    });
+    const createCount = recentCreations.filter((entry) => entry.action === "created").length;
+    if (createCount >= GUILD_CREATE_MAX_PER_WINDOW) {
+      throw new Error(
+        `guild_create_rate_limited: Guild creation is limited to ${GUILD_CREATE_MAX_PER_WINDOW} per 24 hours`
+      );
     }
 
     const existingTag = (await store.listGuilds({ limit: 200 })).find(
@@ -201,7 +266,16 @@ class GuildService {
       ...(action.memberLimit != null ? { memberLimit: action.memberLimit } : {})
     });
 
-    return store.saveGuild(created.guild);
+    const saved = await store.saveGuild(created.guild);
+    await store.appendGuildAuditLog({
+      guildId: saved.id,
+      action: "created",
+      actorPlayerId: authSession.playerId,
+      occurredAt: saved.createdAt,
+      name: saved.name,
+      tag: saved.tag
+    });
+    return saved;
   }
 
   async joinGuildForPlayer(authSession: { playerId: string; displayName: string }, guildId: string): Promise<GuildState> {
@@ -223,6 +297,7 @@ class GuildService {
     if (!guild) {
       throw new Error("guild_not_found");
     }
+    ensureGuildPubliclyVisible(guild);
 
     const joined = joinGuild(guild, {
       playerId: authSession.playerId,
@@ -259,6 +334,65 @@ class GuildService {
       events: result.events,
       deleted: false
     };
+  }
+
+  async hideGuild(guildId: string, actorPlayerId: string, reason?: string): Promise<GuildState> {
+    const store = this.requireStore();
+    const guild = await this.getGuildForAdmin(guildId);
+    const nextGuild: GuildState = {
+      ...guild,
+      moderation: {
+        isHidden: true,
+        hiddenAt: new Date().toISOString(),
+        hiddenByPlayerId: actorPlayerId.trim(),
+        ...(reason?.trim() ? { hiddenReason: reason.trim() } : {})
+      }
+    };
+    const saved = await store.saveGuild(nextGuild);
+    await store.appendGuildAuditLog({
+      guildId: saved.id,
+      action: "hidden",
+      actorPlayerId,
+      name: saved.name,
+      tag: saved.tag,
+      ...(reason?.trim() ? { reason: reason.trim() } : {})
+    });
+    return saved;
+  }
+
+  async unhideGuild(guildId: string, actorPlayerId: string, reason?: string): Promise<GuildState> {
+    const store = this.requireStore();
+    const guild = await this.getGuildForAdmin(guildId);
+    const nextGuild: GuildState = {
+      ...guild,
+      moderation: {
+        isHidden: false
+      }
+    };
+    const saved = await store.saveGuild(nextGuild);
+    await store.appendGuildAuditLog({
+      guildId: saved.id,
+      action: "unhidden",
+      actorPlayerId,
+      name: saved.name,
+      tag: saved.tag,
+      ...(reason?.trim() ? { reason: reason.trim() } : {})
+    });
+    return saved;
+  }
+
+  async deleteGuildAsAdmin(guildId: string, actorPlayerId: string, reason?: string): Promise<void> {
+    const store = this.requireStore();
+    const guild = await this.getGuildForAdmin(guildId);
+    await store.appendGuildAuditLog({
+      guildId: guild.id,
+      action: "deleted",
+      actorPlayerId,
+      name: guild.name,
+      tag: guild.tag,
+      ...(reason?.trim() ? { reason: reason.trim() } : {})
+    });
+    await store.deleteGuild(guild.id);
   }
 }
 

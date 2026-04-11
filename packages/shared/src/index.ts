@@ -15,6 +15,7 @@ export * from "./daily-quests.ts";
 export * from "./daily-dungeons.ts";
 export * from "./daily-quest-rotation.ts";
 export * from "./deterministic-rng.ts";
+export * from "./display-name-validation.ts";
 export * from "./equipment.ts";
 export * from "./event-log.ts";
 export * from "./feature-flags.ts";
