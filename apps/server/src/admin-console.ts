@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ResourceLedger, ServerMessage, WorldState } from "../../../packages/shared/src/index";
+import { GuildService } from "./guilds";
 import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 
@@ -135,6 +136,32 @@ function hasPlayerReportStore(
 ): store is RoomSnapshotStore &
   Required<Pick<RoomSnapshotStore, "createPlayerReport" | "listPlayerReports" | "resolvePlayerReport">> {
   return Boolean(store?.createPlayerReport && store.listPlayerReports && store.resolvePlayerReport);
+}
+
+function hasGuildModerationStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<
+    Pick<
+      RoomSnapshotStore,
+      | "loadGuild"
+      | "loadGuildByMemberPlayerId"
+      | "listGuilds"
+      | "saveGuild"
+      | "deleteGuild"
+      | "appendGuildAuditLog"
+      | "listGuildAuditLogs"
+    >
+  > {
+  return Boolean(
+    store?.loadGuild &&
+      store.loadGuildByMemberPlayerId &&
+      store.listGuilds &&
+      store.saveGuild &&
+      store.deleteGuild &&
+      store.appendGuildAuditLog &&
+      store.listGuildAuditLogs
+  );
 }
 
 function sendInvalidJson(response: ServerResponse): void {
@@ -271,6 +298,15 @@ function parseUnbanBody(value: unknown): { reason?: string } {
   return reason ? { reason } : {};
 }
 
+function parseGuildModerationBody(value: unknown): { reason?: string } {
+  if (value === undefined || value === null || value === "") {
+    return {};
+  }
+  const payload = readRequiredObjectBody(value);
+  const reason = readOptionalTrimmedString(payload, "reason");
+  return reason ? { reason } : {};
+}
+
 function readLimit(request: IncomingMessage, fallback = 20): number {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const parsed = Number(url.searchParams.get("limit"));
@@ -378,6 +414,7 @@ export function registerAdminRoutes(
   store: RoomSnapshotStore | null,
   _gameServer?: unknown
 ): void {
+  const guildService = new GuildService(store);
   app.use((request, response, next) => {
     if (request.method === "OPTIONS") {
       response.setHeader("Access-Control-Allow-Origin", "*");
@@ -694,6 +731,93 @@ export function registerAdminRoutes(
         }
       });
     } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/guilds/:id", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!hasGuildModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const guildId = readRequiredParam(request, "id");
+      const guild = await guildService.getGuildForAdmin(guildId);
+      const audit = await guildService.listGuildAuditLogs(guildId, readLimit(request, 50));
+      sendJson(response, 200, { guild, audit });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/guilds/:id/hide", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasGuildModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const guildId = readRequiredParam(request, "id");
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      const guild = await guildService.hideGuild(guildId, `${role}:admin-console`, input.reason);
+      sendJson(response, 200, { ok: true, guild });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/guilds/:id/unhide", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasGuildModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const guildId = readRequiredParam(request, "id");
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      const guild = await guildService.unhideGuild(guildId, `${role}:admin-console`, input.reason);
+      sendJson(response, 200, { ok: true, guild });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/guilds/:id/delete", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasGuildModerationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const guildId = readRequiredParam(request, "id");
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      await guildService.deleteGuildAsAdmin(guildId, `${role}:admin-console`, input.reason);
+      sendJson(response, 200, { ok: true, guildId });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
         return;

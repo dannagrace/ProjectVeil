@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AudioClip, AudioSource, Node, resources } from "cc";
+import {
+  configureAssetLoadResilienceRuntimeDependencies,
+  resetAssetLoadResilienceRuntimeForTests
+} from "../assets/scripts/cocos-asset-load-resilience.ts";
 import { createCocosAudioAssetBridge } from "../assets/scripts/cocos-audio-resources";
 
 function getAudioSource(hostNode: Node, name: string): AudioSource {
@@ -64,7 +68,7 @@ test("audio asset bridge surfaces resource load failures", async () => {
       callback(new Error("asset missing"), null);
     }) as typeof resources.load;
 
-    await assert.rejects(bridge.loadClip("audio/missing"), /asset missing/);
+    await assert.rejects(bridge.loadClip("audio/missing"), /Failed to load audio clip: audio\/missing/);
 
     resources.load = ((_path, _Type, callback) => {
       callback(null, null);
@@ -73,6 +77,38 @@ test("audio asset bridge surfaces resource load failures", async () => {
     await assert.rejects(bridge.loadClip("audio/empty"), /Failed to load audio clip: audio\/empty/);
   } finally {
     resources.load = originalLoad;
+    resetAssetLoadResilienceRuntimeForTests();
+  }
+});
+
+test("audio asset bridge retries critical loop assets before rejecting", async () => {
+  const hostNode = new Node("Host");
+  const bridge = createCocosAudioAssetBridge(hostNode);
+  const originalLoad = resources.load;
+  const retryDelays: number[] = [];
+  let attempts = 0;
+
+  configureAssetLoadResilienceRuntimeDependencies({
+    setTimeout: (handler, delayMs) => {
+      retryDelays.push(delayMs);
+      handler();
+      return { delayMs } as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: () => {}
+  });
+
+  try {
+    resources.load = ((_path, _Type, callback) => {
+      attempts += 1;
+      callback(new Error(`asset missing ${attempts}`), null);
+    }) as typeof resources.load;
+
+    await assert.rejects(bridge.loadClip("audio/explore-loop"), /Failed to load audio clip: audio\/explore-loop/);
+    assert.equal(attempts, 4);
+    assert.deepEqual(retryDelays, [1000, 2000, 4000]);
+  } finally {
+    resources.load = originalLoad;
+    resetAssetLoadResilienceRuntimeForTests();
   }
 });
 

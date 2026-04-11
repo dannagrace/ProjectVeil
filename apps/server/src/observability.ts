@@ -16,6 +16,7 @@ import {
   renderAnalyticsPipelineSnapshotText,
   resetCapturedAnalyticsEventsForTest
 } from "./analytics";
+import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
 
@@ -46,6 +47,7 @@ interface AuthObservabilityCounters {
   refreshesTotal: number;
   logoutsTotal: number;
   rateLimitedTotal: number;
+  credentialStuffingBlockedTotal: number;
   invalidCredentialsTotal: number;
   tokenDeliveryRequestsTotal: number;
   tokenDeliverySuccessesTotal: number;
@@ -105,6 +107,7 @@ interface AuthObservabilityState {
   activeGuestSessionCount: number;
   activeAccountSessions: Map<string, { playerId: string; provider: string }>;
   activeAccountLockCount: number;
+  activeCredentialStuffingSourceCount: number;
   pendingRegistrationCount: number;
   pendingRecoveryCount: number;
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
@@ -172,13 +175,20 @@ interface RuntimeObservabilityState {
   };
 }
 
+export interface RuntimePersistenceHealth {
+  status: "ok" | "degraded";
+  storage: "memory" | "mysql";
+  message: string;
+}
+
 interface RuntimeHealthPayload {
-  status: "ok";
+  status: "ok" | "warn";
   service: string;
   checkedAt: string;
   startedAt: string;
   uptimeSeconds: number;
   runtime: {
+    persistence: RuntimePersistenceHealth;
     activeRoomCount: number;
     connectionCount: number;
     activeBattleCount: number;
@@ -200,6 +210,7 @@ interface RuntimeHealthPayload {
       activeAccountSessionCount: number;
       activeAccountSessionByProvider: Record<string, number>;
       activeAccountLockCount: number;
+      activeCredentialStuffingSourceCount: number;
       pendingRegistrationCount: number;
       pendingRecoveryCount: number;
       counters: AuthObservabilityCounters;
@@ -341,6 +352,7 @@ const runtimeObservability: RuntimeObservabilityState = {
       refreshesTotal: 0,
       logoutsTotal: 0,
       rateLimitedTotal: 0,
+      credentialStuffingBlockedTotal: 0,
       invalidCredentialsTotal: 0,
       tokenDeliveryRequestsTotal: 0,
       tokenDeliverySuccessesTotal: 0,
@@ -351,6 +363,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
     activeAccountLockCount: 0,
+    activeCredentialStuffingSourceCount: 0,
     pendingRegistrationCount: 0,
     pendingRecoveryCount: 0,
     sessionFailureReasons: {
@@ -466,7 +479,14 @@ function renderHistogramMetric(name: string, help: string, state: HistogramMetri
   return lines;
 }
 
-function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPayload {
+function buildHealthPayload(
+  service = "project-veil-server",
+  persistence: RuntimePersistenceHealth = {
+    status: "ok",
+    storage: "mysql",
+    message: "Persistent room storage available."
+  }
+): RuntimeHealthPayload {
   const roomSnapshots = Array.from(runtimeObservability.rooms.values());
   const activeRoomCount = roomSnapshots.length;
   const connectionCount = roomSnapshots.reduce((total, room) => total + room.connectedPlayers, 0);
@@ -483,12 +503,13 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
   );
 
   return {
-    status: "ok",
+    status: persistence.status === "degraded" ? "warn" : "ok",
     service,
     checkedAt: new Date().toISOString(),
     startedAt: new Date(runtimeObservability.startedAt).toISOString(),
     uptimeSeconds: Number(((Date.now() - runtimeObservability.startedAt) / 1_000).toFixed(3)),
     runtime: {
+      persistence: { ...persistence },
       activeRoomCount,
       connectionCount,
       activeBattleCount,
@@ -510,6 +531,7 @@ function buildHealthPayload(service = "project-veil-server"): RuntimeHealthPaylo
         activeAccountSessionCount: runtimeObservability.auth.activeAccountSessions.size,
         activeAccountSessionByProvider,
         activeAccountLockCount: runtimeObservability.auth.activeAccountLockCount,
+        activeCredentialStuffingSourceCount: runtimeObservability.auth.activeCredentialStuffingSourceCount,
         pendingRegistrationCount: runtimeObservability.auth.pendingRegistrationCount,
         pendingRecoveryCount: runtimeObservability.auth.pendingRecoveryCount,
         counters: { ...runtimeObservability.auth.counters },
@@ -569,6 +591,10 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.activeAccountLockCount} account lockout(s) active`);
   }
 
+  if (health.runtime.auth.activeCredentialStuffingSourceCount > 0) {
+    alerts.push(`${health.runtime.auth.activeCredentialStuffingSourceCount} credential-stuffing source block(s) active`);
+  }
+
   if (health.runtime.auth.pendingRecoveryCount > 10) {
     alerts.push(`${health.runtime.auth.pendingRecoveryCount} password recovery tokens pending`);
   }
@@ -597,6 +623,7 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
       `auth ready; guest=${health.runtime.auth.activeGuestSessionCount} ` +
       `account=${health.runtime.auth.activeAccountSessionCount} ` +
       `lockouts=${health.runtime.auth.activeAccountLockCount} ` +
+      `sourceBlocks=${health.runtime.auth.activeCredentialStuffingSourceCount} ` +
       `wechat=${wechatMode}/${wechatCredentialsStatus}`,
     alerts,
     auth: {
@@ -789,6 +816,7 @@ export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
   const featureFlags = buildFeatureFlagObservabilityPayload();
   const analyticsPipeline = getAnalyticsPipelineSnapshot();
+  const mysqlPools = getMySqlPoolMetricsSnapshot();
   const lines = [
     "# HELP veil_up Process health status.",
     "# TYPE veil_up gauge",
@@ -800,6 +828,35 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_connected_players gauge",
     `veil_connected_players ${health.runtime.connectionCount}`
   ];
+
+  lines.push(
+    "# HELP veil_mysql_pool_connection_limit Configured MySQL pool connection limit.",
+    "# TYPE veil_mysql_pool_connection_limit gauge",
+    "# HELP veil_mysql_pool_connections_active Active MySQL connections borrowed from the pool.",
+    "# TYPE veil_mysql_pool_connections_active gauge",
+    "# HELP veil_mysql_pool_connections_idle Idle MySQL connections retained by the pool.",
+    "# TYPE veil_mysql_pool_connections_idle gauge",
+    "# HELP veil_mysql_pool_queue_depth MySQL pool wait queue depth.",
+    "# TYPE veil_mysql_pool_queue_depth gauge",
+    "# HELP veil_mysql_pool_connection_utilization_ratio Ratio of active connections to configured connection limit.",
+    "# TYPE veil_mysql_pool_connection_utilization_ratio gauge"
+  );
+  if (mysqlPools.length === 0) {
+    lines.push("veil_mysql_pool_connection_limit 0");
+    lines.push("veil_mysql_pool_connections_active 0");
+    lines.push("veil_mysql_pool_connections_idle 0");
+    lines.push("veil_mysql_pool_queue_depth 0");
+    lines.push("veil_mysql_pool_connection_utilization_ratio 0");
+  } else {
+    for (const pool of mysqlPools) {
+      const labels = formatPrometheusLabels({ pool: pool.pool });
+      lines.push(`veil_mysql_pool_connection_limit${labels} ${pool.connectionLimit}`);
+      lines.push(`veil_mysql_pool_connections_active${labels} ${pool.activeConnections}`);
+      lines.push(`veil_mysql_pool_connections_idle${labels} ${pool.idleConnections}`);
+      lines.push(`veil_mysql_pool_queue_depth${labels} ${pool.queueDepth}`);
+      lines.push(`veil_mysql_pool_connection_utilization_ratio${labels} ${pool.utilizationRatio.toFixed(4)}`);
+    }
+  }
 
   lines.push(
     ...renderHistogramMetric(
@@ -923,6 +980,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_feature_flag_enabled gauge",
     "# HELP veil_feature_flag_rollout_ratio Rollout ratio for a feature flag.",
     "# TYPE veil_feature_flag_rollout_ratio gauge",
+    "# HELP veil_active_rooms_total Active room count.",
+    "# TYPE veil_active_rooms_total gauge",
+    `veil_active_rooms_total ${health.runtime.activeRoomCount}`,
     "# HELP veil_active_room_count Active room count.",
     "# TYPE veil_active_room_count gauge",
     `veil_active_room_count ${health.runtime.activeRoomCount}`,
@@ -986,6 +1046,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_account_locks Active account login lockouts.",
     "# TYPE veil_auth_account_locks gauge",
     `veil_auth_account_locks ${health.runtime.auth.activeAccountLockCount}`,
+    "# HELP veil_auth_credential_stuffing_sources Active source-IP blocks triggered by credential-stuffing detection.",
+    "# TYPE veil_auth_credential_stuffing_sources gauge",
+    `veil_auth_credential_stuffing_sources ${health.runtime.auth.activeCredentialStuffingSourceCount}`,
     "# HELP veil_auth_pending_registrations Pending account registration tokens.",
     "# TYPE veil_auth_pending_registrations gauge",
     `veil_auth_pending_registrations ${health.runtime.auth.pendingRegistrationCount}`,
@@ -1019,6 +1082,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
+    "# TYPE veil_auth_credential_stuffing_blocked_total counter",
+    `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
@@ -1577,6 +1643,10 @@ export function setAuthAccountLockCount(count: number): void {
   runtimeObservability.auth.activeAccountLockCount = Math.max(0, Math.floor(count));
 }
 
+export function setAuthCredentialStuffingSourceCount(count: number): void {
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = Math.max(0, Math.floor(count));
+}
+
 export function setPendingAuthRegistrationCount(count: number): void {
   runtimeObservability.auth.pendingRegistrationCount = Math.max(0, Math.floor(count));
 }
@@ -1620,6 +1690,10 @@ export function recordAuthLogout(): void {
 
 export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
+}
+
+export function recordAuthCredentialStuffingBlocked(): void {
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal += 1;
 }
 
 export function recordMatchmakingRateLimited(): void {
@@ -1723,6 +1797,7 @@ export function recordReconnectWindowResolved(
 }
 
 export function resetRuntimeObservability(): void {
+  resetTrackedMySqlPools();
   runtimeObservability.startedAt = Date.now();
   runtimeObservability.rooms.clear();
   runtimeObservability.errorEvents.length = 0;
@@ -1744,6 +1819,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.refreshesTotal = 0;
   runtimeObservability.auth.counters.logoutsTotal = 0;
   runtimeObservability.auth.counters.rateLimitedTotal = 0;
+  runtimeObservability.auth.counters.credentialStuffingBlockedTotal = 0;
   runtimeObservability.auth.counters.invalidCredentialsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryRequestsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliverySuccessesTotal = 0;
@@ -1753,6 +1829,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
+  runtimeObservability.auth.activeCredentialStuffingSourceCount = 0;
   runtimeObservability.auth.pendingRegistrationCount = 0;
   runtimeObservability.auth.pendingRecoveryCount = 0;
   runtimeObservability.auth.sessionFailureReasons.unauthorized = 0;
@@ -1794,10 +1871,12 @@ export function registerRuntimeObservabilityRoutes(
   options?: {
     serviceName?: string;
     store?: { clearAll?: () => void };
+    persistence?: RuntimePersistenceHealth;
   }
 ): void {
   const serviceName = options?.serviceName ?? "project-veil-server";
   const store = options?.store;
+  const persistence = options?.persistence;
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -1815,7 +1894,8 @@ export function registerRuntimeObservabilityRoutes(
 
   app.get("/api/runtime/health", async (_request, response) => {
     try {
-      sendJson(response, 200, buildHealthPayload(serviceName));
+      const payload = buildHealthPayload(serviceName, persistence);
+      sendJson(response, payload.status === "ok" ? 200 : 503, payload);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

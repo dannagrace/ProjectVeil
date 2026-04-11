@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import {
   appendEventLogEntries,
   DEFAULT_TUTORIAL_STEP,
@@ -38,6 +38,15 @@ import {
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
+import {
+  createTrackedMySqlPool,
+  DEFAULT_MYSQL_POOL_CONNECTION_LIMIT,
+  DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS,
+  DEFAULT_MYSQL_POOL_MAX_IDLE,
+  DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
+  DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
+  type MySqlPoolConfig
+} from "./mysql-pool";
 import type { RoomPersistenceSnapshot } from "./index";
 import {
   claimAllPlayerMailboxMessages,
@@ -100,6 +109,7 @@ export interface RoomSnapshotStore {
   loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null>;
   loadGuild?(guildId: string): Promise<GuildState | null>;
   loadGuildByMemberPlayerId?(playerId: string): Promise<GuildState | null>;
+  listGuildAuditLogs?(options?: GuildAuditLogListOptions): Promise<GuildAuditLogRecord[]>;
   loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
   loadPaymentReceiptByOrderId?(orderId: string): Promise<PaymentReceiptSnapshot | null>;
   countVerifiedPaymentReceiptsSince?(playerId: string, since: string): Promise<number>;
@@ -119,6 +129,7 @@ export interface RoomSnapshotStore {
   listGuilds?(options?: GuildListOptions): Promise<GuildState[]>;
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
   saveGuild?(guild: GuildState): Promise<GuildState>;
+  appendGuildAuditLog?(input: GuildAuditLogCreateInput): Promise<GuildAuditLogRecord>;
   savePlayerBan?(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot>;
   clearPlayerBan?(playerId: string, input?: PlayerAccountUnbanInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
@@ -189,6 +200,7 @@ export interface MySqlPersistenceConfig {
   user: string;
   password: string;
   database: string;
+  pool: MySqlPoolConfig;
   retention: SnapshotRetentionPolicy;
 }
 
@@ -397,6 +409,17 @@ interface GuildRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
+interface GuildAuditLogRow extends RowDataPacket {
+  audit_id: string;
+  guild_id: string;
+  action: string;
+  actor_player_id: string;
+  occurred_at: Date | string;
+  name: string;
+  tag: string;
+  reason: string | null;
+}
+
 interface PlayerReportRow extends RowDataPacket {
   report_id: string | number;
   reporter_id: string;
@@ -485,6 +508,36 @@ export interface PlayerAccountEnsureInput {
 export interface GuildListOptions {
   limit?: number;
   playerId?: string;
+}
+
+export type GuildAuditAction = "created" | "hidden" | "unhidden" | "deleted";
+
+export interface GuildAuditLogRecord {
+  auditId: string;
+  guildId: string;
+  action: GuildAuditAction;
+  actorPlayerId: string;
+  occurredAt: string;
+  name: string;
+  tag: string;
+  reason?: string;
+}
+
+export interface GuildAuditLogCreateInput {
+  guildId: string;
+  action: GuildAuditAction;
+  actorPlayerId: string;
+  occurredAt?: string;
+  name: string;
+  tag: string;
+  reason?: string;
+}
+
+export interface GuildAuditLogListOptions {
+  guildId?: string;
+  actorPlayerId?: string;
+  since?: string;
+  limit?: number;
 }
 
 export type GemLedgerReason = "purchase" | "reward" | "spend";
@@ -799,6 +852,9 @@ export const MYSQL_GUILD_UPDATED_AT_INDEX = "idx_guilds_updated_at";
 export const MYSQL_GUILD_TAG_INDEX = "uidx_guilds_tag";
 export const MYSQL_GUILD_MEMBERSHIP_TABLE = "guild_memberships";
 export const MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX = "uidx_guild_memberships_player";
+export const MYSQL_GUILD_AUDIT_LOG_TABLE = "guild_audit_logs";
+export const MYSQL_GUILD_AUDIT_LOG_GUILD_OCCURRED_INDEX = "idx_guild_audit_logs_guild_occurred";
+export const MYSQL_GUILD_AUDIT_LOG_ACTOR_OCCURRED_INDEX = "idx_guild_audit_logs_actor_occurred";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const MYSQL_SEASON_TABLE = "veil_seasons";
@@ -827,6 +883,47 @@ function readOptionalPositiveNumber(value: string | undefined, fallback: number)
   }
 
   return parsed;
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function readNonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function readBooleanFlag(value: string | undefined, fallback: boolean): boolean {
+  if (value == null || value.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return fallback;
 }
 
 function timestampOf(value: Date | string): number {
@@ -940,6 +1037,27 @@ function normalizeGuildId(guildId: string): string {
   }
 
   return normalized.slice(0, 191);
+}
+
+function normalizeGuildAuditReason(reason?: string | null): string | undefined {
+  const normalized = reason?.trim();
+  return normalized ? normalized.slice(0, 200) : undefined;
+}
+
+function toGuildAuditLogRecord(row: GuildAuditLogRow): GuildAuditLogRecord {
+  const action = row.action === "created" || row.action === "hidden" || row.action === "unhidden" || row.action === "deleted"
+    ? row.action
+    : "created";
+  return {
+    auditId: row.audit_id,
+    guildId: normalizeGuildId(row.guild_id),
+    action,
+    actorPlayerId: normalizePlayerId(row.actor_player_id),
+    occurredAt: formatTimestamp(row.occurred_at) ?? new Date().toISOString(),
+    name: row.name.trim().slice(0, 40),
+    tag: row.tag.trim().toUpperCase().slice(0, 4),
+    ...(row.reason?.trim() ? { reason: row.reason.trim() } : {})
+  };
 }
 
 function toGuildState(row: GuildRow): GuildState {
@@ -2006,6 +2124,16 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
     user,
     password,
     database: env.VEIL_MYSQL_DATABASE ?? MYSQL_DEFAULT_DATABASE,
+    pool: {
+      connectionLimit: readPositiveInteger(env.VEIL_MYSQL_POOL_CONNECTION_LIMIT, DEFAULT_MYSQL_POOL_CONNECTION_LIMIT),
+      maxIdle: readPositiveInteger(env.VEIL_MYSQL_POOL_MAX_IDLE, DEFAULT_MYSQL_POOL_MAX_IDLE),
+      idleTimeoutMs: readPositiveInteger(env.VEIL_MYSQL_POOL_IDLE_TIMEOUT_MS, DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS),
+      queueLimit: readNonNegativeInteger(env.VEIL_MYSQL_POOL_QUEUE_LIMIT, DEFAULT_MYSQL_POOL_QUEUE_LIMIT),
+      waitForConnections: readBooleanFlag(
+        env.VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
+        DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS
+      )
+    },
     retention: {
       ttlHours: readOptionalPositiveNumber(env.VEIL_MYSQL_SNAPSHOT_TTL_HOURS, DEFAULT_SNAPSHOT_TTL_HOURS),
       cleanupIntervalMinutes: readOptionalPositiveNumber(
@@ -3929,15 +4057,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   static async create(config: MySqlPersistenceConfig): Promise<MySqlRoomSnapshotStore> {
-    const pool = createPool({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password,
-      database: config.database,
-      connectionLimit: 4,
-      namedPlaceholders: true
-    });
+    const pool = createTrackedMySqlPool("room_snapshot", config);
     await pool.query("SELECT 1");
 
     return new MySqlRoomSnapshotStore(pool, config.database, config.retention);
@@ -4038,6 +4158,93 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toGuildState(row) : null;
+  }
+
+  async listGuildAuditLogs(options: GuildAuditLogListOptions = {}): Promise<GuildAuditLogRecord[]> {
+    const clauses: string[] = [];
+    const params: Array<string | Date | number> = [];
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+
+    if (options.guildId?.trim()) {
+      clauses.push("guild_id = ?");
+      params.push(normalizeGuildId(options.guildId));
+    }
+    if (options.actorPlayerId?.trim()) {
+      clauses.push("actor_player_id = ?");
+      params.push(normalizePlayerId(options.actorPlayerId));
+    }
+    if (options.since?.trim()) {
+      const since = new Date(options.since);
+      if (Number.isNaN(since.getTime())) {
+        throw new Error("since must be a valid ISO timestamp");
+      }
+      clauses.push("occurred_at >= ?");
+      params.push(since);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<GuildAuditLogRow[]>(
+      `SELECT
+         audit_id,
+         guild_id,
+         action,
+         actor_player_id,
+         occurred_at,
+         name,
+         tag,
+         reason
+       FROM \`${MYSQL_GUILD_AUDIT_LOG_TABLE}\`
+       ${whereClause}
+       ORDER BY occurred_at DESC, audit_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toGuildAuditLogRecord(row));
+  }
+
+  async appendGuildAuditLog(input: GuildAuditLogCreateInput): Promise<GuildAuditLogRecord> {
+    const auditId = randomUUID();
+    const occurredAt = new Date(input.occurredAt ?? Date.now());
+    const normalizedReason = normalizeGuildAuditReason(input.reason);
+    if (Number.isNaN(occurredAt.getTime())) {
+      throw new Error("occurredAt must be a valid ISO timestamp");
+    }
+    const record: GuildAuditLogRecord = {
+      auditId,
+      guildId: normalizeGuildId(input.guildId),
+      action: input.action,
+      actorPlayerId: normalizePlayerId(input.actorPlayerId),
+      occurredAt: occurredAt.toISOString(),
+      name: input.name.trim().slice(0, 40),
+      tag: input.tag.trim().toUpperCase().slice(0, 4),
+      ...(normalizedReason ? { reason: normalizedReason } : {})
+    };
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_GUILD_AUDIT_LOG_TABLE}\` (
+         audit_id,
+         guild_id,
+         action,
+         actor_player_id,
+         occurred_at,
+         name,
+         tag,
+         reason
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.auditId,
+        record.guildId,
+        record.action,
+        record.actorPlayerId,
+        occurredAt,
+        record.name,
+        record.tag,
+        record.reason ?? null
+      ]
+    );
+
+    return record;
   }
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {

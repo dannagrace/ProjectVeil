@@ -47,6 +47,13 @@ export interface GuildInviteState {
   respondedAt?: string;
 }
 
+export interface GuildModerationState {
+  isHidden: boolean;
+  hiddenAt?: string;
+  hiddenByPlayerId?: string;
+  hiddenReason?: string;
+}
+
 export interface GuildState {
   id: string;
   name: string;
@@ -57,6 +64,7 @@ export interface GuildState {
   xp: number;
   createdAt: string;
   updatedAt: string;
+  moderation?: GuildModerationState;
   members: GuildMemberState[];
   joinRequests: GuildJoinRequestState[];
   invites: GuildInviteState[];

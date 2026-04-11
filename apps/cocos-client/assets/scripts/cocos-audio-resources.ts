@@ -1,4 +1,5 @@
 import { AudioClip, AudioSource, Node, resources } from "cc";
+import { retryAssetLoad } from "./cocos-asset-load-resilience.ts";
 import type { CocosAudioAssetBridge, CocosAudioAssetClip } from "./cocos-audio-runtime.ts";
 
 const MUSIC_NODE_NAME = "ProjectVeilMusicAudio";
@@ -21,18 +22,29 @@ export function createCocosAudioAssetBridge(hostNode: Node): CocosAudioAssetBrid
         return cached;
       }
 
-      const promise = new Promise<CocosManagedAudioClip>((resolve, reject) => {
-        resources.load(path, AudioClip, (err, clip) => {
-          if (err || !clip) {
-            reject(err ?? new Error(`Failed to load audio clip: ${path}`));
-            return;
-          }
+      const promise = retryAssetLoad({
+        assetType: "audio",
+        assetPath: path,
+        critical: path === "audio/explore-loop" || path === "audio/battle-loop",
+        load: () =>
+          new Promise<CocosManagedAudioClip>((resolve, reject) => {
+            resources.load(path, AudioClip, (err, clip) => {
+              if (err || !clip) {
+                reject(err ?? new Error(`Failed to load audio clip: ${path}`));
+                return;
+              }
 
-          resolve({
-            path,
-            clip
-          });
-        });
+              resolve({
+                path,
+                clip
+              });
+            });
+          })
+      }).then((clip) => {
+        if (!clip) {
+          throw new Error(`Failed to load audio clip: ${path}`);
+        }
+        return clip;
       });
 
       clipCache.set(path, promise);

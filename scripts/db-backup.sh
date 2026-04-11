@@ -87,8 +87,10 @@ require_command aws
 
 if command -v sha256sum >/dev/null 2>&1; then
   SHA_COMMAND=(sha256sum)
+  SHA_VERIFY=(sha256sum -c)
 elif command -v shasum >/dev/null 2>&1; then
   SHA_COMMAND=(shasum -a 256)
+  SHA_VERIFY=(shasum -a 256 -c)
 else
   echo "Missing required command: sha256sum or shasum" >&2
   exit 1
@@ -196,6 +198,10 @@ mysqldump \
 
 archive_hash="$("${SHA_COMMAND[@]}" "$archive_path" | awk '{print $1}')"
 printf '%s  %s\n' "$archive_hash" "$backup_base_name" >"$hash_path"
+(
+  cd "$TMP_DIR"
+  "${SHA_VERIFY[@]}" "./$backup_base_name.sha256"
+)
 
 log "Uploading daily backup to $(s3_uri "$daily_key")"
 upload_file "$archive_path" "$daily_key"

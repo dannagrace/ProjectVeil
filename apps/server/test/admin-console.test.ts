@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
 import type { PlayerBanHistoryRecord, RoomSnapshotStore } from "../src/persistence";
@@ -147,6 +148,17 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     createdAt: string;
     resolvedAt?: string;
   }>();
+  const guilds = new Map<string, GuildState>();
+  const guildAuditLogs: Array<{
+    auditId: string;
+    guildId: string;
+    action: "created" | "hidden" | "unhidden" | "deleted";
+    actorPlayerId: string;
+    occurredAt: string;
+    name: string;
+    tag: string;
+    reason?: string;
+  }> = [];
   const saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }> = [];
   let nextReportId = 1;
 
@@ -209,6 +221,54 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       };
       accounts.set(input.playerId, created);
       return created;
+    },
+    async loadGuild(guildId: string) {
+      return guilds.get(guildId) ? normalizeGuildState(guilds.get(guildId)) : null;
+    },
+    async loadGuildByMemberPlayerId(playerId: string) {
+      const match = Array.from(guilds.values()).find((guild) => guild.members.some((member) => member.playerId === playerId));
+      return match ? normalizeGuildState(match) : null;
+    },
+    async listGuilds(options: { limit?: number } = {}) {
+      return Array.from(guilds.values())
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)))
+        .map((guild) => normalizeGuildState(guild));
+    },
+    async saveGuild(guild: GuildState) {
+      const normalized = normalizeGuildState(guild);
+      guilds.set(normalized.id, normalized);
+      return normalizeGuildState(normalized);
+    },
+    async deleteGuild(guildId: string) {
+      guilds.delete(guildId);
+    },
+    async appendGuildAuditLog(input: {
+      guildId: string;
+      action: "created" | "hidden" | "unhidden" | "deleted";
+      actorPlayerId: string;
+      occurredAt?: string;
+      name: string;
+      tag: string;
+      reason?: string;
+    }) {
+      const entry = {
+        auditId: `${guildAuditLogs.length + 1}`,
+        guildId: input.guildId,
+        action: input.action,
+        actorPlayerId: input.actorPlayerId,
+        occurredAt: input.occurredAt ?? new Date().toISOString(),
+        name: input.name,
+        tag: input.tag,
+        ...(input.reason ? { reason: input.reason } : {})
+      };
+      guildAuditLogs.unshift(entry);
+      return entry;
+    },
+    async listGuildAuditLogs(options: { guildId?: string; limit?: number } = {}) {
+      return guildAuditLogs
+        .filter((entry) => !options.guildId || entry.guildId === options.guildId)
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     },
     async savePlayerAccountProgress(playerId: string, patch: { globalResources?: { gold: number; wood: number; ore: number } }) {
       const account =
@@ -295,7 +355,23 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
 
   return store as Pick<
     RoomSnapshotStore,
-    "loadPlayerAccount" | "createPlayerReport" | "loadPlayerBan" | "ensurePlayerAccount" | "savePlayerAccountProgress" | "savePlayerBan" | "clearPlayerBan" | "listPlayerBanHistory" | "listPlayerReports" | "resolvePlayerReport"
+    | "loadPlayerAccount"
+    | "createPlayerReport"
+    | "loadPlayerBan"
+    | "ensurePlayerAccount"
+    | "loadGuild"
+    | "loadGuildByMemberPlayerId"
+    | "listGuilds"
+    | "saveGuild"
+    | "deleteGuild"
+    | "appendGuildAuditLog"
+    | "listGuildAuditLogs"
+    | "savePlayerAccountProgress"
+    | "savePlayerBan"
+    | "clearPlayerBan"
+    | "listPlayerBanHistory"
+    | "listPlayerReports"
+    | "resolvePlayerReport"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
   };
@@ -1257,4 +1333,152 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
   assert.deepEqual(payload.account.globalResources, { gold: 9, wood: 4, ore: 2 });
   assert.equal(payload.moderation.currentBan.banStatus, "temporary");
   assert.equal(payload.moderation.banHistory[0]?.action, "ban");
+});
+
+test("support moderators can hide and inspect guild moderation audit", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  await store.saveGuild(
+    normalizeGuildState({
+      id: "guild-admin-1",
+      name: "Nightwatch",
+      tag: "NW",
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      memberLimit: 20,
+      level: 1,
+      xp: 0,
+      members: [{ playerId: "founder-1", displayName: "Founder", role: "owner", joinedAt: "2026-04-11T00:00:00.000Z" }],
+      joinRequests: [],
+      invites: []
+    })
+  );
+  await store.appendGuildAuditLog({
+    guildId: "guild-admin-1",
+    action: "created",
+    actorPlayerId: "founder-1",
+    occurredAt: "2026-04-11T00:00:00.000Z",
+    name: "Nightwatch",
+    tag: "NW"
+  });
+  const { gets, posts } = registerRoutes(store as RoomSnapshotStore);
+  const hideHandler = posts.get("/api/admin/guilds/:id/hide");
+  const getHandler = gets.get("/api/admin/guilds/:id");
+  assert.ok(hideHandler);
+  assert.ok(getHandler);
+
+  const hideResponse = createResponse();
+  await hideHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "guild-admin-1" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      },
+      body: JSON.stringify({ reason: "违规名称巡检下架" })
+    }),
+    hideResponse
+  );
+
+  assert.equal(hideResponse.statusCode, 200);
+  const hiddenPayload = JSON.parse(hideResponse.body) as { guild: GuildState };
+  assert.equal(hiddenPayload.guild.moderation?.isHidden, true);
+  assert.equal(hiddenPayload.guild.moderation?.hiddenReason, "违规名称巡检下架");
+
+  const getResponse = createResponse();
+  await getHandler(
+    createRequest({
+      params: { id: "guild-admin-1" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    getResponse
+  );
+
+  assert.equal(getResponse.statusCode, 200);
+  const getPayload = JSON.parse(getResponse.body) as {
+    guild: GuildState;
+    audit: Array<{ action: string; actorPlayerId: string; reason?: string; guildId: string; name: string; tag: string }>;
+  };
+  assert.equal(getPayload.guild.moderation?.isHidden, true);
+  assert.equal(getPayload.audit[0]?.action, "hidden");
+  assert.equal(getPayload.audit[0]?.actorPlayerId, "support-moderator:admin-console");
+  assert.equal(getPayload.audit[0]?.reason, "违规名称巡检下架");
+  assert.equal(getPayload.audit[0]?.guildId, "guild-admin-1");
+  assert.equal(getPayload.audit[0]?.name, "Nightwatch");
+  assert.equal(getPayload.audit[0]?.tag, "NW");
+  const audit = await store.listGuildAuditLogs({ guildId: "guild-admin-1" });
+  assert.equal(audit[0]?.action, "hidden");
+  assert.equal(audit[1]?.action, "created");
+  assert.equal(audit[1]?.actorPlayerId, "founder-1");
+});
+
+test("support moderators can delete guilds without removing audit history", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  await store.saveGuild(
+    normalizeGuildState({
+      id: "guild-admin-delete",
+      name: "Spammy",
+      tag: "SPM",
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+      memberLimit: 20,
+      level: 1,
+      xp: 0,
+      members: [{ playerId: "founder-delete", displayName: "Founder Delete", role: "owner", joinedAt: "2026-04-11T00:00:00.000Z" }],
+      joinRequests: [],
+      invites: []
+    })
+  );
+  await store.appendGuildAuditLog({
+    guildId: "guild-admin-delete",
+    action: "created",
+    actorPlayerId: "founder-delete",
+    occurredAt: "2026-04-11T00:00:00.000Z",
+    name: "Spammy",
+    tag: "SPM"
+  });
+  const { posts, gets } = registerRoutes(store as RoomSnapshotStore);
+  const deleteHandler = posts.get("/api/admin/guilds/:id/delete");
+  const getHandler = gets.get("/api/admin/guilds/:id");
+  assert.ok(deleteHandler);
+  assert.ok(getHandler);
+
+  const deleteResponse = createResponse();
+  await deleteHandler(
+    createRequest({
+      method: "POST",
+      params: { id: "guild-admin-delete" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      },
+      body: JSON.stringify({ reason: "spam cleanup" })
+    }),
+    deleteResponse
+  );
+
+  assert.equal(deleteResponse.statusCode, 200);
+  assert.equal((await store.loadGuild("guild-admin-delete")) === null, true);
+
+  const getResponse = createResponse();
+  await getHandler(
+    createRequest({
+      params: { id: "guild-admin-delete" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    getResponse
+  );
+
+  assert.equal(getResponse.statusCode, 400);
+  assert.match(getResponse.body, /guild_not_found/);
+  const audit = await store.listGuildAuditLogs({ guildId: "guild-admin-delete" });
+  assert.equal(audit[0]?.action, "deleted");
+  assert.equal(audit[0]?.reason, "spam cleanup");
+  assert.equal(audit[1]?.action, "created");
 });

@@ -11,10 +11,21 @@ groups:
         annotations:
           summary: Project Veil connected player count is elevated
           description: veil_connected_players has been above 150 for 10 minutes. Add capacity or shed test traffic before matchmaking and room latency degrade.
-          runbook_url: ./alerting-runbook.md#alert-veilconnectedplayershigh
+          runbook_url: ./incident-response-runbook.md#alert-veilconnectedplayershigh
+
+      - alert: VeilActiveRoomsHigh
+        expr: veil_active_rooms_total > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil active room count is unexpectedly high
+          description: veil_active_rooms_total has been above 80 for 10 minutes. Check for zombie-room cleanup failures, stalled disposal, or synthetic traffic that is creating empty rooms faster than they are drained.
+          runbook_url: ./incident-response-runbook.md#alert-veilactiveroomshigh
 
       - alert: VeilRoomsHot
-        expr: (veil_connected_players / clamp_min(veil_active_rooms, 1)) > 12
+        expr: (veil_connected_players / clamp_min(veil_active_rooms_total, 1)) > 12
         for: 10m
         labels:
           severity: warning
@@ -22,7 +33,7 @@ groups:
         annotations:
           summary: Project Veil room density is high
           description: Average connected players per active room has stayed above 12 for 10 minutes, which indicates hot shards or uneven room placement.
-          runbook_url: ./alerting-runbook.md#alert-veilroomshot
+          runbook_url: ./incident-response-runbook.md#alert-veilroomshot
 
       - alert: VeilBattleDurationP95High
         expr: histogram_quantile(0.95, sum(rate(veil_battle_duration_seconds_bucket[30m])) by (le)) > 180
@@ -33,7 +44,7 @@ groups:
         annotations:
           summary: Project Veil battles are taking too long to resolve
           description: The 95th percentile battle duration has exceeded 180 seconds for 15 minutes, which usually means turn processing stalls or players are stuck in combat loops.
-          runbook_url: ./alerting-runbook.md#alert-veilbattledurationp95high
+          runbook_url: ./incident-response-runbook.md#alert-veilbattledurationp95high
 
       - alert: VeilActionValidationFailuresHigh
         expr: sum(rate(veil_action_validation_failures_total[15m])) > 0.5
@@ -44,7 +55,7 @@ groups:
         annotations:
           summary: Project Veil is rejecting gameplay actions at an abnormal rate
           description: veil_action_validation_failures_total is averaging more than 0.5 rejected actions per second over 15 minutes. Check recent deploys, protocol drift, and client desync.
-          runbook_url: ./alerting-runbook.md#alert-veilactionvalidationfailureshigh
+          runbook_url: ./incident-response-runbook.md#alert-veilactionvalidationfailureshigh
 
       - alert: VeilHttpRequestLatencyP95High
         expr: histogram_quantile(0.95, sum(rate(veil_http_request_duration_seconds_bucket[15m])) by (le)) > 0.75
@@ -55,7 +66,30 @@ groups:
         annotations:
           summary: Project Veil HTTP latency is elevated
           description: The 95th percentile HTTP request latency has exceeded 750ms for 10 minutes. Inspect runtime saturation, downstream auth/config dependencies, and noisy operators.
-          runbook_url: ./alerting-runbook.md#alert-veilhttprequestlatencyp95high
+          runbook_url: ./incident-response-runbook.md#alert-veilhttprequestlatencyp95high
+
+      - alert: VeilMySqlPoolPressureHigh
+        expr: max(veil_mysql_pool_queue_depth{pool=~"room_snapshot|config_center"}) > 0 or max(veil_mysql_pool_connection_utilization_ratio{pool=~"room_snapshot|config_center"}) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil MySQL connection pools are under sustained pressure
+          description: Either the MySQL pool queue is non-zero or pool utilization has exceeded 80 percent for 10 minutes. Expect persistence/config requests to back up before user-facing latency fully degrades.
+          runbook_url: ./incident-response-runbook.md#alert-veilmysqlpoolpressurehigh
+
+      - alert: VeilMySqlReplicationLagHigh
+        expr: max(mysql_slave_status_seconds_behind_master{service="project-veil-mysql"}) > 30
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-mysql
+          notify: ops-slack
+        annotations:
+          summary: Project Veil MySQL replica lag is above the RPO target
+          description: Replica lag has exceeded 30 seconds for 10 minutes. Freeze failover and backup promotion decisions until replication catches up or a deliberate recovery point is chosen.
+          runbook_url: ./incident-response-runbook.md#alert-veilmysqlreplicationlaghigh
 
       - alert: VeilWechatPaymentFraudSignalsHigh
         expr: increase(veil_runtime_error_events_total{feature_area="payment",error_code="payment_fraud_signal"}[15m]) > 0
@@ -63,10 +97,11 @@ groups:
         labels:
           severity: critical
           service: project-veil-server
+          notify: ops-slack
         annotations:
           summary: Project Veil is detecting WeChat payment fraud or integrity anomalies
-          description: `payment_fraud_signal` fired within the last 15 minutes. Freeze risky compensation/refund actions, inspect duplicate callbacks or payer mismatches, and review the current candidate before continuing rollout.
-          runbook_url: ./wechat-pay-ops-runbook.md#payment-fraud-signal-alert
+          description: "`payment_fraud_signal` fired within the last 15 minutes. Freeze risky compensation/refund actions, inspect duplicate callbacks or payer mismatches, and review the current candidate before continuing rollout."
+          runbook_url: ./incident-response-runbook.md#alert-veilwechatpaymentfraudsignalshigh
 
       - alert: VeilAnalyticsFlushFailuresHigh
         expr: increase(veil_analytics_flush_failures_total[15m]) > 0
@@ -108,10 +143,11 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Feature flag config is stale on at least one Project Veil node
-          description: A node has not re-checked or reloaded `configs/feature-flags.json` inside the allowed freshness window. Freeze rollout promotion and compare `/api/runtime/feature-flags` checksums across nodes before proceeding.
-          runbook_url: ./feature-flag-experiments-runbook.md#audit-and-consistency
+          description: "A node has not re-checked or reloaded `configs/feature-flags.json` inside the allowed freshness window. Freeze rollout promotion and compare `/api/runtime/feature-flags` checksums across nodes before proceeding."
+          runbook_url: ./incident-response-runbook.md#alert-veilfeatureflagconfigstale
 
       - alert: VeilFeatureFlagBattlePassSessionFailuresHigh
         expr: (increase(veil_auth_session_failures_total[15m]) / clamp_min(increase(veil_auth_session_checks_total[15m]), 1)) > 0.01 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
@@ -120,10 +156,11 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is causing elevated session failures
-          description: Session failure rate has exceeded 1% for 10 minutes while `battle_pass_enabled` is live. Hold rollout promotion and roll back to the previous safe percentage if the error does not self-resolve immediately.
-          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop
+          description: "Session failure rate has exceeded 1% for 10 minutes while `battle_pass_enabled` is live. Hold rollout promotion and roll back to the previous safe percentage if the error does not self-resolve immediately."
+          runbook_url: ./incident-response-runbook.md#alert-veilfeatureflagbattlepasssessionfailureshigh
 
       - alert: VeilFeatureFlagBattlePassErrorRateHigh
         expr: (increase(veil_action_validation_failures_total[15m]) / clamp_min(increase(veil_gameplay_action_messages_total[15m]), 1)) > 0.02 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
@@ -132,10 +169,11 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is exceeding gameplay error budget
           description: Gameplay action validation failures have exceeded 2% for 10 minutes during a live battle pass rollout. Treat this as the generic rollout error-rate tripwire when a battle-pass-specific signal is not yet available.
-          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop
+          runbook_url: ./incident-response-runbook.md#alert-veilfeatureflagbattlepasserrorratehigh
 
       - alert: VeilFeatureFlagBattlePassPaymentFailuresHigh
         expr: (increase(veil_runtime_error_events_total{feature_area="payment",severity="error"}[15m]) / clamp_min(increase(veil_runtime_error_events_total{feature_area="payment"}[15m]), 1)) > 0.02 and max(veil_feature_flag_rollout_ratio{flag="battle_pass_enabled"}) > 0
@@ -144,7 +182,19 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is triggering payment-related runtime errors
-          description: Payment runtime error ratio has exceeded 2% for 10 minutes while `battle_pass_enabled` is active. Roll back to the previous safe stage and verify the payment callback / reward-claim path before retrying.
-          runbook_url: ./feature-flag-experiments-runbook.md#gray-release-sop
+          description: "Payment runtime error ratio has exceeded 2% for 10 minutes while `battle_pass_enabled` is active. Roll back to the previous safe stage and verify the payment callback / reward-claim path before retrying."
+          runbook_url: ./incident-response-runbook.md#alert-veilfeatureflagbattlepasspaymentfailureshigh
+
+      - alert: VeilAssetLoadFailuresHigh
+        expr: (increase(veil_analytics_events_total{name="asset_load_failed"}[15m]) / clamp_min(increase(veil_analytics_events_total{name="session_start"}[15m]), 1)) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-client
+        annotations:
+          summary: Project Veil client asset load failures exceed the 1% budget
+          description: Client `asset_load_failed` analytics have exceeded 1% of session starts over 15 minutes. Check CDN availability, asset manifest drift, and recent client revisions before widening rollout.
+          runbook_url: ./incident-response-runbook.md#alert-veilassetloadfailureshigh

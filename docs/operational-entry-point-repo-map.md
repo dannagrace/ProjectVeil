@@ -9,6 +9,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
 | Local contributor sanity check | `npm run validate:quickstart` | [`README.md`](../README.md), [`docs/verification-matrix.md`](./verification-matrix.md) |
+| Respond to a live production incident | Start with the 5-minute triage in [`docs/incident-response-runbook.md`](./incident-response-runbook.md) | [`docs/incident-response-runbook.md`](./incident-response-runbook.md), [`docs/alerting-rules.yml`](./alerting-rules.yml) |
 | Pick the smallest sufficient PR verification | [`docs/verification-matrix.md`](./verification-matrix.md) | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Turn changed paths into a minimal validation plan | `npm run plan:validation:minimal -- --branch origin/main` | [`docs/verification-matrix.md`](./verification-matrix.md) |
 | Confirm the current primary client surface | `npm run client:primary` | [`README.md`](../README.md), [`docs/cocos-primary-client-delivery.md`](./cocos-primary-client-delivery.md) |
@@ -57,6 +58,7 @@ For detailed release sequencing, keep [`docs/same-revision-release-evidence-runb
 | Need | Primary command or entry point | Canonical docs |
 | --- | --- | --- |
 | Probe live runtime health and auth readiness for a candidate environment | `GET /api/runtime/health`, `GET /api/runtime/auth-readiness`, `GET /api/runtime/metrics` | [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md), [`docs/release-readiness-dashboard.md`](./release-readiness-dashboard.md). Reviewer notes usually land in `artifacts/wechat-release/` or `artifacts/release-readiness/`. |
+| Route a production incident by severity, owner, and rollback decision | [`docs/incident-response-runbook.md`](./incident-response-runbook.md) | [`docs/incident-response-runbook.md`](./incident-response-runbook.md), [`docs/alerting-runbook.md`](./alerting-runbook.md), [`docs/wechat-pay-ops-runbook.md`](./wechat-pay-ops-runbook.md) |
 | Run reconnect or multiplayer governance checks | `npm run test:e2e:multiplayer:smoke`, `npm run test:sync-governance:matrix`, `npm run stress:rooms:reconnect-soak` | [`docs/sync-governance-matrix.md`](./sync-governance-matrix.md), [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md), [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) |
 | Run room stress or runtime regression comparisons | `npm run stress:rooms:baseline`, `npm run perf:runtime:compare` | [`docs/runtime-regression-baseline.md`](./runtime-regression-baseline.md). Generated runtime metrics and comparison reports usually land in `artifacts/release-readiness/`. |
 | Review or validate MySQL persistence expectations | `npm run db:migrate`, `npm run db:migrate:rollback`, `npm run test:phase1-release-persistence` | [`docs/mysql-persistence.md`](./mysql-persistence.md). The release-facing regression artifact usually lands in `artifacts/release-readiness/phase1-release-persistence-regression-*.json`. |

@@ -19,6 +19,13 @@
 2. 需要长期登录时，再把当前游客档绑定到 `loginId + password`。
 3. 后续账号登录会继续复用同一份英雄长期档、全局资源仓库和账号事件历史。
 
+## `#1201` 当前切片进度
+
+- [x] `POST /api/auth/account-login` 现在会按来源 IP 聚合短窗口内的跨账号口令失败；同一来源连续命中多个不同 `loginId` 失败后，会临时封禁该来源并返回 `429 credential_stuffing_blocked`。
+- [x] `/api/runtime/auth-readiness` 与 `/api/runtime/metrics` 已补充撞库源封禁态势，便于 ops 区分“单账号锁定”与“同源多账号扫描”。
+- [ ] 更外层的 DDoS 缓解仍属于 CDN / WAF / 基础设施侧工作，本次仓库切片未覆盖。
+- [ ] 未成年人保护沿用现有微信实名 / minor protection 读模型，本次切片未改动夜间限制与累计时长策略。
+
 ## 微信小游戏 code2session
 
 - `POST /api/auth/wechat-login` 会用服务端环境变量 `WECHAT_APP_ID` / `WECHAT_APP_SECRET` 调用微信 `jscode2session`。
@@ -43,8 +50,9 @@
   - 当前进程内活跃游客会话：`veil_auth_guest_sessions`
   - 当前进程内活跃正式账号设备会话：`veil_auth_account_sessions`
   - 当前登录锁定数：`veil_auth_account_locks`
+  - 当前处于撞库源封禁中的来源数：`veil_auth_credential_stuffing_sources`
   - 待确认注册 / 找回令牌：`veil_auth_pending_registrations`、`veil_auth_pending_recoveries`
-  - 会话校验、游客登录、账号登录、绑定、注册确认、刷新、退出、限流、口令错误等累计计数：`veil_auth_*_total`
+  - 会话校验、游客登录、账号登录、绑定、注册确认、刷新、退出、限流、撞库源封禁、口令错误等累计计数：`veil_auth_*_total`
   - 账号令牌投递队列 / dead-letter gauge：`veil_auth_token_delivery_queue_count`、`veil_auth_token_delivery_dead_letter_count`
   - 账号令牌投递请求量、成功、失败、重试、耗尽累计计数：`veil_auth_token_delivery_requests_total`、`veil_auth_token_delivery_successes_total`、`veil_auth_token_delivery_failures_total`、`veil_auth_token_delivery_retries_total`、`veil_auth_token_delivery_dead_letters_total`
   - 账号令牌投递失败原因累计计数：`veil_auth_token_delivery_failures_timeout_total`、`veil_auth_token_delivery_failures_network_total`、`veil_auth_token_delivery_failures_smtp_4xx_total`、`veil_auth_token_delivery_failures_smtp_5xx_total`、`veil_auth_token_delivery_failures_smtp_protocol_total`、`veil_auth_token_delivery_failures_webhook_4xx_total`、`veil_auth_token_delivery_failures_webhook_429_total`、`veil_auth_token_delivery_failures_webhook_5xx_total`
@@ -215,6 +223,12 @@
   - 默认 `60000`
 - `VEIL_RATE_LIMIT_AUTH_MAX`
   - 默认 `10`
+- `VEIL_AUTH_CREDENTIAL_STUFFING_WINDOW_MS`
+  - 默认 `300000`；按来源 IP 聚合 `account-login` 失败的观测窗口
+- `VEIL_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_IDS`
+  - 默认 `5`；同一来源在窗口内命中多少个不同 `loginId` 失败后，触发临时撞库源封禁
+- `VEIL_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES`
+  - 默认 `15`；撞库源封禁持续时间，期间 `account-login` 会直接返回 `429 credential_stuffing_blocked`
 
 ## SMTP / Webhook 投递契约与失败处理
 

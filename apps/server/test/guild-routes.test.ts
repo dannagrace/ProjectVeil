@@ -437,6 +437,159 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
   assert.equal(bannedPayload.error.expiry, "2026-05-05T00:00:00.000Z");
 });
 
+test("guild routes reject blocked guild names and tags", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 45200 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const session = issueGuestAuthSession({ playerId: "founder-moderation", displayName: "Founder Moderation" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const blockedName = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      name: "fuck squad",
+      tag: "OK"
+    })
+  });
+
+  assert.equal(blockedName.status, 400);
+  const blockedNamePayload = (await blockedName.json()) as { error: { code: string; message: string } };
+  assert.equal(blockedNamePayload.error.code, "invalid_request");
+  assert.match(blockedNamePayload.error.message, /guild_create_name_blocked/);
+
+  const blockedTag = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      name: "Valid Guild",
+      tag: "gm"
+    })
+  });
+
+  assert.equal(blockedTag.status, 400);
+  const blockedTagPayload = (await blockedTag.json()) as { error: { code: string; message: string } };
+  assert.equal(blockedTagPayload.error.code, "invalid_request");
+  assert.match(blockedTagPayload.error.message, /guild_create_tag_blocked/);
+});
+
+test("guild routes rate limit repeated guild creation per player over 24 hours", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 45300 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const session = issueGuestAuthSession({ playerId: "guild-rate-founder", displayName: "Guild Rate Founder" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (const [name, tag] of [
+    ["Guild One", "G1"],
+    ["Guild Two", "G2"]
+  ] as const) {
+    const createResponse = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`
+      },
+      body: JSON.stringify({ name, tag })
+    });
+    assert.equal(createResponse.status, 201);
+    const payload = (await createResponse.json()) as { guild: { guildId: string } };
+    const leaveResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${payload.guild.guildId}/leave`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    });
+    assert.equal(leaveResponse.status, 200);
+  }
+
+  const thirdCreate = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({ name: "Guild Three", tag: "G3" })
+  });
+
+  assert.equal(thirdCreate.status, 429);
+  const payload = (await thirdCreate.json()) as { error: { code: string; message: string } };
+  assert.equal(payload.error.code, "guild_create_rate_limited");
+  assert.match(payload.error.message, /2 per 24 hours/);
+});
+
+test("hidden guilds disappear from public list/detail/join routes", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 45400 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "hidden-founder", displayName: "Hidden Founder" });
+  const recruitSession = issueGuestAuthSession({ playerId: "hidden-recruit", displayName: "Hidden Recruit" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Hidden Ops", tag: "HOP" })
+  });
+  assert.equal(created.status, 201);
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+
+  const guild = await store.loadGuild(createdPayload.guild.guildId);
+  assert.ok(guild);
+  await store.saveGuild({
+    ...guild,
+    moderation: {
+      isHidden: true,
+      hiddenAt: "2026-04-11T01:00:00.000Z",
+      hiddenByPlayerId: "support-moderator:admin-console",
+      hiddenReason: "违规名称巡检下架"
+    }
+  });
+
+  const listed = await fetch(`http://127.0.0.1:${port}/api/guilds`);
+  const listedPayload = (await listed.json()) as { items: Array<{ guildId: string }> };
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listedPayload.items, []);
+
+  const detail = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}`);
+  assert.equal(detail.status, 404);
+
+  const join = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  assert.equal(join.status, 404);
+});
+
 test("guild routes map malformed payloads and store outages to actionable errors", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();

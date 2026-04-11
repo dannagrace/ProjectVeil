@@ -11,6 +11,7 @@ import {
   recordRuntimeErrorEvent,
   recordMatchmakingRateLimited,
   registerRuntimeObservabilityRoutes,
+  type RuntimePersistenceHealth,
   resetRuntimeObservability
 } from "../src/observability";
 
@@ -18,7 +19,7 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function startObservabilityServer(port: number): Promise<Server> {
+async function startObservabilityServer(port: number, persistence?: RuntimePersistenceHealth): Promise<Server> {
   configureRoomSnapshotStore(null);
   resetLobbyRoomRegistry();
   resetAccountTokenDeliveryState();
@@ -29,12 +30,44 @@ async function startObservabilityServer(port: number): Promise<Server> {
   registerAnalyticsRoutes(app);
   registerPrometheusMetricsMiddleware(app);
   registerPrometheusMetricsRoute(app);
-  registerRuntimeObservabilityRoutes(app);
+  registerRuntimeObservabilityRoutes(app, persistence ? { persistence } : undefined);
   const server = new Server({ transport });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;
 }
+
+test("runtime health returns 503 when persistence is degraded to memory mode", async (t) => {
+  const port = 45000 + Math.floor(Math.random() * 1000);
+  const server = await startObservabilityServer(port, {
+    status: "degraded",
+    storage: "memory",
+    message: "In-memory room persistence active; room data will not survive process restarts."
+  });
+
+  t.after(async () => {
+    resetLobbyRoomRegistry();
+    resetRuntimeObservability();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const healthResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`);
+  const healthPayload = (await healthResponse.json()) as {
+    status: string;
+    runtime: {
+      persistence: {
+        status: string;
+        storage: string;
+        message: string;
+      };
+    };
+  };
+
+  assert.equal(healthResponse.status, 503);
+  assert.equal(healthPayload.status, "warn");
+  assert.equal(healthPayload.runtime.persistence.status, "degraded");
+  assert.equal(healthPayload.runtime.persistence.storage, "memory");
+});
 
 async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
   const client = new Client(`http://127.0.0.1:${port}`);
@@ -385,6 +418,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(metricsResponse.status, 200);
   assert.match(metricsResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(metricsText, /^veil_up 1$/m);
+  assert.match(metricsText, /^veil_active_rooms_total 1$/m);
   assert.match(metricsText, /^veil_active_rooms 1$/m);
   assert.match(metricsText, /^veil_connected_players 1$/m);
   assert.match(metricsText, /^veil_active_room_count 1$/m);
@@ -497,6 +531,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
 
   assert.equal(prometheusResponse.status, 200);
   assert.match(prometheusResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(prometheusText, /^veil_active_rooms_total 1$/m);
   assert.match(prometheusText, /^veil_active_rooms 1$/m);
   assert.match(prometheusText, /^veil_connected_players 1$/m);
   assert.match(prometheusText, /^veil_action_validation_failures_total 0$/m);

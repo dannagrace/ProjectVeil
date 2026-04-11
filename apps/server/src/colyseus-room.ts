@@ -51,6 +51,7 @@ import {
   recordConnectMessage,
   recordRoomCreated,
   recordRoomDisposed,
+  recordRuntimeErrorEvent,
   recordReconnectWindowOpened,
   recordReconnectWindowResolved,
   recordRuntimeRoom,
@@ -87,11 +88,14 @@ const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
 const MINOR_PROTECTION_TICK_MS = 60_000;
 const TURN_TIMER_TICK_MS = 5_000;
 const TURN_REMINDER_DISCONNECT_THRESHOLD_MS = 30_000;
+const ZOMBIE_ROOM_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
+const EMPTY_ROOM_TTL_MS = 10 * 60 * 1_000;
 let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
 const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
+let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
 
 interface RoomTimerHandle {
   unref?(): void;
@@ -156,6 +160,10 @@ export function configureRoomRuntimeDependencies(overrides: Partial<RoomRuntimeD
 }
 
 export function resetRoomRuntimeDependencies(): void {
+  if (zombieRoomCleanupHandle) {
+    roomRuntimeDependencies.clearInterval(zombieRoomCleanupHandle);
+    zombieRoomCleanupHandle = null;
+  }
   roomRuntimeDependencies = defaultRoomRuntimeDependencies;
 }
 
@@ -168,10 +176,33 @@ export function listLobbyRooms(): LobbyRoomSummary[] {
 export function resetLobbyRoomRegistry(): void {
   lobbyRoomSummaries.clear();
   lobbyRoomOwnerTokens.clear();
+  if (zombieRoomCleanupHandle) {
+    roomRuntimeDependencies.clearInterval(zombieRoomCleanupHandle);
+    zombieRoomCleanupHandle = null;
+  }
 }
 
 export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
   return activeRoomInstances;
+}
+
+export async function runZombieRoomCleanup(now = roomRuntimeDependencies.now()): Promise<void> {
+  for (const room of Array.from(activeRoomInstances.values())) {
+    await room.runExpiredEmptyRoomCleanup(now);
+  }
+}
+
+function ensureZombieRoomCleanupLoop(): void {
+  if (zombieRoomCleanupHandle) {
+    return;
+  }
+
+  zombieRoomCleanupHandle = roomRuntimeDependencies.setInterval(() => {
+    void runZombieRoomCleanup().catch((error) => {
+      console.error("[VeilRoom] Zombie room cleanup failed", { error });
+    });
+  }, ZOMBIE_ROOM_CLEANUP_INTERVAL_MS);
+  zombieRoomCleanupHandle.unref?.();
 }
 
 function parseEnvNumber(
@@ -327,12 +358,15 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private turnOwnerPlayerId: string | null = null;
   private turnTimerTickInFlight = false;
   private roomRetired = false;
+  private emptyRoomSinceAtMs: number | null = null;
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
     this.metadata = { logicalRoomId };
     lobbyRoomOwnerTokens.set(logicalRoomId, this.lobbyRoomOwnerToken);
     activeRoomInstances.set(logicalRoomId, this);
+    this.emptyRoomSinceAtMs = roomRuntimeDependencies.now();
+    ensureZombieRoomCleanupLoop();
     this.setState({});
     const persistedSnapshot = configuredRoomSnapshotStore
       ? await configuredRoomSnapshotStore.load(logicalRoomId)
@@ -394,6 +428,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
       this.playerIdBySessionId.set(client.sessionId, playerId);
       this.disconnectedAtByPlayerId.delete(playerId);
+      this.refreshEmptyRoomTracking();
       let ensuredAccount: PlayerAccountSnapshot | null = null;
       if (configuredRoomSnapshotStore) {
         try {
@@ -713,6 +748,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   onJoin(client: ColyseusClient, options?: JoinOptions): void {
     this.playerIdBySessionId.set(client.sessionId, options?.playerId ?? client.sessionId);
+    this.refreshEmptyRoomTracking();
     this.publishLobbyRoomSummary();
   }
 
@@ -738,6 +774,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     this.playerIdBySessionId.delete(client.sessionId);
     this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
+    this.refreshEmptyRoomTracking();
     this.ensureTurnTimerState();
     this.publishLobbyRoomSummary();
     let reconnectWindowOpen = false;
@@ -803,6 +840,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         });
       }
       this.playerIdBySessionId.delete(client.sessionId);
+      this.refreshEmptyRoomTracking();
       this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();
     }
@@ -814,6 +852,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
       this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
     }
+    this.refreshEmptyRoomTracking();
     this.ensureTurnTimerState();
     this.publishLobbyRoomSummary();
   }
@@ -825,10 +864,6 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     if (this.turnTimerHandle) {
       roomRuntimeDependencies.clearInterval(this.turnTimerHandle);
       this.turnTimerHandle = null;
-    }
-
-    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) !== this.lobbyRoomOwnerToken) {
-      return;
     }
 
     this.retireRoom("dispose");
@@ -1522,21 +1557,48 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     this.roomRetired = true;
+    try {
+      for (const battle of this.worldRoom.getActiveBattles()) {
+        recordBattleLifecycleResolved({
+          roomId: this.metadata.logicalRoomId,
+          battleId: battle.id,
+          outcome: "aborted",
+          reason
+        });
+      }
 
-    for (const battle of this.worldRoom.getActiveBattles()) {
-      recordBattleLifecycleResolved({
+      recordRoomDisposed(this.metadata.logicalRoomId, reason);
+    } catch (error) {
+      console.error("[VeilRoom] Failed to retire room cleanly", {
         roomId: this.metadata.logicalRoomId,
-        battleId: battle.id,
-        outcome: "aborted",
-        reason
+        reason,
+        error
       });
+      recordRuntimeErrorEvent({
+        id: `room-retire-${this.metadata.logicalRoomId}-${Date.now()}`,
+        recordedAt: new Date().toISOString(),
+        source: "server",
+        surface: "server",
+        candidateRevision: "workspace",
+        featureArea: "runtime",
+        ownerArea: "multiplayer",
+        severity: "error",
+        errorCode: "room_retire_failed",
+        message: "Room retirement cleanup raised an exception.",
+        context: {
+          roomId: this.metadata.logicalRoomId,
+          playerId: null,
+          requestId: null,
+          route: null,
+          action: null,
+          statusCode: null,
+          crash: false,
+          detail: `reason=${reason} error=${error instanceof Error ? error.message : String(error)}`
+        }
+      });
+    } finally {
+      this.releaseRoomRegistries();
     }
-
-    recordRoomDisposed(this.metadata.logicalRoomId, reason);
-    lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
-    lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
-    activeRoomInstances.delete(this.metadata.logicalRoomId);
-    removeRuntimeRoom(this.metadata.logicalRoomId);
   }
 
   private resolveReportTargetPlayerId(playerId: string, requestedTargetPlayerId: string): string | null {
@@ -1595,6 +1657,69 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
     recordRuntimeRoom(summary);
+  }
+
+  private refreshEmptyRoomTracking(now = roomRuntimeDependencies.now()): void {
+    this.emptyRoomSinceAtMs = this.getConnectedPlayerIds().length === 0 ? this.emptyRoomSinceAtMs ?? now : null;
+  }
+
+  private isExpiredEmptyRoom(now: number): boolean {
+    return this.getConnectedPlayerIds().length === 0 && this.emptyRoomSinceAtMs != null && now - this.emptyRoomSinceAtMs >= EMPTY_ROOM_TTL_MS;
+  }
+
+  runExpiredEmptyRoomCleanup(now: number): Promise<void> {
+    return this.disposeIfExpiredEmptyRoom(now);
+  }
+
+  private async disposeIfExpiredEmptyRoom(now: number): Promise<void> {
+    if (this.roomRetired || activeRoomInstances.get(this.metadata.logicalRoomId) !== this || !this.isExpiredEmptyRoom(now)) {
+      return;
+    }
+
+    try {
+      await this.disconnect();
+    } catch (error) {
+      console.error("[VeilRoom] Failed to dispose stale empty room", {
+        roomId: this.metadata.logicalRoomId,
+        emptyRoomForMs: now - (this.emptyRoomSinceAtMs ?? now),
+        error
+      });
+      recordRuntimeErrorEvent({
+        id: `room-cleanup-${this.metadata.logicalRoomId}-${Date.now()}`,
+        recordedAt: new Date().toISOString(),
+        source: "server",
+        surface: "server",
+        candidateRevision: "workspace",
+        featureArea: "runtime",
+        ownerArea: "multiplayer",
+        severity: "error",
+        errorCode: "zombie_room_cleanup_failed",
+        message: "Background zombie-room cleanup failed to disconnect an empty room.",
+        context: {
+          roomId: this.metadata.logicalRoomId,
+          playerId: null,
+          requestId: null,
+          route: null,
+          action: null,
+          statusCode: null,
+          crash: false,
+          detail: `empty_room_for_ms=${now - (this.emptyRoomSinceAtMs ?? now)} error=${error instanceof Error ? error.message : String(error)}`
+        }
+      });
+      this.retireRoom("zombie_room_cleanup");
+    }
+  }
+
+  private releaseRoomRegistries(): void {
+    if (activeRoomInstances.get(this.metadata.logicalRoomId) === this) {
+      activeRoomInstances.delete(this.metadata.logicalRoomId);
+    }
+
+    if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) === this.lobbyRoomOwnerToken) {
+      lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
+      lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
+      removeRuntimeRoom(this.metadata.logicalRoomId);
+    }
   }
 
   private hasPlayerBeenDisconnectedLongEnough(playerId: string): boolean {

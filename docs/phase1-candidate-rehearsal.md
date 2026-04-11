@@ -19,6 +19,8 @@ It keeps the implementation narrow by reusing the existing evidence commands ins
 - `npm run ci:trend-summary`
 - `npm run release:health:summary`
 - `npm run release:phase1:candidate-dossier`
+- `npm run release:phase1:exit-audit`
+- `npm run release:phase1:exit-dossier-freshness-gate`
 - `npm run release:go-no-go-packet`
 
 ## Workflow Contract
@@ -38,8 +40,11 @@ The bundle contains:
 - stable copied inputs such as `client-release-candidate-smoke-phase1-mainline-<short-sha>.json`
 - stable generated summaries such as `release-gate-summary-phase1-mainline-<short-sha>.json`
 - one same-revision evidence bundle manifest plus the paired drift-gate JSON / Markdown
+- one Cocos primary-client diagnostic snapshot pair so the runtime milestone packet is staged with the candidate bundle
 - the same-revision bundle's manual evidence owner ledger and release-readiness dashboard restaged at the rehearsal bundle top level
-- one candidate-level evidence audit and one current release evidence index so reviewers have a front-door into the packet
+- one candidate-level evidence audit plus the dedicated freshness guard, its owner-reminder and freshness-history companions, along with one current release evidence index, so reviewers have a front-door into the packet
+- one Phase 1 exit audit plus the paired exit-dossier freshness gate so the final reviewer call stays in the same candidate packet
+- one reviewer-facing release PR summary Markdown so the final GitHub-visible digest is staged with the same candidate bundle
 - one reviewer-facing runtime observability bundle directory with the staged evidence and gate files for the target environment
 - the candidate-scoped Cocos RC bundle, Phase 1 dossier, and final go/no-go packet
 - `SUMMARY.md`, which is also appended to `GITHUB_STEP_SUMMARY`
@@ -78,6 +83,6 @@ npm run release:phase1:candidate-rehearsal -- \
   --target-surface h5
 ```
 
-Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file has a dedicated reviewer front-door section for the current release evidence index, candidate evidence audit, restaged release-readiness dashboard, and manual evidence owner ledger, then records the release gate, release health, dossier, and final go/no-go packet outcomes for the candidate revision.
+Open `artifacts/release-readiness/phase1-candidate-rehearsal-local/SUMMARY.md` first. That file has a dedicated reviewer front-door section for the current release evidence index, candidate evidence audit, candidate freshness guard, candidate owner reminder, candidate freshness history, restaged release-readiness dashboard, manual evidence owner ledger, Cocos primary diagnostics, and release PR summary, then records the release gate, release health, dossier, exit audit, exit-dossier freshness gate, and final go/no-go packet outcomes for the candidate revision.
 
 For the standalone CI guard and explicit GitHub Actions inputs, see [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-drift-gate.md).

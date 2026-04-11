@@ -1860,6 +1860,132 @@ test("account login lockout expires after the configured duration", async (t) =>
   assert.equal(payload.session.loginId, "expiry-ranger");
 });
 
+test("account login blocks suspected credential stuffing across distinct login IDs and surfaces it in auth observability", async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_IDS: "2",
+      VEIL_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES: "0.003"
+    },
+    cleanup
+  );
+
+  const port = 44710 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  await store.ensurePlayerAccount({
+    playerId: "credential-stuffing-player",
+    displayName: "守望者"
+  });
+  await store.bindPlayerAccountCredentials("credential-stuffing-player", {
+    loginId: "credential-stuffing-real",
+    passwordHash: hashAccountPassword("hunter2")
+  });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstFailureResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "credential-stuffing-a",
+      password: "wrong-password",
+      privacyConsentAccepted: true
+    })
+  });
+  const firstFailurePayload = (await firstFailureResponse.json()) as { error: { code: string } };
+  assert.equal(firstFailureResponse.status, 401);
+  assert.equal(firstFailurePayload.error.code, "invalid_credentials");
+
+  const blockTriggerResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "credential-stuffing-b",
+      password: "wrong-password",
+      privacyConsentAccepted: true
+    })
+  });
+  const blockTriggerPayload = (await blockTriggerResponse.json()) as {
+    error: { code: string; blockedUntil?: string };
+  };
+  assert.equal(blockTriggerResponse.status, 429);
+  assert.equal(blockTriggerPayload.error.code, "credential_stuffing_blocked");
+  assert.ok(blockTriggerPayload.error.blockedUntil);
+  assert.ok(blockTriggerResponse.headers.get("Retry-After"));
+
+  const blockedLegitimateResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "credential-stuffing-real",
+      password: "hunter2",
+      privacyConsentAccepted: true
+    })
+  });
+  const blockedLegitimatePayload = (await blockedLegitimateResponse.json()) as {
+    error: { code: string; blockedUntil?: string };
+  };
+  assert.equal(blockedLegitimateResponse.status, 429);
+  assert.equal(blockedLegitimatePayload.error.code, "credential_stuffing_blocked");
+  assert.ok(blockedLegitimatePayload.error.blockedUntil);
+
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const readinessPayload = (await readinessResponse.json()) as {
+    status: string;
+    headline: string;
+    alerts: string[];
+    auth: {
+      activeCredentialStuffingSourceCount: number;
+      counters: {
+        credentialStuffingBlockedTotal: number;
+      };
+    };
+  };
+  assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessPayload.status, "warn");
+  assert.match(readinessPayload.headline, /sourceBlocks=1/);
+  assert.deepEqual(readinessPayload.alerts, ["1 credential-stuffing source block(s) active"]);
+  assert.equal(readinessPayload.auth.activeCredentialStuffingSourceCount, 1);
+  assert.equal(readinessPayload.auth.counters.credentialStuffingBlockedTotal, 2);
+
+  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+  const metricsText = await metricsResponse.text();
+  assert.equal(metricsResponse.status, 200);
+  assert.match(metricsText, /^veil_auth_credential_stuffing_sources 1$/m);
+  assert.match(metricsText, /^veil_auth_credential_stuffing_blocked_total 2$/m);
+
+  await sleep(250);
+
+  const successfulLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "credential-stuffing-real",
+      password: "hunter2",
+      privacyConsentAccepted: true
+    })
+  });
+  const successfulLoginPayload = (await successfulLoginResponse.json()) as {
+    account: { playerId: string };
+  };
+  assert.equal(successfulLoginResponse.status, 200);
+  assert.equal(successfulLoginPayload.account.playerId, "credential-stuffing-player");
+});
+
 test("guest auth session LRU eviction invalidates the oldest idle guest token", async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
@@ -3468,7 +3594,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
 
   await store.savePlayerBan("banned-player", {
     banStatus: "temporary",
-    banExpiry: "2026-04-06T00:00:00.000Z",
+    banExpiry: "2026-04-16T00:00:00.000Z",
     banReason: "Harassment"
   });
 
@@ -3483,7 +3609,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
   assert.equal(sessionResponse.status, 403);
   assert.equal(sessionPayload.error.code, "account_banned");
   assert.equal(sessionPayload.error.reason, "Harassment");
-  assert.equal(sessionPayload.error.expiry, "2026-04-06T00:00:00.000Z");
+  assert.equal(sessionPayload.error.expiry, "2026-04-16T00:00:00.000Z");
 
   const reloginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
     method: "POST",
@@ -3502,7 +3628,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
   assert.equal(reloginResponse.status, 403);
   assert.equal(reloginPayload.error.code, "account_banned");
   assert.equal(reloginPayload.error.reason, "Harassment");
-  assert.equal(reloginPayload.error.expiry, "2026-04-06T00:00:00.000Z");
+  assert.equal(reloginPayload.error.expiry, "2026-04-16T00:00:00.000Z");
 });
 
 test("guest login requires privacy consent before issuing the first session", async (t) => {

@@ -8,6 +8,16 @@ The commands below assume the runtime is reachable at `http://127.0.0.1:2567`. O
 export VEIL_RUNTIME_URL="${VEIL_RUNTIME_URL:-http://127.0.0.1:2567}"
 ```
 
+MySQL replication alerts also need an exporter or Prometheus target that exposes the database metrics:
+
+```bash
+export VEIL_MYSQL_EXPORTER_METRICS_URL="${VEIL_MYSQL_EXPORTER_METRICS_URL:-http://127.0.0.1:9104/metrics}"
+export VEIL_MYSQL_REPLICA_HOST="${VEIL_MYSQL_REPLICA_HOST:-127.0.0.1}"
+export VEIL_MYSQL_REPLICA_PORT="${VEIL_MYSQL_REPLICA_PORT:-3306}"
+export VEIL_MYSQL_REPLICA_USER="${VEIL_MYSQL_REPLICA_USER:-root}"
+export VEIL_MYSQL_REPLICA_PASSWORD="${VEIL_MYSQL_REPLICA_PASSWORD:-change_me}"
+```
+
 ## Shared Triage Commands
 
 Start every incident with the same four snapshots so the alert has current context:
@@ -247,6 +257,61 @@ Escalation thresholds:
 
 - escalate if the drop lasts longer than one additional 30-minute comparison window
 - escalate immediately if session-start drop, auth failures, or analytics flush failures are all firing together
+
+## Alert: VeilMySqlPoolPressureHigh
+
+Likely causes:
+
+- the `room_snapshot` pool is saturated by a persistence backlog or slow MySQL response times
+- the `config_center` pool is backing up on exports or config write bursts
+- pool sizing is too small for the current room count, or MySQL itself is slow enough that callers stack up behind a healthy-looking app runtime
+
+Immediate triage commands:
+
+```bash
+grep '^veil_mysql_pool_' /tmp/project-veil.metrics | sort
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq '{activeRoomCount: .runtime.activeRoomCount, connectionCount: .runtime.connectionCount, activeBattleCount: .runtime.activeBattleCount}'
+```
+
+Mitigation steps:
+
+1. Check whether `veil_mysql_pool_queue_depth` is non-zero or whether utilization is simply hovering near the configured cap. Queue depth means callers are already waiting.
+2. If the queue is growing, inspect recent MySQL latency, lock contention, and replication health before only increasing pool limits.
+3. If MySQL is healthy but utilization is consistently above `0.8`, raise `VEIL_MYSQL_POOL_CONNECTION_LIMIT` conservatively and keep `maxIdle` aligned with the new steady-state expectation.
+4. If pressure is isolated to one pool label, treat that subsystem first: snapshot pressure points to persistence/save load, while config-center pressure points to operator workflows or config churn.
+
+Escalation thresholds:
+
+- escalate if queue depth stays above `0` for 20 minutes after load reduction or pool tuning
+- escalate immediately if utilization reaches `1.0`, if HTTP latency is also elevated, or if persistence-related error logs begin surfacing
+
+## Alert: VeilMySqlReplicationLagHigh
+
+Likely causes:
+
+- replica IO or SQL threads are stalled
+- the primary is producing writes faster than the replica can apply them
+- storage, network, or long-running queries are blocking replica catch-up
+
+Immediate triage commands:
+
+```bash
+curl -fsS "$VEIL_MYSQL_EXPORTER_METRICS_URL" > /tmp/project-veil.mysql-exporter.metrics
+grep '^mysql_slave_status_seconds_behind_master' /tmp/project-veil.mysql-exporter.metrics
+mysql --host="$VEIL_MYSQL_REPLICA_HOST" --port="$VEIL_MYSQL_REPLICA_PORT" --user="$VEIL_MYSQL_REPLICA_USER" --password="$VEIL_MYSQL_REPLICA_PASSWORD" -e "SHOW REPLICA STATUS\\G"
+```
+
+Mitigation steps:
+
+1. Confirm the lag is real and not an exporter scrape anomaly. Compare Prometheus values with `SHOW REPLICA STATUS`.
+2. Pause failover, backup-promotion, or restore cutover decisions while lag exceeds the RPO threshold.
+3. If the replica threads are stopped or erroring, fix that first before evaluating whether a new replica or restore target is needed.
+4. If lag is caused by sustained write pressure, reduce nonessential write traffic and re-check the relay/apply backlog before promoting any recovery workflow.
+
+Escalation thresholds:
+
+- escalate if lag remains above `30s` for another 15 minutes after replica recovery work starts
+- escalate immediately if lag exceeds `300s`, if replica threads stop, or if a restore/failover incident is active at the same time
 
 ## Closeout Checklist
 

@@ -36,6 +36,15 @@ export RESTORE_MYSQL_DATABASE=project_veil_restore
 
 If your object storage uses a named AWS CLI profile, also export `VEIL_BACKUP_AWS_PROFILE`.
 
+For rehearsals, prefer the automatable wrapper first:
+
+```bash
+export VEIL_RESTORE_BACKUP_KEY="$VEIL_BACKUP_S3_PREFIX/daily/project_veil-20260403T030000Z.sql.gz"
+npm run db:restore:rehearsal
+```
+
+The remainder of this runbook explains the exact manual steps that wrapper executes so reviewers can audit or adapt the flow.
+
 ## 1. Pick The Backup To Restore
 
 Choose the most recent daily backup that predates the incident. For a weekly rollback or compliance restore, pick the matching object under `weekly/`.
@@ -149,6 +158,15 @@ Validation is complete when:
 - Record the restored backup timestamp, object key, and validation output in the incident log.
 - Only repoint application traffic after the restored instance has passed the regression above.
 
+## Migration Failure Handling
+
+If a production rollout fails during DB migration/bootstrap, the server must not stay up in in-memory mode.
+
+- Treat startup failure plus a non-zero exit code as the expected safeguard, not as a transient warning to ignore.
+- Confirm `/api/runtime/health` is not reporting a degraded in-memory persistence status before reopening traffic.
+- Fix MySQL reachability or apply the missing migration, then restart the service and recheck health.
+- If the release window is at risk, roll back to the previous good build and continue recovery from a controlled host.
+
 ## Estimated RTO
 
 Estimated RTO for a routine restore:
@@ -159,3 +177,14 @@ Estimated RTO for a routine restore:
 - Validation and promotion checks: 10 to 15 minutes
 
 Practical target RTO: 20 to 45 minutes, assuming object storage and a standby MySQL host are both available.
+
+## Rehearsal Recording
+
+For production-readiness drills, capture these fields in the incident log or ops evidence bundle:
+
+- `VEIL_RESTORE_BACKUP_KEY` used for the rehearsal
+- restore host and schema name
+- checksum verification output
+- sanity-query row counts
+- `npm run test:phase1-release-persistence -- --storage mysql` result
+- measured start/end timestamps for the full rehearsal window

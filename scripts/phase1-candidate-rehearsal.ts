@@ -3,12 +3,24 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  buildPhase1ExitDossierFreshnessGateReport,
+  renderMarkdown as renderPhase1ExitDossierFreshnessGateMarkdown
+} from "./phase1-exit-dossier-freshness-gate.ts";
+import {
+  buildPhase1ExitAudit,
+  renderMarkdown as renderPhase1ExitAuditMarkdown
+} from "./phase1-exit-audit.ts";
+import {
   buildReleaseEvidenceIndexReport,
   renderReleaseEvidenceIndexMarkdown
 } from "./release-evidence-index.ts";
 import {
+  appendFreshnessHistory,
+  buildOwnerReminderReport,
   buildSameCandidateEvidenceAuditReport,
-  renderMarkdown as renderCandidateEvidenceAuditMarkdown
+  parseManualEvidenceOwnerLedger,
+  renderMarkdown as renderCandidateEvidenceAuditMarkdown,
+  renderOwnerReminderMarkdown
 } from "./same-candidate-evidence-audit.ts";
 
 type StageStatus = "passed" | "failed" | "skipped";
@@ -40,7 +52,7 @@ interface StageDefinition {
   id: string;
   title: string;
   command?: string[];
-  run: () => StageResult;
+  run: () => StageResult | Promise<StageResult>;
 }
 
 interface StageResult {
@@ -68,6 +80,8 @@ interface RehearsalArtifacts {
   wechatCandidateSummaryPath?: string;
   wechatCandidateMarkdownPath?: string;
   persistencePath?: string;
+  cocosPrimaryDiagnosticsPath?: string;
+  cocosPrimaryDiagnosticsMarkdownPath?: string;
   cocosBundlePath?: string;
   cocosBundleMarkdownPath?: string;
   releaseGateSummaryPath?: string;
@@ -85,12 +99,22 @@ interface RehearsalArtifacts {
   releaseReadinessDashboardMarkdownPath?: string;
   candidateEvidenceAuditPath?: string;
   candidateEvidenceAuditMarkdownPath?: string;
+  candidateEvidenceFreshnessGuardPath?: string;
+  candidateEvidenceFreshnessGuardMarkdownPath?: string;
+  candidateEvidenceOwnerReminderPath?: string;
+  candidateEvidenceOwnerReminderMarkdownPath?: string;
+  candidateEvidenceFreshnessHistoryPath?: string;
   releaseEvidenceIndexPath?: string;
   releaseEvidenceIndexMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
   phase1CandidateDossierMarkdownPath?: string;
+  phase1ExitAuditPath?: string;
+  phase1ExitAuditMarkdownPath?: string;
+  phase1ExitDossierFreshnessGatePath?: string;
+  phase1ExitDossierFreshnessGateMarkdownPath?: string;
   goNoGoPacketPath?: string;
   goNoGoPacketMarkdownPath?: string;
+  releasePrCommentPath?: string;
   summaryPath?: string;
   markdownPath?: string;
 }
@@ -128,6 +152,19 @@ interface SameRevisionManifest {
     releaseReadinessDashboard?: {
       path?: string;
     };
+  };
+}
+
+interface Phase1CandidateDossierLinkedArtifacts {
+  phase1ExitEvidenceGate?: {
+    result?: string;
+    summary?: string;
+    blockingSections?: string[];
+    pendingSections?: string[];
+    acceptedRiskSections?: string[];
+  };
+  artifacts?: {
+    releaseGateSummaryPath?: string;
   };
 }
 
@@ -418,6 +455,17 @@ function resolveManifestArtifactPath(manifestPath: string, value: string | undef
   return path.isAbsolute(value) ? value : path.resolve(value);
 }
 
+function resolveDossierReleaseGateSummaryPath(dossierPath: string, fallbackPath: string): string {
+  if (!fs.existsSync(dossierPath)) {
+    return fallbackPath;
+  }
+  const dossier = readRequiredJson<Phase1CandidateDossierLinkedArtifacts>(dossierPath);
+  const resolved = dossier.artifacts?.releaseGateSummaryPath
+    ? resolveManifestArtifactPath(dossierPath, dossier.artifacts.releaseGateSummaryPath)
+    : undefined;
+  return resolved && fs.existsSync(resolved) ? resolved : fallbackPath;
+}
+
 function findFirstMatching(outputDir: string, prefix: string, suffix: string): string | undefined {
   if (!fs.existsSync(outputDir)) {
     return undefined;
@@ -469,11 +517,26 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
+  if (report.artifacts.candidateEvidenceFreshnessGuardPath) {
+    lines.push(`- Candidate freshness guard: \`${report.artifacts.candidateEvidenceFreshnessGuardPath}\``);
+  }
+  if (report.artifacts.candidateEvidenceOwnerReminderPath) {
+    lines.push(`- Candidate owner reminder: \`${report.artifacts.candidateEvidenceOwnerReminderPath}\``);
+  }
+  if (report.artifacts.candidateEvidenceFreshnessHistoryPath) {
+    lines.push(`- Candidate freshness history: \`${report.artifacts.candidateEvidenceFreshnessHistoryPath}\``);
+  }
   if (report.artifacts.releaseReadinessDashboardPath) {
     lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
   }
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
+  }
+  if (report.artifacts.cocosPrimaryDiagnosticsPath) {
+    lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
+  }
+  if (report.artifacts.releasePrCommentPath) {
+    lines.push(`- Release PR summary: \`${report.artifacts.releasePrCommentPath}\``);
   }
   lines.push("");
 
@@ -500,7 +563,7 @@ function renderMarkdown(report: RehearsalReport): string {
   return `${lines.join("\n")}\n`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   const revision = getRevision();
   const candidateSlug = slugify(args.candidate);
@@ -536,6 +599,14 @@ function main(): void {
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
+  const cocosPrimaryDiagnosticsPath = path.join(
+    outputDir,
+    `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.json`
+  );
+  const cocosPrimaryDiagnosticsMarkdownPath = path.join(
+    outputDir,
+    `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.md`
+  );
   const releaseGateSummaryPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseGateMarkdownPath = path.join(outputDir, `release-gate-summary-${candidateSlug}-${revision.shortCommit}.md`);
   const ciTrendSummaryPath = path.join(outputDir, `ci-trend-summary-${candidateSlug}-${revision.shortCommit}.json`);
@@ -561,6 +632,23 @@ function main(): void {
   const manualEvidenceLedgerPath = path.join(outputDir, `manual-release-evidence-owner-ledger-${candidateSlug}-${revision.shortCommit}.md`);
   const candidateEvidenceAuditPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.json`);
   const candidateEvidenceAuditMarkdownPath = path.join(outputDir, `candidate-evidence-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const candidateEvidenceFreshnessGuardPath = path.join(
+    outputDir,
+    `candidate-evidence-freshness-guard-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateEvidenceFreshnessGuardMarkdownPath = path.join(
+    outputDir,
+    `candidate-evidence-freshness-guard-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const candidateEvidenceOwnerReminderPath = path.join(
+    outputDir,
+    `candidate-evidence-owner-reminder-report-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const candidateEvidenceOwnerReminderMarkdownPath = path.join(
+    outputDir,
+    `candidate-evidence-owner-reminder-report-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const candidateEvidenceFreshnessHistoryPath = path.join(outputDir, `candidate-evidence-freshness-history-${candidateSlug}.json`);
   const releaseEvidenceIndexPath = path.join(outputDir, `current-release-evidence-index-${candidateSlug}-${revision.shortCommit}.json`);
   const releaseEvidenceIndexMarkdownPath = path.join(
     outputDir,
@@ -568,13 +656,26 @@ function main(): void {
   );
   const phase1CandidateDossierPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.json`);
   const phase1CandidateDossierMarkdownPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.md`);
+  const phase1ExitAuditPath = path.join(outputDir, `phase1-exit-audit-${candidateSlug}-${revision.shortCommit}.json`);
+  const phase1ExitAuditMarkdownPath = path.join(outputDir, `phase1-exit-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const phase1ExitDossierFreshnessGatePath = path.join(
+    outputDir,
+    `phase1-exit-dossier-freshness-gate-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const phase1ExitDossierFreshnessGateMarkdownPath = path.join(
+    outputDir,
+    `phase1-exit-dossier-freshness-gate-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const goNoGoPacketPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.json`);
   const goNoGoPacketMarkdownPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.md`);
+  const releasePrCommentPath = path.join(outputDir, `release-pr-comment-${candidateSlug}-${revision.shortCommit}.md`);
   const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-${candidateSlug}-${revision.shortCommit}.json`);
   const markdownPath = path.join(outputDir, "SUMMARY.md");
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.cocosPrimaryDiagnosticsPath = toRelative(cocosPrimaryDiagnosticsPath);
+  artifacts.cocosPrimaryDiagnosticsMarkdownPath = toRelative(cocosPrimaryDiagnosticsMarkdownPath);
   artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
   artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
@@ -593,14 +694,43 @@ function main(): void {
   artifacts.phase1ReleaseEvidenceDriftGateMarkdownPath = toRelative(phase1ReleaseEvidenceDriftGateMarkdownPath);
   artifacts.candidateEvidenceAuditPath = toRelative(candidateEvidenceAuditPath);
   artifacts.candidateEvidenceAuditMarkdownPath = toRelative(candidateEvidenceAuditMarkdownPath);
+  artifacts.candidateEvidenceFreshnessGuardPath = toRelative(candidateEvidenceFreshnessGuardPath);
+  artifacts.candidateEvidenceFreshnessGuardMarkdownPath = toRelative(candidateEvidenceFreshnessGuardMarkdownPath);
+  artifacts.candidateEvidenceOwnerReminderPath = toRelative(candidateEvidenceOwnerReminderPath);
+  artifacts.candidateEvidenceOwnerReminderMarkdownPath = toRelative(candidateEvidenceOwnerReminderMarkdownPath);
+  artifacts.candidateEvidenceFreshnessHistoryPath = toRelative(candidateEvidenceFreshnessHistoryPath);
   artifacts.releaseEvidenceIndexPath = toRelative(releaseEvidenceIndexPath);
   artifacts.releaseEvidenceIndexMarkdownPath = toRelative(releaseEvidenceIndexMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
   artifacts.phase1CandidateDossierMarkdownPath = toRelative(phase1CandidateDossierMarkdownPath);
+  artifacts.phase1ExitAuditPath = toRelative(phase1ExitAuditPath);
+  artifacts.phase1ExitAuditMarkdownPath = toRelative(phase1ExitAuditMarkdownPath);
+  artifacts.phase1ExitDossierFreshnessGatePath = toRelative(phase1ExitDossierFreshnessGatePath);
+  artifacts.phase1ExitDossierFreshnessGateMarkdownPath = toRelative(phase1ExitDossierFreshnessGateMarkdownPath);
   artifacts.goNoGoPacketPath = toRelative(goNoGoPacketPath);
   artifacts.goNoGoPacketMarkdownPath = toRelative(goNoGoPacketMarkdownPath);
+  artifacts.releasePrCommentPath = toRelative(releasePrCommentPath);
   artifacts.summaryPath = toRelative(summaryPath);
   artifacts.markdownPath = toRelative(markdownPath);
+
+  const buildCandidateEvidenceReport = () =>
+    buildSameCandidateEvidenceAuditReport({
+      candidate: args.candidate,
+      candidateRevision: revision.commit,
+      targetSurface: args.targetSurface,
+      snapshotPath: releaseReadinessSnapshotPath,
+      releaseGateSummaryPath,
+      cocosRcBundlePath:
+        findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json"),
+      ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
+      ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
+      manualEvidenceLedgerPath,
+      ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
+      ...(artifacts.wechatCandidateSummaryPath
+        ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
+        : {}),
+      maxAgeHours: 72
+    });
 
   const stageDefinitions: StageDefinition[] = [
     {
@@ -711,6 +841,21 @@ function main(): void {
           "--output",
           persistencePath
         ], [persistencePath])
+    },
+    {
+      id: "cocos-primary-diagnostics",
+      title: "Build Cocos primary diagnostics",
+      run: () =>
+        runCommandStage("cocos-primary-diagnostics", "Build Cocos primary diagnostics", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/cocos-primary-client-diagnostic-snapshots.ts",
+          "--output",
+          cocosPrimaryDiagnosticsPath,
+          "--markdown-output",
+          cocosPrimaryDiagnosticsMarkdownPath
+        ], [cocosPrimaryDiagnosticsPath, cocosPrimaryDiagnosticsMarkdownPath])
     },
     {
       id: "cocos-rc-bundle",
@@ -956,7 +1101,13 @@ function main(): void {
             title: "Build candidate evidence audit",
             status: "failed",
             summary: "Phase 1 same-revision evidence bundle manifest is missing, so the reviewer audit front-door could not be generated.",
-            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+            outputs: [
+              candidateEvidenceAuditPath,
+              candidateEvidenceAuditMarkdownPath,
+              candidateEvidenceOwnerReminderPath,
+              candidateEvidenceOwnerReminderMarkdownPath,
+              candidateEvidenceFreshnessHistoryPath
+            ].map(toRelative)
           };
         }
 
@@ -989,39 +1140,64 @@ function main(): void {
             title: "Build candidate evidence audit",
             status: "failed",
             summary: "Phase 1 same-revision evidence bundle did not provide a manual evidence owner ledger for the reviewer audit front-door.",
-            outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+            outputs: [
+              candidateEvidenceAuditPath,
+              candidateEvidenceAuditMarkdownPath,
+              candidateEvidenceOwnerReminderPath,
+              candidateEvidenceOwnerReminderMarkdownPath,
+              candidateEvidenceFreshnessHistoryPath
+            ].map(toRelative)
           };
         }
 
-        const report = buildSameCandidateEvidenceAuditReport({
-          candidate: args.candidate,
-          candidateRevision: revision.commit,
-          targetSurface: args.targetSurface,
-          snapshotPath: releaseReadinessSnapshotPath,
-          releaseGateSummaryPath,
-          cocosRcBundlePath:
-            findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json") ?? path.join(outputDir, "missing-cocos-bundle.json"),
-          ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
-          ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
-          manualEvidenceLedgerPath,
-          ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
-          ...(artifacts.wechatCandidateSummaryPath
-            ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
-            : {}),
-          outputPath: candidateEvidenceAuditPath,
-          markdownOutputPath: candidateEvidenceAuditMarkdownPath,
-          maxAgeHours: 72
-        });
+        const report = buildCandidateEvidenceReport();
 
         writeJsonFile(candidateEvidenceAuditPath, report);
         writeFile(candidateEvidenceAuditMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
+        const ownerReminderReport = buildOwnerReminderReport(report, parseManualEvidenceOwnerLedger(manualEvidenceLedgerPath));
+        writeJsonFile(candidateEvidenceOwnerReminderPath, ownerReminderReport);
+        writeFile(candidateEvidenceOwnerReminderMarkdownPath, renderOwnerReminderMarkdown(ownerReminderReport));
+        appendFreshnessHistory(candidateEvidenceFreshnessHistoryPath, report);
 
         return {
           id: "candidate-evidence-audit",
           title: "Build candidate evidence audit",
           status: "passed",
           summary: `Audit verdict ${report.summary.status}; reviewer front-door artifact generated successfully.`,
-          outputs: [candidateEvidenceAuditPath, candidateEvidenceAuditMarkdownPath].map(toRelative)
+          outputs: [
+            candidateEvidenceAuditPath,
+            candidateEvidenceAuditMarkdownPath,
+            candidateEvidenceOwnerReminderPath,
+            candidateEvidenceOwnerReminderMarkdownPath,
+            candidateEvidenceFreshnessHistoryPath
+          ].map(toRelative)
+        };
+      }
+    },
+    {
+      id: "candidate-evidence-freshness-guard",
+      title: "Build candidate evidence freshness guard",
+      run: () => {
+        if (!fs.existsSync(candidateEvidenceAuditPath)) {
+          return {
+            id: "candidate-evidence-freshness-guard",
+            title: "Build candidate evidence freshness guard",
+            status: "failed",
+            summary: "Candidate evidence audit must exist before the dedicated freshness guard can be staged.",
+            outputs: [candidateEvidenceFreshnessGuardPath, candidateEvidenceFreshnessGuardMarkdownPath].map(toRelative)
+          };
+        }
+
+        const report = buildCandidateEvidenceReport();
+        writeJsonFile(candidateEvidenceFreshnessGuardPath, report);
+        writeFile(candidateEvidenceFreshnessGuardMarkdownPath, renderCandidateEvidenceAuditMarkdown(report));
+
+        return {
+          id: "candidate-evidence-freshness-guard",
+          title: "Build candidate evidence freshness guard",
+          status: "passed",
+          summary: `Freshness guard verdict ${report.summary.status}; reviewer gate artifact generated successfully.`,
+          outputs: [candidateEvidenceFreshnessGuardPath, candidateEvidenceFreshnessGuardMarkdownPath].map(toRelative)
         };
       }
     },
@@ -1101,6 +1277,92 @@ function main(): void {
       }
     },
     {
+      id: "phase1-exit-audit",
+      title: "Build Phase 1 exit audit",
+      run: () => {
+        const dossierReleaseGateSummaryPath = resolveDossierReleaseGateSummaryPath(phase1CandidateDossierPath, releaseGateSummaryPath);
+        const reportPromise = buildPhase1ExitAudit({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          targetSurface: args.targetSurface,
+          snapshotPath: releaseReadinessSnapshotPath,
+          releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+          ...(artifacts.wechatCandidateSummaryPath
+            ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
+            : {}),
+          ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
+          ...(artifacts.stableH5SmokePath ? { h5SmokePath: stableH5SmokePath } : {}),
+          ...(artifacts.stableReconnectSoakPath ? { reconnectSoakPath: stableReconnectSoakPath } : {}),
+          ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+          ...(artifacts.cocosBundlePath ? { cocosBundlePath: path.resolve(artifacts.cocosBundlePath) } : {}),
+          persistencePath,
+          ciTrendSummaryPath,
+          ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
+          ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
+          ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
+          outputPath: phase1ExitAuditPath,
+          markdownOutputPath: phase1ExitAuditMarkdownPath,
+          maxEvidenceAgeHours: 48
+        });
+
+        return reportPromise.then((report) => {
+          const stagedDossier = fs.existsSync(phase1CandidateDossierPath)
+            ? readRequiredJson<Phase1CandidateDossierLinkedArtifacts>(phase1CandidateDossierPath)
+            : undefined;
+          const normalizedReport = {
+            ...report,
+            ...(stagedDossier?.phase1ExitEvidenceGate ? { phase1ExitEvidenceGate: stagedDossier.phase1ExitEvidenceGate } : {}),
+            inputs: {
+              ...report.inputs,
+              snapshotPath: releaseReadinessSnapshotPath,
+              releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+              ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {})
+            }
+          };
+
+          writeJsonFile(phase1ExitAuditPath, normalizedReport);
+          writeFile(phase1ExitAuditMarkdownPath, renderPhase1ExitAuditMarkdown(normalizedReport));
+          return {
+            id: "phase1-exit-audit",
+            title: "Build Phase 1 exit audit",
+            status: "passed" as StageStatus,
+            summary: `Exit audit verdict ${normalizedReport.summary.status}; final reviewer gate artifact generated successfully.`,
+            outputs: [phase1ExitAuditPath, phase1ExitAuditMarkdownPath].map(toRelative)
+          };
+        });
+      }
+    },
+    {
+      id: "phase1-exit-dossier-freshness-gate",
+      title: "Build Phase 1 exit dossier freshness gate",
+      run: () => {
+        const dossierReleaseGateSummaryPath = resolveDossierReleaseGateSummaryPath(phase1CandidateDossierPath, releaseGateSummaryPath);
+        const report = buildPhase1ExitDossierFreshnessGateReport({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          dossierPath: phase1CandidateDossierPath,
+          exitAuditPath: phase1ExitAuditPath,
+          snapshotPath: releaseReadinessSnapshotPath,
+          releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+          ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+          outputPath: phase1ExitDossierFreshnessGatePath,
+          markdownOutputPath: phase1ExitDossierFreshnessGateMarkdownPath,
+          maxAgeHours: 48
+        });
+
+        writeJsonFile(phase1ExitDossierFreshnessGatePath, report);
+        writeFile(phase1ExitDossierFreshnessGateMarkdownPath, renderPhase1ExitDossierFreshnessGateMarkdown(report));
+
+        return {
+          id: "phase1-exit-dossier-freshness-gate",
+          title: "Build Phase 1 exit dossier freshness gate",
+          status: report.summary.status === "passed" ? "passed" : "failed",
+          summary: report.summary.summary,
+          outputs: [phase1ExitDossierFreshnessGatePath, phase1ExitDossierFreshnessGateMarkdownPath].map(toRelative)
+        };
+      }
+    },
+    {
       id: "go-no-go-packet",
       title: "Build go/no-go decision packet",
       run: () => {
@@ -1130,11 +1392,30 @@ function main(): void {
           goNoGoPacketMarkdownPath
         ]);
       }
+    },
+    {
+      id: "release-pr-summary",
+      title: "Build release PR summary",
+      run: () =>
+        runCommandStage("release-pr-summary", "Build release PR summary", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/release-pr-comment.ts",
+          "--release-gate-summary",
+          releaseGateSummaryPath,
+          "--release-health-summary",
+          releaseHealthSummaryPath,
+          "--go-no-go-packet",
+          goNoGoPacketPath,
+          "--output",
+          releasePrCommentPath
+        ], [releasePrCommentPath])
     }
   ];
 
   for (const stage of stageDefinitions) {
-    const result = stage.run();
+    const result = await Promise.resolve(stage.run());
     stageResults.push(result);
   }
 
@@ -1153,6 +1434,8 @@ function main(): void {
   const requiredArtifacts = [
     releaseReadinessSnapshotPath,
     persistencePath,
+    cocosPrimaryDiagnosticsPath,
+    cocosPrimaryDiagnosticsMarkdownPath,
     releaseGateSummaryPath,
     releaseGateMarkdownPath,
     ciTrendSummaryPath,
@@ -1165,13 +1448,23 @@ function main(): void {
     phase1ReleaseEvidenceDriftGateMarkdownPath,
     candidateEvidenceAuditPath,
     candidateEvidenceAuditMarkdownPath,
+    candidateEvidenceFreshnessGuardPath,
+    candidateEvidenceFreshnessGuardMarkdownPath,
+    candidateEvidenceOwnerReminderPath,
+    candidateEvidenceOwnerReminderMarkdownPath,
+    candidateEvidenceFreshnessHistoryPath,
     syntheticDashboardPath,
     releaseEvidenceIndexPath,
     releaseEvidenceIndexMarkdownPath,
     phase1CandidateDossierPath,
     phase1CandidateDossierMarkdownPath,
+    phase1ExitAuditPath,
+    phase1ExitAuditMarkdownPath,
+    phase1ExitDossierFreshnessGatePath,
+    phase1ExitDossierFreshnessGateMarkdownPath,
     goNoGoPacketPath,
-    goNoGoPacketMarkdownPath
+    goNoGoPacketMarkdownPath,
+    releasePrCommentPath
   ];
   if (args.serverUrl) {
     requiredArtifacts.push(runtimeObservabilityBundlePath, runtimeObservabilityBundleMarkdownPath);
@@ -1258,4 +1551,7 @@ function main(): void {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`Phase 1 candidate rehearsal failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});

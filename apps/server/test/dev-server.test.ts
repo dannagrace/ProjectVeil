@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { listLobbyRooms } from "../src/colyseus-room";
 import { startDevServer, type DevServerBootstrapDependencies } from "../src/dev-server";
+import type { RuntimePersistenceHealth } from "../src/observability";
 import type { MySqlPersistenceConfig, SnapshotRetentionPolicy } from "../src/persistence";
 
 interface TestLogger {
@@ -110,7 +111,21 @@ function createMySqlStore(retention: SnapshotRetentionPolicy, pruneImpl: () => P
 function createBaseDependencies() {
   const logger = createLogger();
   const process = createProcessStub();
-  const expressApp = { kind: "express-app" };
+  const expressApp = {
+    kind: "express-app",
+    middleware: [] as Array<unknown>,
+    getRoutes: [] as Array<{ path: string; handler: unknown }>,
+    postRoutes: [] as Array<{ path: string; handler: unknown }>,
+    use(handler: unknown) {
+      this.middleware.push(handler);
+    },
+    get(path: string, handler: unknown) {
+      this.getRoutes.push({ path, handler });
+    },
+    post(path: string, handler: unknown) {
+      this.postRoutes.push({ path, handler });
+    }
+  };
   const routeCalls: string[] = [];
   const transport = {
     getExpressApp() {
@@ -168,6 +183,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   let playerAccountStore: unknown;
   let matchmakingStore: unknown;
   let lobbyListRooms: unknown;
+  let persistenceHealth: RuntimePersistenceHealth | undefined;
 
   await startDevServer(3101, "0.0.0.0", {
     readMySqlPersistenceConfig: () => null,
@@ -250,8 +266,9 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(app, base.expressApp);
       base.routeCalls.push("seasons");
     },
-    registerRuntimeObservabilityRoutes: (app) => {
+    registerRuntimeObservabilityRoutes: (app, options) => {
       assert.equal(app, base.expressApp);
+      persistenceHealth = options?.persistence;
       base.routeCalls.push("runtime-observability");
     },
     registerAdminRoutes: (app, store, gameServer) => {
@@ -306,6 +323,11 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(base.logger.warnings.length, 0);
   assert.equal(base.logger.errors.length, 0);
+  assert.deepEqual(persistenceHealth, {
+    status: "degraded",
+    storage: "memory",
+    message: "In-memory room persistence active; room data will not survive process restarts."
+  });
   assertStartupLogIncludes(base.logger, [
     /Project Veil Colyseus dev server listening on ws:\/\/0\.0\.0\.0:3101/,
     /Guild API available at http:\/\/0\.0\.0\.0:3101\/api\/guilds/,
@@ -317,7 +339,8 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
-    /Local in-memory room persistence enabled/
+    /Persistence mode: degraded\/in-memory/,
+    /In-memory room persistence active; room data will not survive process restarts\./
   ]);
   assert.ok(base.process.handlers.SIGINT);
   assert.ok(base.process.handlers.SIGTERM);
@@ -470,6 +493,13 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     user: "veil",
     password: "veil",
     database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
@@ -477,6 +507,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
   };
   let mysqlStoreCreated = false;
   let mysqlConfigStoreCreated = false;
+  let persistenceHealth: RuntimePersistenceHealth | undefined;
 
   await startDevServer(3202, "127.0.0.1", {
     readMySqlPersistenceConfig: () => mysqlConfig,
@@ -515,7 +546,9 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
-    registerRuntimeObservabilityRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: (_app, options) => {
+      persistenceHealth = options?.persistence;
+    },
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -535,6 +568,11 @@ test("dev server falls back to in-memory persistence and warns when schema migra
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.deepEqual(base.logger.warnings, ["pending migration warning"]);
   assert.equal(base.logger.errors.length, 0);
+  assert.deepEqual(persistenceHealth, {
+    status: "degraded",
+    storage: "memory",
+    message: "In-memory room persistence active; room data will not survive process restarts."
+  });
   assertStartupLogIncludes(base.logger, [
     /Runtime health available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/auth-readiness/,
@@ -543,8 +581,101 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
-    /Local in-memory room persistence enabled/
+    /Persistence mode: degraded\/in-memory/,
+    /In-memory room persistence active; room data will not survive process restarts\./
   ]);
+});
+
+test("dev server exits non-zero in production when MySQL bootstrap fails instead of falling back to memory", async () => {
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const mysqlConfig: MySqlPersistenceConfig = {
+    host: "127.0.0.1",
+    port: 3306,
+    user: "veil",
+    password: "veil",
+    database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
+    retention: {
+      ttlHours: 24,
+      cleanupIntervalMinutes: 30
+    }
+  };
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  let memoryStoreCreated = false;
+
+  try {
+    await assert.rejects(
+      startDevServer(3203, "127.0.0.1", {
+        readMySqlPersistenceConfig: () => mysqlConfig,
+        getSchemaMigrationStatus: async () => ({ pending: [] }),
+        createFileSystemConfigCenterStore: () => configCenterStore,
+        createMySqlRoomSnapshotStore: async () => {
+          throw new Error("connect ETIMEDOUT");
+        },
+        createMemoryRoomSnapshotStore: () => {
+          memoryStoreCreated = true;
+          return createMemoryStore();
+        },
+        configureRoomSnapshotStore: () => undefined,
+        createTransport: () => base.transport,
+        readRedisUrl: () => null,
+        createRedisPresence: () => {
+          throw new Error("createRedisPresence should not be used without REDIS_URL");
+        },
+        createRedisDriver: () => {
+          throw new Error("createRedisDriver should not be used without REDIS_URL");
+        },
+        registerAuthRoutes: () => undefined,
+        registerConfigCenterRoutes: () => undefined,
+        registerConfigViewerRoutes: () => undefined,
+        registerGuildRoutes: () => undefined,
+        registerPlayerAccountRoutes: () => undefined,
+        registerShopRoutes: () => undefined,
+        registerWechatPayRoutes: () => undefined,
+        registerLobbyRoutes: () => undefined,
+        registerMatchmakingRoutes: () => undefined,
+        registerMinorProtectionPreviewRoutes: () => undefined,
+        registerPrometheusMetricsMiddleware: () => undefined,
+        registerPrometheusMetricsRoute: () => undefined,
+        registerLeaderboardRoutes: () => undefined,
+        registerSeasonRoutes: () => undefined,
+        registerRuntimeObservabilityRoutes: () => undefined,
+        registerAdminRoutes: () => undefined,
+        createGameServer: () => base.gameServer,
+        logger: base.logger,
+        process: base.process,
+        setInterval: () => {
+          throw new Error("setInterval should not be used when startup fails");
+        },
+        clearInterval: () => undefined,
+        isMySqlSnapshotStore: () => false
+      }),
+      /connect ETIMEDOUT/
+    );
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  }
+
+  assert.equal(memoryStoreCreated, false);
+  assert.equal(configCenterStore.initializeCalls, 0);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assert.deepEqual(base.gameServer.listenCalls, []);
+  assert.deepEqual(base.process.exitCodes, [1]);
+  assert.equal(base.logger.warnings.length, 0);
+  assert.equal(base.logger.errors.length, 1);
+  assert.equal(base.logger.errors[0]?.message, "MySQL migration/bootstrap failed during production startup");
 });
 
 test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL is set", async () => {
@@ -637,11 +768,19 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     user: "veil",
     password: "veil",
     database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
     retention
   };
   const scheduledTimers: TestTimer[] = [];
   const clearedTimers: TestTimer[] = [];
   let memoryStoreCreated = false;
+  let persistenceHealth: RuntimePersistenceHealth | undefined;
 
   await startDevServer(3303, "127.0.0.2", {
     readMySqlPersistenceConfig: () => mysqlConfig,
@@ -678,7 +817,9 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
-    registerRuntimeObservabilityRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: (_app, options) => {
+      persistenceHealth = options?.persistence;
+    },
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -708,6 +849,11 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(mysqlStore.pruneCalls, 1);
   assert.equal(base.logger.warnings.length, 0);
+  assert.deepEqual(persistenceHealth, {
+    status: "ok",
+    storage: "mysql",
+    message: "MySQL room persistence active."
+  });
   assertStartupLogIncludes(base.logger, [
     /Runtime health available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/health/,
     /Auth readiness available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/auth-readiness/,
@@ -716,7 +862,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     /Runtime metrics available at http:\/\/127\.0\.0\.2:3303\/api\/runtime\/metrics/,
     /Config center storage: mysql/,
     /Local in-memory Colyseus presence\/driver enabled/,
-    /MySQL room persistence enabled/,
+    /Persistence mode: production\/mysql/,
     /Snapshot retention: ttl=48h \/ cleanup=15m/,
     /Pruned 2 expired room snapshot\(s\)/
   ]);
