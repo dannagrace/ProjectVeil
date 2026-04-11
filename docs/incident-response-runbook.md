@@ -89,7 +89,7 @@ curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq .
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/auth-readiness" | jq .
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics.errorSummary'
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/slo-summary?format=text"
-grep -E '^(veil_connected_players|veil_active_rooms|veil_http_request_duration_seconds|veil_action_validation_failures_total|veil_feature_flag_config_stale|veil_mysql_pool_|veil_runtime_error_events_total) ' /tmp/project-veil.metrics
+grep -E '^(veil_connected_players|veil_active_rooms(_total)?|veil_http_request_duration_seconds|veil_action_validation_failures_total|veil_feature_flag_config_stale|veil_mysql_pool_|veil_runtime_error_events_total) ' /tmp/project-veil.metrics
 ```
 
 5 分钟内必须回答：
@@ -249,6 +249,10 @@ curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics
 ### Alert-VeilConnectedPlayersHigh
 
 先执行 [Five-Minute Triage](#five-minute-triage)，再检查热点房间与容量。若伴随 HTTP 延迟或房间密度恶化，按 [Runtime Unavailable](#runtime-unavailable) 处理；否则按 `P2/P1` 进行扩容或摘除测试流量。
+
+### Alert-VeilActiveRoomsHigh
+
+先确认 `veil_active_rooms_total` 是否和 `activeRoomCount`、房间摘要、以及最近 `room.disposed` 事件一致。若连接数不高但房间数持续上升，优先按僵尸房间或房间退役失败处理；若确实在跑大规模压测，则保留告警并监控是否继续自行回落。
 
 ### Alert-VeilRoomsHot
 

@@ -368,6 +368,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(metricsResponse.status, 200);
   assert.match(metricsResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(metricsText, /^veil_up 1$/m);
+  assert.match(metricsText, /^veil_active_rooms_total 1$/m);
   assert.match(metricsText, /^veil_active_rooms 1$/m);
   assert.match(metricsText, /^veil_connected_players 1$/m);
   assert.match(metricsText, /^veil_active_room_count 1$/m);
@@ -438,6 +439,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
 
   assert.equal(prometheusResponse.status, 200);
   assert.match(prometheusResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(prometheusText, /^veil_active_rooms_total 1$/m);
   assert.match(prometheusText, /^veil_active_rooms 1$/m);
   assert.match(prometheusText, /^veil_connected_players 1$/m);
   assert.match(prometheusText, /^veil_action_validation_failures_total 0$/m);

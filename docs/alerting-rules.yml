@@ -13,8 +13,19 @@ groups:
           description: veil_connected_players has been above 150 for 10 minutes. Add capacity or shed test traffic before matchmaking and room latency degrade.
           runbook_url: ./incident-response-runbook.md#alert-veilconnectedplayershigh
 
+      - alert: VeilActiveRoomsHigh
+        expr: veil_active_rooms_total > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil active room count is unexpectedly high
+          description: veil_active_rooms_total has been above 80 for 10 minutes. Check for zombie-room cleanup failures, stalled disposal, or synthetic traffic that is creating empty rooms faster than they are drained.
+          runbook_url: ./incident-response-runbook.md#alert-veilactiveroomshigh
+
       - alert: VeilRoomsHot
-        expr: (veil_connected_players / clamp_min(veil_active_rooms, 1)) > 12
+        expr: (veil_connected_players / clamp_min(veil_active_rooms_total, 1)) > 12
         for: 10m
         labels:
           severity: warning
