@@ -74,6 +74,7 @@ groups:
         labels:
           severity: critical
           service: project-veil-mysql
+          notify: ops-slack
         annotations:
           summary: Project Veil MySQL replica lag is above the RPO target
           description: Replica lag has exceeded 30 seconds for 10 minutes. Freeze failover and backup promotion decisions until replication catches up or a deliberate recovery point is chosen.
@@ -85,6 +86,7 @@ groups:
         labels:
           severity: critical
           service: project-veil-server
+          notify: ops-slack
         annotations:
           summary: Project Veil is detecting WeChat payment fraud or integrity anomalies
           description: "`payment_fraud_signal` fired within the last 15 minutes. Freeze risky compensation/refund actions, inspect duplicate callbacks or payer mismatches, and review the current candidate before continuing rollout."
@@ -97,6 +99,7 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Feature flag config is stale on at least one Project Veil node
           description: "A node has not re-checked or reloaded `configs/feature-flags.json` inside the allowed freshness window. Freeze rollout promotion and compare `/api/runtime/feature-flags` checksums across nodes before proceeding."
@@ -109,6 +112,7 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is causing elevated session failures
           description: "Session failure rate has exceeded 1% for 10 minutes while `battle_pass_enabled` is live. Hold rollout promotion and roll back to the previous safe percentage if the error does not self-resolve immediately."
@@ -121,6 +125,7 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is exceeding gameplay error budget
           description: Gameplay action validation failures have exceeded 2% for 10 minutes during a live battle pass rollout. Treat this as the generic rollout error-rate tripwire when a battle-pass-specific signal is not yet available.
@@ -133,6 +138,7 @@ groups:
           severity: critical
           service: project-veil-server
           feature_flag: battle_pass_enabled
+          notify: ops-slack
         annotations:
           summary: Battle pass gray rollout is triggering payment-related runtime errors
           description: "Payment runtime error ratio has exceeded 2% for 10 minutes while `battle_pass_enabled` is active. Roll back to the previous safe stage and verify the payment callback / reward-claim path before retrying."
