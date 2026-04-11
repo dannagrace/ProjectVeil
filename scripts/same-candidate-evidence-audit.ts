@@ -679,7 +679,7 @@ function evaluateFreshness(timestamp: string | undefined, maxAgeMs: number): Fre
   return Date.now() - parsed > maxAgeMs ? "stale" : "fresh";
 }
 
-function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedger {
+export function parseManualEvidenceOwnerLedger(filePath: string): ManualEvidenceOwnerLedger {
   const content = fs.readFileSync(filePath, "utf8");
   const capture = (label: string): string | undefined => {
     const match = content.match(new RegExp(`^- ${label}:\\s+\`([^\\n\`]+)\``, "m"));
@@ -1266,7 +1266,7 @@ function getReminderCondition(findings: AuditFinding[], hasOwnerAssignment: bool
   return undefined;
 }
 
-function buildOwnerReminderReport(
+export function buildOwnerReminderReport(
   auditReport: CandidateEvidenceAuditReport,
   ledger: ManualEvidenceOwnerLedger | undefined
 ): CandidateOwnerReminderReport {
@@ -1411,7 +1411,7 @@ function readFreshnessHistory(filePath: string, candidate: string): CandidateEvi
   };
 }
 
-function appendFreshnessHistory(
+export function appendFreshnessHistory(
   historyPath: string,
   report: CandidateEvidenceAuditReport
 ): CandidateEvidenceFreshnessHistoryReport {
