@@ -626,6 +626,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateRevisionTriageDigestPath) {
     lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
   }
+  if (report.artifacts.cocosBundlePath) {
+    lines.push(`- Cocos RC bundle: \`${report.artifacts.cocosBundlePath}\``);
+  }
   if (report.artifacts.goNoGoPacketPath) {
     lines.push(`- Go/no-go packet: \`${report.artifacts.goNoGoPacketPath}\``);
   }

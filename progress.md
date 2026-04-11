@@ -1,5 +1,11 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Issue #1313 - Phase 1 rehearsal Cocos bundle front door - 2026-04-11
+
+- Frontloaded the candidate-scoped `Cocos RC bundle` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can jump straight from `SUMMARY.md` into the staged RC packet without digging through generated outputs first.
+- Locked the new reviewer entry with markdown and artifact-path assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the Phase 1 rehearsal docs and release script inventory so the reviewer packet description explicitly includes the staged Cocos RC bundle.
+
 ## Discovery notes
 
 - 仓库是全栈 TypeScript monorepo，当前主运行时是 `apps/cocos-client`，`apps/client` 主要承担 H5 调试壳、配置联调和回归测试。

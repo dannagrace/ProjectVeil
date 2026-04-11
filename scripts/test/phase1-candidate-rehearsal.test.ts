@@ -194,6 +194,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.candidateRevisionTriageInputPath ?? "", /candidate-revision-triage-input-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestMarkdownPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
+  assert.match(report.artifacts.cocosBundlePath ?? "", /cocos-rc-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.phase1ReleaseEvidenceDriftGatePath ?? "", /phase1-release-evidence-drift-gate-phase1-mainline-/);
@@ -249,6 +250,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Cocos main-journey replay gate:/);
   assert.match(markdown, /Cocos primary diagnostics:/);
   assert.match(markdown, /Candidate revision triage digest:/);
+  assert.match(markdown, /Cocos RC bundle:/);
   assert.match(markdown, /Go\/no-go packet:/);
   assert.match(markdown, /Release PR summary:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidencePath:/);
@@ -259,6 +261,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateRevisionTriageInputPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestMarkdownPath:/);
+  assert.match(markdown, /cocosBundlePath:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessGuardPath:/);
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
