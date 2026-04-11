@@ -10,6 +10,8 @@ Issue #1299 closes the gap between the existing local-dev Compose setup and a re
 
 This runbook assumes a VM or bare-metal host using Docker Compose. For zero-downtime deploys, run two identical app hosts behind the same L4/L7 load balancer and roll them one host at a time while both point at the same MySQL and Redis.
 
+Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](./capacity-planning.md). The current published single-node limit is `10` concurrent rooms, with an early scale-out trigger at `8`.
+
 ## 1. Files Used During Deploy
 
 - Compose stack: `docker compose -f docker-compose.prod.yml`

@@ -14,15 +14,26 @@ groups:
           runbook_url: ./incident-response-runbook.md#alert-veilconnectedplayershigh
 
       - alert: VeilActiveRoomsHigh
-        expr: veil_active_rooms_total > 80
-        for: 10m
+        expr: veil_active_rooms_total > 8
+        for: 5m
         labels:
           severity: warning
           service: project-veil-server
         annotations:
-          summary: Project Veil active room count is unexpectedly high
-          description: veil_active_rooms_total has been above 80 for 10 minutes. Check for zombie-room cleanup failures, stalled disposal, or synthetic traffic that is creating empty rooms faster than they are drained.
+          summary: Project Veil active room count is nearing the current safe single-node limit
+          description: veil_active_rooms_total has been above 8 for 5 minutes. The current measured safe limit is 10 rooms per instance, so add capacity or shed traffic before world-action p95 latency crosses the 100ms hard limit.
           runbook_url: ./incident-response-runbook.md#alert-veilactiveroomshigh
+
+      - alert: VeilMatchmakingQueueDepthHigh
+        expr: veil_matchmaking_queue_depth > 50
+        for: 30s
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil matchmaking queue depth is backing up
+          description: veil_matchmaking_queue_depth has been above 50 for 30 seconds. Scale out room capacity or investigate shard admission because queued PvP requests are now waiting behind the current room ceiling.
+          runbook_url: ./alerting-runbook.md#alert-veilmatchmakingqueuedepthhigh
 
       - alert: VeilRoomsHot
         expr: (veil_connected_players / clamp_min(veil_active_rooms_total, 1)) > 12
