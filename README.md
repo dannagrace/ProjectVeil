@@ -111,6 +111,8 @@ npm run dev:client:h5
 - 匹配队列默认会把断线玩家 5 分钟后清理掉，可用 `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`（默认 `300` 秒）覆盖
 - 设置 `REDIS_URL` 后，Colyseus presence/driver 和 matchmaking 队列都会自动切到 Redis-backed 实现
 
+服务端 HTTP 路由现在会为每个请求返回 `x-correlation-id`。排查失败请求时可直接复用调用方传入的同名 header，或从 5xx 响应 / 服务端错误日志 / `/api/runtime/diagnostic-snapshot` 里的 `requestId` 交叉定位同一次请求。
+
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
 
 如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每 6 小时备份一次、每周一次 `./scripts/db-restore-test.sh` 的 cron。服务端启动时会校验该 S3 目标是否可达，并把最近一次成功备份时间暴露为 Prometheus 指标 `veil_db_backup_last_success_timestamp`；恢复步骤见 `docs/db-restore-runbook.md`。
