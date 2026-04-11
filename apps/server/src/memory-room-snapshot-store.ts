@@ -39,6 +39,8 @@ import {
   type PlayerAccountDeviceSessionSnapshot,
   type PlayerAccountCredentialInput,
   type PlayerAccountEnsureInput,
+  type GuestAccountMigrationInput,
+  type GuestAccountMigrationResult,
   type PlayerAccountListOptions,
   type PlayerAccountUnbanInput,
   type PlayerBanHistoryRecord,
@@ -537,6 +539,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
+      ...(existing?.guestMigratedToPlayerId ? { guestMigratedToPlayerId: existing.guestMigratedToPlayerId } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
       ...(existing?.notificationPreferences
@@ -1320,6 +1323,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+    delete nextAccount.guestMigratedToPlayerId;
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     if (nextDisplayName !== existing.displayName) {
       this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
@@ -1335,6 +1339,113 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       }
     }
     return cloneAccount(nextAccount);
+  }
+
+  async migrateGuestToRegistered(input: GuestAccountMigrationInput): Promise<GuestAccountMigrationResult> {
+    const guestPlayerId = normalizePlayerId(input.guestPlayerId);
+    const targetPlayerId = normalizePlayerId(input.targetPlayerId);
+    const guestAccount = await this.ensurePlayerAccount({ playerId: guestPlayerId });
+    const targetAccount = await this.ensurePlayerAccount({ playerId: targetPlayerId });
+    const progressSource = input.progressSource === "target" ? targetAccount : guestAccount;
+    const nextTarget: PlayerAccountSnapshot = {
+      ...cloneAccount(targetAccount),
+      ...cloneAccount(progressSource),
+      playerId: targetPlayerId,
+      displayName: input.wechatIdentity.displayName?.trim() || progressSource.displayName,
+      ...(input.wechatIdentity.avatarUrl?.trim()
+        ? { avatarUrl: input.wechatIdentity.avatarUrl.trim() }
+        : progressSource.avatarUrl
+          ? { avatarUrl: progressSource.avatarUrl }
+          : targetAccount.avatarUrl
+            ? { avatarUrl: targetAccount.avatarUrl }
+            : {}),
+      ...(targetAccount.loginId ? { loginId: targetAccount.loginId } : {}),
+      ...(targetAccount.credentialBoundAt ? { credentialBoundAt: targetAccount.credentialBoundAt } : {}),
+      ...(targetAccount.phoneNumber ? { phoneNumber: targetAccount.phoneNumber } : {}),
+      ...(targetAccount.phoneNumberBoundAt ? { phoneNumberBoundAt: targetAccount.phoneNumberBoundAt } : {}),
+      ...(targetAccount.accountSessionVersion !== undefined ? { accountSessionVersion: targetAccount.accountSessionVersion } : {}),
+      wechatMiniGameOpenId: input.wechatIdentity.openId.trim(),
+      ...(input.wechatIdentity.unionId?.trim()
+        ? { wechatMiniGameUnionId: input.wechatIdentity.unionId.trim() }
+        : targetAccount.wechatMiniGameUnionId
+          ? { wechatMiniGameUnionId: targetAccount.wechatMiniGameUnionId }
+          : {}),
+      ...(input.wechatIdentity.ageVerified !== undefined
+        ? { ageVerified: input.wechatIdentity.ageVerified }
+        : progressSource.ageVerified !== undefined
+          ? { ageVerified: progressSource.ageVerified }
+          : {}),
+      ...(input.wechatIdentity.isMinor !== undefined
+        ? { isMinor: input.wechatIdentity.isMinor }
+        : progressSource.isMinor !== undefined
+          ? { isMinor: progressSource.isMinor }
+          : {}),
+      wechatMiniGameBoundAt: targetAccount.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    delete nextTarget.guestMigratedToPlayerId;
+    this.accounts.set(targetPlayerId, cloneAccount(nextTarget));
+    this.playerIdByWechatOpenId.set(nextTarget.wechatMiniGameOpenId!, targetPlayerId);
+
+    if (input.progressSource === "guest") {
+      const guestArchives = await this.loadPlayerHeroArchives([guestPlayerId]);
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${targetPlayerId}:`) || key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      for (const archive of guestArchives) {
+        this.heroArchives.set(`${targetPlayerId}:${archive.heroId}`, {
+          ...cloneArchive(archive),
+          playerId: targetPlayerId,
+          hero: {
+            ...structuredClone(archive.hero),
+            playerId: targetPlayerId
+          }
+        });
+      }
+      const guestQuestState = await this.loadPlayerQuestState(guestPlayerId);
+      this.playerQuestStates.delete(targetPlayerId);
+      this.playerQuestStates.delete(guestPlayerId);
+      if (guestQuestState) {
+        this.playerQuestStates.set(targetPlayerId, {
+          ...structuredClone(guestQuestState),
+          playerId: targetPlayerId
+        });
+      }
+    } else {
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      this.playerQuestStates.delete(guestPlayerId);
+    }
+
+    const migratedGuest: PlayerAccountSnapshot = {
+      ...cloneAccount(guestAccount),
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentBattleReplays: [],
+      gems: 0,
+      seasonXp: 0,
+      loginStreak: 0,
+      guestMigratedToPlayerId: targetPlayerId,
+      updatedAt: new Date().toISOString()
+    };
+    delete migratedGuest.wechatMiniGameOpenId;
+    delete migratedGuest.wechatMiniGameUnionId;
+    delete migratedGuest.wechatMiniGameBoundAt;
+    delete migratedGuest.loginId;
+    delete migratedGuest.credentialBoundAt;
+    delete migratedGuest.phoneNumber;
+    delete migratedGuest.phoneNumberBoundAt;
+    this.accounts.set(guestPlayerId, cloneAccount(migratedGuest));
+
+    return {
+      account: cloneAccount(nextTarget),
+      guestAccount: cloneAccount(migratedGuest)
+    };
   }
 
   async deletePlayerAccount(

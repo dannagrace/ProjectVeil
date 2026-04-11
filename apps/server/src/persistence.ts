@@ -181,6 +181,7 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerAccountWechatMiniGameIdentityInput
   ): Promise<PlayerAccountSnapshot>;
+  migrateGuestToRegistered(input: GuestAccountMigrationInput): Promise<GuestAccountMigrationResult>;
   deletePlayerAccount(
     playerId: string,
     input?: PlayerAccountDeleteInput
@@ -299,6 +300,7 @@ interface PlayerAccountRow extends RowDataPacket {
   wechat_mini_game_open_id: string | null;
   wechat_mini_game_union_id: string | null;
   wechat_mini_game_bound_at: Date | string | null;
+  guest_migrated_to_player_id: string | null;
   credential_bound_at: Date | string | null;
   privacy_consent_at: Date | string | null;
   phone_number: string | null;
@@ -490,6 +492,7 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   wechatMiniGameOpenId?: string;
   wechatMiniGameUnionId?: string;
   wechatMiniGameBoundAt?: string;
+  guestMigratedToPlayerId?: string;
   createdAt?: string;
   updatedAt?: string;
   phoneNumber?: string;
@@ -772,6 +775,18 @@ export interface PlayerAccountWechatMiniGameIdentityInput {
   avatarUrl?: string | null;
   ageVerified?: boolean;
   isMinor?: boolean;
+}
+
+export interface GuestAccountMigrationInput {
+  guestPlayerId: string;
+  targetPlayerId: string;
+  progressSource: "guest" | "target";
+  wechatIdentity: PlayerAccountWechatMiniGameIdentityInput;
+}
+
+export interface GuestAccountMigrationResult {
+  account: PlayerAccountSnapshot;
+  guestAccount: PlayerAccountSnapshot;
 }
 
 export interface PlayerAccountDeleteInput {
@@ -1891,11 +1906,15 @@ function normalizePlayerAccountSnapshot(account: {
   wechatMiniGameOpenId?: string | null | undefined;
   wechatMiniGameUnionId?: string | null | undefined;
   wechatMiniGameBoundAt?: string | undefined;
+  guestMigratedToPlayerId?: string | null | undefined;
   credentialBoundAt?: string | undefined;
   privacyConsentAt?: string | Date | null | undefined;
   phoneNumber?: string | null | undefined;
   phoneNumberBoundAt?: string | Date | null | undefined;
   notificationPreferences?: NotificationPreferences | null | undefined;
+  accountSessionVersion?: number | null | undefined;
+  refreshSessionId?: string | null | undefined;
+  refreshTokenExpiresAt?: string | Date | null | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 }): PlayerAccountSnapshot {
@@ -1963,6 +1982,12 @@ function normalizePlayerAccountSnapshot(account: {
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
     ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
+    ...(account.guestMigratedToPlayerId?.trim()
+      ? { guestMigratedToPlayerId: normalizePlayerId(account.guestMigratedToPlayerId) }
+      : {}),
+    ...(account.accountSessionVersion != null ? { accountSessionVersion: Math.max(0, Math.floor(account.accountSessionVersion)) } : {}),
+    ...(account.refreshSessionId?.trim() ? { refreshSessionId: account.refreshSessionId.trim() } : {}),
+    ...(formatTimestamp(account.refreshTokenExpiresAt) ? { refreshTokenExpiresAt: formatTimestamp(account.refreshTokenExpiresAt)! } : {}),
     ...(account.phoneNumber?.trim() ? { phoneNumber: account.phoneNumber.trim() } : {}),
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(account.createdAt ? { createdAt: account.createdAt } : {}),
@@ -2334,6 +2359,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   wechat_mini_game_open_id VARCHAR(191) NULL,
   wechat_mini_game_union_id VARCHAR(191) NULL,
   wechat_mini_game_bound_at DATETIME NULL DEFAULT NULL,
+  guest_migrated_to_player_id VARCHAR(191) NULL,
   password_hash VARCHAR(255) NULL,
   credential_bound_at DATETIME NULL DEFAULT NULL,
   privacy_consent_at DATETIME NULL DEFAULT NULL,
@@ -3252,6 +3278,24 @@ PREPARE veil_player_accounts_wechat_bound_at_stmt FROM @veil_player_accounts_wec
 EXECUTE veil_player_accounts_wechat_bound_at_stmt;
 DEALLOCATE PREPARE veil_player_accounts_wechat_bound_at_stmt;
 
+SET @veil_player_accounts_guest_migrated_to_player_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_ACCOUNT_TABLE}'
+    AND COLUMN_NAME = 'guest_migrated_to_player_id'
+);
+
+SET @veil_player_accounts_guest_migrated_to_player_id_sql := IF(
+  @veil_player_accounts_guest_migrated_to_player_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` ADD COLUMN \`guest_migrated_to_player_id\` VARCHAR(191) NULL AFTER \`wechat_mini_game_bound_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_player_accounts_guest_migrated_to_player_id_stmt FROM @veil_player_accounts_guest_migrated_to_player_id_sql;
+EXECUTE veil_player_accounts_guest_migrated_to_player_id_stmt;
+DEALLOCATE PREPARE veil_player_accounts_guest_migrated_to_player_id_stmt;
+
 SET @veil_player_accounts_credential_bound_at_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -3805,6 +3849,7 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(wechatUnionId ? { wechatMiniGameUnionId: wechatUnionId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(wechatMiniGameBoundAt ? { wechatMiniGameBoundAt } : {}),
+    ...(row.guest_migrated_to_player_id ? { guestMigratedToPlayerId: row.guest_migrated_to_player_id } : {}),
     ...(credentialBoundAt ? { credentialBoundAt } : {}),
     ...(privacyConsentAt ? { privacyConsentAt } : {}),
     ...(row.phone_number ? { phoneNumber: row.phone_number } : {}),
@@ -4262,6 +4307,264 @@ async function savePlayerHeroArchives(
   }
 }
 
+function buildGuestMigrationTargetAccount(input: {
+  progressAccount: PlayerAccountSnapshot;
+  targetAccount: PlayerAccountSnapshot;
+  targetPlayerId: string;
+  wechatIdentity: PlayerAccountWechatMiniGameIdentityInput;
+}): PlayerAccountSnapshot {
+  const progressAccount = normalizePlayerAccountSnapshot({
+    ...input.progressAccount,
+    playerId: input.targetPlayerId
+  });
+  const targetAccount = normalizePlayerAccountSnapshot({
+    ...input.targetAccount,
+    playerId: input.targetPlayerId
+  });
+
+  return normalizePlayerAccountSnapshot({
+    ...targetAccount,
+    ...progressAccount,
+    playerId: input.targetPlayerId,
+    displayName: input.wechatIdentity.displayName?.trim() ? input.wechatIdentity.displayName : progressAccount.displayName,
+    avatarUrl:
+      input.wechatIdentity.avatarUrl !== undefined
+        ? input.wechatIdentity.avatarUrl
+        : progressAccount.avatarUrl ?? targetAccount.avatarUrl,
+    loginId: targetAccount.loginId,
+    credentialBoundAt: targetAccount.credentialBoundAt,
+    privacyConsentAt: progressAccount.privacyConsentAt ?? targetAccount.privacyConsentAt,
+    phoneNumber: targetAccount.phoneNumber,
+    phoneNumberBoundAt: targetAccount.phoneNumberBoundAt,
+    notificationPreferences: progressAccount.notificationPreferences ?? targetAccount.notificationPreferences,
+    accountSessionVersion: targetAccount.accountSessionVersion,
+    refreshSessionId: targetAccount.refreshSessionId,
+    refreshTokenExpiresAt: targetAccount.refreshTokenExpiresAt,
+    wechatMiniGameOpenId: input.wechatIdentity.openId,
+    wechatMiniGameUnionId: input.wechatIdentity.unionId ?? targetAccount.wechatMiniGameUnionId,
+    wechatMiniGameBoundAt: targetAccount.wechatMiniGameBoundAt ?? new Date().toISOString(),
+    ageVerified:
+      input.wechatIdentity.ageVerified !== undefined
+        ? input.wechatIdentity.ageVerified
+        : progressAccount.ageVerified ?? targetAccount.ageVerified,
+    isMinor:
+      input.wechatIdentity.isMinor !== undefined
+        ? input.wechatIdentity.isMinor
+        : progressAccount.isMinor ?? targetAccount.isMinor,
+    guestMigratedToPlayerId: undefined
+  });
+}
+
+function buildMigratedGuestAccountTombstone(
+  account: PlayerAccountSnapshot,
+  targetPlayerId: string
+): PlayerAccountSnapshot {
+  return normalizePlayerAccountSnapshot({
+    playerId: account.playerId,
+    displayName: account.displayName,
+    avatarUrl: account.avatarUrl,
+    globalResources: normalizeResourceLedger(),
+    achievements: [],
+    recentEventLog: account.recentEventLog,
+    recentBattleReplays: [],
+    gems: 0,
+    seasonXp: 0,
+    seasonPassTier: 1,
+    seasonPassPremium: false,
+    seasonPassClaimedTiers: [],
+    seasonBadges: [],
+    campaignProgress: undefined,
+    seasonalEventStates: undefined,
+    mailbox: undefined,
+    cosmeticInventory: { ownedIds: [] },
+    equippedCosmetics: {},
+    eloRating: normalizeEloRating(undefined),
+    rankDivision: getRankDivisionForRating(undefined),
+    peakRankDivision: getRankDivisionForRating(undefined),
+    promotionSeries: undefined,
+    demotionShield: undefined,
+    seasonHistory: [],
+    rankedWeeklyProgress: undefined,
+    dailyDungeonState: undefined,
+    leaderboardAbuseState: undefined,
+    leaderboardModerationState: undefined,
+    tutorialStep: DEFAULT_TUTORIAL_STEP,
+    lastRoomId: undefined,
+    lastSeenAt: account.lastSeenAt,
+    loginId: undefined,
+    credentialBoundAt: undefined,
+    privacyConsentAt: account.privacyConsentAt,
+    phoneNumber: undefined,
+    phoneNumberBoundAt: undefined,
+    notificationPreferences: undefined,
+    ageVerified: undefined,
+    isMinor: undefined,
+    dailyPlayMinutes: 0,
+    lastPlayDate: undefined,
+    loginStreak: 0,
+    banStatus: "none",
+    banExpiry: undefined,
+    banReason: undefined,
+    wechatMiniGameOpenId: undefined,
+    wechatMiniGameUnionId: undefined,
+    wechatMiniGameBoundAt: undefined,
+    guestMigratedToPlayerId: targetPlayerId
+  });
+}
+
+async function upsertPlayerAccountForMigration(
+  connection: PoolConnection,
+  existingAccount: PlayerAccountSnapshot,
+  nextAccount: PlayerAccountSnapshot
+): Promise<void> {
+  await connection.query(
+    `INSERT INTO \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
+       player_id,
+       display_name,
+       avatar_url,
+       elo_rating,
+       rank_division,
+       peak_rank_division,
+       promotion_series_json,
+       demotion_shield_json,
+       season_history_json,
+       ranked_weekly_progress_json,
+       gems,
+       season_xp,
+       season_pass_tier,
+       season_pass_premium,
+       season_pass_claimed_tiers_json,
+       season_badges_json,
+       campaign_progress_json,
+       seasonal_event_states_json,
+       mailbox_json,
+       cosmetic_inventory_json,
+       equipped_cosmetics_json,
+       global_resources_json,
+       achievements_json,
+       recent_event_log_json,
+       recent_battle_replays_json,
+       daily_dungeon_state_json,
+       leaderboard_abuse_state_json,
+       leaderboard_moderation_state_json,
+       tutorial_step,
+       last_room_id,
+       last_seen_at,
+       age_verified,
+       is_minor,
+       daily_play_minutes,
+       last_play_date,
+       login_streak,
+       wechat_open_id,
+       wechat_union_id,
+       wechat_mini_game_open_id,
+       wechat_mini_game_union_id,
+       wechat_mini_game_bound_at,
+       guest_migrated_to_player_id,
+       privacy_consent_at,
+       phone_number,
+       phone_number_bound_at,
+       notification_preferences_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       display_name = VALUES(display_name),
+       avatar_url = VALUES(avatar_url),
+       elo_rating = VALUES(elo_rating),
+       rank_division = VALUES(rank_division),
+       peak_rank_division = VALUES(peak_rank_division),
+       promotion_series_json = VALUES(promotion_series_json),
+       demotion_shield_json = VALUES(demotion_shield_json),
+       season_history_json = VALUES(season_history_json),
+       ranked_weekly_progress_json = VALUES(ranked_weekly_progress_json),
+       gems = VALUES(gems),
+       season_xp = VALUES(season_xp),
+       season_pass_tier = VALUES(season_pass_tier),
+       season_pass_premium = VALUES(season_pass_premium),
+       season_pass_claimed_tiers_json = VALUES(season_pass_claimed_tiers_json),
+       season_badges_json = VALUES(season_badges_json),
+       campaign_progress_json = VALUES(campaign_progress_json),
+       seasonal_event_states_json = VALUES(seasonal_event_states_json),
+       mailbox_json = VALUES(mailbox_json),
+       cosmetic_inventory_json = VALUES(cosmetic_inventory_json),
+       equipped_cosmetics_json = VALUES(equipped_cosmetics_json),
+       global_resources_json = VALUES(global_resources_json),
+       achievements_json = VALUES(achievements_json),
+       recent_event_log_json = VALUES(recent_event_log_json),
+       recent_battle_replays_json = VALUES(recent_battle_replays_json),
+       daily_dungeon_state_json = VALUES(daily_dungeon_state_json),
+       leaderboard_abuse_state_json = VALUES(leaderboard_abuse_state_json),
+       leaderboard_moderation_state_json = VALUES(leaderboard_moderation_state_json),
+       tutorial_step = VALUES(tutorial_step),
+       last_room_id = VALUES(last_room_id),
+       last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
+       age_verified = VALUES(age_verified),
+       is_minor = VALUES(is_minor),
+       daily_play_minutes = VALUES(daily_play_minutes),
+       last_play_date = VALUES(last_play_date),
+       login_streak = VALUES(login_streak),
+       wechat_open_id = VALUES(wechat_open_id),
+       wechat_union_id = VALUES(wechat_union_id),
+       wechat_mini_game_open_id = VALUES(wechat_mini_game_open_id),
+       wechat_mini_game_union_id = VALUES(wechat_mini_game_union_id),
+       wechat_mini_game_bound_at = VALUES(wechat_mini_game_bound_at),
+       guest_migrated_to_player_id = VALUES(guest_migrated_to_player_id),
+       privacy_consent_at = VALUES(privacy_consent_at),
+       phone_number = VALUES(phone_number),
+       phone_number_bound_at = VALUES(phone_number_bound_at),
+       notification_preferences_json = VALUES(notification_preferences_json),
+       version = version + 1`,
+    [
+      nextAccount.playerId,
+      nextAccount.displayName,
+      nextAccount.avatarUrl ?? null,
+      nextAccount.eloRating,
+      nextAccount.rankDivision ?? null,
+      nextAccount.peakRankDivision ?? null,
+      JSON.stringify(nextAccount.promotionSeries ?? null),
+      JSON.stringify(nextAccount.demotionShield ?? null),
+      JSON.stringify(nextAccount.seasonHistory ?? []),
+      JSON.stringify(nextAccount.rankedWeeklyProgress ?? null),
+      nextAccount.gems,
+      Math.max(0, Math.floor(nextAccount.seasonXp ?? 0)),
+      Math.max(1, Math.floor(nextAccount.seasonPassTier ?? 1)),
+      nextAccount.seasonPassPremium === true ? 1 : 0,
+      JSON.stringify(nextAccount.seasonPassClaimedTiers ?? []),
+      JSON.stringify(nextAccount.seasonBadges ?? []),
+      JSON.stringify(nextAccount.campaignProgress ?? null),
+      JSON.stringify(nextAccount.seasonalEventStates ?? null),
+      JSON.stringify(nextAccount.mailbox ?? null),
+      JSON.stringify(nextAccount.cosmeticInventory ?? { ownedIds: [] }),
+      JSON.stringify(nextAccount.equippedCosmetics ?? {}),
+      JSON.stringify(nextAccount.globalResources),
+      JSON.stringify(nextAccount.achievements),
+      JSON.stringify(nextAccount.recentEventLog),
+      JSON.stringify(nextAccount.recentBattleReplays),
+      JSON.stringify(nextAccount.dailyDungeonState ?? null),
+      JSON.stringify(nextAccount.leaderboardAbuseState ?? null),
+      JSON.stringify(nextAccount.leaderboardModerationState ?? null),
+      nextAccount.tutorialStep,
+      nextAccount.lastRoomId ?? null,
+      existingAccount.lastSeenAt ? new Date(existingAccount.lastSeenAt) : null,
+      nextAccount.ageVerified === true ? 1 : 0,
+      nextAccount.isMinor === true ? 1 : 0,
+      normalizeDailyPlayMinutes(nextAccount.dailyPlayMinutes),
+      nextAccount.lastPlayDate ? new Date(nextAccount.lastPlayDate) : null,
+      normalizeLoginStreak(nextAccount.loginStreak),
+      nextAccount.wechatMiniGameOpenId ?? null,
+      nextAccount.wechatMiniGameUnionId ?? null,
+      nextAccount.wechatMiniGameOpenId ?? null,
+      nextAccount.wechatMiniGameUnionId ?? null,
+      nextAccount.wechatMiniGameBoundAt ? new Date(nextAccount.wechatMiniGameBoundAt) : null,
+      nextAccount.guestMigratedToPlayerId ?? null,
+      nextAccount.privacyConsentAt ? new Date(nextAccount.privacyConsentAt) : null,
+      nextAccount.phoneNumber ?? null,
+      nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
+      JSON.stringify(nextAccount.notificationPreferences ?? null)
+    ]
+  );
+}
+
 export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   private readonly pool: Pool;
   private readonly database: string;
@@ -4658,6 +4961,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
+         guest_migrated_to_player_id,
          credential_bound_at,
          privacy_consent_at,
          phone_number,
@@ -4724,6 +5028,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
+         guest_migrated_to_player_id,
          credential_bound_at,
          privacy_consent_at,
          phone_number,
@@ -4893,6 +5198,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
+         guest_migrated_to_player_id,
          credential_bound_at,
          privacy_consent_at,
          phone_number,
@@ -6496,6 +6802,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
              wechat_mini_game_open_id = ?,
              wechat_mini_game_union_id = COALESCE(?, wechat_mini_game_union_id),
              wechat_mini_game_bound_at = COALESCE(wechat_mini_game_bound_at, ?),
+             guest_migrated_to_player_id = NULL,
              age_verified = COALESCE(?, age_verified),
              is_minor = COALESCE(?, is_minor),
              version = version + 1
@@ -6538,6 +6845,119 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         wechatMiniGameBoundAt: boundAt
       })
     );
+  }
+
+  async migrateGuestToRegistered(input: GuestAccountMigrationInput): Promise<GuestAccountMigrationResult> {
+    const guestPlayerId = normalizePlayerId(input.guestPlayerId);
+    const targetPlayerId = normalizePlayerId(input.targetPlayerId);
+    if (!guestPlayerId.startsWith("guest-")) {
+      throw new Error("guestPlayerId must be an ephemeral guest account");
+    }
+    if (guestPlayerId === targetPlayerId) {
+      throw new Error("guestPlayerId must not match targetPlayerId");
+    }
+
+    const guestAccount = await this.loadPlayerAccount(guestPlayerId);
+    if (!guestAccount) {
+      throw new Error("guest account not found");
+    }
+    if (guestAccount.guestMigratedToPlayerId) {
+      throw new Error("guest account already migrated");
+    }
+
+    const targetAccount =
+      (await this.loadPlayerAccount(targetPlayerId)) ??
+      normalizePlayerAccountSnapshot({
+        playerId: targetPlayerId,
+        displayName: targetPlayerId,
+        globalResources: normalizeResourceLedger()
+      });
+    const guestHeroArchives = await this.loadPlayerHeroArchives([guestPlayerId]);
+    const guestQuestState = await this.loadPlayerQuestState?.(guestPlayerId);
+    const nextTargetAccount = buildGuestMigrationTargetAccount({
+      progressAccount: input.progressSource === "guest" ? guestAccount : targetAccount,
+      targetAccount,
+      targetPlayerId,
+      wechatIdentity: input.wechatIdentity
+    });
+    const migratedGuestAccount = buildMigratedGuestAccountTombstone(guestAccount, targetPlayerId);
+    const connection = await this.pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+      await upsertPlayerAccountForMigration(connection, targetAccount, nextTargetAccount);
+      await upsertPlayerAccountForMigration(connection, guestAccount, migratedGuestAccount);
+
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+         WHERE player_id IN (?, ?)`,
+        [guestPlayerId, targetPlayerId]
+      );
+      if (input.progressSource === "guest" && guestHeroArchives.length > 0) {
+        await savePlayerHeroArchives(
+          connection,
+          guestHeroArchives.map((archive) => ({
+            ...archive,
+            playerId: targetPlayerId,
+            hero: {
+              ...archive.hero,
+              playerId: targetPlayerId
+            }
+          }))
+        );
+      }
+
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\`
+         WHERE player_id IN (?, ?)`,
+        [guestPlayerId, targetPlayerId]
+      );
+      if (input.progressSource === "guest" && guestQuestState) {
+        const nextQuestState = normalizePlayerQuestState({
+          ...guestQuestState,
+          playerId: targetPlayerId
+        });
+        await connection.query(
+          `INSERT INTO \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\` (
+             player_id,
+             current_date_key,
+             active_quest_ids_json,
+             rotations_json,
+             updated_at
+           )
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             current_date_key = VALUES(current_date_key),
+             active_quest_ids_json = VALUES(active_quest_ids_json),
+             rotations_json = VALUES(rotations_json),
+             updated_at = VALUES(updated_at)`,
+          [
+            nextQuestState.playerId,
+            nextQuestState.currentDateKey ?? null,
+            JSON.stringify(nextQuestState.activeQuestIds),
+            JSON.stringify(nextQuestState.rotations),
+            new Date(nextQuestState.updatedAt)
+          ]
+        );
+      }
+
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+         WHERE player_id = ?`,
+        [guestPlayerId]
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    return {
+      account: (await this.loadPlayerAccount(targetPlayerId)) ?? nextTargetAccount,
+      guestAccount: (await this.loadPlayerAccount(guestPlayerId)) ?? migratedGuestAccount
+    };
   }
 
   async deletePlayerAccount(
@@ -6594,6 +7014,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            wechat_mini_game_open_id = NULL,
            wechat_mini_game_union_id = NULL,
            wechat_mini_game_bound_at = NULL,
+           guest_migrated_to_player_id = NULL,
            version = version + 1
        WHERE player_id = ?`,
       [anonymizedDisplayName, JSON.stringify(normalizeResourceLedger()), JSON.stringify([]), normalizedPlayerId]
@@ -7104,6 +7525,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          wechat_mini_game_open_id,
          wechat_mini_game_union_id,
          wechat_mini_game_bound_at,
+         guest_migrated_to_player_id,
          credential_bound_at,
          privacy_consent_at,
          phone_number,
