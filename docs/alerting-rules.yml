@@ -57,6 +57,18 @@ groups:
           description: veil_action_validation_failures_total is averaging more than 0.5 rejected actions per second over 15 minutes. Check recent deploys, protocol drift, and client desync.
           runbook_url: ./incident-response-runbook.md#alert-veilactionvalidationfailureshigh
 
+      - alert: VeilSuspiciousActionBurstDetected
+        expr: increase(veil_anti_cheat_alerts_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: project-veil-server
+          notify: ops-slack
+        annotations:
+          summary: Project Veil is seeing repeated suspicious gameplay actions from at least one active session
+          description: The server emitted an anti-cheat suspicious-action alert within the last 15 minutes. Inspect recent invalid move or battle commands, identify the affected player/session, and verify whether the client is desynced or malicious.
+          runbook_url: ./incident-response-runbook.md#alert-veilsuspiciousactionburstdetected
+
       - alert: VeilHttpRequestLatencyP95High
         expr: histogram_quantile(0.95, sum(rate(veil_http_request_duration_seconds_bucket[15m])) by (le)) > 0.75
         for: 10m

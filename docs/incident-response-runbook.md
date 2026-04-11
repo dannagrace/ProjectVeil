@@ -266,6 +266,10 @@ curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics
 
 把它视为协议漂移或 gameplay desync 的强信号。先暂停可疑 rollout；若同一窗口内也有 feature flag 或会话失败，直接跳到 [Config Push Or Feature Flag Rollout Causing Disconnects](#config-push-or-feature-flag-rollout-causing-disconnects)。
 
+### Alert-VeilSuspiciousActionBurstDetected
+
+把它视为单个 session 或少量玩家正在持续发送异常移动/战斗指令。先从运行时指标和日志定位房间与玩家，再区分是客户端版本漂移、断线重放，还是明显作弊流量；在结论不明确前不要发补偿或人工改档。
+
 ### Alert-VeilHttpRequestLatencyP95High
 
 结合 `auth-readiness` 和连接数判断是否为服务整体饱和。若探活和诊断接口同时退化，走 [Runtime Unavailable](#runtime-unavailable)；若主要由 MySQL 背压带来，走 [Database Pool Exhaustion](#database-pool-exhaustion)。

@@ -65,7 +65,23 @@ interface LeaderboardAbuseObservabilityCounters {
   alertsTotal: number;
 }
 
+interface AntiCheatObservabilityCounters {
+  alertsTotal: number;
+}
+
 type ActionValidationScope = "world" | "battle";
+
+export interface AntiCheatAlertEvent {
+  roomId: string;
+  playerId: string;
+  sessionId: string;
+  scope: ActionValidationScope;
+  actionType: string;
+  reason: string;
+  rejectionCount: number;
+  windowMs: number;
+  recordedAt: string;
+}
 
 interface HistogramMetricState {
   buckets: number[];
@@ -182,6 +198,10 @@ interface RuntimeObservabilityState {
     counters: LeaderboardAbuseObservabilityCounters;
     recentAlerts: LeaderboardAlertEvent[];
   };
+  antiCheat: {
+    counters: AntiCheatObservabilityCounters;
+    recentAlerts: AntiCheatAlertEvent[];
+  };
 }
 
 export interface RuntimePersistenceHealth {
@@ -249,6 +269,10 @@ interface RuntimeHealthPayload {
     };
     leaderboardAbuse: {
       counters: LeaderboardAbuseObservabilityCounters;
+      alertsTracked: number;
+    };
+    antiCheat: {
+      counters: AntiCheatObservabilityCounters;
       alertsTracked: number;
     };
   };
@@ -430,6 +454,12 @@ const runtimeObservability: RuntimeObservabilityState = {
       alertsTotal: 0
     },
     recentAlerts: []
+  },
+  antiCheat: {
+    counters: {
+      alertsTotal: 0
+    },
+    recentAlerts: []
   }
 };
 
@@ -522,7 +552,12 @@ function buildHealthPayload(
   );
 
   return {
-    status: persistence.status === "degraded" || runtimeObservability.leaderboardAbuse.recentAlerts.length > 0 ? "warn" : "ok",
+    status:
+      persistence.status === "degraded" ||
+      runtimeObservability.leaderboardAbuse.recentAlerts.length > 0 ||
+      runtimeObservability.antiCheat.recentAlerts.length > 0
+        ? "warn"
+        : "ok",
     service,
     checkedAt: new Date().toISOString(),
     startedAt: new Date(runtimeObservability.startedAt).toISOString(),
@@ -580,6 +615,10 @@ function buildHealthPayload(
       leaderboardAbuse: {
         counters: { ...runtimeObservability.leaderboardAbuse.counters },
         alertsTracked: runtimeObservability.leaderboardAbuse.recentAlerts.length
+      },
+      antiCheat: {
+        counters: { ...runtimeObservability.antiCheat.counters },
+        alertsTracked: runtimeObservability.antiCheat.recentAlerts.length
       }
     }
   };
@@ -1114,6 +1153,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_leaderboard_abuse_alerts_total Total leaderboard anti-abuse alerts emitted by this process.",
     "# TYPE veil_leaderboard_abuse_alerts_total counter",
     `veil_leaderboard_abuse_alerts_total ${health.runtime.leaderboardAbuse.counters.alertsTotal}`,
+    "# HELP veil_anti_cheat_alerts_total Total anti-cheat alerts emitted by this process.",
+    "# TYPE veil_anti_cheat_alerts_total counter",
+    `veil_anti_cheat_alerts_total ${health.runtime.antiCheat.counters.alertsTotal}`,
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
@@ -1760,6 +1802,14 @@ export function recordLeaderboardAbuseAlert(alert: LeaderboardAlertEvent): void 
   }
 }
 
+export function recordAntiCheatAlert(alert: AntiCheatAlertEvent): void {
+  runtimeObservability.antiCheat.counters.alertsTotal += 1;
+  runtimeObservability.antiCheat.recentAlerts.unshift({ ...alert });
+  if (runtimeObservability.antiCheat.recentAlerts.length > 20) {
+    runtimeObservability.antiCheat.recentAlerts.length = 20;
+  }
+}
+
 export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
@@ -1922,6 +1972,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
+  runtimeObservability.antiCheat.counters.alertsTotal = 0;
+  runtimeObservability.antiCheat.recentAlerts.length = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(

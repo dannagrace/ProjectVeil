@@ -28,7 +28,7 @@ import {
 } from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
+import { buildPrometheusMetricsDocument, buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
 import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 
 interface FakeClient extends Client {
@@ -1408,6 +1408,7 @@ test("disposing a room with an active battle records a battle abort", async (t) 
 });
 
 test("invalid world actions return a structured rejection only to the originating client", async (t) => {
+  resetRuntimeObservability();
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
   const room = await createTestRoom(`lifecycle-world-rejection-${Date.now()}`);
@@ -1468,7 +1469,53 @@ test("invalid world actions return a structured rejection only to the originatin
   assert.equal(observerPushCountAfter, observerPushCountBefore);
 });
 
+test("repeated rejected movement actions emit an anti-cheat alert metric", async (t) => {
+  resetRuntimeObservability();
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-anti-cheat-${Date.now()}`);
+  const client = createFakeClient("session-anti-cheat-source");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        heroes: Array<{
+          id: string;
+          playerId: string;
+          move: { total: number; remaining: number };
+        }>;
+      };
+    };
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-anti-cheat-source");
+
+  const sourceHero = internalRoom.worldRoom.getInternalState().heroes.find((hero) => hero.playerId === "player-1");
+  assert.ok(sourceHero);
+  sourceHero.move.remaining = 0;
+
+  for (let index = 0; index < 5; index += 1) {
+    await emitRoomMessage(room, "world.action", client, {
+      type: "world.action",
+      requestId: `anti-cheat-${index}`,
+      action: {
+        type: "hero.move",
+        heroId: sourceHero.id,
+        destination: { x: 2, y: 1 }
+      }
+    });
+  }
+
+  assert.match(buildPrometheusMetricsDocument(), /^veil_anti_cheat_alerts_total 1$/m);
+});
+
 test("invalid battle actions return a structured rejection only to the originating client", async (t) => {
+  resetRuntimeObservability();
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
   const room = await createTestRoom(`lifecycle-battle-rejection-${Date.now()}`);
