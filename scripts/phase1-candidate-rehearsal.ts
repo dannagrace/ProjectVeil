@@ -569,6 +569,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.stableH5SmokePath) {
     lines.push(`- H5 candidate smoke: \`${report.artifacts.stableH5SmokePath}\``);
   }
+  if (report.artifacts.stableReconnectSoakPath) {
+    lines.push(`- Reconnect soak summary: \`${report.artifacts.stableReconnectSoakPath}\``);
+  }
   if (report.artifacts.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${report.artifacts.wechatCandidateSummaryPath}\``);
   }

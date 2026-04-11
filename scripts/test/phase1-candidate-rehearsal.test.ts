@@ -215,6 +215,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.goNoGoPacketMarkdownPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
   assert.match(report.artifacts.releasePrCommentPath ?? "", /release-pr-comment-phase1-mainline-/);
   assert.match(report.artifacts.stableH5SmokePath ?? "", /client-release-candidate-smoke-phase1-mainline-/);
+  assert.match(report.artifacts.stableReconnectSoakPath ?? "", /colyseus-reconnect-soak-summary-phase1-mainline-/);
   assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
   assert.match(report.artifacts.wechatCandidateSummaryPath ?? "", /codex\.wechat\.release-candidate-summary\.json/);
   assert.match(report.artifacts.wechatCandidateMarkdownPath ?? "", /codex\.wechat\.release-candidate-summary\.md/);
@@ -229,6 +230,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Release health summary:/);
   assert.match(markdown, /Release readiness snapshot:/);
   assert.match(markdown, /H5 candidate smoke:/);
+  assert.match(markdown, /Reconnect soak summary:/);
   assert.match(markdown, /WeChat candidate summary:/);
   assert.match(markdown, /Runtime observability gate:/);
   assert.match(markdown, /Candidate evidence audit:/);
@@ -265,6 +267,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /releaseHealthSummaryPath:/);
   assert.match(markdown, /releaseReadinessSnapshotPath:/);
   assert.match(markdown, /stableH5SmokePath:/);
+  assert.match(markdown, /stableReconnectSoakPath:/);
   assert.match(markdown, /wechatCandidateSummaryPath:/);
   assert.match(markdown, /wechatCandidateMarkdownPath:/);
   assert.match(markdown, /runtimeObservabilityGatePath:/);
