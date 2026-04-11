@@ -166,6 +166,18 @@ interface SuspiciousActionTracker {
   lastAlertAt: number | null;
 }
 
+type IdempotentActionReply = Extract<ServerMessage, { type: "session.state" | "error" }>;
+
+interface IdempotentActionReplayEntry {
+  fingerprint: string;
+  reply: IdempotentActionReply;
+}
+
+interface PendingIdempotentActionReplayEntry {
+  fingerprint: string;
+  promise: Promise<IdempotentActionReply>;
+}
+
 function hasPlayerReportStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "createPlayerReport">> {
@@ -425,6 +437,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
   private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
   private readonly suspiciousActionTrackerBySessionId = new Map<string, SuspiciousActionTracker>();
+  private readonly completedActionRepliesBySessionId = new Map<string, Map<string, IdempotentActionReplayEntry>>();
+  private readonly pendingActionRepliesBySessionId = new Map<string, Map<string, PendingIdempotentActionReplayEntry>>();
   private unsubscribeConfigUpdate: (() => void) | null = null;
   private turnTimerHandle: RoomTimerHandle | null = null;
   private turnOwnerPlayerId: string | null = null;
@@ -616,56 +630,63 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         }
         return;
       }
+      await this.replyToIdempotentAction(client, "world.action", message.requestId, message.action, async (reply) => {
+        const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+        const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
+        const result = this.worldRoom.dispatch(playerId, message.action);
+        if (!result.ok) {
+          this.recordSuspiciousAction(client, playerId, result.rejection);
+          reply({
+            type: "session.state",
+            requestId: message.requestId,
+            delivery: "reply",
+            payload: this.buildStatePayload(playerId, {
+              events: [],
+              movementPlan: null,
+              ...(result.reason ? { reason: result.reason } : {}),
+              ...(result.rejection ? { rejection: result.rejection } : {})
+            })
+          });
+          return;
+        }
 
-      const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
-      const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
-      const result = this.worldRoom.dispatch(playerId, message.action);
-      if (!result.ok) {
-        this.recordSuspiciousAction(client, playerId, result.rejection);
-        sendMessage(client, "session.state", {
+        this.afterSuccessfulWorldAction(playerId, message.action);
+        try {
+          await this.persistRoomState();
+        } catch {
+          this.restoreWorldRoom(previousSnapshot);
+          this.ensureTurnTimerState();
+          this.publishLobbyRoomSummary();
+          reply({
+            type: "error",
+            requestId: message.requestId,
+            reason: "persistence_save_failed"
+          });
+          return;
+        }
+        const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+        await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+        await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
+        this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
+
+        this.publishLobbyRoomSummary();
+        reply({
+          type: "session.state",
           requestId: message.requestId,
           delivery: "reply",
           payload: this.buildStatePayload(playerId, {
-            events: [],
-            movementPlan: null,
+            events: result.events ?? [],
+            movementPlan: result.movementPlan ?? null,
             ...(result.reason ? { reason: result.reason } : {}),
             ...(result.rejection ? { rejection: result.rejection } : {})
           })
         });
-        return;
-      }
-
-      this.afterSuccessfulWorldAction(playerId, message.action);
-      try {
-        await this.persistRoomState();
-      } catch {
-        this.restoreWorldRoom(previousSnapshot);
-        this.ensureTurnTimerState();
-        this.publishLobbyRoomSummary();
-        sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
-        return;
-      }
-      const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
-      await this.persistBattleSnapshots(result.events ?? [], completedReplays);
-      await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
-      this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
-
-      this.publishLobbyRoomSummary();
-      sendMessage(client, "session.state", {
-        requestId: message.requestId,
-        delivery: "reply",
-        payload: this.buildStatePayload(playerId, {
+        this.broadcastState(client, {
           events: result.events ?? [],
-          movementPlan: result.movementPlan ?? null,
-          ...(result.reason ? { reason: result.reason } : {}),
-          ...(result.rejection ? { rejection: result.rejection } : {})
-        })
+          movementPlan: result.movementPlan ?? null
+        });
+        await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
       });
-      this.broadcastState(client, {
-        events: result.events ?? [],
-        movementPlan: result.movementPlan ?? null
-      });
-      await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
     });
 
     this.onMessage("battle.action", async (client, message: Extract<ClientMessage, { type: "battle.action" }>) => {
@@ -684,55 +705,63 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       recordBattleActionMessage();
-      const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
-      const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
-      const result = this.worldRoom.dispatchBattle(playerId, message.action);
-      if (!result.ok) {
-        this.recordSuspiciousAction(client, playerId, result.rejection);
-        sendMessage(client, "session.state", {
+      await this.replyToIdempotentAction(client, "battle.action", message.requestId, message.action, async (reply) => {
+        const previousSnapshot = this.worldRoom.serializePersistenceSnapshot();
+        const previousTurnOwnerPlayerId = this.turnOwnerPlayerId;
+        const result = this.worldRoom.dispatchBattle(playerId, message.action);
+        if (!result.ok) {
+          this.recordSuspiciousAction(client, playerId, result.rejection);
+          reply({
+            type: "session.state",
+            requestId: message.requestId,
+            delivery: "reply",
+            payload: this.buildStatePayload(playerId, {
+              events: [],
+              movementPlan: null,
+              ...(result.reason ? { reason: result.reason } : {}),
+              ...(result.rejection ? { rejection: result.rejection } : {})
+            })
+          });
+          return;
+        }
+
+        this.afterSuccessfulBattleAction(playerId);
+        try {
+          await this.persistRoomState();
+        } catch {
+          this.restoreWorldRoom(previousSnapshot);
+          this.ensureTurnTimerState();
+          this.publishLobbyRoomSummary();
+          reply({
+            type: "error",
+            requestId: message.requestId,
+            reason: "persistence_save_failed"
+          });
+          return;
+        }
+        const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+        await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+        await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
+        this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
+
+        this.publishLobbyRoomSummary();
+        reply({
+          type: "session.state",
           requestId: message.requestId,
           delivery: "reply",
           payload: this.buildStatePayload(playerId, {
-            events: [],
+            events: result.events ?? [],
             movementPlan: null,
             ...(result.reason ? { reason: result.reason } : {}),
             ...(result.rejection ? { rejection: result.rejection } : {})
           })
         });
-        return;
-      }
-
-      this.afterSuccessfulBattleAction(playerId);
-      try {
-        await this.persistRoomState();
-      } catch {
-        this.restoreWorldRoom(previousSnapshot);
-        this.ensureTurnTimerState();
-        this.publishLobbyRoomSummary();
-        sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
-        return;
-      }
-      const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
-      await this.persistBattleSnapshots(result.events ?? [], completedReplays);
-      await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
-      this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
-
-      this.publishLobbyRoomSummary();
-      sendMessage(client, "session.state", {
-        requestId: message.requestId,
-        delivery: "reply",
-        payload: this.buildStatePayload(playerId, {
+        this.broadcastState(client, {
           events: result.events ?? [],
-          movementPlan: null,
-          ...(result.reason ? { reason: result.reason } : {}),
-          ...(result.rejection ? { rejection: result.rejection } : {})
-        })
+          movementPlan: null
+        });
+        await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
       });
-      this.broadcastState(client, {
-        events: result.events ?? [],
-        movementPlan: null
-      });
-      await this.maybeSendTurnReminderForTurnStart(previousTurnOwnerPlayerId);
     });
 
     this.onMessage("report.player", async (client, message: Extract<ClientMessage, { type: "report.player" }>) => {
@@ -934,6 +963,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     const playerId = this.playerIdBySessionId.get(client.sessionId);
     this.playerIdBySessionId.delete(client.sessionId);
     this.suspiciousActionTrackerBySessionId.delete(client.sessionId);
+    this.completedActionRepliesBySessionId.delete(client.sessionId);
+    this.pendingActionRepliesBySessionId.delete(client.sessionId);
     if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
       this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
     }
@@ -1011,6 +1042,138 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     this.suspiciousActionTrackerBySessionId.set(client.sessionId, tracker);
+  }
+
+  private sendCachedReply(client: ColyseusClient, reply: IdempotentActionReply): void {
+    if (reply.type === "session.state") {
+      sendMessage(client, "session.state", {
+        requestId: reply.requestId,
+        delivery: reply.delivery,
+        payload: structuredClone(reply.payload)
+      });
+      return;
+    }
+
+    sendMessage(client, "error", {
+      requestId: reply.requestId,
+      reason: reply.reason
+    });
+  }
+
+  private getCompletedActionReplies(sessionId: string): Map<string, IdempotentActionReplayEntry> {
+    const existing = this.completedActionRepliesBySessionId.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, IdempotentActionReplayEntry>();
+    this.completedActionRepliesBySessionId.set(sessionId, created);
+    return created;
+  }
+
+  private getPendingActionReplies(sessionId: string): Map<string, PendingIdempotentActionReplayEntry> {
+    const existing = this.pendingActionRepliesBySessionId.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, PendingIdempotentActionReplayEntry>();
+    this.pendingActionRepliesBySessionId.set(sessionId, created);
+    return created;
+  }
+
+  private cacheCompletedActionReply(sessionId: string, key: string, fingerprint: string, reply: IdempotentActionReply): void {
+    const completed = this.getCompletedActionReplies(sessionId);
+    completed.delete(key);
+    completed.set(key, {
+      fingerprint,
+      reply: structuredClone(reply)
+    });
+    while (completed.size > 32) {
+      const oldestKey = completed.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      completed.delete(oldestKey);
+    }
+  }
+
+  private async replyToIdempotentAction(
+    client: ColyseusClient,
+    messageType: "world.action" | "battle.action",
+    requestId: string,
+    action: WorldAction | BattleAction,
+    execute: (reply: (message: IdempotentActionReply) => void) => Promise<void>
+  ): Promise<void> {
+    const key = `${messageType}:${requestId}`;
+    const fingerprint = JSON.stringify(action);
+    const completed = this.getCompletedActionReplies(client.sessionId);
+    const completedEntry = completed.get(key);
+    if (completedEntry) {
+      if (completedEntry.fingerprint === fingerprint) {
+        this.sendCachedReply(client, completedEntry.reply);
+        return;
+      }
+
+      sendMessage(client, "error", {
+        requestId,
+        reason: "request_id_reused_with_different_payload"
+      });
+      return;
+    }
+
+    const pending = this.getPendingActionReplies(client.sessionId);
+    const pendingEntry = pending.get(key);
+    if (pendingEntry) {
+      if (pendingEntry.fingerprint !== fingerprint) {
+        sendMessage(client, "error", {
+          requestId,
+          reason: "request_id_reused_with_different_payload"
+        });
+        return;
+      }
+
+      this.sendCachedReply(client, await pendingEntry.promise);
+      return;
+    }
+
+    let resolvePending!: (reply: IdempotentActionReply) => void;
+    let rejectPending!: (reason?: unknown) => void;
+    const pendingReply = new Promise<IdempotentActionReply>((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    pending.set(key, { fingerprint, promise: pendingReply });
+
+    let replySent = false;
+    const reply = (message: IdempotentActionReply) => {
+      if (replySent) {
+        throw new Error(`duplicate_idempotent_reply:${key}`);
+      }
+
+      replySent = true;
+      const cachedReply = structuredClone(message);
+      this.cacheCompletedActionReply(client.sessionId, key, fingerprint, cachedReply);
+      resolvePending(cachedReply);
+      this.sendCachedReply(client, cachedReply);
+    };
+
+    try {
+      await execute(reply);
+      if (!replySent) {
+        throw new Error(`missing_idempotent_reply:${key}`);
+      }
+    } catch (error) {
+      if (!replySent) {
+        rejectPending(error);
+      }
+      throw error;
+    } finally {
+      pending.delete(key);
+      if (pending.size === 0) {
+        this.pendingActionRepliesBySessionId.delete(client.sessionId);
+      }
+    }
   }
 
   private getConnectedPlayerIds(): string[] {
