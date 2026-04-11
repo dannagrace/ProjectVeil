@@ -572,6 +572,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseReadinessDashboardPath) {
     lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
   }
+  if (report.artifacts.phase1ReleaseEvidenceDriftGatePath) {
+    lines.push(`- Phase 1 release evidence drift gate: \`${report.artifacts.phase1ReleaseEvidenceDriftGatePath}\``);
+  }
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }

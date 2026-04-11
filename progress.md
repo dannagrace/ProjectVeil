@@ -1841,3 +1841,18 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 `cocos-main-journey-replay-gate` 阶段、artifact path 与 summary 呈现
+
+## Issue #1262 - Phase 1 rehearsal drift gate front door - 2026-04-11
+
+- 本轮把 `phase1-release-evidence-drift-gate` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `phase1ReleaseEvidenceDriftGatePath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 paired Phase 1 release evidence drift gate 作为 packet-level same-revision checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 drift gate front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `phase1ReleaseEvidenceDriftGatePath` 的展示

@@ -225,6 +225,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Candidate owner reminder:/);
   assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
+  assert.match(markdown, /Phase 1 release evidence drift gate:/);
   assert.match(markdown, /Manual evidence owner ledger:/);
   assert.match(markdown, /Cocos primary journey evidence:/);
   assert.match(markdown, /Cocos main-journey replay gate:/);
@@ -244,6 +245,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessHistoryPath:/);
   assert.match(markdown, /releaseEvidenceIndexPath:/);
+  assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
   assert.match(markdown, /goNoGoPacketPath:/);
