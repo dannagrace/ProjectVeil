@@ -196,6 +196,7 @@ export interface RoomSnapshotStore {
   loadGuildByMemberPlayerId?(playerId: string): Promise<GuildState | null>;
   listGuildAuditLogs?(options?: GuildAuditLogListOptions): Promise<GuildAuditLogRecord[]>;
   loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
+  listPaymentOrders?(options?: PaymentOrderListOptions): Promise<PaymentOrderSnapshot[]>;
   loadPaymentReceiptByOrderId?(orderId: string): Promise<PaymentReceiptSnapshot | null>;
   countVerifiedPaymentReceiptsSince?(playerId: string, since: string): Promise<number>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
@@ -229,6 +230,7 @@ export interface RoomSnapshotStore {
   ): Promise<PlayerAccountSnapshot>;
   createPaymentOrder?(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot>;
   completePaymentOrder?(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement>;
+  retryPaymentOrderGrant?(orderId: string, input: PaymentOrderGrantRetryInput): Promise<PaymentOrderSettlement>;
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   claimPlayerReferral?(referrerId: string, newPlayerId: string, rewardGems: number): Promise<PlayerReferralClaimResult>;
@@ -503,6 +505,12 @@ interface PaymentOrderRow extends RowDataPacket {
   gem_amount: number;
   created_at: Date | string;
   paid_at: Date | string | null;
+  last_grant_attempt_at: Date | string | null;
+  next_grant_retry_at: Date | string | null;
+  settled_at: Date | string | null;
+  dead_lettered_at: Date | string | null;
+  grant_attempt_count: number;
+  last_grant_error: string | null;
   updated_at: Date | string;
 }
 
@@ -721,7 +729,7 @@ export interface ShopPurchaseResult {
   processedAt: string;
 }
 
-export type PaymentOrderStatus = "pending" | "paid";
+export type PaymentOrderStatus = "created" | "paid" | "grant_pending" | "settled" | "dead_letter";
 
 export interface PaymentOrderSnapshot {
   orderId: string;
@@ -732,8 +740,14 @@ export interface PaymentOrderSnapshot {
   gemAmount: number;
   createdAt: string;
   updatedAt: string;
+  grantAttemptCount: number;
   wechatOrderId?: string;
   paidAt?: string;
+  lastGrantAttemptAt?: string;
+  nextGrantRetryAt?: string;
+  lastGrantError?: string;
+  settledAt?: string;
+  deadLetteredAt?: string;
 }
 
 export interface PaymentOrderCreateInput {
@@ -750,6 +764,7 @@ export interface PaymentOrderCompleteInput {
   verifiedAt?: string;
   productName: string;
   grant: ShopPurchaseGrant;
+  retryPolicy?: PaymentGrantRetryPolicy;
 }
 
 export interface PaymentOrderSettlement {
@@ -766,6 +781,25 @@ export interface PaymentReceiptSnapshot {
   productId: string;
   amount: number;
   verifiedAt: string;
+}
+
+export interface PaymentGrantRetryPolicy {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+}
+
+export interface PaymentOrderListOptions {
+  statuses?: PaymentOrderStatus[];
+  limit?: number;
+  dueBefore?: string;
+}
+
+export interface PaymentOrderGrantRetryInput {
+  productName: string;
+  grant: ShopPurchaseGrant;
+  retriedAt?: string;
+  retryPolicy?: PaymentGrantRetryPolicy;
+  allowDeadLetter?: boolean;
 }
 
 export interface GemLedgerEntry {
@@ -1016,6 +1050,7 @@ export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
 export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
 export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
 export const MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX = "uidx_orders_wechat_order_id";
+export const MYSQL_PAYMENT_ORDER_STATUS_RETRY_INDEX = "idx_orders_status_next_retry";
 export const MYSQL_PAYMENT_RECEIPT_TABLE = "payment_receipts";
 export const MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX = "uidx_payment_receipts_order_id";
 export const MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX = "idx_payment_receipts_player_verified";
@@ -1163,7 +1198,18 @@ function normalizePaymentOrderId(orderId: string): string {
 }
 
 function normalizePaymentOrderStatus(status?: string | null): PaymentOrderStatus {
-  return status === "paid" ? "paid" : "pending";
+  switch (status) {
+    case "created":
+    case "paid":
+    case "grant_pending":
+    case "settled":
+    case "dead_letter":
+      return status;
+    case "pending":
+      return "created";
+    default:
+      return "created";
+  }
 }
 
 function normalizeWechatOrderId(wechatOrderId: string): string {
@@ -1184,10 +1230,39 @@ function normalizePaymentAmount(amount: number): number {
   return normalized;
 }
 
+function normalizePaymentGrantAttemptCount(value?: number | null): number {
+  const normalized = Math.max(0, Math.floor(value ?? 0));
+  return Number.isFinite(normalized) ? normalized : 0;
+}
+
+function normalizePaymentGrantError(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizePaymentGrantRetryPolicy(input?: PaymentGrantRetryPolicy | null): Required<PaymentGrantRetryPolicy> {
+  const maxAttempts = Math.max(1, Math.floor(input?.maxAttempts ?? 5));
+  const baseDelayMs = Math.max(1_000, Math.floor(input?.baseDelayMs ?? 60_000));
+  return {
+    maxAttempts,
+    baseDelayMs
+  };
+}
+
+function computePaymentGrantRetryDelayMs(attemptCount: number, baseDelayMs: number): number {
+  const exponent = Math.max(0, Math.min(6, Math.floor(attemptCount) - 1));
+  return Math.max(1_000, baseDelayMs * 2 ** exponent);
+}
+
 function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
   const createdAt = formatTimestamp(row.created_at) ?? new Date(0).toISOString();
   const updatedAt = formatTimestamp(row.updated_at) ?? createdAt;
   const paidAt = formatTimestamp(row.paid_at);
+  const lastGrantAttemptAt = formatTimestamp(row.last_grant_attempt_at);
+  const nextGrantRetryAt = formatTimestamp(row.next_grant_retry_at);
+  const settledAt = formatTimestamp(row.settled_at);
+  const deadLetteredAt = formatTimestamp(row.dead_lettered_at);
+  const lastGrantError = normalizePaymentGrantError(row.last_grant_error);
 
   return {
     orderId: normalizePaymentOrderId(row.order_id),
@@ -1198,8 +1273,14 @@ function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
     gemAmount: normalizeGemAmount(row.gem_amount),
     createdAt,
     updatedAt,
+    grantAttemptCount: normalizePaymentGrantAttemptCount(row.grant_attempt_count),
     ...(row.wechat_order_id ? { wechatOrderId: normalizeWechatOrderId(row.wechat_order_id) } : {}),
-    ...(paidAt ? { paidAt } : {})
+    ...(paidAt ? { paidAt } : {}),
+    ...(lastGrantAttemptAt ? { lastGrantAttemptAt } : {}),
+    ...(nextGrantRetryAt ? { nextGrantRetryAt } : {}),
+    ...(lastGrantError ? { lastGrantError } : {}),
+    ...(settledAt ? { settledAt } : {}),
+    ...(deadLetteredAt ? { deadLetteredAt } : {})
   };
 }
 
@@ -2545,11 +2626,17 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_ORDER_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   product_id VARCHAR(191) NOT NULL,
   wechat_order_id VARCHAR(191) NULL,
-  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  status VARCHAR(16) NOT NULL DEFAULT 'created',
   amount INT NOT NULL,
   gem_amount INT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   paid_at DATETIME NULL DEFAULT NULL,
+  last_grant_attempt_at DATETIME NULL DEFAULT NULL,
+  next_grant_retry_at DATETIME NULL DEFAULT NULL,
+  settled_at DATETIME NULL DEFAULT NULL,
+  dead_lettered_at DATETIME NULL DEFAULT NULL,
+  grant_attempt_count INT NOT NULL DEFAULT 0,
+  last_grant_error VARCHAR(512) NULL DEFAULT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -3610,6 +3697,145 @@ SET @veil_payment_orders_wechat_order_idx_sql := IF(
 PREPARE veil_payment_orders_wechat_order_idx_stmt FROM @veil_payment_orders_wechat_order_idx_sql;
 EXECUTE veil_payment_orders_wechat_order_idx_stmt;
 DEALLOCATE PREPARE veil_payment_orders_wechat_order_idx_stmt;
+
+SET @veil_payment_orders_last_grant_attempt_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'last_grant_attempt_at'
+);
+
+SET @veil_payment_orders_last_grant_attempt_sql := IF(
+  @veil_payment_orders_last_grant_attempt_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`last_grant_attempt_at\` DATETIME NULL DEFAULT NULL AFTER \`paid_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_last_grant_attempt_stmt FROM @veil_payment_orders_last_grant_attempt_sql;
+EXECUTE veil_payment_orders_last_grant_attempt_stmt;
+DEALLOCATE PREPARE veil_payment_orders_last_grant_attempt_stmt;
+
+SET @veil_payment_orders_next_grant_retry_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'next_grant_retry_at'
+);
+
+SET @veil_payment_orders_next_grant_retry_sql := IF(
+  @veil_payment_orders_next_grant_retry_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`next_grant_retry_at\` DATETIME NULL DEFAULT NULL AFTER \`last_grant_attempt_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_next_grant_retry_stmt FROM @veil_payment_orders_next_grant_retry_sql;
+EXECUTE veil_payment_orders_next_grant_retry_stmt;
+DEALLOCATE PREPARE veil_payment_orders_next_grant_retry_stmt;
+
+SET @veil_payment_orders_settled_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'settled_at'
+);
+
+SET @veil_payment_orders_settled_at_sql := IF(
+  @veil_payment_orders_settled_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`settled_at\` DATETIME NULL DEFAULT NULL AFTER \`next_grant_retry_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_settled_at_stmt FROM @veil_payment_orders_settled_at_sql;
+EXECUTE veil_payment_orders_settled_at_stmt;
+DEALLOCATE PREPARE veil_payment_orders_settled_at_stmt;
+
+SET @veil_payment_orders_dead_lettered_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'dead_lettered_at'
+);
+
+SET @veil_payment_orders_dead_lettered_at_sql := IF(
+  @veil_payment_orders_dead_lettered_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`dead_lettered_at\` DATETIME NULL DEFAULT NULL AFTER \`settled_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_dead_lettered_at_stmt FROM @veil_payment_orders_dead_lettered_at_sql;
+EXECUTE veil_payment_orders_dead_lettered_at_stmt;
+DEALLOCATE PREPARE veil_payment_orders_dead_lettered_at_stmt;
+
+SET @veil_payment_orders_grant_attempt_count_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'grant_attempt_count'
+);
+
+SET @veil_payment_orders_grant_attempt_count_sql := IF(
+  @veil_payment_orders_grant_attempt_count_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`grant_attempt_count\` INT NOT NULL DEFAULT 0 AFTER \`dead_lettered_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_grant_attempt_count_stmt FROM @veil_payment_orders_grant_attempt_count_sql;
+EXECUTE veil_payment_orders_grant_attempt_count_stmt;
+DEALLOCATE PREPARE veil_payment_orders_grant_attempt_count_stmt;
+
+SET @veil_payment_orders_last_grant_error_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'last_grant_error'
+);
+
+SET @veil_payment_orders_last_grant_error_sql := IF(
+  @veil_payment_orders_last_grant_error_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`last_grant_error\` VARCHAR(512) NULL DEFAULT NULL AFTER \`grant_attempt_count\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_last_grant_error_stmt FROM @veil_payment_orders_last_grant_error_sql;
+EXECUTE veil_payment_orders_last_grant_error_stmt;
+DEALLOCATE PREPARE veil_payment_orders_last_grant_error_stmt;
+
+UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+SET status = 'created'
+WHERE status = 'pending';
+
+UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+SET status = 'settled',
+    settled_at = COALESCE(settled_at, paid_at, updated_at),
+    grant_attempt_count = CASE WHEN grant_attempt_count <= 0 THEN 1 ELSE grant_attempt_count END,
+    last_grant_attempt_at = COALESCE(last_grant_attempt_at, paid_at, updated_at),
+    next_grant_retry_at = NULL,
+    last_grant_error = NULL
+WHERE status = 'paid';
+
+SET @veil_payment_orders_status_retry_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PAYMENT_ORDER_STATUS_RETRY_INDEX}'
+);
+
+SET @veil_payment_orders_status_retry_idx_sql := IF(
+  @veil_payment_orders_status_retry_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PAYMENT_ORDER_STATUS_RETRY_INDEX}\` ON \`${MYSQL_PAYMENT_ORDER_TABLE}\` (status, next_grant_retry_at, updated_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_status_retry_idx_stmt FROM @veil_payment_orders_status_retry_idx_sql;
+EXECUTE veil_payment_orders_status_retry_idx_stmt;
+DEALLOCATE PREPARE veil_payment_orders_status_retry_idx_stmt;
 
 SET @veil_payment_receipts_player_verified_idx_exists := (
   SELECT COUNT(*)
@@ -4998,6 +5224,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          gem_amount,
          created_at,
          paid_at,
+         last_grant_attempt_at,
+         next_grant_retry_at,
+         settled_at,
+         dead_lettered_at,
+         grant_attempt_count,
+         last_grant_error,
          updated_at
        FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
        WHERE order_id = ?
@@ -5007,6 +5239,55 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPaymentOrderSnapshot(row) : null;
+  }
+
+  async listPaymentOrders(options: PaymentOrderListOptions = {}): Promise<PaymentOrderSnapshot[]> {
+    const normalizedStatuses = Array.from(new Set((options.statuses ?? []).map((status) => normalizePaymentOrderStatus(status))));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+    const dueBefore =
+      options.dueBefore && !Number.isNaN(new Date(options.dueBefore).getTime()) ? new Date(options.dueBefore) : null;
+    const whereClauses = [];
+    const params: Array<string | number | Date> = [];
+
+    if (normalizedStatuses.length > 0) {
+      whereClauses.push(`status IN (${normalizedStatuses.map(() => "?").join(", ")})`);
+      params.push(...normalizedStatuses);
+    }
+    if (dueBefore) {
+      whereClauses.push("next_grant_retry_at IS NOT NULL");
+      whereClauses.push("next_grant_retry_at <= ?");
+      params.push(dueBefore);
+    }
+
+    const [rows] = await this.pool.query<PaymentOrderRow[]>(
+      `SELECT
+         order_id,
+         player_id,
+         product_id,
+         wechat_order_id,
+         status,
+         amount,
+         gem_amount,
+         created_at,
+         paid_at,
+         last_grant_attempt_at,
+         next_grant_retry_at,
+         settled_at,
+         dead_lettered_at,
+         grant_attempt_count,
+         last_grant_error,
+         updated_at
+       FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+       ${whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ""}
+       ORDER BY
+         CASE WHEN next_grant_retry_at IS NULL THEN 1 ELSE 0 END ASC,
+         next_grant_retry_at ASC,
+         updated_at DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toPaymentOrderSnapshot(row));
   }
 
   async loadPaymentReceiptByOrderId(orderId: string): Promise<PaymentReceiptSnapshot | null> {
@@ -6406,19 +6687,21 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     await this.pool.query(
       `INSERT INTO \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          (order_id, player_id, product_id, status, amount, gem_amount)
-       VALUES (?, ?, ?, 'pending', ?, ?)`,
+       VALUES (?, ?, ?, 'created', ?, ?)`,
       [orderId, playerId, productId, amount, gemAmount]
     );
 
+    const now = new Date().toISOString();
     return {
       orderId,
       playerId,
       productId,
-      status: "pending",
+      status: "created",
       amount,
       gemAmount,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now,
+      grantAttemptCount: 0
     };
   }
 
@@ -6434,6 +6717,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     if (Number.isNaN(verifiedAt.getTime())) {
       throw new Error("verifiedAt must be a valid ISO timestamp");
     }
+    const retryPolicy = normalizePaymentGrantRetryPolicy(input.retryPolicy);
 
     const connection = await this.pool.getConnection();
     try {
@@ -6450,6 +6734,12 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            gem_amount,
            created_at,
            paid_at,
+           last_grant_attempt_at,
+           next_grant_retry_at,
+           settled_at,
+           dead_lettered_at,
+           grant_attempt_count,
+           last_grant_error,
            updated_at
          FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          WHERE order_id = ?
@@ -6480,7 +6770,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
               globalResources: normalizeResourceLedger()
             });
 
-      if (currentOrder.status === "paid") {
+      if (currentOrder.status !== "created") {
         const [receiptRows] = await connection.query<PaymentReceiptRow[]>(
           `SELECT
              transaction_id,
@@ -6503,7 +6793,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           },
           account: currentAccount,
           credited: false,
-          ...(receiptRows[0] ? { receipt: toPaymentReceiptSnapshot(receiptRows[0]) } : {})
+            ...(receiptRows[0] ? { receipt: toPaymentReceiptSnapshot(receiptRows[0]) } : {})
         };
       }
 
@@ -6552,41 +6842,294 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         };
       }
 
-      const nextAccount = await applyVerifiedPaymentGrantToAccount(connection, currentAccount, {
-        playerId: currentOrder.playerId,
-        productId: currentOrder.productId,
-        productName: normalizedProductName,
-        grant: input.grant,
-        refId: currentOrder.orderId,
-        processedAt: paidAt.toISOString()
-      });
       await connection.query(
         `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          SET wechat_order_id = ?,
              status = 'paid',
-             paid_at = ?
+             paid_at = ?,
+             last_grant_attempt_at = ?,
+             next_grant_retry_at = NULL,
+             settled_at = NULL,
+             dead_lettered_at = NULL,
+             grant_attempt_count = 1,
+             last_grant_error = NULL
          WHERE order_id = ?`,
-        [normalizedWechatOrderId, paidAt, currentOrder.orderId]
+        [normalizedWechatOrderId, paidAt, paidAt, currentOrder.orderId]
       );
 
-      await connection.commit();
+      try {
+        const nextAccount = await applyVerifiedPaymentGrantToAccount(connection, currentAccount, {
+          playerId: currentOrder.playerId,
+          productId: currentOrder.productId,
+          productName: normalizedProductName,
+          grant: input.grant,
+          refId: currentOrder.orderId,
+          processedAt: paidAt.toISOString()
+        });
 
-      const nextOrder =
-        (await this.loadPaymentOrder(currentOrder.orderId)) ??
-        ({
-          ...currentOrder,
-          status: "paid",
-          wechatOrderId: normalizedWechatOrderId,
-          paidAt: paidAt.toISOString(),
-          updatedAt: paidAt.toISOString()
-        } satisfies PaymentOrderSnapshot);
+        await connection.query(
+          `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           SET status = 'settled',
+               settled_at = ?,
+               next_grant_retry_at = NULL,
+               dead_lettered_at = NULL,
+               last_grant_error = NULL
+           WHERE order_id = ?`,
+          [paidAt, currentOrder.orderId]
+        );
 
-      return {
-        order: nextOrder,
-        account: nextAccount,
-        credited: true,
-        receipt
-      };
+        await connection.commit();
+
+        return {
+          order: {
+            ...currentOrder,
+            status: "settled",
+            wechatOrderId: normalizedWechatOrderId,
+            paidAt: paidAt.toISOString(),
+            lastGrantAttemptAt: paidAt.toISOString(),
+            grantAttemptCount: 1,
+            settledAt: paidAt.toISOString(),
+            updatedAt: paidAt.toISOString()
+          },
+          account: nextAccount,
+          credited: true,
+          receipt
+        };
+      } catch (error) {
+        const grantError = normalizePaymentGrantError(error instanceof Error ? error.message : String(error)) ?? "grant_failed";
+        const nextDelayMs = computePaymentGrantRetryDelayMs(1, retryPolicy.baseDelayMs);
+        const nextRetryAt = new Date(paidAt.getTime() + nextDelayMs);
+        const deadLetter = 1 >= retryPolicy.maxAttempts;
+
+        await connection.query(
+          `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           SET status = ?,
+               next_grant_retry_at = ?,
+               dead_lettered_at = ?,
+               last_grant_error = ?
+           WHERE order_id = ?`,
+          [
+            deadLetter ? "dead_letter" : "grant_pending",
+            deadLetter ? null : nextRetryAt,
+            deadLetter ? paidAt : null,
+            grantError,
+            currentOrder.orderId
+          ]
+        );
+
+        await connection.commit();
+
+        return {
+          order: {
+            ...currentOrder,
+            status: deadLetter ? "dead_letter" : "grant_pending",
+            wechatOrderId: normalizedWechatOrderId,
+            paidAt: paidAt.toISOString(),
+            lastGrantAttemptAt: paidAt.toISOString(),
+            grantAttemptCount: 1,
+            lastGrantError: grantError,
+            ...(deadLetter ? { deadLetteredAt: paidAt.toISOString() } : { nextGrantRetryAt: nextRetryAt.toISOString() }),
+            updatedAt: paidAt.toISOString()
+          },
+          account: currentAccount,
+          credited: false,
+          receipt
+        };
+      }
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async retryPaymentOrderGrant(orderId: string, input: PaymentOrderGrantRetryInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const retriedAt = input.retriedAt ? new Date(input.retriedAt) : new Date();
+    const normalizedProductName = normalizeShopProductName(input.productName);
+    if (Number.isNaN(retriedAt.getTime())) {
+      throw new Error("retriedAt must be a valid ISO timestamp");
+    }
+    const retryPolicy = normalizePaymentGrantRetryPolicy(input.retryPolicy);
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [orderRows] = await connection.query<PaymentOrderRow[]>(
+        `SELECT
+           order_id,
+           player_id,
+           product_id,
+           wechat_order_id,
+           status,
+           amount,
+           gem_amount,
+           created_at,
+           paid_at,
+           last_grant_attempt_at,
+           next_grant_retry_at,
+           settled_at,
+           dead_lettered_at,
+           grant_attempt_count,
+           last_grant_error,
+           updated_at
+         FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         WHERE order_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedOrderId]
+      );
+      const currentOrderRow = orderRows[0];
+      if (!currentOrderRow) {
+        throw new Error("payment_order_not_found");
+      }
+
+      const currentOrder = toPaymentOrderSnapshot(currentOrderRow);
+      if (currentOrder.status === "settled") {
+        const account = (await this.loadPlayerAccount(currentOrder.playerId)) ?? (await this.ensurePlayerAccount({ playerId: currentOrder.playerId }));
+        const receipt = await this.loadPaymentReceiptByOrderId(currentOrder.orderId);
+        await connection.commit();
+        return {
+          order: currentOrder,
+          account,
+          credited: false,
+          ...(receipt ? { receipt } : {})
+        };
+      }
+      if (currentOrder.status !== "grant_pending" && currentOrder.status !== "dead_letter" && currentOrder.status !== "paid") {
+        throw new Error("payment_order_not_retryable");
+      }
+      if (currentOrder.status === "dead_letter" && input.allowDeadLetter !== true) {
+        throw new Error("payment_order_retry_requires_override");
+      }
+
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [currentOrder.playerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: currentOrder.playerId,
+              displayName: currentOrder.playerId,
+              globalResources: normalizeResourceLedger()
+            });
+      const [receiptRows] = await connection.query<PaymentReceiptRow[]>(
+        `SELECT
+           transaction_id,
+           order_id,
+           player_id,
+           product_id,
+           amount,
+           verified_at
+         FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+         WHERE order_id = ?
+         LIMIT 1`,
+        [currentOrder.orderId]
+      );
+      const receiptRow = receiptRows[0];
+      if (!receiptRow) {
+        throw new Error("payment_receipt_not_found");
+      }
+      const receipt = toPaymentReceiptSnapshot(receiptRow);
+      const attemptCount = currentOrder.grantAttemptCount + 1;
+      const {
+        nextGrantRetryAt: _previousNextGrantRetryAt,
+        lastGrantError: _previousLastGrantError,
+        deadLetteredAt: _previousDeadLetteredAt,
+        settledAt: _previousSettledAt,
+        ...retryBaseOrder
+      } = currentOrder;
+
+      try {
+        const nextAccount = await applyVerifiedPaymentGrantToAccount(connection, currentAccount, {
+          playerId: currentOrder.playerId,
+          productId: currentOrder.productId,
+          productName: normalizedProductName,
+          grant: input.grant,
+          refId: currentOrder.orderId,
+          processedAt: retriedAt.toISOString()
+        });
+
+        await connection.query(
+          `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           SET status = 'settled',
+               last_grant_attempt_at = ?,
+               next_grant_retry_at = NULL,
+               settled_at = ?,
+               dead_lettered_at = NULL,
+               grant_attempt_count = ?,
+               last_grant_error = NULL
+           WHERE order_id = ?`,
+          [retriedAt, retriedAt, attemptCount, currentOrder.orderId]
+        );
+
+        await connection.commit();
+
+        return {
+          order: {
+            ...retryBaseOrder,
+            status: "settled",
+            lastGrantAttemptAt: retriedAt.toISOString(),
+            settledAt: retriedAt.toISOString(),
+            grantAttemptCount: attemptCount,
+            updatedAt: retriedAt.toISOString()
+          },
+          account: nextAccount,
+          credited: true,
+          receipt
+        };
+      } catch (error) {
+        const grantError = normalizePaymentGrantError(error instanceof Error ? error.message : String(error)) ?? "grant_failed";
+        const deadLetter = attemptCount >= retryPolicy.maxAttempts;
+        const nextDelayMs = computePaymentGrantRetryDelayMs(attemptCount, retryPolicy.baseDelayMs);
+        const nextRetryAt = new Date(retriedAt.getTime() + nextDelayMs);
+
+        await connection.query(
+          `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           SET status = ?,
+               last_grant_attempt_at = ?,
+               next_grant_retry_at = ?,
+               settled_at = NULL,
+               dead_lettered_at = ?,
+               grant_attempt_count = ?,
+               last_grant_error = ?
+           WHERE order_id = ?`,
+          [
+            deadLetter ? "dead_letter" : "grant_pending",
+            retriedAt,
+            deadLetter ? null : nextRetryAt,
+            deadLetter ? retriedAt : null,
+            attemptCount,
+            grantError,
+            currentOrder.orderId
+          ]
+        );
+
+        await connection.commit();
+
+        return {
+          order: {
+            ...retryBaseOrder,
+            status: deadLetter ? "dead_letter" : "grant_pending",
+            lastGrantAttemptAt: retriedAt.toISOString(),
+            grantAttemptCount: attemptCount,
+            lastGrantError: grantError,
+            updatedAt: retriedAt.toISOString(),
+            ...(deadLetter ? { deadLetteredAt: retriedAt.toISOString() } : { nextGrantRetryAt: nextRetryAt.toISOString() })
+          },
+          account: currentAccount,
+          credited: false,
+          receipt
+        };
+      }
     } catch (error) {
       await connection.rollback();
       throw error;

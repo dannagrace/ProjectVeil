@@ -69,6 +69,11 @@ interface AntiCheatObservabilityCounters {
   alertsTotal: number;
 }
 
+interface PaymentGrantObservabilityCounters {
+  retriesTotal: number;
+  deadLetterTotal: number;
+}
+
 type ActionValidationScope = "world" | "battle";
 
 export interface AntiCheatAlertEvent {
@@ -202,6 +207,13 @@ interface RuntimeObservabilityState {
   antiCheat: {
     counters: AntiCheatObservabilityCounters;
     recentAlerts: AntiCheatAlertEvent[];
+  };
+  paymentGrant: {
+    queueCount: number;
+    deadLetterCount: number;
+    oldestQueuedLatencyMs: number | null;
+    nextAttemptDelayMs: number | null;
+    counters: PaymentGrantObservabilityCounters;
   };
 }
 
@@ -462,6 +474,16 @@ const runtimeObservability: RuntimeObservabilityState = {
       alertsTotal: 0
     },
     recentAlerts: []
+  },
+  paymentGrant: {
+    queueCount: 0,
+    deadLetterCount: 0,
+    oldestQueuedLatencyMs: null,
+    nextAttemptDelayMs: null,
+    counters: {
+      retriesTotal: 0,
+      deadLetterTotal: 0
+    }
   }
 };
 
@@ -1215,6 +1237,24 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_failures_webhook_5xx_total Total token delivery failures caused by retryable 5xx webhook responses.",
     "# TYPE veil_auth_token_delivery_failures_webhook_5xx_total counter",
     `veil_auth_token_delivery_failures_webhook_5xx_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_5xx}`,
+    "# HELP veil_payment_grant_queue_count Payment orders currently queued for grant retry.",
+    "# TYPE veil_payment_grant_queue_count gauge",
+    `veil_payment_grant_queue_count ${runtimeObservability.paymentGrant.queueCount}`,
+    "# HELP veil_payment_grant_dead_letter_count Payment orders currently parked in the dead-letter set.",
+    "# TYPE veil_payment_grant_dead_letter_count gauge",
+    `veil_payment_grant_dead_letter_count ${runtimeObservability.paymentGrant.deadLetterCount}`,
+    "# HELP veil_payment_grant_oldest_queued_latency_ms Oldest queued payment grant retry age in milliseconds.",
+    "# TYPE veil_payment_grant_oldest_queued_latency_ms gauge",
+    `veil_payment_grant_oldest_queued_latency_ms ${runtimeObservability.paymentGrant.oldestQueuedLatencyMs ?? 0}`,
+    "# HELP veil_payment_grant_next_attempt_delay_ms Delay until the next queued payment grant retry attempt in milliseconds.",
+    "# TYPE veil_payment_grant_next_attempt_delay_ms gauge",
+    `veil_payment_grant_next_attempt_delay_ms ${runtimeObservability.paymentGrant.nextAttemptDelayMs ?? 0}`,
+    "# HELP veil_payment_grant_retries_total Total payment grant retries attempted by this process.",
+    "# TYPE veil_payment_grant_retries_total counter",
+    `veil_payment_grant_retries_total ${runtimeObservability.paymentGrant.counters.retriesTotal}`,
+    "# HELP veil_payment_dead_letter_total Total payment orders moved to dead-letter by this process.",
+    "# TYPE veil_payment_dead_letter_total counter",
+    `veil_payment_dead_letter_total ${runtimeObservability.paymentGrant.counters.deadLetterTotal}`,
     "# HELP veil_auth_session_failures_unauthorized_total Total auth session failures caused by missing or invalid credentials.",
     "# TYPE veil_auth_session_failures_unauthorized_total counter",
     `veil_auth_session_failures_unauthorized_total ${health.runtime.auth.sessionFailureReasons.unauthorized}`,
@@ -1858,6 +1898,32 @@ export function recordAuthTokenDeliveryDeadLetter(): void {
   runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal += 1;
 }
 
+export function setPaymentGrantQueueCount(count: number): void {
+  runtimeObservability.paymentGrant.queueCount = Math.max(0, Math.floor(count));
+}
+
+export function setPaymentGrantDeadLetterCount(count: number): void {
+  runtimeObservability.paymentGrant.deadLetterCount = Math.max(0, Math.floor(count));
+}
+
+export function setPaymentGrantQueueLatency(metrics: {
+  oldestQueuedLatencyMs: number | null;
+  nextAttemptDelayMs: number | null;
+}): void {
+  runtimeObservability.paymentGrant.oldestQueuedLatencyMs =
+    metrics.oldestQueuedLatencyMs != null ? Math.max(0, Math.floor(metrics.oldestQueuedLatencyMs)) : null;
+  runtimeObservability.paymentGrant.nextAttemptDelayMs =
+    metrics.nextAttemptDelayMs != null ? Math.max(0, Math.floor(metrics.nextAttemptDelayMs)) : null;
+}
+
+export function recordPaymentGrantRetry(): void {
+  runtimeObservability.paymentGrant.counters.retriesTotal += 1;
+}
+
+export function recordPaymentDeadLetter(): void {
+  runtimeObservability.paymentGrant.counters.deadLetterTotal += 1;
+}
+
 export function recordAuthTokenDeliveryAttempt(entry: {
   kind: "account-registration" | "password-recovery";
   loginId: string;
@@ -1985,6 +2051,12 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
   runtimeObservability.antiCheat.counters.alertsTotal = 0;
   runtimeObservability.antiCheat.recentAlerts.length = 0;
+  runtimeObservability.paymentGrant.queueCount = 0;
+  runtimeObservability.paymentGrant.deadLetterCount = 0;
+  runtimeObservability.paymentGrant.oldestQueuedLatencyMs = null;
+  runtimeObservability.paymentGrant.nextAttemptDelayMs = null;
+  runtimeObservability.paymentGrant.counters.retriesTotal = 0;
+  runtimeObservability.paymentGrant.counters.deadLetterTotal = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(

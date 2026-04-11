@@ -2,12 +2,20 @@ import { createCipheriv, createDecipheriv, createSign, createVerify, randomBytes
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
-import { recordRuntimeErrorEvent } from "./observability";
+import {
+  recordPaymentDeadLetter,
+  recordPaymentGrantRetry,
+  recordRuntimeErrorEvent,
+  setPaymentGrantDeadLetterCount,
+  setPaymentGrantQueueCount,
+  setPaymentGrantQueueLatency
+} from "./observability";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
 
 interface HttpApp {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
+  get?: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
 }
 
@@ -80,6 +88,8 @@ interface WechatPayCallbackTransaction {
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 const MAX_CALLBACK_TIMESTAMP_SKEW_SECONDS = 5 * 60;
+const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
+const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;
 const SUCCESS_CALLBACK_BODY = { code: "SUCCESS", message: "success" };
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -417,8 +427,108 @@ function isPaymentStoreReady(store: RoomSnapshotStore | null): store is RoomSnap
   );
 }
 
+function isPaymentOpsStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "listPaymentOrders" | "retryPaymentOrderGrant">> {
+  return Boolean(store?.listPaymentOrders && store.retryPaymentOrderGrant);
+}
+
+function readAdminToken(): string | null {
+  const token = process.env.VEIL_ADMIN_TOKEN?.trim();
+  return token ? token : null;
+}
+
+function isAdminRequest(request: IncomingMessage): boolean {
+  const adminToken = readAdminToken();
+  return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
+}
+
+function normalizePaymentGrantRetryPolicy(): { maxAttempts: number; baseDelayMs: number } {
+  return {
+    maxAttempts: DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS,
+    baseDelayMs: DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS
+  };
+}
+
+function isFinalizedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
+  return status === "settled" || status === "dead_letter";
+}
+
+function isAcceptedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
+  return status !== "created";
+}
+
+async function refreshPaymentGrantObservability(store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>, now: Date) {
+  const [pendingOrders, deadLetterOrders] = await Promise.all([
+    store.listPaymentOrders({ statuses: ["grant_pending"], limit: 200 }),
+    store.listPaymentOrders({ statuses: ["dead_letter"], limit: 200 })
+  ]);
+
+  setPaymentGrantQueueCount(pendingOrders.length);
+  setPaymentGrantDeadLetterCount(deadLetterOrders.length);
+
+  const pendingRetryTimes = pendingOrders
+    .map((order) => (order.nextGrantRetryAt ? new Date(order.nextGrantRetryAt).getTime() : null))
+    .filter((value): value is number => value != null && Number.isFinite(value))
+    .sort((left, right) => left - right);
+
+  const oldestQueuedLatencyMs =
+    pendingOrders.length === 0
+      ? null
+      : pendingOrders
+          .map((order) => (order.lastGrantAttemptAt ? Math.max(0, now.getTime() - new Date(order.lastGrantAttemptAt).getTime()) : 0))
+          .reduce((max, value) => Math.max(max, value), 0);
+  const nextPendingRetryTime = pendingRetryTimes[0];
+  const nextAttemptDelayMs =
+    nextPendingRetryTime != null ? Math.max(0, nextPendingRetryTime - now.getTime()) : null;
+
+  setPaymentGrantQueueLatency({
+    oldestQueuedLatencyMs,
+    nextAttemptDelayMs
+  });
+
+  return {
+    pendingOrders,
+    deadLetterOrders
+  };
+}
+
+async function buildPaymentGrantRuntimePayload(
+  store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>,
+  now: Date
+) {
+  const { pendingOrders, deadLetterOrders } = await refreshPaymentGrantObservability(store, now);
+  return {
+    checkedAt: now.toISOString(),
+    queueCount: pendingOrders.length,
+    deadLetterCount: deadLetterOrders.length,
+    pendingOrders,
+    deadLetterOrders
+  };
+}
+
 function findProduct(products: ShopProduct[], productId: string): ShopProduct | undefined {
   return products.find((product) => product.productId === productId);
+}
+
+function resolvePaymentGrantRetryPayload(
+  products: ShopProduct[],
+  order: Pick<PaymentOrderSnapshot, "productId" | "gemAmount">
+): { productName: string; grant: ShopProductGrant } {
+  const product = findProduct(products, order.productId);
+  if (product) {
+    const normalizedProduct = normalizeWechatPayProduct(product);
+    return {
+      productName: normalizedProduct.name,
+      grant: normalizedProduct.grant
+    };
+  }
+
+  return {
+    productName: order.productId,
+    grant: {
+      gems: order.gemAmount
+    }
+  };
 }
 
 async function requireAuthSession(request: IncomingMessage, response: ServerResponse, store: RoomSnapshotStore | null) {
@@ -705,7 +815,7 @@ export function registerWechatPayRoutes(
       }
 
       const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
-      if (order.status === "paid" || existingReceipt) {
+      if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
           productId: order.productId
@@ -760,9 +870,16 @@ export function registerWechatPayRoutes(
         paidAt: verified.success_time,
         verifiedAt: now().toISOString(),
         productName: product.name,
-        grant: product.grant
+        grant: product.grant,
+        retryPolicy: normalizePaymentGrantRetryPolicy()
       });
-      if (!settlement.credited) {
+      if (settlement.order.status === "dead_letter") {
+        recordPaymentDeadLetter();
+      }
+      if (isPaymentOpsStoreReady(store)) {
+        await refreshPaymentGrantObservability(store, now());
+      }
+      if (!settlement.credited && isFinalizedPaymentOrderStatus(settlement.order.status)) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
           productId: order.productId,
@@ -804,6 +921,8 @@ export function registerWechatPayRoutes(
         status: settlement.order.status,
         credited: settlement.credited,
         paidAt: settlement.order.paidAt,
+        ...(settlement.order.nextGrantRetryAt ? { nextGrantRetryAt: settlement.order.nextGrantRetryAt } : {}),
+        ...(settlement.order.lastGrantError ? { lastGrantError: settlement.order.lastGrantError } : {}),
         gemsBalance: settlement.account.gems ?? 0,
         seasonPassPremium: settlement.account.seasonPassPremium === true
       });
@@ -916,7 +1035,7 @@ export function registerWechatPayRoutes(
       }
 
       const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
-      if (order.status === "paid" || existingReceipt) {
+      if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
           productId: order.productId
@@ -958,8 +1077,15 @@ export function registerWechatPayRoutes(
         paidAt: verified.success_time,
         verifiedAt: now().toISOString(),
         productName: product.name,
-        grant: product.grant
+        grant: product.grant,
+        retryPolicy: normalizePaymentGrantRetryPolicy()
       });
+      if (settlement.order.status === "dead_letter") {
+        recordPaymentDeadLetter();
+      }
+      if (isPaymentOpsStoreReady(store)) {
+        await refreshPaymentGrantObservability(store, now());
+      }
       if (settlement.credited) {
         emitAnalyticsEvent("purchase", {
           playerId: order.playerId,
@@ -976,6 +1102,221 @@ export function registerWechatPayRoutes(
       sendCallbackResponse(response, 400, {
         code: "FAIL",
         message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
+  if (app.get) {
+    app.get("/api/runtime/wechat-payment-grants", async (_request, response) => {
+      if (!isPaymentOpsStoreReady(store)) {
+        sendJson(response, 503, {
+          error: {
+            code: "payment_persistence_unavailable",
+            message: "Payment grant queue visibility requires configured persistence storage"
+          }
+        });
+        return;
+      }
+
+      try {
+        sendJson(response, 200, await buildPaymentGrantRuntimePayload(store, now()));
+      } catch (error) {
+        sendJson(response, 500, {
+          error: {
+            code: "wechat_payment_grant_runtime_unavailable",
+            message: error instanceof Error ? error.message : String(error)
+          }
+        });
+      }
+    });
+
+    app.get("/api/admin/payments/wechat/orders", async (request, response) => {
+      const adminToken = readAdminToken();
+      if (!adminToken) {
+        sendJson(response, 503, { error: { code: "admin_token_not_configured", message: "VEIL_ADMIN_TOKEN is not configured" } });
+        return;
+      }
+      if (!isAdminRequest(request)) {
+        sendJson(response, 403, { error: { code: "forbidden", message: "Invalid admin token" } });
+        return;
+      }
+      if (!isPaymentOpsStoreReady(store)) {
+        sendJson(response, 503, {
+          error: {
+            code: "payment_persistence_unavailable",
+            message: "Payment grant queue inspection requires configured persistence storage"
+          }
+        });
+        return;
+      }
+
+      try {
+        const url = new URL(request.url ?? "/api/admin/payments/wechat/orders", "http://runtime.local");
+        const rawStatuses = url.searchParams
+          .get("status")
+          ?.split(",")
+          .map((value) => value.trim())
+          .filter((value): value is PaymentOrderSnapshot["status"] =>
+            value === "created" || value === "paid" || value === "grant_pending" || value === "settled" || value === "dead_letter"
+          );
+        const limit = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("limit") ?? "50"))));
+        const orders = await store.listPaymentOrders({
+          ...(rawStatuses && rawStatuses.length > 0 ? { statuses: rawStatuses } : {}),
+          limit
+        });
+        await refreshPaymentGrantObservability(store, now());
+        sendJson(response, 200, {
+          checkedAt: now().toISOString(),
+          count: orders.length,
+          items: orders
+        });
+      } catch (error) {
+        sendJson(response, 500, {
+          error: {
+            code: "wechat_payment_order_list_failed",
+            message: error instanceof Error ? error.message : String(error)
+          }
+        });
+      }
+    });
+  }
+
+  app.post("/api/admin/payments/wechat/retry", async (request, response) => {
+    const adminToken = readAdminToken();
+    if (!adminToken) {
+      sendJson(response, 503, { error: { code: "admin_token_not_configured", message: "VEIL_ADMIN_TOKEN is not configured" } });
+      return;
+    }
+    if (!isAdminRequest(request)) {
+      sendJson(response, 403, { error: { code: "forbidden", message: "Invalid admin token" } });
+      return;
+    }
+    if (!isPaymentStoreReady(store) || !isPaymentOpsStoreReady(store)) {
+      sendJson(response, 503, {
+        error: {
+          code: "payment_persistence_unavailable",
+          message: "Payment grant retries require configured persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        orderId?: string | null;
+        limit?: number;
+        includeDeadLetter?: boolean;
+      };
+      const processedAt = now();
+      const retryPolicy = normalizePaymentGrantRetryPolicy();
+
+      if (body.orderId?.trim()) {
+        const currentOrder = await store.loadPaymentOrder(body.orderId);
+        if (!currentOrder) {
+          sendJson(response, 404, {
+            error: {
+              code: "payment_order_not_found",
+              message: "Payment order was not found"
+            }
+          });
+          return;
+        }
+
+        const retryPayload = resolvePaymentGrantRetryPayload(products, currentOrder);
+        recordPaymentGrantRetry();
+        const settlement = await store.retryPaymentOrderGrant(currentOrder.orderId, {
+          ...retryPayload,
+          retriedAt: processedAt.toISOString(),
+          retryPolicy,
+          allowDeadLetter: body.includeDeadLetter === true
+        });
+        if (currentOrder.status !== "dead_letter" && settlement.order.status === "dead_letter") {
+          recordPaymentDeadLetter();
+        }
+        if (settlement.credited) {
+          emitAnalyticsEvent("purchase", {
+            playerId: settlement.order.playerId,
+            payload: {
+              purchaseId: settlement.order.orderId,
+              productId: settlement.order.productId,
+              quantity: 1,
+              totalPrice: settlement.order.amount
+            }
+          });
+        }
+        await refreshPaymentGrantObservability(store, processedAt);
+        sendJson(response, 200, {
+          processedAt: processedAt.toISOString(),
+          retried: 1,
+          order: settlement.order,
+          credited: settlement.credited
+        });
+        return;
+      }
+
+      const limit = Math.max(1, Math.min(100, Math.floor(body.limit ?? 20)));
+      const dueOrders = await store.listPaymentOrders({
+        statuses: ["grant_pending"],
+        dueBefore: processedAt.toISOString(),
+        limit
+      });
+      const results: Array<{
+        orderId: string;
+        status: PaymentOrderSnapshot["status"];
+        credited: boolean;
+        error?: string;
+      }> = [];
+
+      for (const pendingOrder of dueOrders) {
+        try {
+          const retryPayload = resolvePaymentGrantRetryPayload(products, pendingOrder);
+          recordPaymentGrantRetry();
+          const settlement = await store.retryPaymentOrderGrant(pendingOrder.orderId, {
+            ...retryPayload,
+            retriedAt: processedAt.toISOString(),
+            retryPolicy
+          });
+          if (pendingOrder.status !== "dead_letter" && settlement.order.status === "dead_letter") {
+            recordPaymentDeadLetter();
+          }
+          if (settlement.credited) {
+            emitAnalyticsEvent("purchase", {
+              playerId: settlement.order.playerId,
+              payload: {
+                purchaseId: settlement.order.orderId,
+                productId: settlement.order.productId,
+                quantity: 1,
+                totalPrice: settlement.order.amount
+              }
+            });
+          }
+          results.push({
+            orderId: settlement.order.orderId,
+            status: settlement.order.status,
+            credited: settlement.credited
+          });
+        } catch (error) {
+          results.push({
+            orderId: pendingOrder.orderId,
+            status: pendingOrder.status,
+            credited: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      await refreshPaymentGrantObservability(store, processedAt);
+      sendJson(response, 200, {
+        processedAt: processedAt.toISOString(),
+        retried: results.length,
+        items: results
+      });
+    } catch (error) {
+      sendJson(response, 400, {
+        error: {
+          code: "wechat_payment_retry_failed",
+          message: error instanceof Error ? error.message : String(error)
+        }
       });
     }
   });
