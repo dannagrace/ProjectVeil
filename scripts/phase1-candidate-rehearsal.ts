@@ -557,6 +557,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseEvidenceIndexPath) {
     lines.push(`- Current release evidence index: \`${report.artifacts.releaseEvidenceIndexPath}\``);
   }
+  if (report.artifacts.releaseGateSummaryPath) {
+    lines.push(`- Release gate summary: \`${report.artifacts.releaseGateSummaryPath}\``);
+  }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
