@@ -11,8 +11,12 @@ import {
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import {
+  getAnalyticsPipelineSnapshot,
+  renderAnalyticsPipelineSnapshotText,
+  resetCapturedAnalyticsEventsForTest
+} from "./analytics";
 import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
-import { resetCapturedAnalyticsEventsForTest } from "./analytics";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
 
@@ -811,6 +815,7 @@ function buildFeatureFlagObservabilityPayload(service = "project-veil-server"): 
 export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
   const featureFlags = buildFeatureFlagObservabilityPayload();
+  const analyticsPipeline = getAnalyticsPipelineSnapshot();
   const mysqlPools = getMySqlPoolMetricsSnapshot();
   const lines = [
     "# HELP veil_up Process health status.",
@@ -897,6 +902,52 @@ export function buildPrometheusMetricsDocument(): string {
           owner_area: ownerArea ?? "unknown",
           severity: severity ?? "unknown"
         })} ${value}`
+      );
+    }
+  }
+
+  lines.push(
+    "# HELP veil_analytics_events_buffered Events currently waiting in the server-side analytics flush buffer.",
+    "# TYPE veil_analytics_events_buffered gauge",
+    `veil_analytics_events_buffered ${analyticsPipeline.buffering.pendingEvents}`,
+    "# HELP veil_analytics_ingested_events_total Total analytics events accepted into the server-side delivery buffer.",
+    "# TYPE veil_analytics_ingested_events_total counter",
+    "# HELP veil_analytics_events_flushed_total Total analytics events flushed successfully to the configured sink.",
+    "# TYPE veil_analytics_events_flushed_total counter",
+    "# HELP veil_analytics_flush_batches_total Total analytics batch flushes completed successfully.",
+    "# TYPE veil_analytics_flush_batches_total counter",
+    `veil_analytics_flush_batches_total ${analyticsPipeline.delivery.flushBatchesTotal}`,
+    "# HELP veil_analytics_flush_failures_total Total analytics batch flush failures.",
+    "# TYPE veil_analytics_flush_failures_total counter",
+    `veil_analytics_flush_failures_total ${analyticsPipeline.delivery.flushFailuresTotal}`,
+    "# HELP veil_analytics_last_flush_timestamp_seconds Unix timestamp for the last successful analytics batch flush.",
+    "# TYPE veil_analytics_last_flush_timestamp_seconds gauge",
+    `veil_analytics_last_flush_timestamp_seconds ${
+      analyticsPipeline.delivery.lastFlushAt == null ? 0 : Math.floor(new Date(analyticsPipeline.delivery.lastFlushAt).getTime() / 1_000)
+    }`,
+    "# HELP veil_analytics_last_error_timestamp_seconds Unix timestamp for the last analytics flush failure.",
+    "# TYPE veil_analytics_last_error_timestamp_seconds gauge",
+    `veil_analytics_last_error_timestamp_seconds ${
+      analyticsPipeline.delivery.lastErrorAt == null ? 0 : Math.floor(new Date(analyticsPipeline.delivery.lastErrorAt).getTime() / 1_000)
+    }`,
+    "# HELP veil_analytics_sink_configured Whether the configured analytics sink is active for this runtime.",
+    "# TYPE veil_analytics_sink_configured gauge",
+    `veil_analytics_sink_configured${formatPrometheusLabels({ sink: analyticsPipeline.sink })} 1`,
+    "# HELP veil_analytics_retention_days Configured analytics retention window in days.",
+    "# TYPE veil_analytics_retention_days gauge",
+    `veil_analytics_retention_days ${analyticsPipeline.warehouse.retentionDays}`
+  );
+
+  if (analyticsPipeline.delivery.events.length === 0) {
+    lines.push("veil_analytics_ingested_events_total 0");
+    lines.push("veil_analytics_events_flushed_total 0");
+  } else {
+    for (const event of analyticsPipeline.delivery.events) {
+      lines.push(
+        `veil_analytics_ingested_events_total${formatPrometheusLabels({ name: event.name, source: event.source })} ${event.ingestedTotal}`
+      );
+      lines.push(
+        `veil_analytics_events_flushed_total${formatPrometheusLabels({ name: event.name, source: event.source })} ${event.flushedTotal}`
       );
     }
   }
@@ -1907,6 +1958,24 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/account-token-delivery", async (_request, response) => {
     try {
       sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/analytics-pipeline", async (request, response) => {
+    try {
+      const snapshot = getAnalyticsPipelineSnapshot();
+      const url = new URL(request.url ?? "/api/runtime/analytics-pipeline", "http://runtime.local");
+
+      if (url.searchParams.get("format") === "text") {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/plain; charset=utf-8");
+        response.end(renderAnalyticsPipelineSnapshotText(snapshot));
+        return;
+      }
+
+      sendJson(response, 200, snapshot);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

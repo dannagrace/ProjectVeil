@@ -3,6 +3,7 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import { registerAnalyticsRoutes } from "../src/analytics";
 import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "../src/dev-server";
@@ -26,6 +27,7 @@ async function startObservabilityServer(port: number, persistence?: RuntimePersi
 
   const transport = new WebSocketTransport();
   const app = transport.getExpressApp() as never;
+  registerAnalyticsRoutes(app);
   registerPrometheusMetricsMiddleware(app);
   registerPrometheusMetricsRoute(app);
   registerRuntimeObservabilityRoutes(app, persistence ? { persistence } : undefined);
@@ -120,6 +122,10 @@ async function sendRequest<T extends ServerMessage["type"]>(
 test("runtime observability routes expose live room counts and gameplay traffic", async (t) => {
   const port = 44000 + Math.floor(Math.random() * 1000);
   const originalFeatureFlagJson = process.env.VEIL_FEATURE_FLAGS_JSON;
+  const originalAnalyticsSink = process.env.ANALYTICS_SINK;
+  const originalAnalyticsDataset = process.env.ANALYTICS_WAREHOUSE_DATASET;
+  const originalAnalyticsTable = process.env.ANALYTICS_WAREHOUSE_EVENTS_TABLE;
+  const originalAnalyticsDeletionWorkflow = process.env.ANALYTICS_DELETION_WORKFLOW;
   process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
     schemaVersion: 1,
     flags: {
@@ -160,6 +166,10 @@ test("runtime observability routes expose live room counts and gameplay traffic"
       ]
     }
   });
+  process.env.ANALYTICS_SINK = "stdout";
+  process.env.ANALYTICS_WAREHOUSE_DATASET = "analytics_prod";
+  process.env.ANALYTICS_WAREHOUSE_EVENTS_TABLE = "veil_analytics_events";
+  process.env.ANALYTICS_DELETION_WORKFLOW = "dsr-player-delete";
   const server = await startObservabilityServer(port);
   const room = await joinRoom(port, "room-observability-alpha", "player-1");
 
@@ -168,6 +178,26 @@ test("runtime observability routes expose live room counts and gameplay traffic"
       delete process.env.VEIL_FEATURE_FLAGS_JSON;
     } else {
       process.env.VEIL_FEATURE_FLAGS_JSON = originalFeatureFlagJson;
+    }
+    if (originalAnalyticsSink === undefined) {
+      delete process.env.ANALYTICS_SINK;
+    } else {
+      process.env.ANALYTICS_SINK = originalAnalyticsSink;
+    }
+    if (originalAnalyticsDataset === undefined) {
+      delete process.env.ANALYTICS_WAREHOUSE_DATASET;
+    } else {
+      process.env.ANALYTICS_WAREHOUSE_DATASET = originalAnalyticsDataset;
+    }
+    if (originalAnalyticsTable === undefined) {
+      delete process.env.ANALYTICS_WAREHOUSE_EVENTS_TABLE;
+    } else {
+      process.env.ANALYTICS_WAREHOUSE_EVENTS_TABLE = originalAnalyticsTable;
+    }
+    if (originalAnalyticsDeletionWorkflow === undefined) {
+      delete process.env.ANALYTICS_DELETION_WORKFLOW;
+    } else {
+      process.env.ANALYTICS_DELETION_WORKFLOW = originalAnalyticsDeletionWorkflow;
     }
     await room.leave(true).catch(() => undefined);
     resetLobbyRoomRegistry();
@@ -199,7 +229,27 @@ test("runtime observability routes expose live room counts and gameplay traffic"
     "session.state"
   );
 
-  await wait(100);
+  const analyticsIngestResponse = await fetch(`http://127.0.0.1:${port}/api/analytics/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      schemaVersion: 1,
+      emittedAt: "2026-04-11T08:00:00.000Z",
+      events: [
+        {
+          name: "tutorial_step",
+          source: "cocos-client",
+          playerId: "player-1",
+          payload: { stepId: "tutorial_completed", status: "completed" }
+        }
+      ]
+    })
+  });
+  assert.equal(analyticsIngestResponse.status, 202);
+
+  await wait(350);
   recordMatchmakingRateLimited();
   recordMatchmakingRateLimited();
   recordRuntimeErrorEvent({
@@ -434,6 +484,48 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(roomLifecycleText, /room_creates=1/);
   assert.match(roomLifecycleText, /room\.created/);
 
+  const analyticsPipelineResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline`);
+  const analyticsPipelinePayload = (await analyticsPipelineResponse.json()) as {
+    status: string;
+    sink: string;
+    warehouse: {
+      dataset: string;
+      eventsTable: string;
+      deletionWorkflow: string;
+    };
+    delivery: {
+      ingestedEventsTotal: number;
+      flushedEventsTotal: number;
+      events: Array<{
+        name: string;
+        source: string;
+        flushedTotal: number;
+      }>;
+    };
+  };
+
+  assert.equal(analyticsPipelineResponse.status, 200);
+  assert.equal(analyticsPipelinePayload.status, "ok");
+  assert.equal(analyticsPipelinePayload.sink, "stdout");
+  assert.equal(analyticsPipelinePayload.warehouse.dataset, "analytics_prod");
+  assert.equal(analyticsPipelinePayload.warehouse.eventsTable, "veil_analytics_events");
+  assert.equal(analyticsPipelinePayload.warehouse.deletionWorkflow, "dsr-player-delete");
+  assert.equal(analyticsPipelinePayload.delivery.ingestedEventsTotal, 2);
+  assert.equal(analyticsPipelinePayload.delivery.flushedEventsTotal, 2);
+  assert.equal(
+    analyticsPipelinePayload.delivery.events.find((event) => event.name === "tutorial_step" && event.source === "cocos-client")?.flushedTotal,
+    1
+  );
+
+  const analyticsPipelineTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline?format=text`);
+  const analyticsPipelineText = await analyticsPipelineTextResponse.text();
+
+  assert.equal(analyticsPipelineTextResponse.status, 200);
+  assert.match(analyticsPipelineTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(analyticsPipelineText, /^analytics_pipeline status=ok/m);
+  assert.match(analyticsPipelineText, /dataset=analytics_prod\.veil_analytics_events/);
+  assert.match(analyticsPipelineText, /deletion_workflow=dsr-player-delete/);
+
   const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`);
   const prometheusText = await prometheusResponse.text();
 
@@ -443,6 +535,10 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(prometheusText, /^veil_active_rooms 1$/m);
   assert.match(prometheusText, /^veil_connected_players 1$/m);
   assert.match(prometheusText, /^veil_action_validation_failures_total 0$/m);
+  assert.match(prometheusText, /^veil_analytics_events_buffered 0$/m);
+  assert.match(prometheusText, /^veil_analytics_ingested_events_total\{name="session_start",source="server"\} 1$/m);
+  assert.match(prometheusText, /^veil_analytics_events_flushed_total\{name="tutorial_step",source="cocos-client"\} 1$/m);
+  assert.match(prometheusText, /^veil_analytics_sink_configured\{sink="stdout"\} 1$/m);
   assert.match(prometheusText, /^veil_http_request_duration_seconds_count [1-9]\d*$/m);
   assert.match(prometheusText, /^veil_battle_duration_seconds_count 0$/m);
 });

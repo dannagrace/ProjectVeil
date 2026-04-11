@@ -26,6 +26,7 @@ Start every incident with the same four snapshots so the alert has current conte
 curl -fsS "$VEIL_RUNTIME_URL/metrics" > /tmp/project-veil.metrics
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq .
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/auth-readiness" | jq .
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq .
 curl -fsS "$VEIL_RUNTIME_URL/api/runtime/slo-summary?format=text"
 ```
 
@@ -173,6 +174,89 @@ Escalation thresholds:
 
 - escalate if p95 stays above `750ms` for 20 minutes after traffic reduction or dependency recovery work
 - escalate immediately if p95 exceeds `1.5s`, if auth-readiness is degraded, or if connected-player and room-density alerts are firing concurrently
+
+## Alert: VeilAnalyticsFlushFailuresHigh
+
+Likely causes:
+
+- `ANALYTICS_ENDPOINT` is unavailable or returning non-2xx responses
+- the runtime drifted back to `stdout` because production sink config is incomplete
+- the analytics gateway is healthy but backpressure is preventing the local buffer from draining
+
+Immediate triage commands:
+
+```bash
+grep '^veil_analytics_' /tmp/project-veil.metrics | sort
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq .
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline?format=text"
+```
+
+Mitigation steps:
+
+1. Confirm the sink mode first. If it shows `stdout` in production, restore `ANALYTICS_SINK=http` and `ANALYTICS_ENDPOINT` before chasing downstream delivery.
+2. If the sink is already `http`, check whether `veil_analytics_events_buffered` is rising. A rising buffer with new failures means the gateway path is degraded.
+3. If the gateway is failing, pause dashboards and alerts that depend on freshness, then route traffic recovery through the analytics/on-call owner.
+4. Do not clear or restart the runtime blindly while buffered events are still draining unless the buffer itself is causing broader runtime instability.
+
+Escalation thresholds:
+
+- escalate immediately if failures persist for two consecutive alert windows or if `veil_analytics_events_buffered` continues to rise
+- escalate immediately if payment-fraud analytics or session-start drop alerts fire at the same time, because business visibility is already impaired
+
+## Alert: VeilAnalyticsPaymentFraudSignalsHigh
+
+Likely causes:
+
+- duplicate or replayed WeChat callbacks are reaching the payment pipeline
+- payer or product mismatches are increasing after a payment-related deploy
+- a real fraud/exploit attempt is generating repeated integrity anomalies
+
+Immediate triage commands:
+
+```bash
+grep 'veil_analytics_events_flushed_total{name="payment_fraud_signal"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq '.delivery.events[] | select(.name=="payment_fraud_signal")'
+```
+
+Mitigation steps:
+
+1. Freeze risky compensation, refund, and rollout actions that depend on payment integrity.
+2. Compare the Prometheus spike with the warehouse query in [`docs/analytics-pipeline-runbook.md`](./analytics-pipeline-runbook.md) so you know whether this is isolated or broad.
+3. Inspect recent payment callback / verify traffic and confirm whether order ids or payer identifiers repeat.
+4. Keep the incident open until the spike subsides and the root cause is documented in the payment or analytics runbook.
+
+Escalation thresholds:
+
+- escalate immediately on first fire during a live payment rollout or candidate promotion
+- escalate to payments risk if the alert remains active for more than 15 minutes or warehouse counts keep climbing
+
+## Alert: VeilAnalyticsSessionStartsDropped
+
+Likely causes:
+
+- real player/session starts dropped because login, matchmaking, or room admission is broken
+- analytics delivery is degraded, so healthy player traffic is no longer reaching the sink
+- routing, release, or regional config changes shifted traffic away from the monitored environment
+
+Immediate triage commands:
+
+```bash
+grep 'veil_analytics_events_flushed_total{name="session_start"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq '{connectionCount: .runtime.connectionCount, activeRoomCount: .runtime.activeRoomCount}'
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq .
+```
+
+Mitigation steps:
+
+1. Determine whether gameplay traffic and room counts also dropped. If they did, treat this as a player-traffic incident first.
+2. If room/player counts look normal but session-start analytics dropped, treat the sink as suspect and inspect `veil_analytics_flush_failures_total` plus `veil_analytics_events_buffered`.
+3. Compare the runtime signal with the warehouse DAU/session query before making business-facing claims about the size of the drop.
+4. If the issue started with a release or config change, halt rollout promotion until both traffic and analytics freshness are explained.
+
+Escalation thresholds:
+
+- escalate if the drop lasts longer than one additional 30-minute comparison window
+- escalate immediately if session-start drop, auth failures, or analytics flush failures are all firing together
 
 ## Alert: VeilMySqlPoolPressureHigh
 

@@ -7,6 +7,66 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
 const ANALYTICS_BUFFER_FLUSH_DELAY_MS = 250;
+const DEFAULT_ANALYTICS_RETENTION_DAYS = 400;
+
+export type AnalyticsSink = "stdout" | "http";
+
+interface AnalyticsPipelineConfig {
+  sink: AnalyticsSink;
+  endpoint: string | null;
+  warehouseDataset: string;
+  warehouseEventsTable: string;
+  warehouseRawBucket: string;
+  retentionDays: number;
+  deletionWorkflow: string;
+  alerts: string[];
+}
+
+interface AnalyticsPipelineCounters {
+  ingestedEventsTotal: number;
+  flushedEventsTotal: number;
+  flushBatchesTotal: number;
+  flushFailuresTotal: number;
+  lastFlushAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
+  ingestedByKey: Map<string, number>;
+  flushedByKey: Map<string, number>;
+}
+
+export interface AnalyticsPipelineSnapshot {
+  status: "ok" | "warn";
+  sink: AnalyticsSink;
+  endpoint: string | null;
+  buffering: {
+    pendingEvents: number;
+    flushSize: number;
+    flushDelayMs: number;
+  };
+  warehouse: {
+    dataset: string;
+    eventsTable: string;
+    rawBucket: string;
+    retentionDays: number;
+    deletionWorkflow: string;
+  };
+  delivery: {
+    ingestedEventsTotal: number;
+    flushedEventsTotal: number;
+    flushBatchesTotal: number;
+    flushFailuresTotal: number;
+    lastFlushAt: string | null;
+    lastErrorAt: string | null;
+    lastErrorMessage: string | null;
+    events: Array<{
+      name: string;
+      source: string;
+      ingestedTotal: number;
+      flushedTotal: number;
+    }>;
+  };
+  alerts: string[];
+}
 
 interface AnalyticsRuntimeDependencies {
   fetch(input: string, init?: RequestInit): Promise<{ ok: boolean; status: number }>;
@@ -28,6 +88,17 @@ let analyticsRuntimeDependencies = defaultAnalyticsRuntimeDependencies;
 let pendingEvents: AnalyticsEvent[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
 let capturedAnalyticsEvents: AnalyticsEvent[] = [];
+const analyticsPipelineCounters: AnalyticsPipelineCounters = {
+  ingestedEventsTotal: 0,
+  flushedEventsTotal: 0,
+  flushBatchesTotal: 0,
+  flushFailuresTotal: 0,
+  lastFlushAt: null,
+  lastErrorAt: null,
+  lastErrorMessage: null,
+  ingestedByKey: new Map<string, number>(),
+  flushedByKey: new Map<string, number>()
+};
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -50,6 +121,154 @@ class PayloadTooLargeError extends Error {
 }
 
 const MAX_ANALYTICS_REQUEST_BYTES = 256 * 1024;
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+function normalizeAnalyticsDimension(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function buildAnalyticsCounterKey(event: { name?: unknown; source?: unknown }): string {
+  return `${normalizeAnalyticsDimension(event.name, "unknown")}::${normalizeAnalyticsDimension(event.source, "unknown")}`;
+}
+
+function incrementCounter(map: Map<string, number>, key: string, amount = 1): void {
+  map.set(key, (map.get(key) ?? 0) + amount);
+}
+
+function recordIngestedEvents(events: Array<{ name?: unknown; source?: unknown }>): void {
+  analyticsPipelineCounters.ingestedEventsTotal += events.length;
+  for (const event of events) {
+    incrementCounter(analyticsPipelineCounters.ingestedByKey, buildAnalyticsCounterKey(event));
+  }
+}
+
+function recordFlushedEvents(events: Array<{ name?: unknown; source?: unknown }>): void {
+  analyticsPipelineCounters.flushedEventsTotal += events.length;
+  analyticsPipelineCounters.flushBatchesTotal += 1;
+  analyticsPipelineCounters.lastFlushAt = new Date().toISOString();
+  analyticsPipelineCounters.lastErrorAt = null;
+  analyticsPipelineCounters.lastErrorMessage = null;
+  for (const event of events) {
+    incrementCounter(analyticsPipelineCounters.flushedByKey, buildAnalyticsCounterKey(event));
+  }
+}
+
+function recordFlushFailure(message: string): void {
+  analyticsPipelineCounters.flushFailuresTotal += 1;
+  analyticsPipelineCounters.lastErrorAt = new Date().toISOString();
+  analyticsPipelineCounters.lastErrorMessage = message;
+}
+
+function resolveAnalyticsPipelineConfig(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineConfig {
+  const requestedSink = env.ANALYTICS_SINK?.trim().toLowerCase();
+  const configuredEndpoint = env.ANALYTICS_ENDPOINT?.trim() || env.ANALYTICS_HTTP_ENDPOINT?.trim() || null;
+  const alerts: string[] = [];
+  let sink: AnalyticsSink =
+    requestedSink === "http" || requestedSink === "stdout"
+      ? requestedSink
+      : configuredEndpoint
+        ? "http"
+        : "stdout";
+
+  if (sink === "http" && !configuredEndpoint) {
+    alerts.push("ANALYTICS_SINK=http but ANALYTICS_ENDPOINT is not configured; falling back to stdout.");
+    sink = "stdout";
+  }
+
+  return {
+    sink,
+    endpoint: sink === "http" ? configuredEndpoint : null,
+    warehouseDataset: env.ANALYTICS_WAREHOUSE_DATASET?.trim() || "analytics_prod",
+    warehouseEventsTable: env.ANALYTICS_WAREHOUSE_EVENTS_TABLE?.trim() || "veil_analytics_events",
+    warehouseRawBucket: env.ANALYTICS_RAW_BUCKET?.trim() || "s3://project-veil-analytics-prod/raw",
+    retentionDays: parsePositiveInteger(env.ANALYTICS_RETENTION_DAYS, DEFAULT_ANALYTICS_RETENTION_DAYS),
+    deletionWorkflow: env.ANALYTICS_DELETION_WORKFLOW?.trim() || "dsr-player-delete",
+    alerts
+  };
+}
+
+function buildAnalyticsPipelineEventsSummary(): AnalyticsPipelineSnapshot["delivery"]["events"] {
+  const keys = new Set([
+    ...analyticsPipelineCounters.ingestedByKey.keys(),
+    ...analyticsPipelineCounters.flushedByKey.keys()
+  ]);
+
+  return Array.from(keys)
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => {
+      const [name, source] = key.split("::");
+      return {
+        name: name ?? "unknown",
+        source: source ?? "unknown",
+        ingestedTotal: analyticsPipelineCounters.ingestedByKey.get(key) ?? 0,
+        flushedTotal: analyticsPipelineCounters.flushedByKey.get(key) ?? 0
+      };
+    });
+}
+
+export function getAnalyticsPipelineSnapshot(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineSnapshot {
+  const config = resolveAnalyticsPipelineConfig(env);
+  const alerts = [...config.alerts];
+  if (analyticsPipelineCounters.flushFailuresTotal > 0) {
+    alerts.push(`analytics flush failures recorded=${analyticsPipelineCounters.flushFailuresTotal}`);
+  }
+
+  return {
+    status: alerts.length > 0 ? "warn" : "ok",
+    sink: config.sink,
+    endpoint: config.endpoint,
+    buffering: {
+      pendingEvents: pendingEvents.length,
+      flushSize: ANALYTICS_BUFFER_FLUSH_SIZE,
+      flushDelayMs: ANALYTICS_BUFFER_FLUSH_DELAY_MS
+    },
+    warehouse: {
+      dataset: config.warehouseDataset,
+      eventsTable: config.warehouseEventsTable,
+      rawBucket: config.warehouseRawBucket,
+      retentionDays: config.retentionDays,
+      deletionWorkflow: config.deletionWorkflow
+    },
+    delivery: {
+      ingestedEventsTotal: analyticsPipelineCounters.ingestedEventsTotal,
+      flushedEventsTotal: analyticsPipelineCounters.flushedEventsTotal,
+      flushBatchesTotal: analyticsPipelineCounters.flushBatchesTotal,
+      flushFailuresTotal: analyticsPipelineCounters.flushFailuresTotal,
+      lastFlushAt: analyticsPipelineCounters.lastFlushAt,
+      lastErrorAt: analyticsPipelineCounters.lastErrorAt,
+      lastErrorMessage: analyticsPipelineCounters.lastErrorMessage,
+      events: buildAnalyticsPipelineEventsSummary()
+    },
+    alerts
+  };
+}
+
+export function renderAnalyticsPipelineSnapshotText(snapshot: AnalyticsPipelineSnapshot): string {
+  const parts = [
+    `analytics_pipeline status=${snapshot.status}`,
+    `sink=${snapshot.sink}`,
+    `pending=${snapshot.buffering.pendingEvents}`,
+    `ingested=${snapshot.delivery.ingestedEventsTotal}`,
+    `flushed=${snapshot.delivery.flushedEventsTotal}`,
+    `failures=${snapshot.delivery.flushFailuresTotal}`,
+    `dataset=${snapshot.warehouse.dataset}.${snapshot.warehouse.eventsTable}`,
+    `retention_days=${snapshot.warehouse.retentionDays}`,
+    `deletion_workflow=${snapshot.warehouse.deletionWorkflow}`
+  ];
+  return `${parts.join(" | ")}\n`;
+}
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
@@ -91,6 +310,15 @@ export function resetAnalyticsRuntimeDependencies(): void {
     analyticsRuntimeDependencies.clearTimeout(flushTimer);
   }
   flushTimer = null;
+  analyticsPipelineCounters.ingestedEventsTotal = 0;
+  analyticsPipelineCounters.flushedEventsTotal = 0;
+  analyticsPipelineCounters.flushBatchesTotal = 0;
+  analyticsPipelineCounters.flushFailuresTotal = 0;
+  analyticsPipelineCounters.lastFlushAt = null;
+  analyticsPipelineCounters.lastErrorAt = null;
+  analyticsPipelineCounters.lastErrorMessage = null;
+  analyticsPipelineCounters.ingestedByKey.clear();
+  analyticsPipelineCounters.flushedByKey.clear();
 }
 
 export function resetCapturedAnalyticsEventsForTest(): void {
@@ -106,6 +334,7 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
     return;
   }
 
+  const config = resolveAnalyticsPipelineConfig(env);
   const batch = pendingEvents;
   pendingEvents = [];
   if (flushTimer) {
@@ -118,15 +347,15 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
     emittedAt: new Date().toISOString(),
     events: batch
   };
-  const endpoint = env.ANALYTICS_ENDPOINT?.trim();
 
-  if (!endpoint) {
+  if (config.sink === "stdout" || !config.endpoint) {
     analyticsRuntimeDependencies.log(`[Analytics] ${JSON.stringify(envelope)}`);
+    recordFlushedEvents(batch);
     return;
   }
 
   try {
-    const response = await analyticsRuntimeDependencies.fetch(endpoint, {
+    const response = await analyticsRuntimeDependencies.fetch(config.endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json; charset=utf-8"
@@ -135,10 +364,20 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
     });
 
     if (!response.ok) {
-      analyticsRuntimeDependencies.error(`[Analytics] Failed to flush analytics batch: ${response.status}`);
+      const message = `[Analytics] Failed to flush analytics batch: ${response.status}`;
+      analyticsRuntimeDependencies.error(message);
+      recordFlushFailure(message);
+      pendingEvents = [...batch, ...pendingEvents];
+      scheduleFlush(env);
+      return;
     }
+    recordFlushedEvents(batch);
   } catch (error) {
-    analyticsRuntimeDependencies.error("[Analytics] Failed to flush analytics batch", error);
+    const message = "[Analytics] Failed to flush analytics batch";
+    analyticsRuntimeDependencies.error(message, error);
+    recordFlushFailure(message);
+    pendingEvents = [...batch, ...pendingEvents];
+    scheduleFlush(env);
   }
 }
 
@@ -166,6 +405,7 @@ export function emitAnalyticsEvent<Name extends AnalyticsEventName>(
 ): AnalyticsEvent<Name> {
   const event = createAnalyticsEvent(name, input);
   pendingEvents.push(event);
+  recordIngestedEvents([event]);
   scheduleFlush(env);
   return event;
 }
@@ -208,7 +448,10 @@ export function registerAnalyticsRoutes(
         ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
         : [];
       capturedAnalyticsEvents.push(...events);
-      analyticsRuntimeDependencies.log(`[Analytics] ${JSON.stringify(payload)}`);
+      pendingEvents.push(...events);
+      recordIngestedEvents(events);
+      scheduleFlush();
+      analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into ${getAnalyticsPipelineSnapshot().sink} sink`);
       sendJson(response, 202, {
         accepted: events.length
       });

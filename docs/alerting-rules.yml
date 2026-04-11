@@ -103,6 +103,39 @@ groups:
           description: "`payment_fraud_signal` fired within the last 15 minutes. Freeze risky compensation/refund actions, inspect duplicate callbacks or payer mismatches, and review the current candidate before continuing rollout."
           runbook_url: ./incident-response-runbook.md#alert-veilwechatpaymentfraudsignalshigh
 
+      - alert: VeilAnalyticsFlushFailuresHigh
+        expr: increase(veil_analytics_flush_failures_total[15m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: project-veil-server
+        annotations:
+          summary: Project Veil analytics batches are failing to flush
+          description: Analytics delivery has recorded at least one failed flush over the last 15 minutes. Check `/api/runtime/analytics-pipeline`, restore the configured sink, and verify buffered events are draining again.
+          runbook_url: ./alerting-runbook.md#alert-veilanalyticsflushfailureshigh
+
+      - alert: VeilAnalyticsPaymentFraudSignalsHigh
+        expr: increase(veil_analytics_events_flushed_total{name="payment_fraud_signal",source="server"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          service: project-veil-server
+        annotations:
+          summary: Project Veil analytics is seeing a payment fraud signal spike
+          description: More than three `payment_fraud_signal` analytics events were flushed in 15 minutes. Freeze risk-sensitive payment actions, validate callback integrity, and compare with the warehouse query before resuming promotion.
+          runbook_url: ./alerting-runbook.md#alert-veilanalyticspaymentfraudsignalshigh
+
+      - alert: VeilAnalyticsSessionStartsDropped
+        expr: sum(increase(veil_analytics_events_flushed_total{name="session_start",source="server"}[30m])) < (0.3 * clamp_min(sum(increase(veil_analytics_events_flushed_total{name="session_start",source="server"}[30m] offset 1d)), 1)) and sum(increase(veil_analytics_events_flushed_total{name="session_start",source="server"}[30m] offset 1d)) > 20
+        for: 20m
+        labels:
+          severity: warning
+          service: project-veil-server
+        annotations:
+          summary: Project Veil session starts have dropped sharply versus the same window yesterday
+          description: Server-side `session_start` analytics in the last 30 minutes have fallen below 30 percent of the same 30-minute window one day earlier. Check login health, room admission, and whether the analytics sink is still flushing current traffic.
+          runbook_url: ./alerting-runbook.md#alert-veilanalyticssessionstartsdropped
+
       - alert: VeilFeatureFlagConfigStale
         expr: max(veil_feature_flag_config_stale) > 0
         for: 2m
