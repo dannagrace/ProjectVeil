@@ -11,10 +11,16 @@ import {
   resetRuntimeConfigs
 } from "../../../packages/shared/src/index";
 import {
+  configureConfigCenterRuntimeDependencies,
+  configureConfigRuntimeStatusProvider,
   createWorldConfigPreview,
-  FileSystemConfigCenterStore
+  FileSystemConfigCenterStore,
+  flushPendingConfigUpdate,
+  resetConfigCenterRuntimeDependencies,
+  resetConfigHotReloadState
 } from "../src/config-center";
 import type { WorldConfigPreview } from "../src/config-center";
+import { recordRuntimeErrorEvent, resetRuntimeObservability } from "../src/observability";
 
 const WORLD_CONFIG = {
   width: 8,
@@ -169,6 +175,13 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
 
 test.afterEach(() => {
   resetRuntimeConfigs();
+  resetConfigHotReloadState();
+  resetConfigCenterRuntimeDependencies();
+  configureConfigRuntimeStatusProvider(() => ({
+    rooms: [],
+    activeBattleCount: 0
+  }));
+  resetRuntimeObservability();
 });
 
 test("config center lists seeded config documents", async () => {
@@ -764,4 +777,118 @@ test("config center staged publish blocks invalid drafts", async () => {
     () => store.publishStagedDraft({ author: "Ops", summary: "bad publish" }),
     /未通过校验|修复/
   );
+});
+
+test("config center delays hot reload while battles are active and applies it once rooms are safe", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  let activeBattles = 1;
+  configureConfigRuntimeStatusProvider(() => ({
+    rooms: activeBattles > 0 ? [{ roomId: "room-battle", activeBattles }] : [],
+    activeBattleCount: activeBattles
+  }));
+
+  const nextWorld = {
+    ...WORLD_CONFIG,
+    width: 10
+  };
+
+  await store.saveDocument("world", JSON.stringify(nextWorld));
+  assert.equal(getDefaultWorldConfig().width, WORLD_CONFIG.width);
+
+  activeBattles = 0;
+  const result = flushPendingConfigUpdate();
+
+  assert.equal(result?.status, "applied");
+  assert.equal(getDefaultWorldConfig().width, 10);
+});
+
+test("config center rejects schema-incompatible staged publishes with an explicit error", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const incompatibleBalance = {
+    ...BATTLE_BALANCE_CONFIG,
+    environment: {
+      ...BATTLE_BALANCE_CONFIG.environment
+    }
+  } as typeof BATTLE_BALANCE_CONFIG & {
+    environment: Omit<typeof BATTLE_BALANCE_CONFIG.environment, "trapGrantedStatusId">;
+  };
+  delete incompatibleBalance.environment.trapGrantedStatusId;
+
+  await store.saveStagedDraft([
+    {
+      id: "battleBalance",
+      content: JSON.stringify(incompatibleBalance)
+    }
+  ]);
+
+  await assert.rejects(
+    () => store.publishStagedDraft({ author: "Ops", summary: "incompatible hot reload" }),
+    /不兼容的 Schema 变更/
+  );
+});
+
+test("config center rolls back hot reloads after a room error spike within the safety window", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  let scheduledHandler: (() => void) | null = null;
+  const baselineMs = Date.parse("2026-04-11T16:15:00.000Z");
+  configureConfigCenterRuntimeDependencies({
+    now: () => baselineMs,
+    setTimeout: (handler) => {
+      scheduledHandler = handler;
+      return {};
+    },
+    clearTimeout: () => {
+      scheduledHandler = null;
+    }
+  });
+
+  await store.saveDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 10
+    })
+  );
+  assert.equal(getDefaultWorldConfig().width, 10);
+  assert.ok(scheduledHandler);
+
+  for (let index = 0; index < 3; index += 1) {
+    recordRuntimeErrorEvent({
+      id: `hot-reload-error-${index}`,
+      recordedAt: new Date(baselineMs + 1_000 + index).toISOString(),
+      source: "server",
+      surface: "server",
+      candidateRevision: "workspace",
+      featureArea: "runtime",
+      ownerArea: "multiplayer",
+      severity: "error",
+      errorCode: "room_hot_reload_crash",
+      message: "Synthetic room crash after hot reload.",
+      context: {
+        roomId: `room-${index}`,
+        playerId: null,
+        requestId: null,
+        route: null,
+        action: null,
+        statusCode: null,
+        crash: true,
+        detail: "test spike"
+      }
+    });
+  }
+
+  scheduledHandler?.();
+  assert.equal(getDefaultWorldConfig().width, WORLD_CONFIG.width);
 });

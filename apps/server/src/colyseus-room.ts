@@ -44,7 +44,11 @@ import {
   type RoomSnapshotStore,
   type PlayerAccountSnapshot,
 } from "./persistence";
-import { registerConfigUpdateListener } from "./config-center";
+import {
+  configureConfigRuntimeStatusProvider,
+  flushPendingConfigUpdate,
+  registerConfigUpdateListener
+} from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
 import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
@@ -99,6 +103,20 @@ const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
 let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
+
+configureConfigRuntimeStatusProvider(() => {
+  const rooms = Array.from(activeRoomInstances.values())
+    .map((room) => ({
+      roomId: room.roomId,
+      activeBattles: room.worldRoom?.getActiveBattles().length ?? 0
+    }))
+    .filter((room) => room.activeBattles > 0);
+
+  return {
+    rooms,
+    activeBattleCount: rooms.reduce((sum, room) => sum + room.activeBattles, 0)
+  };
+});
 
 interface RoomTimerHandle {
   unref?(): void;
@@ -1669,6 +1687,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
     recordRuntimeRoom(summary);
+    flushPendingConfigUpdate();
   }
 
   private refreshEmptyRoomTracking(now = roomRuntimeDependencies.now()): void {
@@ -1732,6 +1751,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
       removeRuntimeRoom(this.metadata.logicalRoomId);
     }
+
+    flushPendingConfigUpdate();
   }
 
   private hasPlayerBeenDisconnectedLongEnough(playerId: string): boolean {

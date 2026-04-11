@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import { applyEloMatchResult, decodePlayerWorldView } from "../../../packages/shared/src/index";
+import {
+  applyEloMatchResult,
+  createNeutralBattleState,
+  decodePlayerWorldView,
+  getBattleBalanceConfig,
+  getDefaultBattleSkillCatalog,
+  getDefaultWorldConfig,
+  resetRuntimeConfigs
+} from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
 import { resolveBattlePassConfig } from "../src/battle-pass";
+import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "../src/config-center";
 import {
   VeilColyseusRoom,
   configureRoomRuntimeDependencies,
@@ -38,6 +50,11 @@ class InstrumentedRoomSnapshotStore extends MemoryRoomSnapshotStore {
     return super.savePlayerAccountProgress(playerId, patch);
   }
 }
+
+test.afterEach(() => {
+  resetConfigHotReloadState();
+  resetRuntimeConfigs();
+});
 
 class FailingBootstrapSaveStore extends MemoryRoomSnapshotStore {
   override async save(_roomId: string, _snapshot: RoomPersistenceSnapshot): Promise<void> {
@@ -132,6 +149,93 @@ function createManualRoomTimer(startAtMs = 0): {
       await flushAsyncWork();
     }
   };
+}
+
+const HOT_RELOAD_TEST_WORLD_CONFIG = {
+  width: 8,
+  height: 8,
+  heroes: [
+    {
+      id: "hero-1",
+      playerId: "player-1",
+      name: "凯琳",
+      position: { x: 1, y: 1 },
+      vision: 2,
+      move: { total: 6, remaining: 6 },
+      stats: {
+        attack: 2,
+        defense: 2,
+        power: 1,
+        knowledge: 1,
+        hp: 30,
+        maxHp: 30
+      },
+      progression: {
+        level: 1,
+        experience: 0,
+        battlesWon: 0,
+        neutralBattlesWon: 0,
+        pvpBattlesWon: 0
+      },
+      armyTemplateId: "hero_guard_basic",
+      armyCount: 24
+    }
+  ],
+  resourceSpawn: {
+    goldChance: 0.06,
+    woodChance: 0.06,
+    oreChance: 0.06
+  }
+};
+
+const HOT_RELOAD_TEST_MAP_OBJECTS_CONFIG = {
+  neutralArmies: [
+    {
+      id: "neutral-1",
+      position: { x: 5, y: 4 },
+      reward: { kind: "gold" as const, amount: 300 },
+      stacks: [{ templateId: "wolf_pack", count: 1 }]
+    }
+  ],
+  guaranteedResources: [],
+  buildings: []
+};
+
+const HOT_RELOAD_TEST_UNIT_CONFIG = {
+  templates: [
+    {
+      id: "hero_guard_basic",
+      stackName: "枪兵",
+      faction: "crown",
+      rarity: "common",
+      initiative: 6,
+      attack: 4,
+      defense: 4,
+      minDamage: 1,
+      maxDamage: 3,
+      maxHp: 10
+    },
+    {
+      id: "wolf_pack",
+      stackName: "恶狼",
+      faction: "wild",
+      rarity: "common",
+      initiative: 8,
+      attack: 5,
+      defense: 3,
+      minDamage: 2,
+      maxDamage: 4,
+      maxHp: 7
+    }
+  ]
+};
+
+async function seedConfigRootFromRuntime(rootDir: string): Promise<void> {
+  await writeFile(join(rootDir, "phase1-world.json"), `${JSON.stringify(HOT_RELOAD_TEST_WORLD_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "phase1-map-objects.json"), `${JSON.stringify(HOT_RELOAD_TEST_MAP_OBJECTS_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "units.json"), `${JSON.stringify(HOT_RELOAD_TEST_UNIT_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(getDefaultBattleSkillCatalog(), null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(getBattleBalanceConfig(), null, 2)}\n`, "utf8");
 }
 
 async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {
@@ -1166,6 +1270,66 @@ test("battle replay persistence runs once at settlement and is drained from the 
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("config hot reload waits for an in-progress battle before notifying the room", async (t) => {
+  resetLobbyRoomRegistry();
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-hot-reload-"));
+  await seedConfigRootFromRuntime(rootDir);
+  const configStore = new FileSystemConfigCenterStore(rootDir);
+  await configStore.initializeRuntimeConfigs();
+  const baselineWidth = getDefaultWorldConfig().width;
+  const logicalRoomId = `lifecycle-config-hot-reload-${Date.now()}`;
+  const seededBattleRoom = createRoom(logicalRoomId, 1001);
+  const seededState = seededBattleRoom.getInternalState();
+  const hero = seededState.heroes.find((entry) => entry.playerId === "player-1");
+  const neutralArmy = Object.values(seededState.neutralArmies)[0];
+  assert.ok(hero);
+  assert.ok(neutralArmy);
+  const seededBattle = createNeutralBattleState(hero, neutralArmy, 1001, seededState);
+
+  const snapshotStore = new MemoryRoomSnapshotStore();
+  await snapshotStore.save(logicalRoomId, {
+    state: seededState,
+    battles: [seededBattle]
+  });
+  configureRoomSnapshotStore(snapshotStore);
+
+  const room = await createTestRoom(logicalRoomId);
+  const client = createFakeClient("session-config-hot-reload");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: ReturnType<typeof createRoom>;
+    publishLobbyRoomSummary(): void;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-config-hot-reload");
+  assert.ok(getBattleForPlayer(room, "player-1"));
+
+  await configStore.saveDocument(
+    "world",
+    JSON.stringify({
+      ...getDefaultWorldConfig(),
+      width: baselineWidth + 2
+    })
+  );
+
+  assert.equal(getDefaultWorldConfig().width, baselineWidth);
+  assert.equal(client.sent.filter((message) => message.type === "config.update").length, 0);
+
+  internalRoom.worldRoom = createRoom(logicalRoomId, 1001, {
+    state: structuredClone(internalRoom.worldRoom.getInternalState()),
+    battles: []
+  });
+  internalRoom.publishLobbyRoomSummary();
+
+  assert.equal(getDefaultWorldConfig().width, baselineWidth + 2);
+  assert.equal(client.sent.filter((message) => message.type === "config.update").length, 1);
 });
 
 test("battle settlement increments lifecycle completion metrics", async (t) => {

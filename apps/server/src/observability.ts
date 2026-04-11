@@ -1513,6 +1513,32 @@ export function recordRuntimeErrorEvent(
   );
 }
 
+export function countRuntimeErrorEventsSince(
+  sinceMs: number,
+  filters: Partial<Pick<RuntimeDiagnosticsErrorEvent, "featureArea" | "ownerArea" | "severity">> = {}
+): number {
+  return runtimeObservability.errorEvents.filter((event) => {
+    const recordedAtMs = Date.parse(event.recordedAt);
+    if (!Number.isFinite(recordedAtMs) || recordedAtMs < sinceMs) {
+      return false;
+    }
+
+    if (filters.featureArea && event.featureArea !== filters.featureArea) {
+      return false;
+    }
+
+    if (filters.ownerArea && event.ownerArea !== filters.ownerArea) {
+      return false;
+    }
+
+    if (filters.severity && event.severity !== filters.severity) {
+      return false;
+    }
+
+    return true;
+  }).length;
+}
+
 export function removeRuntimeRoom(roomId: string): void {
   runtimeObservability.rooms.delete(roomId);
 }
