@@ -171,6 +171,12 @@ function hasPlayerAccountStore(
   return Boolean(store?.loadPlayerAccount && store.savePlayerAccountProgress);
 }
 
+function hasBattleSnapshotHistoryStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listBattleSnapshotsForPlayer">> {
+  return Boolean(store?.listBattleSnapshotsForPlayer);
+}
+
 function sendInvalidJson(response: ServerResponse): void {
   sendJson(response, 400, { error: "Invalid JSON body" });
 }
@@ -727,6 +733,9 @@ export function registerAdminRoutes(
       const banHistory = hasBanModerationStore(store)
         ? await store.listPlayerBanHistory(playerId, { limit: readLimit(request, 100) })
         : [];
+      const battleHistory = hasBattleSnapshotHistoryStore(store)
+        ? await store.listBattleSnapshotsForPlayer(playerId, { limit: readLimit(request, 50) })
+        : [];
 
       sendJson(response, 200, {
         playerId,
@@ -735,7 +744,8 @@ export function registerAdminRoutes(
         moderation: {
           currentBan,
           banHistory
-        }
+        },
+        battleHistory
       });
     } catch (error) {
       if (error instanceof InvalidAdminPayloadError) {

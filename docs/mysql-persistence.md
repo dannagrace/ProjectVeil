@@ -61,6 +61,43 @@ Recommended index:
 
 - `idx_room_snapshots_updated_at` on `updated_at`
 
+### Table: `battle_snapshots`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `room_id` | `VARCHAR(191)` | No | - | Logical room id |
+| `battle_id` | `VARCHAR(191)` | No | - | Battle id inside the room |
+| `hero_id` | `VARCHAR(191)` | No | - | Attacking hero id |
+| `attacker_player_id` | `VARCHAR(191)` | No | - | Attacker player id |
+| `defender_player_id` | `VARCHAR(191)` | Yes | `NULL` | Defender player id for PvP battles |
+| `defender_hero_id` | `VARCHAR(191)` | Yes | `NULL` | Defender hero id for PvP battles |
+| `neutral_army_id` | `VARCHAR(191)` | Yes | `NULL` | Neutral army id for PvE battles |
+| `encounter_kind` | `VARCHAR(16)` | No | - | `neutral` or `hero` |
+| `initiator` | `VARCHAR(16)` | Yes | `NULL` | Who initiated the encounter |
+| `path_json` | `LONGTEXT` | No | - | Serialized battle-start path used to enter the encounter |
+| `move_cost` | `INT` | No | - | Movement cost consumed when battle started |
+| `player_ids_json` | `LONGTEXT` | No | - | Serialized participant player id list |
+| `initial_state_json` | `LONGTEXT` | No | - | Serialized starting `BattleState` snapshot |
+| `estimated_compensation_grant_json` | `LONGTEXT` | Yes | `NULL` | Serialized conservative compensation estimate used when a neutral battle cannot be restored |
+| `status` | `VARCHAR(16)` | No | `active` | `active`, `resolved`, `compensated`, or `aborted` |
+| `result` | `VARCHAR(32)` | Yes | `NULL` | Final result when the battle settled normally |
+| `resolution_reason` | `VARCHAR(64)` | Yes | `NULL` | Why the record left `active` |
+| `compensation_json` | `LONGTEXT` | Yes | `NULL` | Serialized compensation/notice payload delivered to affected players |
+| `started_at` | `DATETIME` | No | - | Logical battle start time |
+| `resolved_at` | `DATETIME` | Yes | `NULL` | Logical settlement or compensation time |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Row insertion time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last mutation time |
+
+Primary key:
+
+- `(room_id, battle_id)`
+
+Recommended index:
+
+- `idx_battle_snapshots_status_updated` on `(status, updated_at DESC)`
+
+This table is an ops/support ledger separate from `room_snapshots`. It is written on `battle.started`, updated on `battle.resolved`, and later marked `compensated` or `aborted` if a player reconnects after the original room vanished. Support export flows can query this history to inspect both normal settlements and interrupted battles.
+
 ### Table: `player_room_profiles`
 
 | Column | Type | Nullable | Default | Description |

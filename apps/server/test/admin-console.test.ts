@@ -149,6 +149,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     resolvedAt?: string;
   }>();
   const guilds = new Map<string, GuildState>();
+  const battleHistoryByPlayerId = new Map<string, Array<{
+    roomId: string;
+    battleId: string;
+    status: "active" | "resolved" | "compensated" | "aborted";
+    encounterKind: "neutral" | "hero";
+    startedAt: string;
+  }>>();
   const guildAuditLogs: Array<{
     auditId: string;
     guildId: string;
@@ -341,6 +348,21 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     async listPlayerBanHistory(playerId: string, options: { limit?: number } = {}) {
       return (banHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
     },
+    async listBattleSnapshotsForPlayer(playerId: string, options: { limit?: number } = {}) {
+      return (battleHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
+    },
+    seedBattleHistory(
+      playerId: string,
+      items: Array<{
+        roomId: string;
+        battleId: string;
+        status: "active" | "resolved" | "compensated" | "aborted";
+        encounterKind: "neutral" | "hero";
+        startedAt: string;
+      }>
+    ) {
+      battleHistoryByPlayerId.set(playerId, items);
+    },
     async listPlayerReports(options: {
       status?: "pending" | "dismissed" | "warned" | "banned";
       limit?: number;
@@ -382,10 +404,21 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "savePlayerBan"
     | "clearPlayerBan"
     | "listPlayerBanHistory"
+    | "listBattleSnapshotsForPlayer"
     | "listPlayerReports"
     | "resolvePlayerReport"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
+    seedBattleHistory(
+      playerId: string,
+      items: Array<{
+        roomId: string;
+        battleId: string;
+        status: "active" | "resolved" | "compensated" | "aborted";
+        encounterKind: "neutral" | "hero";
+        startedAt: string;
+      }>
+    ): void;
   };
 }
 
@@ -1317,6 +1350,15 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
     banReason: "Spam",
     banExpiry: "2026-05-10T00:00:00.000Z"
   });
+  store.seedBattleHistory("player-export", [
+    {
+      roomId: "room-reconnect",
+      battleId: "battle-neutral-1",
+      status: "compensated",
+      encounterKind: "neutral",
+      startedAt: "2026-04-11T10:00:00.000Z"
+    }
+  ]);
   const { gets } = registerRoutes(store as RoomSnapshotStore);
   const handler = gets.get("/api/admin/players/:id/export");
   assert.ok(handler);
@@ -1338,6 +1380,7 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
     exportedAt: string;
     account: { playerId: string; globalResources: { gold: number; wood: number; ore: number } };
     moderation: { currentBan: { banStatus: string }; banHistory: Array<{ action: string }> };
+    battleHistory: Array<{ battleId: string; status: string }>;
   };
   assert.equal(payload.playerId, "player-export");
   assert.ok(Number.isFinite(Date.parse(payload.exportedAt)));
@@ -1345,6 +1388,8 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
   assert.deepEqual(payload.account.globalResources, { gold: 9, wood: 4, ore: 2 });
   assert.equal(payload.moderation.currentBan.banStatus, "temporary");
   assert.equal(payload.moderation.banHistory[0]?.action, "ban");
+  assert.equal(payload.battleHistory[0]?.battleId, "battle-neutral-1");
+  assert.equal(payload.battleHistory[0]?.status, "compensated");
 });
 
 test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movement for a player", async (t) => {

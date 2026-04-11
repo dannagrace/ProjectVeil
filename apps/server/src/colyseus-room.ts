@@ -42,6 +42,7 @@ import {
   isPlayerBanActive,
   type RoomSnapshotStore,
   type PlayerAccountSnapshot,
+  type BattleSnapshotRecord
 } from "./persistence";
 import {
   configureConfigRuntimeStatusProvider,
@@ -156,6 +157,23 @@ function hasPlayerReportStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "createPlayerReport">> {
   return Boolean(store?.createPlayerReport);
+}
+
+function hasBattleSnapshotStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<
+    Pick<
+      RoomSnapshotStore,
+      "saveBattleSnapshotStart" | "saveBattleSnapshotResolution" | "settleInterruptedBattleSnapshot" | "listBattleSnapshotsForPlayer"
+    >
+  > {
+  return Boolean(
+    store?.saveBattleSnapshotStart &&
+      store.saveBattleSnapshotResolution &&
+      store.settleInterruptedBattleSnapshot &&
+      store.listBattleSnapshotsForPlayer
+  );
 }
 
 export interface LobbyRoomSummary {
@@ -496,6 +514,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
       await this.ensurePlayerWorldSlot(playerId, ensuredAccount);
+      await this.reconcileInterruptedBattles(playerId);
       if (this.shouldRunTurnTimer()) {
         this.ensureTurnTimerState();
         await this.persistRoomState();
@@ -597,7 +616,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
-      await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+      const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+      await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+      await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
       this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
 
       this.publishLobbyRoomSummary();
@@ -661,7 +682,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         sendMessage(client, "error", { requestId: message.requestId, reason: "persistence_save_failed" });
         return;
       }
-      await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+      const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+      await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+      await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
       this.emitAnalyticsForWorldEvents(playerId, result.events ?? []);
 
       this.publishLobbyRoomSummary();
@@ -1173,7 +1196,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
-    await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+    const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+    await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+    await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
     this.publishLobbyRoomSummary();
     this.pushSessionStateToAll({
       events: result.events ?? [],
@@ -1212,7 +1237,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
-    await this.persistPlayerAccountProgress(result.events ?? [], this.worldRoom.consumeCompletedBattleReplays());
+    const completedReplays = this.worldRoom.consumeCompletedBattleReplays();
+    await this.persistBattleSnapshots(result.events ?? [], completedReplays);
+    await this.persistPlayerAccountProgress(result.events ?? [], completedReplays);
     this.publishLobbyRoomSummary();
     this.pushSessionStateToAll({
       events: result.events ?? [],
@@ -1365,6 +1392,82 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     await configuredRoomSnapshotStore.save(this.metadata.logicalRoomId, this.worldRoom.serializePersistenceSnapshot());
   }
 
+  private async persistBattleSnapshots(
+    events: WorldEvent[],
+    completedReplays: CompletedBattleReplayCapture[]
+  ): Promise<void> {
+    const store = configuredRoomSnapshotStore;
+    if (!hasBattleSnapshotStore(store) || (events.length === 0 && completedReplays.length === 0)) {
+      return;
+    }
+
+    const replayByBattleId = new Map(completedReplays.map((replay) => [replay.battleId, replay] as const));
+    const activeBattlesById = new Map(this.worldRoom.getActiveBattles().map((battle) => [battle.id, battle] as const));
+    const internalState = this.worldRoom.getInternalState();
+
+    try {
+      for (const event of events) {
+        if (event.type === "battle.started") {
+          const battle = activeBattlesById.get(event.battleId);
+          if (!battle) {
+            continue;
+          }
+
+          const neutralArmyReward =
+            event.encounterKind === "neutral" && event.neutralArmyId
+              ? internalState.neutralArmies[event.neutralArmyId]?.reward
+              : null;
+          await store.saveBattleSnapshotStart({
+            roomId: this.metadata.logicalRoomId,
+            battleId: event.battleId,
+            heroId: event.heroId,
+            attackerPlayerId: event.attackerPlayerId,
+            ...(event.defenderPlayerId ? { defenderPlayerId: event.defenderPlayerId } : {}),
+            ...(event.defenderHeroId ? { defenderHeroId: event.defenderHeroId } : {}),
+            ...(event.neutralArmyId ? { neutralArmyId: event.neutralArmyId } : {}),
+            encounterKind: event.encounterKind,
+            ...(event.initiator ? { initiator: event.initiator } : {}),
+            path: event.path,
+            moveCost: event.moveCost,
+            playerIds: [event.attackerPlayerId, ...(event.defenderPlayerId ? [event.defenderPlayerId] : [])],
+            initialState: battle,
+            ...(neutralArmyReward
+              ? {
+                  estimatedCompensationGrant: {
+                    resources: {
+                      gold: neutralArmyReward.kind === "gold" ? neutralArmyReward.amount : 0,
+                      wood: neutralArmyReward.kind === "wood" ? neutralArmyReward.amount : 0,
+                      ore: neutralArmyReward.kind === "ore" ? neutralArmyReward.amount : 0
+                    }
+                  }
+                }
+              : {}),
+            startedAt: new Date(roomRuntimeDependencies.now()).toISOString()
+          });
+          continue;
+        }
+
+        if (event.type !== "battle.resolved") {
+          continue;
+        }
+
+        const replay = replayByBattleId.get(event.battleId);
+        await store.saveBattleSnapshotResolution({
+          roomId: this.metadata.logicalRoomId,
+          battleId: event.battleId,
+          result: event.result,
+          resolutionReason: "battle_resolved",
+          resolvedAt: replay?.completedAt ?? new Date(roomRuntimeDependencies.now()).toISOString()
+        });
+      }
+    } catch (error) {
+      console.error("[VeilRoom] Failed to persist battle snapshot state", {
+        roomId: this.metadata.logicalRoomId,
+        error
+      });
+    }
+  }
+
   private async persistPlayerAccountProgress(
     events: WorldEvent[],
     completedReplays: CompletedBattleReplayCapture[]
@@ -1479,6 +1582,76 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         error
       });
     }
+  }
+
+  private async reconcileInterruptedBattles(playerId: string): Promise<void> {
+    const store = configuredRoomSnapshotStore;
+    if (!hasBattleSnapshotStore(store)) {
+      return;
+    }
+
+    try {
+      const activeSnapshots = await store.listBattleSnapshotsForPlayer(playerId, {
+        statuses: ["active"],
+        limit: 20
+      });
+      for (const snapshot of activeSnapshots) {
+        if (this.currentRoomIncludesBattle(snapshot, playerId)) {
+          continue;
+        }
+        if (activeRoomInstances.has(snapshot.roomId)) {
+          continue;
+        }
+
+        const compensation = this.buildInterruptedBattleCompensation(snapshot);
+        await store.settleInterruptedBattleSnapshot({
+          roomId: snapshot.roomId,
+          battleId: snapshot.battleId,
+          status: snapshot.estimatedCompensationGrant ? "compensated" : "aborted",
+          resolutionReason: "room_missing_after_disconnect",
+          ...(compensation ? { compensation } : {}),
+          resolvedAt: new Date(roomRuntimeDependencies.now()).toISOString()
+        });
+      }
+    } catch (error) {
+      console.error("[VeilRoom] Failed to reconcile interrupted battles", {
+        roomId: this.metadata.logicalRoomId,
+        playerId,
+        error
+      });
+    }
+  }
+
+  private currentRoomIncludesBattle(snapshot: BattleSnapshotRecord, playerId: string): boolean {
+    const activeBattle = this.worldRoom.getBattleForPlayer(playerId);
+    if (activeBattle?.id === snapshot.battleId) {
+      return true;
+    }
+
+    return this.worldRoom.getActiveBattles().some((battle) => battle.id === snapshot.battleId);
+  }
+
+  private buildInterruptedBattleCompensation(snapshot: BattleSnapshotRecord) {
+    const grant = snapshot.estimatedCompensationGrant;
+    const messageId = `${snapshot.battleId}:disconnect-recovery`;
+    if (grant) {
+      return {
+        mailboxMessageId: messageId,
+        playerIds: [snapshot.attackerPlayerId],
+        kind: "compensation" as const,
+        title: "战斗中断补偿",
+        body: `房间 ${snapshot.roomId} 的战斗 ${snapshot.battleId} 在断线后未能恢复，系统已按开战快照补发可估算奖励。`,
+        grant
+      };
+    }
+
+    return {
+      mailboxMessageId: messageId,
+      playerIds: snapshot.playerIds,
+      kind: "system" as const,
+      title: "战斗中断通知",
+      body: `房间 ${snapshot.roomId} 的战斗 ${snapshot.battleId} 在断线后未能恢复，系统已保留记录供客服追溯。`
+    };
   }
 
   private buildPlayerBattleReplaysForAccount(
