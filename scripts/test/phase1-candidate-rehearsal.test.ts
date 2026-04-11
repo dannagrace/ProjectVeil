@@ -206,6 +206,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.candidateEvidenceOwnerReminderMarkdownPath ?? "", /candidate-evidence-owner-reminder-report-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceFreshnessHistoryPath ?? "", /candidate-evidence-freshness-history-phase1-mainline\.json/);
   assert.match(report.artifacts.releaseEvidenceIndexPath ?? "", /current-release-evidence-index-phase1-mainline-/);
+  assert.match(report.artifacts.releaseGateSummaryPath ?? "", /release-gate-summary-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitAuditPath ?? "", /phase1-exit-audit-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitDossierFreshnessGatePath ?? "", /phase1-exit-dossier-freshness-gate-phase1-mainline-/);
@@ -220,6 +221,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Phase 1 dossier summary: `passed`/);
   assert.match(markdown, /## Reviewer Front Door/);
   assert.match(markdown, /Current release evidence index:/);
+  assert.match(markdown, /Release gate summary:/);
   assert.match(markdown, /Candidate evidence audit:/);
   assert.match(markdown, /Candidate freshness guard:/);
   assert.match(markdown, /Candidate owner reminder:/);
@@ -249,6 +251,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessHistoryPath:/);
   assert.match(markdown, /releaseEvidenceIndexPath:/);
+  assert.match(markdown, /releaseGateSummaryPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
