@@ -14,6 +14,7 @@ import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./
 import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerEventRoutes } from "./event-engine";
 import { registerGuildRoutes } from "./guilds";
+import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
@@ -311,6 +312,7 @@ export async function startDevServer(
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
+  installHttpRequestObservability(expressApp as unknown as Parameters<typeof installHttpRequestObservability>[0], deps.logger);
   deps.registerPrometheusMetricsMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
