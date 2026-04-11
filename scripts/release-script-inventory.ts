@@ -149,12 +149,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
   },
   "release:phase1:candidate-rehearsal": {
     purpose:
-      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the current evidence index, and the final go/no-go packet, into one release-readiness bundle directory.",
+      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including the same-revision bundle's owner ledger/dashboard, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, and the final go/no-go packet, into one release-readiness bundle directory.",
     requiredInputs: [
       "Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.",
     ],
     producedArtifacts: [
-      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the current evidence index, the final go/no-go packet, and a top-level `SUMMARY.md`.",
+      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the restaged release-readiness dashboard and manual evidence owner ledger, the candidate evidence audit, the current evidence index, the Phase 1 exit audit, the exit-dossier freshness gate, the final go/no-go packet, and a top-level `SUMMARY.md`.",
     ],
   },
   "release:phase1:evidence-drift-gate": {

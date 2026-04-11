@@ -3,6 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  buildPhase1ExitDossierFreshnessGateReport,
+  renderMarkdown as renderPhase1ExitDossierFreshnessGateMarkdown
+} from "./phase1-exit-dossier-freshness-gate.ts";
+import {
+  buildPhase1ExitAudit,
+  renderMarkdown as renderPhase1ExitAuditMarkdown
+} from "./phase1-exit-audit.ts";
+import {
   buildReleaseEvidenceIndexReport,
   renderReleaseEvidenceIndexMarkdown
 } from "./release-evidence-index.ts";
@@ -40,7 +48,7 @@ interface StageDefinition {
   id: string;
   title: string;
   command?: string[];
-  run: () => StageResult;
+  run: () => StageResult | Promise<StageResult>;
 }
 
 interface StageResult {
@@ -89,6 +97,10 @@ interface RehearsalArtifacts {
   releaseEvidenceIndexMarkdownPath?: string;
   phase1CandidateDossierPath?: string;
   phase1CandidateDossierMarkdownPath?: string;
+  phase1ExitAuditPath?: string;
+  phase1ExitAuditMarkdownPath?: string;
+  phase1ExitDossierFreshnessGatePath?: string;
+  phase1ExitDossierFreshnessGateMarkdownPath?: string;
   goNoGoPacketPath?: string;
   goNoGoPacketMarkdownPath?: string;
   summaryPath?: string;
@@ -128,6 +140,19 @@ interface SameRevisionManifest {
     releaseReadinessDashboard?: {
       path?: string;
     };
+  };
+}
+
+interface Phase1CandidateDossierLinkedArtifacts {
+  phase1ExitEvidenceGate?: {
+    result?: string;
+    summary?: string;
+    blockingSections?: string[];
+    pendingSections?: string[];
+    acceptedRiskSections?: string[];
+  };
+  artifacts?: {
+    releaseGateSummaryPath?: string;
   };
 }
 
@@ -418,6 +443,17 @@ function resolveManifestArtifactPath(manifestPath: string, value: string | undef
   return path.isAbsolute(value) ? value : path.resolve(value);
 }
 
+function resolveDossierReleaseGateSummaryPath(dossierPath: string, fallbackPath: string): string {
+  if (!fs.existsSync(dossierPath)) {
+    return fallbackPath;
+  }
+  const dossier = readRequiredJson<Phase1CandidateDossierLinkedArtifacts>(dossierPath);
+  const resolved = dossier.artifacts?.releaseGateSummaryPath
+    ? resolveManifestArtifactPath(dossierPath, dossier.artifacts.releaseGateSummaryPath)
+    : undefined;
+  return resolved && fs.existsSync(resolved) ? resolved : fallbackPath;
+}
+
 function findFirstMatching(outputDir: string, prefix: string, suffix: string): string | undefined {
   if (!fs.existsSync(outputDir)) {
     return undefined;
@@ -500,7 +536,7 @@ function renderMarkdown(report: RehearsalReport): string {
   return `${lines.join("\n")}\n`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   const revision = getRevision();
   const candidateSlug = slugify(args.candidate);
@@ -568,6 +604,16 @@ function main(): void {
   );
   const phase1CandidateDossierPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.json`);
   const phase1CandidateDossierMarkdownPath = path.join(outputDir, `phase1-candidate-dossier-${candidateSlug}-${revision.shortCommit}.md`);
+  const phase1ExitAuditPath = path.join(outputDir, `phase1-exit-audit-${candidateSlug}-${revision.shortCommit}.json`);
+  const phase1ExitAuditMarkdownPath = path.join(outputDir, `phase1-exit-audit-${candidateSlug}-${revision.shortCommit}.md`);
+  const phase1ExitDossierFreshnessGatePath = path.join(
+    outputDir,
+    `phase1-exit-dossier-freshness-gate-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const phase1ExitDossierFreshnessGateMarkdownPath = path.join(
+    outputDir,
+    `phase1-exit-dossier-freshness-gate-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const goNoGoPacketPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.json`);
   const goNoGoPacketMarkdownPath = path.join(outputDir, `go-no-go-decision-packet-${candidateSlug}-${revision.shortCommit}.md`);
   const summaryPath = path.join(outputDir, `phase1-candidate-rehearsal-${candidateSlug}-${revision.shortCommit}.json`);
@@ -597,6 +643,10 @@ function main(): void {
   artifacts.releaseEvidenceIndexMarkdownPath = toRelative(releaseEvidenceIndexMarkdownPath);
   artifacts.phase1CandidateDossierPath = toRelative(phase1CandidateDossierPath);
   artifacts.phase1CandidateDossierMarkdownPath = toRelative(phase1CandidateDossierMarkdownPath);
+  artifacts.phase1ExitAuditPath = toRelative(phase1ExitAuditPath);
+  artifacts.phase1ExitAuditMarkdownPath = toRelative(phase1ExitAuditMarkdownPath);
+  artifacts.phase1ExitDossierFreshnessGatePath = toRelative(phase1ExitDossierFreshnessGatePath);
+  artifacts.phase1ExitDossierFreshnessGateMarkdownPath = toRelative(phase1ExitDossierFreshnessGateMarkdownPath);
   artifacts.goNoGoPacketPath = toRelative(goNoGoPacketPath);
   artifacts.goNoGoPacketMarkdownPath = toRelative(goNoGoPacketMarkdownPath);
   artifacts.summaryPath = toRelative(summaryPath);
@@ -1101,6 +1151,92 @@ function main(): void {
       }
     },
     {
+      id: "phase1-exit-audit",
+      title: "Build Phase 1 exit audit",
+      run: () => {
+        const dossierReleaseGateSummaryPath = resolveDossierReleaseGateSummaryPath(phase1CandidateDossierPath, releaseGateSummaryPath);
+        const reportPromise = buildPhase1ExitAudit({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          targetSurface: args.targetSurface,
+          snapshotPath: releaseReadinessSnapshotPath,
+          releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+          ...(artifacts.wechatCandidateSummaryPath
+            ? { wechatCandidateSummaryPath: path.resolve(artifacts.wechatCandidateSummaryPath) }
+            : {}),
+          ...(artifacts.stableWechatArtifactsDir ? { wechatArtifactsDir: stableWechatArtifactsDir } : {}),
+          ...(artifacts.stableH5SmokePath ? { h5SmokePath: stableH5SmokePath } : {}),
+          ...(artifacts.stableReconnectSoakPath ? { reconnectSoakPath: stableReconnectSoakPath } : {}),
+          ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+          ...(artifacts.cocosBundlePath ? { cocosBundlePath: path.resolve(artifacts.cocosBundlePath) } : {}),
+          persistencePath,
+          ciTrendSummaryPath,
+          ...(fs.existsSync(runtimeObservabilityEvidencePath) ? { runtimeObservabilityEvidencePath } : {}),
+          ...(fs.existsSync(runtimeObservabilityGatePath) ? { runtimeObservabilityGatePath } : {}),
+          ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
+          outputPath: phase1ExitAuditPath,
+          markdownOutputPath: phase1ExitAuditMarkdownPath,
+          maxEvidenceAgeHours: 48
+        });
+
+        return reportPromise.then((report) => {
+          const stagedDossier = fs.existsSync(phase1CandidateDossierPath)
+            ? readRequiredJson<Phase1CandidateDossierLinkedArtifacts>(phase1CandidateDossierPath)
+            : undefined;
+          const normalizedReport = {
+            ...report,
+            ...(stagedDossier?.phase1ExitEvidenceGate ? { phase1ExitEvidenceGate: stagedDossier.phase1ExitEvidenceGate } : {}),
+            inputs: {
+              ...report.inputs,
+              snapshotPath: releaseReadinessSnapshotPath,
+              releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+              ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {})
+            }
+          };
+
+          writeJsonFile(phase1ExitAuditPath, normalizedReport);
+          writeFile(phase1ExitAuditMarkdownPath, renderPhase1ExitAuditMarkdown(normalizedReport));
+          return {
+            id: "phase1-exit-audit",
+            title: "Build Phase 1 exit audit",
+            status: "passed" as StageStatus,
+            summary: `Exit audit verdict ${normalizedReport.summary.status}; final reviewer gate artifact generated successfully.`,
+            outputs: [phase1ExitAuditPath, phase1ExitAuditMarkdownPath].map(toRelative)
+          };
+        });
+      }
+    },
+    {
+      id: "phase1-exit-dossier-freshness-gate",
+      title: "Build Phase 1 exit dossier freshness gate",
+      run: () => {
+        const dossierReleaseGateSummaryPath = resolveDossierReleaseGateSummaryPath(phase1CandidateDossierPath, releaseGateSummaryPath);
+        const report = buildPhase1ExitDossierFreshnessGateReport({
+          candidate: args.candidate,
+          candidateRevision: revision.commit,
+          dossierPath: phase1CandidateDossierPath,
+          exitAuditPath: phase1ExitAuditPath,
+          snapshotPath: releaseReadinessSnapshotPath,
+          releaseGateSummaryPath: dossierReleaseGateSummaryPath,
+          ...(artifacts.manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+          outputPath: phase1ExitDossierFreshnessGatePath,
+          markdownOutputPath: phase1ExitDossierFreshnessGateMarkdownPath,
+          maxAgeHours: 48
+        });
+
+        writeJsonFile(phase1ExitDossierFreshnessGatePath, report);
+        writeFile(phase1ExitDossierFreshnessGateMarkdownPath, renderPhase1ExitDossierFreshnessGateMarkdown(report));
+
+        return {
+          id: "phase1-exit-dossier-freshness-gate",
+          title: "Build Phase 1 exit dossier freshness gate",
+          status: report.summary.status === "passed" ? "passed" : "failed",
+          summary: report.summary.summary,
+          outputs: [phase1ExitDossierFreshnessGatePath, phase1ExitDossierFreshnessGateMarkdownPath].map(toRelative)
+        };
+      }
+    },
+    {
       id: "go-no-go-packet",
       title: "Build go/no-go decision packet",
       run: () => {
@@ -1134,7 +1270,7 @@ function main(): void {
   ];
 
   for (const stage of stageDefinitions) {
-    const result = stage.run();
+    const result = await Promise.resolve(stage.run());
     stageResults.push(result);
   }
 
@@ -1170,6 +1306,10 @@ function main(): void {
     releaseEvidenceIndexMarkdownPath,
     phase1CandidateDossierPath,
     phase1CandidateDossierMarkdownPath,
+    phase1ExitAuditPath,
+    phase1ExitAuditMarkdownPath,
+    phase1ExitDossierFreshnessGatePath,
+    phase1ExitDossierFreshnessGateMarkdownPath,
     goNoGoPacketPath,
     goNoGoPacketMarkdownPath
   ];
@@ -1258,4 +1398,7 @@ function main(): void {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`Phase 1 candidate rehearsal failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});
