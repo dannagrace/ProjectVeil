@@ -1805,3 +1805,21 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 `candidate-revision-triage-digest` 阶段、artifact path 与 summary 呈现
+
+## Issue #1257 - Phase 1 rehearsal primary journey evidence - 2026-04-11
+
+- 本轮把 `release:cocos:primary-journey-evidence` 也收进了 `release:phase1:candidate-rehearsal` 的 candidate packet：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `cocos-primary-journey-evidence` 阶段
+    - 生成并登记：
+      - `cocosPrimaryJourneyEvidencePath`
+      - `cocosPrimaryJourneyEvidenceMarkdownPath`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出 Cocos primary journey evidence
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 现在包含 standalone 的 Cocos primary-client journey evidence
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 primary journey evidence
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `cocos-primary-journey-evidence` 阶段、artifact path 与 summary 呈现

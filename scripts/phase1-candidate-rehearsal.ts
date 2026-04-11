@@ -84,6 +84,8 @@ interface RehearsalArtifacts {
   wechatCandidateSummaryPath?: string;
   wechatCandidateMarkdownPath?: string;
   persistencePath?: string;
+  cocosPrimaryJourneyEvidencePath?: string;
+  cocosPrimaryJourneyEvidenceMarkdownPath?: string;
   cocosPrimaryDiagnosticsPath?: string;
   cocosPrimaryDiagnosticsMarkdownPath?: string;
   candidateRevisionTriageInputPath?: string;
@@ -574,6 +576,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.cocosPrimaryDiagnosticsPath) {
     lines.push(`- Cocos primary diagnostics: \`${report.artifacts.cocosPrimaryDiagnosticsPath}\``);
   }
+  if (report.artifacts.cocosPrimaryJourneyEvidencePath) {
+    lines.push(`- Cocos primary journey evidence: \`${report.artifacts.cocosPrimaryJourneyEvidencePath}\``);
+  }
   if (report.artifacts.candidateRevisionTriageDigestPath) {
     lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
   }
@@ -641,6 +646,14 @@ async function main(): Promise<void> {
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
+  const cocosPrimaryJourneyEvidencePath = path.join(
+    outputDir,
+    `cocos-primary-journey-evidence-${candidateSlug}-${revision.shortCommit}.json`
+  );
+  const cocosPrimaryJourneyEvidenceMarkdownPath = path.join(
+    outputDir,
+    `cocos-primary-journey-evidence-${candidateSlug}-${revision.shortCommit}.md`
+  );
   const cocosPrimaryDiagnosticsPath = path.join(
     outputDir,
     `cocos-primary-client-diagnostic-snapshots-${revision.shortCommit}-${candidateSlug}.json`
@@ -728,6 +741,8 @@ async function main(): Promise<void> {
 
   artifacts.releaseReadinessSnapshotPath = toRelative(releaseReadinessSnapshotPath);
   artifacts.persistencePath = toRelative(persistencePath);
+  artifacts.cocosPrimaryJourneyEvidencePath = toRelative(cocosPrimaryJourneyEvidencePath);
+  artifacts.cocosPrimaryJourneyEvidenceMarkdownPath = toRelative(cocosPrimaryJourneyEvidenceMarkdownPath);
   artifacts.cocosPrimaryDiagnosticsPath = toRelative(cocosPrimaryDiagnosticsPath);
   artifacts.cocosPrimaryDiagnosticsMarkdownPath = toRelative(cocosPrimaryDiagnosticsMarkdownPath);
   artifacts.candidateRevisionTriageInputPath = toRelative(candidateRevisionTriageInputPath);
@@ -898,6 +913,27 @@ async function main(): Promise<void> {
           "--output",
           persistencePath
         ], [persistencePath])
+    },
+    {
+      id: "cocos-primary-journey-evidence",
+      title: "Build Cocos primary journey evidence",
+      run: () =>
+        runCommandStage("cocos-primary-journey-evidence", "Build Cocos primary journey evidence", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/cocos-primary-client-journey-evidence.ts",
+          "--candidate",
+          args.candidate,
+          "--output",
+          cocosPrimaryJourneyEvidencePath,
+          "--markdown-output",
+          cocosPrimaryJourneyEvidenceMarkdownPath,
+          "--owner",
+          "codex",
+          "--server",
+          args.targetSurface
+        ], [cocosPrimaryJourneyEvidencePath, cocosPrimaryJourneyEvidenceMarkdownPath])
     },
     {
       id: "cocos-primary-diagnostics",
@@ -1532,6 +1568,8 @@ async function main(): Promise<void> {
   const requiredArtifacts = [
     releaseReadinessSnapshotPath,
     persistencePath,
+    cocosPrimaryJourneyEvidencePath,
+    cocosPrimaryJourneyEvidenceMarkdownPath,
     cocosPrimaryDiagnosticsPath,
     cocosPrimaryDiagnosticsMarkdownPath,
     candidateRevisionTriageInputPath,
