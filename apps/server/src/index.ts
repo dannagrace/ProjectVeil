@@ -61,6 +61,14 @@ export interface RoomPersistenceSnapshot {
   battles: BattleState[];
 }
 
+export interface AuthoritativeRoomErrorContext {
+  roomId: string;
+  playerId: string | null;
+  battleId: string | null;
+  heroId: string | null;
+  day: number;
+}
+
 interface AuthoritativeRoomTelemetry {
   recordBattleDuration(durationSeconds: number): void;
   recordBattleResolved(input: {
@@ -535,6 +543,23 @@ export class AuthoritativeWorldRoom {
       snapshot: this.getSnapshot(playerId)
     };
   }
+}
+
+export function buildAuthoritativeRoomErrorContext(
+  room: AuthoritativeWorldRoom,
+  playerId?: string | null
+): AuthoritativeRoomErrorContext {
+  const internalState = room.getInternalState();
+  const activeBattle = playerId ? room.getBattleForPlayer(playerId) : null;
+  const activeHero = playerId ? internalState.heroes.find((hero) => hero.playerId === playerId) ?? null : null;
+
+  return {
+    roomId: internalState.meta.roomId,
+    playerId: playerId ?? null,
+    battleId: activeBattle?.id ?? null,
+    heroId: activeHero?.id ?? null,
+    day: internalState.meta.day
+  };
 }
 
 export function createRoom(roomId: string, seed?: number, snapshot?: RoomPersistenceSnapshot): AuthoritativeWorldRoom {

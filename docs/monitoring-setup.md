@@ -96,6 +96,7 @@ Record the drill in your deployment log with timestamp, receiver channel, and sc
 
 ## Production Notes
 
+- Set `SENTRY_DSN` on the server runtime if you want uncaught exceptions and structured server error events forwarded to Sentry. Leaving `SENTRY_DSN` empty keeps runtime diagnostics and Prometheus metrics active without external delivery.
 - Replace the Slack webhook secret with a production-managed secret mount.
 - For Kubernetes or a VM-based deployment, keep `infra/prometheus.yml` and `infra/alertmanager.yml` unchanged and translate only the runtime wrapper from Docker Compose into your platform manifests.
-- If the organization prefers DingTalk or WeCom robots, keep the same Prometheus rule labels and swap the Alertmanager receiver to a webhook bridge that transforms Alertmanager payloads into the provider-specific robot format.
+- If the organization prefers PagerDuty, DingTalk, or WeCom robots, keep the same Prometheus rule labels and swap the Alertmanager receiver to a webhook bridge that transforms Alertmanager payloads into the provider-specific target.

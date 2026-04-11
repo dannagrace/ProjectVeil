@@ -340,6 +340,74 @@ Escalation thresholds:
 - escalate if the alert survives one additional 15-minute window after rollout pause or traffic reduction
 - escalate immediately if the same window also shows asset-load failure growth or player-reported WeChat crashes
 
+## Alert: VeilPersistenceSaveFailuresHigh
+
+Likely causes:
+
+- MySQL or the configured room snapshot store is timing out, read-only, or otherwise unhealthy
+- one specific gameplay action path is writing invalid state and causing repeated rollback loops
+- a deploy changed persistence schema assumptions without matching runtime/store compatibility
+
+Immediate triage commands:
+
+```bash
+grep 'veil_runtime_error_events_total{error_code="persistence_save_failed"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics.errorEvents[] | select(.errorCode=="persistence_save_failed")'
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health"
+```
+
+Mitigation steps:
+
+1. Confirm whether the failures are localized to one room, one player cohort, or all room traffic by checking `roomId`, `playerId`, and `action` context in runtime diagnostics or Sentry.
+2. Inspect MySQL pool pressure, replica lag, and recent persistence deploys before restarting healthy room nodes blindly.
+3. If one action path is dominating the failures, disable or gate that flow and let unaffected room traffic continue.
+4. Route `notify=ops-pagerduty` to the production PagerDuty or DingTalk bridge so the alert reaches a human immediately.
+
+Escalation thresholds:
+
+- escalate immediately when the alert first fires because the rule already represents more than ten failures in one minute
+- escalate to rollback if the same candidate keeps firing after traffic reduction or one node recycle
+
+## Alert: VeilConfigHotloadFailuresHigh
+
+Likely causes:
+
+- a config-center apply introduced a bad world/runtime bundle that caused a room error spike
+- rollback succeeded, but automation or operators are attempting to re-apply the same bad bundle repeatedly
+
+Immediate triage commands:
+
+```bash
+grep 'veil_runtime_error_events_total{error_code="config_hotload_failed"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics.errorEvents[] | select(.errorCode=="config_hotload_failed")'
+```
+
+Mitigation steps:
+
+1. Confirm the rollback already restored the previous runtime bundle before making new config-center changes.
+2. Freeze further config hot reload attempts until the offending bundle diff is reviewed.
+3. Compare the failed apply timestamp with room error spikes and release notes for the same candidate.
+
+## Alert: VeilClientRuntimeErrorsHigh
+
+Likely causes:
+
+- reconnect recovery is failing for one client build or one network cohort
+- the new global error boundary is catching uncaught runtime exceptions on a particular surface
+
+Immediate triage commands:
+
+```bash
+grep 'veil_analytics_events_flushed_total{name="client_runtime_error"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq '.delivery.events[] | select(.name=="client_runtime_error")'
+```
+
+Mitigation steps:
+
+1. Break down the latest `client_runtime_error` payloads by `errorCode`, `stage`, candidate revision, and room scope in the analytics sink.
+2. If `session_disconnect` dominates, inspect reconnect health and room persistence errors alongside the client signal.
+3. If `client_error_boundary_triggered` dominates, pause rollout for the affected client candidate and reproduce with the same surface or mission flow.
+
 ## Closeout Checklist
 
 - capture the alert name, environment, and exact trigger window in the incident notes or PR comments

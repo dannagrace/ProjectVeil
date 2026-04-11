@@ -136,6 +136,30 @@ groups:
           description: Server-side `session_start` analytics in the last 30 minutes have fallen below 30 percent of the same 30-minute window one day earlier. Check login health, room admission, and whether the analytics sink is still flushing current traffic.
           runbook_url: ./alerting-runbook.md#alert-veilanalyticssessionstartsdropped
 
+      - alert: VeilPersistenceSaveFailuresHigh
+        expr: increase(veil_runtime_error_events_total{error_code="persistence_save_failed"}[1m]) > 10
+        for: 1m
+        labels:
+          severity: critical
+          service: project-veil-server
+          notify: ops-pagerduty
+        annotations:
+          summary: Project Veil room persistence failures are above the rollback budget
+          description: More than ten `persistence_save_failed` runtime errors were captured in one minute. Freeze risky room traffic, inspect MySQL/persistence health, and page the on-call path that bridges PagerDuty or DingTalk.
+          runbook_url: ./alerting-runbook.md#alert-veilpersistencesavefailureshigh
+
+      - alert: VeilConfigHotloadFailuresHigh
+        expr: increase(veil_runtime_error_events_total{error_code="config_hotload_failed"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: project-veil-server
+          notify: ops-slack
+        annotations:
+          summary: Project Veil config hot reload rolled back after a runtime error spike
+          description: At least one `config_hotload_failed` runtime error was captured in the last 15 minutes. Inspect the last config-center apply, confirm rollback state, and hold further rollout changes until the bad bundle is understood.
+          runbook_url: ./alerting-runbook.md#alert-veilconfighotloadfailureshigh
+
       - alert: VeilFeatureFlagConfigStale
         expr: max(veil_feature_flag_config_stale) > 0
         for: 2m
@@ -209,3 +233,14 @@ groups:
           summary: Project Veil client runtime performance degradation is above budget
           description: Client `client_perf_degraded` analytics exceeded five flushed events in 15 minutes. Inspect the affected candidate revision, low-FPS windows, and memory pressure before expanding traffic.
           runbook_url: ./alerting-runbook.md#alert-veilclientperfdegradedhigh
+
+      - alert: VeilClientRuntimeErrorsHigh
+        expr: increase(veil_analytics_events_flushed_total{name="client_runtime_error",source="cocos-client"}[15m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-client
+        annotations:
+          summary: Project Veil client severe runtime errors are above budget
+          description: Client `client_runtime_error` analytics exceeded five flushed events in 15 minutes. Check whether the spike is dominated by `session_disconnect` or `client_error_boundary_triggered` payloads before widening rollout.
+          runbook_url: ./alerting-runbook.md#alert-veilclientruntimeerrorshigh

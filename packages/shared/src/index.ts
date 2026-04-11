@@ -18,6 +18,7 @@ export * from "./daily-quest-rotation.ts";
 export * from "./deterministic-rng.ts";
 export * from "./display-name-validation.ts";
 export * from "./equipment.ts";
+export * from "./error-codes.ts";
 export * from "./event-log.ts";
 export * from "./feature-flags.ts";
 export * from "./feedback.ts";

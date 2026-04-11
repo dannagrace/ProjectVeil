@@ -134,6 +134,18 @@ export const ANALYTICS_EVENT_CATALOG = {
       wechatVersion: "8.0.50"
     }
   ),
+  client_runtime_error: defineAnalyticsEvent(
+    "client_runtime_error",
+    1,
+    "Client runtime captured a severe session or global application error worth operational triage.",
+    {
+      errorCode: "session_disconnect",
+      severity: "error",
+      stage: "connection",
+      recoverable: true,
+      message: "Reconnect failed while restoring the room snapshot."
+    }
+  ),
 } as const;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENT_CATALOG;

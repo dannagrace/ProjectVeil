@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
@@ -33,6 +34,8 @@ import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
 import { registerShopRoutes } from "./shop";
 import { registerWechatPayRoutes } from "./wechat-pay";
+import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
+import { recordRuntimeErrorEvent } from "./observability";
 
 loadEnv();
 
@@ -362,6 +365,11 @@ export async function startDevServer(
     deps.logger.log("Persistence mode: degraded/in-memory");
     deps.logger.log(persistenceHealth.message);
   }
+  deps.logger.log(
+    isErrorMonitoringEnabled()
+      ? "Error monitoring: SENTRY_DSN configured; Sentry delivery enabled"
+      : "Error monitoring: SENTRY_DSN not configured; external delivery skipped"
+  );
 
   let cleanupTimer: CleanupTimerHandle | null = null;
   if (deps.isMySqlSnapshotStore(effectiveSnapshotStore)) {
@@ -422,7 +430,20 @@ export async function startDevServer(
       deps.logger.error(message, error);
     }
 
-    void closeStore().finally(() => deps.process.exit(exitCode));
+    const capturePromise =
+      message && error
+        ? captureServerError({
+            errorCode: message.startsWith("Unhandled promise rejection") ? "unhandled_rejection" : "uncaught_exception",
+            message,
+            error,
+            severity: "fatal",
+            featureArea: "runtime",
+            ownerArea: "ops",
+            surface: "dev-server"
+          })
+        : Promise.resolve();
+
+    void Promise.allSettled([capturePromise, closeStore()]).finally(() => deps.process.exit(exitCode));
   };
 
   deps.process.once("SIGINT", () => {
@@ -432,9 +453,53 @@ export async function startDevServer(
     shutdown(0);
   });
   deps.process.on("unhandledRejection", (reason) => {
+    recordRuntimeErrorEvent({
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "dev-server",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+      featureArea: "runtime",
+      ownerArea: "ops",
+      severity: "fatal",
+      errorCode: "unhandled_rejection",
+      message: "Unhandled promise rejection in dev server",
+      context: {
+        roomId: null,
+        playerId: null,
+        requestId: null,
+        route: null,
+        action: null,
+        statusCode: null,
+        crash: true,
+        detail: reason instanceof Error ? reason.message : String(reason)
+      }
+    });
     shutdown(1, "Unhandled promise rejection in dev server", reason);
   });
   deps.process.on("uncaughtException", (error) => {
+    recordRuntimeErrorEvent({
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "dev-server",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+      featureArea: "runtime",
+      ownerArea: "ops",
+      severity: "fatal",
+      errorCode: "uncaught_exception",
+      message: "Uncaught exception in dev server",
+      context: {
+        roomId: null,
+        playerId: null,
+        requestId: null,
+        route: null,
+        action: null,
+        statusCode: null,
+        crash: true,
+        detail: error.message
+      }
+    });
     shutdown(1, "Uncaught exception in dev server", error);
   });
 }
