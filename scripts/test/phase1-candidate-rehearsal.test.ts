@@ -25,6 +25,10 @@ function readGit(command: string[]): string {
   return result.stdout.trim();
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehearsal outputs", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-rehearsal-"));
   const buildDir = path.join(workspace, "build");
@@ -226,10 +230,12 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Release gate summary: `passed`/);
   assert.match(markdown, /Phase 1 dossier summary: `passed`/);
   assert.match(markdown, /## Reviewer Front Door/);
+  assert.match(markdown, /canonical packet-level reviewer entrypoint from `SUMMARY\.md`/);
   assert.match(markdown, /Current release evidence index:/);
   assert.match(markdown, /Release gate summary:/);
   assert.match(markdown, /Release health summary:/);
   assert.match(markdown, /Release readiness snapshot:/);
+  assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
   assert.match(markdown, /H5 candidate smoke:/);
   assert.match(markdown, /Reconnect soak summary:/);
   assert.match(markdown, /WeChat candidate summary:/);
