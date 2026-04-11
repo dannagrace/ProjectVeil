@@ -3791,6 +3791,60 @@ test("wechat mini game login stores verified minor status when age data is provi
   assert.equal(storedAccount?.isMinor, true);
 });
 
+test("wechat mini game login derives minor status from self-declared birthdate", { concurrency: false }, async (t) => {
+  const port = 45010 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-birthdate-minor",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "wechat-birthdate-minor",
+      displayName: "晨训学员",
+      birthdate: "2012-01-01",
+      privacyConsentAccepted: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const storedAccount = await store.loadPlayerAccount("wechat-birthdate-minor");
+  assert.equal(storedAccount?.ageVerified, true);
+  assert.equal(storedAccount?.isMinor, true);
+});
+
 test("wechat mini game login reuses the bound player even when later requests spoof another playerId", { concurrency: false }, async (t) => {
   const port = 45050 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();

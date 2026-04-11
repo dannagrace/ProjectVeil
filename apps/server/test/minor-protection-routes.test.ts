@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { evaluateMinorProtectionState, readMinorProtectionConfig } from "../src/minor-protection";
-import { registerMinorProtectionPreviewRoutes } from "../src/minor-protection-preview";
+import { registerMinorProtectionRoutes } from "../src/minor-protection-routes";
 import type { RoomSnapshotStore } from "../src/persistence";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
@@ -126,7 +126,7 @@ test("evaluateMinorProtectionState applies holiday override", () => {
   assert.equal(evaluation.reason, null);
 });
 
-test("GET /api/admin/minor-protection/preview requires the admin token", async (t) => {
+test("GET /api/admin/minor-protection requires the admin token", async (t) => {
   const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.VEIL_ADMIN_TOKEN = "preview-token";
   t.after(() => {
@@ -138,14 +138,14 @@ test("GET /api/admin/minor-protection/preview requires the admin token", async (
   });
 
   const { app, gets } = createTestApp();
-  registerMinorProtectionPreviewRoutes(app, null);
-  const handler = gets.get("/api/admin/minor-protection/preview");
+  registerMinorProtectionRoutes(app, null);
+  const handler = gets.get("/api/admin/minor-protection");
   assert.ok(handler);
 
   const response = createResponse();
   await handler(
     createRequest({
-      url: "/api/admin/minor-protection/preview?playerId=minor-player"
+      url: "/api/admin/minor-protection?playerId=minor-player"
     }),
     response
   );
@@ -159,7 +159,7 @@ test("GET /api/admin/minor-protection/preview requires the admin token", async (
   });
 });
 
-test("GET /api/admin/minor-protection/preview returns 400 when playerId is missing", async (t) => {
+test("GET /api/admin/minor-protection returns 400 when playerId is missing", async (t) => {
   const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.VEIL_ADMIN_TOKEN = "preview-token";
   t.after(() => {
@@ -171,8 +171,8 @@ test("GET /api/admin/minor-protection/preview returns 400 when playerId is missi
   });
 
   const { app, gets } = createTestApp();
-  registerMinorProtectionPreviewRoutes(app, null);
-  const handler = gets.get("/api/admin/minor-protection/preview");
+  registerMinorProtectionRoutes(app, null);
+  const handler = gets.get("/api/admin/minor-protection");
   assert.ok(handler);
 
   const response = createResponse();
@@ -181,7 +181,7 @@ test("GET /api/admin/minor-protection/preview returns 400 when playerId is missi
       headers: {
         "x-veil-admin-token": "preview-token"
       },
-      url: "/api/admin/minor-protection/preview"
+      url: "/api/admin/minor-protection"
     }),
     response
   );
@@ -195,7 +195,7 @@ test("GET /api/admin/minor-protection/preview returns 400 when playerId is missi
   });
 });
 
-test("GET /api/admin/minor-protection/preview honors at and dailyPlayMinutes overrides", async (t) => {
+test("GET /api/admin/minor-protection honors at and dailyPlayMinutes overrides", async (t) => {
   const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.VEIL_ADMIN_TOKEN = "preview-token";
   t.after(() => {
@@ -218,8 +218,8 @@ test("GET /api/admin/minor-protection/preview honors at and dailyPlayMinutes ove
   } as Pick<RoomSnapshotStore, "loadPlayerAccount"> as RoomSnapshotStore;
 
   const { app, gets } = createTestApp();
-  registerMinorProtectionPreviewRoutes(app, store);
-  const handler = gets.get("/api/admin/minor-protection/preview");
+  registerMinorProtectionRoutes(app, store);
+  const handler = gets.get("/api/admin/minor-protection");
   assert.ok(handler);
 
   const response = createResponse();
@@ -228,7 +228,7 @@ test("GET /api/admin/minor-protection/preview honors at and dailyPlayMinutes ove
       headers: {
         "x-veil-admin-token": "preview-token"
       },
-      url: "/api/admin/minor-protection/preview?playerId=minor-player&at=2026-04-03T14:30:00.000Z&dailyPlayMinutes=90"
+      url: "/api/admin/minor-protection?playerId=minor-player&at=2026-04-03T14:30:00.000Z&dailyPlayMinutes=90"
     }),
     response
   );
@@ -242,11 +242,22 @@ test("GET /api/admin/minor-protection/preview honors at and dailyPlayMinutes ove
     restrictedHours: true,
     dailyLimitReached: true,
     wouldBlock: true,
-    reason: "minor_restricted_hours"
+    reason: "minor_restricted_hours",
+    currentServerTime: "2026-04-03T14:30:00.000Z",
+    currentLocalTime: "22:30",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 0,
+    nextAllowedAt: "2026-04-04T00:00:00.000Z",
+    nextAllowedLocalTime: "08:00",
+    nextAllowedCountdownSeconds: 34200
   });
 });
 
-test("GET /api/admin/minor-protection/preview returns pass-through and allowed states", async (t) => {
+test("GET /api/admin/minor-protection returns pass-through and allowed states", async (t) => {
   const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.VEIL_ADMIN_TOKEN = "preview-token";
   t.after(() => {
@@ -278,8 +289,8 @@ test("GET /api/admin/minor-protection/preview returns pass-through and allowed s
   } as Pick<RoomSnapshotStore, "loadPlayerAccount"> as RoomSnapshotStore;
 
   const { app, gets } = createTestApp();
-  registerMinorProtectionPreviewRoutes(app, store);
-  const handler = gets.get("/api/admin/minor-protection/preview");
+  registerMinorProtectionRoutes(app, store);
+  const handler = gets.get("/api/admin/minor-protection");
   assert.ok(handler);
 
   const adultResponse = createResponse();
@@ -288,7 +299,7 @@ test("GET /api/admin/minor-protection/preview returns pass-through and allowed s
       headers: {
         "x-veil-admin-token": "preview-token"
       },
-      url: "/api/admin/minor-protection/preview?playerId=adult-player&at=2026-04-03T14:30:00.000Z"
+      url: "/api/admin/minor-protection?playerId=adult-player&at=2026-04-03T14:30:00.000Z"
     }),
     adultResponse
   );
@@ -302,7 +313,18 @@ test("GET /api/admin/minor-protection/preview returns pass-through and allowed s
     restrictedHours: true,
     dailyLimitReached: true,
     wouldBlock: false,
-    reason: null
+    reason: null,
+    currentServerTime: "2026-04-03T14:30:00.000Z",
+    currentLocalTime: "22:30",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 0,
+    nextAllowedAt: "2026-04-03T14:30:00.000Z",
+    nextAllowedLocalTime: "22:30",
+    nextAllowedCountdownSeconds: 0
   });
 
   const allowedResponse = createResponse();
@@ -311,7 +333,7 @@ test("GET /api/admin/minor-protection/preview returns pass-through and allowed s
       headers: {
         "x-veil-admin-token": "preview-token"
       },
-      url: "/api/admin/minor-protection/preview?playerId=minor-player&at=2026-04-03T01:00:00.000Z"
+      url: "/api/admin/minor-protection?playerId=minor-player&at=2026-04-03T01:00:00.000Z"
     }),
     allowedResponse
   );
@@ -325,6 +347,47 @@ test("GET /api/admin/minor-protection/preview returns pass-through and allowed s
     restrictedHours: false,
     dailyLimitReached: false,
     wouldBlock: false,
-    reason: null
+    reason: null,
+    currentServerTime: "2026-04-03T01:00:00.000Z",
+    currentLocalTime: "09:00",
+    timeZone: "Asia/Shanghai",
+    restrictedWindow: {
+      startHour: 22,
+      endHour: 8
+    },
+    remainingDailyMinutes: 45,
+    nextAllowedAt: "2026-04-03T01:00:00.000Z",
+    nextAllowedLocalTime: "09:00",
+    nextAllowedCountdownSeconds: 0
   });
+});
+
+test("GET /api/admin/minor-protection/preview remains as a compatibility alias", async (t) => {
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "preview-token";
+  t.after(() => {
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+      return;
+    }
+    process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+  });
+
+  const { app, gets } = createTestApp();
+  registerMinorProtectionRoutes(app, null);
+  const handler = gets.get("/api/admin/minor-protection/preview");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": "preview-token"
+      },
+      url: "/api/admin/minor-protection/preview?playerId=minor-player"
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
 });

@@ -51,7 +51,7 @@ import {
 } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { resolveGuestAuthSession } from "./auth";
-import { deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
+import { buildMinorProtectionBlockDetails, deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
   recordAntiCheatAlert,
@@ -1547,15 +1547,23 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     const syncedAccount = await this.syncMinorProtectionAccount(playerId, account);
-    const state = deriveMinorProtectionState(syncedAccount, new Date(), this.minorProtectionConfig);
-    if (state.restrictedHours) {
-      sendMessage(client, "error", { requestId, reason: "minor_restricted_hours" });
+    const details = buildMinorProtectionBlockDetails(syncedAccount, new Date(), this.minorProtectionConfig);
+    if (details.restrictedHours) {
+      sendMessage(client, "error", {
+        requestId,
+        reason: "minor_restricted_hours",
+        minorProtection: details
+      });
       client.leave(CloseCode.WITH_ERROR, "minor_restricted_hours");
       return true;
     }
 
-    if (state.dailyLimitReached) {
-      sendMessage(client, "error", { requestId, reason: "minor_daily_limit_reached" });
+    if (details.dailyLimitReached) {
+      sendMessage(client, "error", {
+        requestId,
+        reason: "minor_daily_limit_reached",
+        minorProtection: details
+      });
       client.leave(CloseCode.WITH_ERROR, "minor_daily_limit_reached");
       return true;
     }

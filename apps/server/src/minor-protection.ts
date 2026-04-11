@@ -29,6 +29,20 @@ export interface MinorProtectionEvaluation extends MinorProtectionState {
   reason: "minor_restricted_hours" | "minor_daily_limit_reached" | null;
 }
 
+export interface MinorProtectionBlockDetails extends MinorProtectionEvaluation {
+  currentServerTime: string;
+  currentLocalTime: string;
+  timeZone: string;
+  restrictedWindow: {
+    startHour: number;
+    endHour: number;
+  };
+  remainingDailyMinutes: number;
+  nextAllowedAt: string | null;
+  nextAllowedLocalTime: string | null;
+  nextAllowedCountdownSeconds: number | null;
+}
+
 function parseEnvInteger(value: string | undefined, fallback: number, minimum: number, maximum?: number): number {
   const parsed = Number(value?.trim());
   if (!Number.isFinite(parsed)) {
@@ -74,6 +88,17 @@ function getHourInTimeZone(date: Date, timeZone: string): number {
   return Number(hourPart ?? "0");
 }
 
+function getMinuteInTimeZone(date: Date, timeZone: string): number {
+  const minutePart = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    minute: "2-digit"
+  })
+    .formatToParts(date)
+    .find((part) => part.type === "minute")?.value;
+
+  return Number(minutePart ?? "0");
+}
+
 function getWeekdayInTimeZone(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -84,6 +109,72 @@ function getWeekdayInTimeZone(date: Date, timeZone: string): string {
 function normalizeDateKey(value?: string | null): string | undefined {
   const normalized = value?.trim();
   return normalized && /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : undefined;
+}
+
+function formatLocalTime(date: Date, timeZone: string): string {
+  const hour = String(getHourInTimeZone(date, timeZone)).padStart(2, "0");
+  const minute = String(getMinuteInTimeZone(date, timeZone)).padStart(2, "0");
+  return `${hour}:${minute}`;
+}
+
+function parseBirthdate(value: string): { year: number; month: number; day: number } | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return { year, month, day };
+}
+
+function getNumericDateParts(date: Date, timeZone: string): { year: number; month: number; day: number } {
+  const parts = getDateParts(date, timeZone);
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day)
+  };
+}
+
+function compareDateParts(
+  left: { year: number; month: number; day: number },
+  right: { year: number; month: number; day: number }
+): number {
+  if (left.year !== right.year) {
+    return left.year - right.year;
+  }
+  if (left.month !== right.month) {
+    return left.month - right.month;
+  }
+  return left.day - right.day;
+}
+
+function deriveAgeFromBirthdate(
+  birthdate: { year: number; month: number; day: number },
+  now: Date,
+  timeZone: string
+): number {
+  const today = getNumericDateParts(now, timeZone);
+  let age = today.year - birthdate.year;
+  if (today.month < birthdate.month || (today.month === birthdate.month && today.day < birthdate.day)) {
+    age -= 1;
+  }
+  return age;
 }
 
 function isMinorAgeRange(ageRange: string): boolean | undefined {
@@ -196,11 +287,94 @@ export function evaluateMinorProtectionState(
   };
 }
 
-export function deriveWechatMinorProtection(input: {
-  ageVerified?: boolean | null;
-  isAdult?: boolean | null;
-  ageRange?: string | null;
-}): { ageVerified?: boolean; isMinor?: boolean } {
+export function normalizeMinorProtectionBirthdate(
+  value: string,
+  now = new Date(),
+  config = readMinorProtectionConfig()
+): string {
+  const normalized = value.trim();
+  const birthdate = parseBirthdate(normalized);
+  if (!birthdate) {
+    throw new Error('Expected optional string field: birthdate in "YYYY-MM-DD" format');
+  }
+
+  const today = getNumericDateParts(now, config.timeZone);
+  if (compareDateParts(birthdate, today) > 0) {
+    throw new Error("birthdate cannot be in the future");
+  }
+
+  const age = deriveAgeFromBirthdate(birthdate, now, config.timeZone);
+  if (age > 120) {
+    throw new Error("birthdate must be within the past 120 years");
+  }
+
+  return normalized;
+}
+
+export function findNextAllowedMinorProtectionTime(
+  account: Pick<PlayerAccountSnapshot, "isMinor" | "dailyPlayMinutes" | "lastPlayDate">,
+  now = new Date(),
+  config = readMinorProtectionConfig()
+): Date | null {
+  const current = evaluateMinorProtectionState(account, now, config);
+  if (!current.wouldBlock) {
+    return now;
+  }
+
+  for (let minutes = 1; minutes <= 48 * 60; minutes += 1) {
+    const candidate = new Date(now.getTime() + minutes * 60_000);
+    if (!evaluateMinorProtectionState(account, candidate, config).wouldBlock) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+export function buildMinorProtectionBlockDetails(
+  account: Pick<PlayerAccountSnapshot, "isMinor" | "dailyPlayMinutes" | "lastPlayDate">,
+  now = new Date(),
+  config = readMinorProtectionConfig()
+): MinorProtectionBlockDetails {
+  const evaluation = evaluateMinorProtectionState(account, now, config);
+  const nextAllowedAt = evaluation.wouldBlock ? findNextAllowedMinorProtectionTime(account, now, config) : now;
+
+  return {
+    ...evaluation,
+    currentServerTime: now.toISOString(),
+    currentLocalTime: formatLocalTime(now, config.timeZone),
+    timeZone: config.timeZone,
+    restrictedWindow: {
+      startHour: config.restrictedStartHour,
+      endHour: config.restrictedEndHour
+    },
+    remainingDailyMinutes: Math.max(0, evaluation.dailyLimitMinutes - evaluation.normalizedDailyPlayMinutes),
+    nextAllowedAt: nextAllowedAt?.toISOString() ?? null,
+    nextAllowedLocalTime: nextAllowedAt ? formatLocalTime(nextAllowedAt, config.timeZone) : null,
+    nextAllowedCountdownSeconds:
+      nextAllowedAt == null ? null : Math.max(0, Math.ceil((nextAllowedAt.getTime() - now.getTime()) / 1000))
+  };
+}
+
+export function deriveWechatMinorProtection(
+  input: {
+    birthdate?: string | null;
+    ageVerified?: boolean | null;
+    isAdult?: boolean | null;
+    ageRange?: string | null;
+  },
+  now = new Date(),
+  config = readMinorProtectionConfig()
+): { ageVerified?: boolean; isMinor?: boolean } {
+  if (typeof input.birthdate === "string") {
+    const normalizedBirthdate = normalizeMinorProtectionBirthdate(input.birthdate, now, config);
+    const birthdate = parseBirthdate(normalizedBirthdate);
+    return {
+      ageVerified: true,
+      isMinor: birthdate != null && deriveAgeFromBirthdate(birthdate, now, config.timeZone) < 18
+    };
+  }
+
   if (typeof input.isAdult === "boolean") {
     return {
       ageVerified: true,

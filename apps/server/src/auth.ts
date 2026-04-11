@@ -1010,6 +1010,7 @@ async function handleWechatLogin(
     avatarUrl?: string | null;
     migrationChoice?: string | null;
     privacyConsentAccepted?: boolean | null;
+    birthdate?: string | null;
     ageVerified?: boolean | null;
     isAdult?: boolean | null;
     ageRange?: string | null;
@@ -1085,6 +1086,16 @@ async function handleWechatLogin(
     return;
   }
 
+  if (body.birthdate !== undefined && body.birthdate !== null && typeof body.birthdate !== "string") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional string field: birthdate"
+      }
+    });
+    return;
+  }
+
   if (body.isAdult !== undefined && body.isAdult !== null && typeof body.isAdult !== "boolean") {
     sendJson(response, 400, {
       error: {
@@ -1122,11 +1133,24 @@ async function handleWechatLogin(
     });
     return;
   }
-  const minorProtection = deriveWechatMinorProtection({
-    ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
-    ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
-    ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
-  });
+  const now = new Date();
+  let minorProtection: ReturnType<typeof deriveWechatMinorProtection>;
+  try {
+    minorProtection = deriveWechatMinorProtection({
+      ...(body.birthdate !== undefined ? { birthdate: body.birthdate } : {}),
+      ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
+      ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
+      ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
+    }, now);
+  } catch (error) {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: error instanceof Error ? error.message : String(error)
+      }
+    });
+    return;
+  }
   const wechatConfig = readWechatMiniGameLoginConfig();
 
   let identity: WechatMiniGameIdentity;
