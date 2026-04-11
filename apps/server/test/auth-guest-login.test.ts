@@ -3670,6 +3670,34 @@ test("guest login requires privacy consent before issuing the first session", as
   assert.ok((await store.loadPlayerAccount("guest-consent"))?.privacyConsentAt);
 });
 
+test("guest login rejects moderated display names with a clear 400 error", async (t) => {
+  const port = 45170 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-moderation",
+      displayName: "G.M!",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string; message: string } };
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "invalid_display_name");
+  assert.match(payload.error.message, /reserved term/i);
+});
+
 test("account registration confirmation requires privacy consent", async (t) => {
   const port = 45180 + Math.floor(Math.random() * 1000);
   const cleanup: Array<() => void> = [];

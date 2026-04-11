@@ -39,6 +39,7 @@ import {
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
+import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
@@ -2092,6 +2093,7 @@ export function registerAuthRoutes(
 
       let playerId = normalizePlayerId(body.playerId);
       let displayName = normalizeDisplayName(playerId, body.displayName);
+      await assertDisplayNameAvailableOrThrow(store, displayName, playerId);
 
       if (store) {
         let account = await store.ensurePlayerAccount({
@@ -2354,6 +2356,7 @@ export function registerAuthRoutes(
       }
 
       const requestedDisplayName = normalizeRequestedRegistrationDisplayName(loginId, body.displayName);
+      await assertDisplayNameAvailableOrThrow(store, requestedDisplayName);
       const deliveryMode = readAccountRegistrationDeliveryMode();
       const existingRegistrationState = getAccountRegistrationState(loginId);
       const registrationState =

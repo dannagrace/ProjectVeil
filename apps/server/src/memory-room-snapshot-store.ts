@@ -6,6 +6,7 @@ import {
   getTierForDivision,
   normalizeGuildState,
   normalizeCosmeticInventory,
+  normalizeTextForModeration,
   normalizeEloRating,
   normalizeEventLogEntries,
   normalizeEventLogQuery,
@@ -59,6 +60,10 @@ import {
   type ShopPurchaseMutationInput,
   type ShopPurchaseResult
 } from "./persistence";
+import {
+  assertDisplayNameAvailableOrThrow,
+  buildBannedAccountNameReservationExpiry
+} from "./display-name-rules";
 import type { RoomPersistenceSnapshot } from "./index";
 import {
   applyBattlePassXp,
@@ -99,6 +104,15 @@ function normalizeDisplayName(playerId: string, displayName?: string | null): st
   return normalized.slice(0, MAX_PLAYER_DISPLAY_NAME_LENGTH);
 }
 
+function normalizeDisplayNameLookup(displayName: string): string {
+  const normalized = normalizeTextForModeration(displayName);
+  if (!normalized) {
+    throw new Error("displayName must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
 function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
   const normalized = avatarUrl?.trim();
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
@@ -136,6 +150,22 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly guildAuditLogs: GuildAuditLogRecord[] = [];
+  private readonly nameHistoryByPlayerId = new Map<string, Array<{
+    id: number;
+    playerId: string;
+    displayName: string;
+    normalizedName: string;
+    changedAt: string;
+  }>>();
+  private readonly activeNameReservations = new Map<string, {
+    id: number;
+    playerId: string;
+    displayName: string;
+    normalizedName: string;
+    reservedUntil: string;
+    reason: string;
+    createdAt: string;
+  }>();
   private readonly paymentOrders = new Map<string, PaymentOrderSnapshot>();
   private readonly paymentReceiptsByOrderId = new Map<string, PaymentReceiptSnapshot>();
   private readonly paymentReceiptOrderIdByTransactionId = new Map<string, string>();
@@ -151,6 +181,41 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly seasonRewardLog = new Map<string, { gems: number; badge: string; distributedAt: string }>();
   private readonly referrals = new Set<string>();
   private nextReportId = 1;
+  private nextPlayerNameHistoryId = 1;
+  private nextPlayerNameReservationId = 1;
+
+  private appendPlayerNameHistory(playerId: string, displayName: string, changedAt = new Date().toISOString()): void {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const history = this.nameHistoryByPlayerId.get(normalizedPlayerId) ?? [];
+    history.unshift({
+      id: this.nextPlayerNameHistoryId++,
+      playerId: normalizedPlayerId,
+      displayName: displayName.trim(),
+      normalizedName: normalizeDisplayNameLookup(displayName),
+      changedAt
+    });
+    this.nameHistoryByPlayerId.set(normalizedPlayerId, history);
+  }
+
+  private reserveBannedPlayerNames(playerId: string, displayNames: string[]): void {
+    const reservedUntil = buildBannedAccountNameReservationExpiry();
+    for (const displayName of Array.from(new Set(displayNames.map((entry) => entry.trim()).filter(Boolean)))) {
+      const normalizedName = normalizeDisplayNameLookup(displayName);
+      const existing = this.activeNameReservations.get(normalizedName);
+      this.activeNameReservations.set(normalizedName, {
+        id: existing?.id ?? this.nextPlayerNameReservationId++,
+        playerId: normalizePlayerId(playerId),
+        displayName,
+        normalizedName,
+        reservedUntil:
+          existing && new Date(existing.reservedUntil).getTime() > new Date(reservedUntil).getTime()
+            ? existing.reservedUntil
+            : reservedUntil,
+        reason: "banned_account",
+        createdAt: existing?.createdAt ?? new Date().toISOString()
+      });
+    }
+  }
 
   async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
     const snapshot = this.snapshots.get(roomId);
@@ -248,6 +313,37 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(account.banExpiry ? { banExpiry: account.banExpiry } : {}),
       ...(account.banReason ? { banReason: account.banReason } : {})
     };
+  }
+
+  async listPlayerNameHistory(playerId: string, options: { limit?: number } = {}) {
+    return (this.nameHistoryByPlayerId.get(normalizePlayerId(playerId)) ?? [])
+      .slice(0, Math.max(1, Math.floor(options.limit ?? 20)))
+      .map((entry) => structuredClone(entry));
+  }
+
+  async findPlayerNameHistoryByDisplayName(displayName: string, options: { limit?: number } = {}) {
+    const normalizedName = normalizeDisplayNameLookup(displayName);
+    const matches = Array.from(this.nameHistoryByPlayerId.values())
+      .flat()
+      .filter((entry) => entry.normalizedName === normalizedName)
+      .sort((left, right) => right.changedAt.localeCompare(left.changedAt) || right.id - left.id)
+      .slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
+    return matches.map((entry) => structuredClone(entry));
+  }
+
+  async findActivePlayerNameReservation(displayName: string) {
+    const normalizedName = normalizeDisplayNameLookup(displayName);
+    const reservation = this.activeNameReservations.get(normalizedName);
+    if (!reservation) {
+      return null;
+    }
+
+    if (new Date(reservation.reservedUntil).getTime() <= Date.now()) {
+      this.activeNameReservations.delete(normalizedName);
+      return null;
+    }
+
+    return structuredClone(reservation);
   }
 
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
@@ -393,9 +489,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const playerId = normalizePlayerId(input.playerId);
     const existing = this.accounts.get(playerId);
+    const nextDisplayName = normalizeDisplayName(playerId, input.displayName ?? existing?.displayName);
+    if (!existing || nextDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, playerId);
+    }
     const nextAccount: PlayerAccountSnapshot = {
       playerId,
-      displayName: normalizeDisplayName(playerId, input.displayName ?? existing?.displayName),
+      displayName: nextDisplayName,
       ...(existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
       eloRating: normalizeEloRating(existing?.eloRating),
       gems: existing?.gems ?? 0,
@@ -443,6 +543,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     const storedAccount = cloneAccount(nextAccount);
     this.accounts.set(playerId, storedAccount);
+    if (!existing || existing.displayName !== nextDisplayName) {
+      this.appendPlayerNameHistory(playerId, nextDisplayName, storedAccount.updatedAt);
+    }
     return cloneAccount(storedAccount);
   }
 
@@ -970,6 +1073,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       createdAt: new Date().toISOString()
     });
     this.banHistoryByPlayerId.set(normalizedPlayerId, history);
+    this.reserveBannedPlayerNames(
+      normalizedPlayerId,
+      Array.from(new Set([account.displayName, ...(await this.listPlayerNameHistory(normalizedPlayerId, { limit: 100 })).map((entry) => entry.displayName)]))
+    );
     return cloneAccount(account);
   }
 
@@ -1192,6 +1299,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const nextDisplayName = input.displayName?.trim()
       ? normalizeDisplayName(normalizedPlayerId, input.displayName)
       : existing.displayName;
+    if (nextDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, normalizedPlayerId);
+    }
     const normalizedAvatarUrl = normalizeAvatarUrl(input.avatarUrl);
     const normalizedUnionId = input.unionId?.trim() || existing.wechatMiniGameUnionId;
 
@@ -1207,6 +1317,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    if (nextDisplayName !== existing.displayName) {
+      this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
+    }
     this.playerIdByWechatOpenId.set(normalizedOpenId, normalizedPlayerId);
     if (nextAccount.loginId) {
       const auth = this.authByLoginId.get(nextAccount.loginId);
@@ -1299,12 +1412,14 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
     const normalizedAvatarUrl =
       patch.avatarUrl !== undefined ? normalizeAvatarUrl(patch.avatarUrl) : existing.avatarUrl;
+    const nextDisplayName =
+      patch.displayName !== undefined ? normalizeDisplayName(normalizedPlayerId, patch.displayName) : existing.displayName;
+    if (nextDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, normalizedPlayerId);
+    }
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
-      displayName:
-        patch.displayName !== undefined
-          ? normalizeDisplayName(normalizedPlayerId, patch.displayName)
-          : existing.displayName,
+      displayName: nextDisplayName,
       ...(normalizedAvatarUrl ? { avatarUrl: normalizedAvatarUrl } : {}),
       ...(patch.lastRoomId !== undefined
         ? patch.lastRoomId?.trim()
@@ -1323,6 +1438,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    if (nextDisplayName !== existing.displayName) {
+      this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
+    }
     if (nextAccount.loginId) {
       const auth = this.authByLoginId.get(nextAccount.loginId);
       if (auth) {
@@ -1537,7 +1655,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           ? (right.eloRating ?? 0) - (left.eloRating ?? 0)
           : String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
       );
-    return filtered.slice(0, Math.max(1, Math.floor(options.limit ?? 20))).map((account) => cloneAccount(account));
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(options.offset ?? 0));
+    return filtered.slice(safeOffset, safeOffset + safeLimit).map((account) => cloneAccount(account));
   }
 
   async save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void> {

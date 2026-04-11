@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "minLength": 2,
+  "maxLength": 24,
+  "reservedTerms": ["admin", "gm", "mod", "official", "客服", "系统", "管理员"],
+  "profanityTerms": ["fuck", "shit", "傻逼", "操你妈"],
+  "reservedPatterns": ["^gm\\d*$", "^admin\\d*$", "^客服\\d*$", "^系统\\d*$"]
+}

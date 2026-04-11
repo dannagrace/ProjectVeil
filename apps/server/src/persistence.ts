@@ -11,6 +11,7 @@ import {
   normalizeEloRating,
   normalizeEventLogQuery,
   normalizeAchievementProgress,
+  normalizeTextForModeration,
   normalizeCosmeticInventory,
   normalizeEventLogEntries,
   normalizeEquippedCosmetics,
@@ -38,6 +39,11 @@ import {
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
+import {
+  assertDisplayNameAvailableOrThrow,
+  buildBannedAccountNameReservationExpiry,
+  normalizeDisplayNameForLookup
+} from "./display-name-rules";
 import {
   createTrackedMySqlPool,
   DEFAULT_MYSQL_POOL_CONNECTION_LIMIT,
@@ -115,6 +121,12 @@ export interface RoomSnapshotStore {
   countVerifiedPaymentReceiptsSince?(playerId: string, since: string): Promise<number>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
+  listPlayerNameHistory?(playerId: string, options?: PlayerNameHistoryListOptions): Promise<PlayerNameHistoryRecord[]>;
+  findPlayerNameHistoryByDisplayName?(
+    displayName: string,
+    options?: PlayerNameLookupOptions
+  ): Promise<PlayerNameHistoryRecord[]>;
+  findActivePlayerNameReservation?(displayName: string): Promise<PlayerNameReservationRecord | null>;
   createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
@@ -316,6 +328,25 @@ interface PlayerEventHistoryRow extends RowDataPacket {
   world_event_type: EventLogEntry["worldEventType"] | null;
   achievement_id: EventLogEntry["achievementId"] | null;
   entry_json: string | EventLogEntry;
+  created_at: Date | string;
+}
+
+interface PlayerNameHistoryRow extends RowDataPacket {
+  id: number;
+  player_id: string;
+  display_name: string;
+  normalized_name: string;
+  changed_at: Date | string;
+  created_at: Date | string;
+}
+
+interface PlayerNameReservationRow extends RowDataPacket {
+  id: number;
+  player_id: string;
+  display_name: string;
+  normalized_name: string;
+  reserved_until: Date | string;
+  reason: string;
   created_at: Date | string;
 }
 
@@ -747,6 +778,33 @@ export interface PlayerAccountListOptions {
   limit?: number;
   playerId?: string;
   orderBy?: "eloRating";
+  offset?: number;
+}
+
+export interface PlayerNameHistoryRecord {
+  id: number;
+  playerId: string;
+  displayName: string;
+  normalizedName: string;
+  changedAt: string;
+}
+
+export interface PlayerNameHistoryListOptions {
+  limit?: number;
+}
+
+export interface PlayerNameLookupOptions {
+  limit?: number;
+}
+
+export interface PlayerNameReservationRecord {
+  id: number;
+  playerId: string;
+  displayName: string;
+  normalizedName: string;
+  reservedUntil: string;
+  reason: string;
+  createdAt: string;
 }
 
 export interface PlayerRoomProfileSummary {
@@ -838,6 +896,12 @@ export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
 export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
+export const MYSQL_PLAYER_NAME_HISTORY_TABLE = "player_name_history";
+export const MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX = "idx_player_name_history_player_changed";
+export const MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX = "idx_player_name_history_normalized_changed";
+export const MYSQL_PLAYER_NAME_RESERVATION_TABLE = "player_name_reservations";
+export const MYSQL_PLAYER_NAME_RESERVATION_UNTIL_INDEX = "idx_player_name_reservations_until";
+export const MYSQL_PLAYER_NAME_RESERVATION_NORMALIZED_INDEX = "uidx_player_name_reservations_normalized";
 export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
 export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
 export const MYSQL_PLAYER_QUEST_STATE_TABLE = "player_quest_states";
@@ -1604,6 +1668,15 @@ function normalizePlayerDisplayName(playerId: string, displayName?: string | nul
   }
 
   return normalized.slice(0, MAX_PLAYER_DISPLAY_NAME_LENGTH);
+}
+
+function normalizePlayerDisplayNameLookup(displayName: string): string {
+  const normalized = normalizeDisplayNameForLookup(displayName);
+  if (!normalized) {
+    throw new Error("displayName must not be empty");
+  }
+
+  return normalized.slice(0, 191);
 }
 
 function normalizePlayerAvatarUrl(avatarUrl?: string | null): string | undefined {
@@ -3778,6 +3851,39 @@ function toPlayerBanHistoryRecord(row: PlayerBanHistoryRow): PlayerBanHistoryRec
   };
 }
 
+function toPlayerNameHistoryRecord(row: PlayerNameHistoryRow): PlayerNameHistoryRecord {
+  const changedAt = formatTimestamp(row.changed_at) ?? formatTimestamp(row.created_at);
+  if (!changedAt) {
+    throw new Error("player name history changed_at must be present");
+  }
+
+  return {
+    id: Math.max(0, Math.floor(row.id)),
+    playerId: normalizePlayerId(row.player_id),
+    displayName: row.display_name.trim(),
+    normalizedName: row.normalized_name.trim(),
+    changedAt
+  };
+}
+
+function toPlayerNameReservationRecord(row: PlayerNameReservationRow): PlayerNameReservationRecord {
+  const reservedUntil = formatTimestamp(row.reserved_until);
+  const createdAt = formatTimestamp(row.created_at);
+  if (!reservedUntil || !createdAt) {
+    throw new Error("player name reservation timestamps must be present");
+  }
+
+  return {
+    id: Math.max(0, Math.floor(row.id)),
+    playerId: normalizePlayerId(row.player_id),
+    displayName: row.display_name.trim(),
+    normalizedName: row.normalized_name.trim(),
+    reservedUntil,
+    reason: row.reason.trim() || "banned_account",
+    createdAt
+  };
+}
+
 function toPlayerReportRecord(row: PlayerReportRow): PlayerReportRecord {
   return normalizePlayerReportRecord({
     reportId: row.report_id,
@@ -3854,6 +3960,61 @@ async function appendPlayerBanHistoryEntry(
      VALUES (?, ?, ?, ?, ?)`,
     [playerId, entry.action, entry.banStatus, banExpiry, entry.banReason ?? null]
   );
+}
+
+async function appendPlayerNameHistoryEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  displayName: string,
+  changedAt = new Date().toISOString()
+): Promise<void> {
+  const normalizedChangedAt = new Date(changedAt);
+  if (Number.isNaN(normalizedChangedAt.getTime())) {
+    throw new Error("changedAt must be a valid ISO timestamp");
+  }
+
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\` (
+       player_id,
+       display_name,
+       normalized_name,
+       changed_at
+     )
+     VALUES (?, ?, ?, ?)`,
+    [playerId, displayName.trim(), normalizePlayerDisplayNameLookup(displayName), normalizedChangedAt]
+  );
+}
+
+async function reservePlayerNamesForBannedAccount(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  displayNames: string[],
+  reservedUntil: string,
+  reason = "banned_account"
+): Promise<void> {
+  const normalizedReservedUntil = new Date(reservedUntil);
+  if (Number.isNaN(normalizedReservedUntil.getTime())) {
+    throw new Error("reservedUntil must be a valid ISO timestamp");
+  }
+
+  for (const displayName of Array.from(new Set(displayNames.map((entry) => entry.trim()).filter(Boolean)))) {
+    await queryable.query(
+      `INSERT INTO \`${MYSQL_PLAYER_NAME_RESERVATION_TABLE}\` (
+         player_id,
+         display_name,
+         normalized_name,
+         reserved_until,
+         reason
+       )
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         player_id = VALUES(player_id),
+         display_name = VALUES(display_name),
+         reserved_until = GREATEST(reserved_until, VALUES(reserved_until)),
+         reason = VALUES(reason)`,
+      [playerId, displayName, normalizePlayerDisplayNameLookup(displayName), normalizedReservedUntil, reason]
+    );
+  }
 }
 
 async function appendGemLedgerEntry(
@@ -4822,10 +4983,86 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return rows.map((row) => toPlayerBanHistoryRecord(row));
   }
 
+  async listPlayerNameHistory(
+    playerId: string,
+    options: PlayerNameHistoryListOptions = {}
+  ): Promise<PlayerNameHistoryRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const [rows] = await this.pool.query<PlayerNameHistoryRow[]>(
+      `SELECT
+         id,
+         player_id,
+         display_name,
+         normalized_name,
+         changed_at,
+         created_at
+       FROM \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY changed_at DESC, id DESC
+       LIMIT ?`,
+      [normalizedPlayerId, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerNameHistoryRecord(row));
+  }
+
+  async findPlayerNameHistoryByDisplayName(
+    displayName: string,
+    options: PlayerNameLookupOptions = {}
+  ): Promise<PlayerNameHistoryRecord[]> {
+    const normalizedName = normalizePlayerDisplayNameLookup(displayName);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const [rows] = await this.pool.query<PlayerNameHistoryRow[]>(
+      `SELECT
+         id,
+         player_id,
+         display_name,
+         normalized_name,
+         changed_at,
+         created_at
+       FROM \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\`
+       WHERE normalized_name = ?
+       ORDER BY changed_at DESC, id DESC
+       LIMIT ?`,
+      [normalizedName, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerNameHistoryRecord(row));
+  }
+
+  async findActivePlayerNameReservation(displayName: string): Promise<PlayerNameReservationRecord | null> {
+    const normalizedName = normalizePlayerDisplayNameLookup(displayName);
+    const [rows] = await this.pool.query<PlayerNameReservationRow[]>(
+      `SELECT
+         id,
+         player_id,
+         display_name,
+         normalized_name,
+         reserved_until,
+         reason,
+         created_at
+       FROM \`${MYSQL_PLAYER_NAME_RESERVATION_TABLE}\`
+       WHERE normalized_name = ?
+         AND reserved_until > UTC_TIMESTAMP()
+       ORDER BY reserved_until DESC, id DESC
+       LIMIT 1`,
+      [normalizedName]
+    );
+
+    const row = rows[0];
+    return row ? toPlayerNameReservationRecord(row) : null;
+  }
+
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const playerId = normalizePlayerId(input.playerId);
+    const existing = await this.loadPlayerAccount(playerId);
     const explicitDisplayName = input.displayName?.trim() ? normalizePlayerDisplayName(playerId, input.displayName) : null;
     const insertDisplayName = normalizePlayerDisplayName(playerId, explicitDisplayName);
+    const nextDisplayName = explicitDisplayName ?? existing?.displayName ?? insertDisplayName;
+    if (!existing || nextDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, nextDisplayName, playerId);
+    }
     const lastRoomId = input.lastRoomId?.trim() ? input.lastRoomId.trim() : null;
     const lastSeenAt = new Date();
 
@@ -4892,11 +5129,15 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ]
     );
 
+    if (!existing || existing.displayName !== nextDisplayName) {
+      await appendPlayerNameHistoryEntry(this.pool, playerId, nextDisplayName, lastSeenAt.toISOString());
+    }
+
     return (
       (await this.loadPlayerAccount(playerId)) ??
       normalizePlayerAccountSnapshot({
         playerId,
-        displayName: insertDisplayName,
+        displayName: nextDisplayName,
         eloRating: normalizeEloRating(undefined),
         seasonXp: 0,
         seasonPassTier: 1,
@@ -4948,6 +5189,13 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       ...(banStatus === "temporary" && banExpiry ? { banExpiry } : {}),
       banReason
     });
+    const historicalNames = await this.listPlayerNameHistory(normalizedPlayerId, { limit: 100 });
+    await reservePlayerNamesForBannedAccount(
+      this.pool,
+      normalizedPlayerId,
+      Array.from(new Set([existingAccount.displayName, ...historicalNames.map((entry) => entry.displayName)])),
+      buildBannedAccountNameReservationExpiry()
+    );
 
     return (
       (await this.loadPlayerAccount(normalizedPlayerId)) ??
@@ -6174,6 +6422,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const displayName = input.displayName?.trim()
       ? normalizePlayerDisplayName(normalizedPlayerId, input.displayName)
       : null;
+    if (displayName && displayName !== existingAccount.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, displayName, normalizedPlayerId);
+    }
     const boundAt = existingAccount.wechatMiniGameBoundAt ?? new Date().toISOString();
     const ageVerified =
       input.ageVerified !== undefined ? normalizePlayerAgeVerified(input.ageVerified) : existingAccount.ageVerified;
@@ -6212,6 +6463,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
       }
 
       throw error;
+    }
+
+    if (displayName && displayName !== existingAccount.displayName) {
+      await appendPlayerNameHistoryEntry(this.pool, normalizedPlayerId, displayName);
     }
 
     return (
@@ -6355,12 +6610,17 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         displayName: normalizedPlayerId,
         globalResources: normalizeResourceLedger()
       });
+    const requestedDisplayName =
+      patch.displayName !== undefined ? normalizePlayerDisplayName(normalizedPlayerId, patch.displayName) : existing.displayName;
+    if (requestedDisplayName !== existing.displayName) {
+      await assertDisplayNameAvailableOrThrow(this, requestedDisplayName, normalizedPlayerId);
+    }
 
     const nextAccount = normalizePlayerAccountSnapshot({
       ...existing,
       playerId: normalizedPlayerId,
       ...(patch.displayName !== undefined
-        ? { displayName: normalizePlayerDisplayName(normalizedPlayerId, patch.displayName) }
+        ? { displayName: requestedDisplayName }
         : {}),
       ...(patch.avatarUrl !== undefined
         ? patch.avatarUrl
@@ -6496,6 +6756,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         JSON.stringify(nextAccount.notificationPreferences ?? null)
       ]
     );
+
+    if (requestedDisplayName !== existing.displayName) {
+      await appendPlayerNameHistoryEntry(this.pool, normalizedPlayerId, requestedDisplayName);
+    }
 
     return (
       (await this.loadPlayerAccount(normalizedPlayerId)) ??
@@ -6721,6 +6985,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
   async listPlayerAccounts(options: PlayerAccountListOptions = {}): Promise<PlayerAccountSnapshot[]> {
     const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(options.offset ?? 0));
     const clauses: string[] = [];
     const params: Array<string | number> = [];
 
@@ -6783,8 +7048,9 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
        ${whereClause}
        ${orderByClause}
-       LIMIT ?`,
-      [...params, safeLimit]
+       LIMIT ?
+       OFFSET ?`,
+      [...params, safeLimit, safeOffset]
     );
 
     return rows.map((row) => toPlayerAccountSnapshot(row));
