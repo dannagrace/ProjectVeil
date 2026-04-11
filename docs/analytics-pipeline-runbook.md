@@ -11,6 +11,8 @@ Production sink target:
 3. The HTTP analytics gateway persists the raw envelope into object storage at `ANALYTICS_RAW_BUCKET`, then writes flattened rows into ClickHouse table `${ANALYTICS_WAREHOUSE_DATASET}.${ANALYTICS_WAREHOUSE_EVENTS_TABLE}`.
 4. Ops, growth, and payments query the curated ClickHouse table for live KPI checks and alert investigations.
 
+Issue #1227 adds the client-side `client_perf_degraded` event for WeChat/Cocos runtime degradation. The Cocos client emits it only in production analytics mode when either FPS stays below `20` for `5s` or heap usage rises above `80%`, and it is throttled to at most one event per minute per running client session.
+
 Local/dev fallback:
 
 - If `ANALYTICS_SINK` is unset and no endpoint is configured, the runtime falls back to `stdout` and still exposes the same counters through `/api/runtime/analytics-pipeline` and `/metrics`.

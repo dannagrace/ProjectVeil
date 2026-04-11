@@ -313,6 +313,33 @@ Escalation thresholds:
 - escalate if lag remains above `30s` for another 15 minutes after replica recovery work starts
 - escalate immediately if lag exceeds `300s`, if replica threads stop, or if a restore/failover incident is active at the same time
 
+## Alert: VeilClientPerfDegradedHigh
+
+Likely causes:
+
+- a recent Cocos candidate introduced a render-loop regression that keeps FPS below `20` for at least 5 seconds
+- memory pressure is climbing above `80%` on one or more WeChat device classes
+- one specific handset or WeChat runtime version is overrepresented in the degraded events
+
+Immediate triage commands:
+
+```bash
+grep 'veil_analytics_events_flushed_total{name="client_perf_degraded"' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/analytics-pipeline" | jq '.delivery.events[] | select(.name=="client_perf_degraded")'
+```
+
+Mitigation steps:
+
+1. Confirm whether the spike lines up with one candidate revision or one rollout wave before treating it as a generic traffic increase.
+2. Break down the latest `client_perf_degraded` events by `payload.deviceModel` and `payload.wechatVersion` in the warehouse or raw sink so you can isolate a device cluster quickly.
+3. If the events are dominated by `reason="fps"`, inspect recent rendering, particle, animation, and asset changes; if they are dominated by `reason="memory"`, inspect recent bundle growth and retained asset scopes.
+4. Hold further rollout expansion until the event rate drops and the affected client build has either been fixed or scoped away from the impacted device slice.
+
+Escalation thresholds:
+
+- escalate if the alert survives one additional 15-minute window after rollout pause or traffic reduction
+- escalate immediately if the same window also shows asset-load failure growth or player-reported WeChat crashes
+
 ## Closeout Checklist
 
 - capture the alert name, environment, and exact trigger window in the incident notes or PR comments

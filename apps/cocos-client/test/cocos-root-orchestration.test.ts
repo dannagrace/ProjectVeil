@@ -1055,6 +1055,62 @@ test("VeilRoot emits shop, tutorial, quest, and experiment analytics once per se
   assertCapturedAnalyticsEvent(events, "tutorial_step");
 });
 
+test("VeilRoot emits throttled client_perf_degraded analytics when runtime performance stays degraded", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-analytics";
+  root.playerId = "player-1";
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.clientPerfRuntimeMetadata = {
+    deviceModel: "iPhone 13 Pro Max",
+    wechatVersion: "8.0.50"
+  };
+
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
+
+  const originalDateNow = Date.now;
+  const originalPerformance = (globalThis as { performance?: unknown }).performance;
+  let nowMs = 0;
+  Date.now = () => nowMs;
+  (globalThis as { performance?: unknown }).performance = {
+    memory: {
+      usedJSHeapSize: 85,
+      totalJSHeapSize: 100
+    }
+  };
+
+  try {
+    for (nowMs = 250; nowMs <= 5_250; nowMs += 250) {
+      root.update(0.06);
+    }
+    nowMs = 10_000;
+    root.update(0.06);
+    nowMs = 65_500;
+    root.update(0.06);
+    await flushClientAnalyticsEventsForTest();
+  } finally {
+    Date.now = originalDateNow;
+    (globalThis as { performance?: unknown }).performance = originalPerformance;
+  }
+
+  const events = parseCapturedAnalyticsEvents(fetchCalls);
+  const perfEvents = events.filter((event) => event.name === "client_perf_degraded");
+  assert.equal(perfEvents.length, 2);
+  assert.equal(perfEvents[0]?.payload.reason, "memory");
+  assert.equal(perfEvents[0]?.payload.deviceModel, "iPhone 13 Pro Max");
+  assert.equal(perfEvents[0]?.payload.wechatVersion, "8.0.50");
+  assert.equal(perfEvents[1]?.payload.reason, "fps_and_memory");
+});
+
 test("VeilRoot gameplay account refresh uses the injected loader for remote equipment and loot updates", async () => {
   const storage = createMemoryStorage();
   (sys as unknown as { localStorage: Storage }).localStorage = storage;
