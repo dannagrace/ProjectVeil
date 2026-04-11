@@ -137,3 +137,14 @@ groups:
           summary: Battle pass gray rollout is triggering payment-related runtime errors
           description: "Payment runtime error ratio has exceeded 2% for 10 minutes while `battle_pass_enabled` is active. Roll back to the previous safe stage and verify the payment callback / reward-claim path before retrying."
           runbook_url: ./incident-response-runbook.md#alert-veilfeatureflagbattlepasspaymentfailureshigh
+
+      - alert: VeilAssetLoadFailuresHigh
+        expr: (increase(veil_analytics_events_total{name="asset_load_failed"}[15m]) / clamp_min(increase(veil_analytics_events_total{name="session_start"}[15m]), 1)) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: project-veil-client
+        annotations:
+          summary: Project Veil client asset load failures exceed the 1% budget
+          description: Client `asset_load_failed` analytics have exceeded 1% of session starts over 15 minutes. Check CDN availability, asset manifest drift, and recent client revisions before widening rollout.
+          runbook_url: ./incident-response-runbook.md#alert-veilassetloadfailureshigh
