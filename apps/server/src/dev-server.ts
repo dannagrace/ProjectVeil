@@ -3,6 +3,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { registerAnalyticsRoutes } from "./analytics";
+import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
 import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
@@ -22,6 +23,7 @@ import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes,
+  setDbBackupLastSuccessTimestamp,
   type RuntimePersistenceHealth
 } from "./observability";
 import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotStore, readMySqlPersistenceConfig, type SnapshotRetentionPolicy } from "./persistence";
@@ -128,6 +130,7 @@ export interface DevServerBootstrapDependencies {
     app: unknown,
     options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth }
   ): void;
+  validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
@@ -200,6 +203,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
+    validateBackupStorage: () => validateBackupStorageOnStartup(),
     registerRetentionSummaryRoute: (app, store) =>
       registerRetentionSummaryRoute(app as never, store as RoomSnapshotStore | null),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
@@ -294,6 +298,13 @@ export async function startDevServer(
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
   await configCenterStore.initializeRuntimeConfigs();
+  const backupStorage = await deps.validateBackupStorage();
+  setDbBackupLastSuccessTimestamp(backupStorage.lastSuccessTimestamp);
+  if (backupStorage.status === "warn") {
+    deps.logger.warn(`BACKUP WARNING: ${backupStorage.message}`);
+  } else {
+    deps.logger.log(backupStorage.message);
+  }
   const redisUrl = deps.readRedisUrl();
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;

@@ -43,6 +43,12 @@ export VEIL_RESTORE_BACKUP_KEY="$VEIL_BACKUP_S3_PREFIX/daily/project_veil-202604
 npm run db:restore:rehearsal
 ```
 
+For recurring verification, prefer the latest-backup wrapper:
+
+```bash
+npm run db:restore:test
+```
+
 The remainder of this runbook explains the exact manual steps that wrapper executes so reviewers can audit or adapt the flow.
 
 ## 1. Pick The Backup To Restore

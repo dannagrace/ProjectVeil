@@ -32,6 +32,7 @@ Optional environment:
   VEIL_RESTORE_WORK_DIR=<mktemp dir>
   VEIL_RESTORE_DROP_DATABASE=0
   VEIL_RESTORE_SKIP_REGRESSION=0
+  VEIL_RESTORE_SKIP_SCHEMA_VALIDATION=0
   VEIL_RESTORE_VALIDATE_COMMAND='npm run test:phase1-release-persistence -- --storage mysql'
 EOF
   exit 0
@@ -81,6 +82,7 @@ RESTORE_MYSQL_PORT="${RESTORE_MYSQL_PORT:-3306}"
 RESTORE_MYSQL_DATABASE="${RESTORE_MYSQL_DATABASE:-project_veil_restore}"
 VEIL_RESTORE_DROP_DATABASE="${VEIL_RESTORE_DROP_DATABASE:-0}"
 VEIL_RESTORE_SKIP_REGRESSION="${VEIL_RESTORE_SKIP_REGRESSION:-0}"
+VEIL_RESTORE_SKIP_SCHEMA_VALIDATION="${VEIL_RESTORE_SKIP_SCHEMA_VALIDATION:-0}"
 VEIL_RESTORE_VALIDATE_COMMAND="${VEIL_RESTORE_VALIDATE_COMMAND:-npm run test:phase1-release-persistence -- --storage mysql}"
 
 TEMP_DIR_CREATED=0
@@ -149,6 +151,31 @@ run_validation() {
   )
 }
 
+run_schema_validation() {
+  if [[ "$VEIL_RESTORE_SKIP_SCHEMA_VALIDATION" == "1" ]]; then
+    log "Skipping schema validation because VEIL_RESTORE_SKIP_SCHEMA_VALIDATION=1"
+    return
+  fi
+
+  local expected_migrations
+  expected_migrations="$(find "$ROOT_DIR/scripts/migrations" -maxdepth 1 -type f -name '*.ts' | wc -l | tr -d ' ')"
+  local applied_migrations
+  applied_migrations="$(
+    mysql_base_command --batch --skip-column-names "$RESTORE_MYSQL_DATABASE" <<'SQL'
+SELECT COUNT(*) FROM schema_migrations;
+SQL
+  )"
+
+  applied_migrations="$(printf '%s' "$applied_migrations" | tr -d '[:space:]')"
+
+  if [[ -z "$applied_migrations" || "$applied_migrations" != "$expected_migrations" ]]; then
+    echo "Schema validation failed: expected ${expected_migrations} applied migrations, found ${applied_migrations:-0}." >&2
+    exit 1
+  fi
+
+  log "Schema validation passed with ${applied_migrations} applied migrations"
+}
+
 log "Downloading backup object $VEIL_RESTORE_BACKUP_KEY"
 download_object "$VEIL_RESTORE_BACKUP_KEY" "$BACKUP_PATH"
 download_object "${VEIL_RESTORE_BACKUP_KEY}.sha256" "$BACKUP_HASH_PATH"
@@ -183,6 +210,7 @@ UNION ALL
 SELECT 'config_documents', COUNT(*) FROM config_documents;
 SQL
 
+run_schema_validation
 run_validation
 
 log "Restore rehearsal complete: $BACKUP_FILE -> $RESTORE_MYSQL_DATABASE"
