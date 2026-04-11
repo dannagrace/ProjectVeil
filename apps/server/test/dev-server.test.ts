@@ -366,6 +366,66 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.deepEqual(base.process.exitCodes, [0]);
 });
 
+test("dev server loads runtime secrets before reading persistence config", async () => {
+  const order: string[] = [];
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+
+  await startDevServer(3102, "127.0.0.1", {
+    loadRuntimeSecrets: async () => {
+      order.push("loadRuntimeSecrets");
+    },
+    readMySqlPersistenceConfig: () => {
+      order.push("readMySqlPersistenceConfig");
+      return null;
+    },
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
+    registerAuthRoutes: () => undefined,
+    registerAnalyticsRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerEventRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
+    registerLeaderboardRoutes: () => undefined,
+    registerSeasonRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
+    registerAdminRoutes: () => undefined,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  assert.deepEqual(order.slice(0, 2), ["loadRuntimeSecrets", "readMySqlPersistenceConfig"]);
+});
+
 test("dev server logs process-level failures, closes stores, and exits non-zero", async () => {
   resetRuntimeObservability();
   const base = createBaseDependencies();

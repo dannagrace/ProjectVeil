@@ -6,7 +6,7 @@ test("validateProductionEnv passes when all required variables are present", () 
   const envText = PRODUCTION_ENV_VARS.map((key) => `${key}=value`).join("\n");
   const result = validateProductionEnv(parseEnvFile(envText));
 
-  assert.equal(result.expectedCount, 27);
+  assert.equal(result.expectedCount, 28);
   assert.deepEqual(result.missing, []);
   assert.deepEqual(result.blank, []);
 });

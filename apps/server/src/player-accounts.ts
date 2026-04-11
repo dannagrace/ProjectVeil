@@ -53,6 +53,7 @@ import {
   resolveSeasonalEvents
 } from "./event-engine";
 import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "./feature-flags";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import {
   buildCampaignMissionStates,
@@ -114,7 +115,7 @@ function readExpectedWechatAppId(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 function readGroupChallengeSecret(env: NodeJS.ProcessEnv = process.env): string {
-  return env.VEIL_WECHAT_GROUP_CHALLENGE_SECRET?.trim() || "project-veil-local-group-challenge-secret";
+  return readRuntimeSecret("VEIL_WECHAT_GROUP_CHALLENGE_SECRET", env) || "project-veil-local-group-challenge-secret";
 }
 
 function logWechatValidationFailure(playerId: string, operation: string, reason: string): void {
@@ -164,7 +165,7 @@ function emitExperimentExposureForSurface(
 }
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
-  const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
 }
 
@@ -1227,7 +1228,7 @@ export function registerPlayerAccountRoutes(
   });
 
   app.post("/api/admin/player-mailbox/deliver", async (request, response) => {
-    const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+    const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
     if (!adminToken) {
       sendJson(response, 503, {
         error: {

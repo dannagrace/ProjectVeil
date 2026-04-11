@@ -41,6 +41,7 @@ import {
 } from "./persistence";
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
 export type AuthMode = "guest" | "account";
@@ -157,7 +158,6 @@ interface AccountRegistrationState {
   expiresAt: string;
 }
 
-const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
 const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
@@ -180,6 +180,10 @@ const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
+
+function readAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
+  return readRuntimeSecret("VEIL_AUTH_SECRET", env) || "project-veil-dev-secret";
+}
 
 function countActiveAccountLockouts(): number {
   const currentTime = nowMs();
@@ -318,15 +322,15 @@ function isExpiredTimestamp(value: string): boolean {
 }
 
 function hashRefreshToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`refresh:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`refresh:${token}`).digest("hex");
 }
 
 function hashPasswordRecoveryToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`password-recovery:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`password-recovery:${token}`).digest("hex");
 }
 
 function hashAccountRegistrationToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`account-registration:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`account-registration:${token}`).digest("hex");
 }
 
 function cacheAccountAuthState(input: {
@@ -357,7 +361,8 @@ export function cachePlayerAccountAuthState(input: {
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
   const isTestEnvironment = env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && env.WECHAT_APP_SECRET?.trim());
+  const wechatAppSecret = readRuntimeSecret("WECHAT_APP_SECRET", env);
+  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && wechatAppSecret);
   const defaultMode = isTestEnvironment ? "mock" : hasWechatCredentials ? "production" : "disabled";
   const mode =
     normalizedMode === "mock" && isTestEnvironment
@@ -372,7 +377,7 @@ function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): We
     mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code",
     code2SessionUrl: env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL?.trim() || "https://api.weixin.qq.com/sns/jscode2session",
     ...(env.WECHAT_APP_ID?.trim() ? { appId: env.WECHAT_APP_ID.trim() } : {}),
-    ...(env.WECHAT_APP_SECRET?.trim() ? { appSecret: env.WECHAT_APP_SECRET.trim() } : {})
+    ...(wechatAppSecret ? { appSecret: wechatAppSecret } : {})
   };
 }
 
@@ -722,7 +727,7 @@ export function createWechatMiniGamePlayerId(openId: string): string {
     throw new Error("wechat_openid_required");
   }
 
-  return `wechat-${createHmac("sha256", AUTH_SECRET).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
+  return `wechat-${createHmac("sha256", readAuthSecret()).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
 }
 
 const WECHAT_GUEST_UPGRADE_NOTICE = "您的游客进度将合并到新账号";
@@ -832,7 +837,7 @@ async function exchangeWechatMiniGameCode(
 
 function issueSignedToken(payload: GuestAuthTokenPayload): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const signature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const signature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   return `${encodedPayload}.${signature}`;
 }
 
@@ -1431,7 +1436,7 @@ function resolveAuthSession(token: string): GuestAuthSession | null {
     return null;
   }
 
-  const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) {
     return null;
   }
@@ -1529,7 +1534,7 @@ async function validateAuthToken(
     return { session: null, errorCode: "unauthorized" };
   }
 
-  const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) {
     recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };

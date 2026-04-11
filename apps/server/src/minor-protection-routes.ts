@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buildMinorProtectionBlockDetails, getMinorProtectionDateKey, readMinorProtectionConfig } from "./minor-protection";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 interface MinorProtectionApp {
   use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;
@@ -14,7 +15,7 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 }
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
-  const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
 }
 

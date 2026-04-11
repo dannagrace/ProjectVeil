@@ -11,6 +11,7 @@ import {
   setPaymentGrantQueueLatency
 } from "./observability";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
 
 interface HttpApp {
@@ -103,7 +104,8 @@ function normalizePemValue(value: string): string {
 }
 
 function readPemValue(env: NodeJS.ProcessEnv, key: string): string | null {
-  const direct = env[key]?.trim();
+  const direct =
+    key === "VEIL_WECHAT_PAY_PRIVATE_KEY" ? readRuntimeSecret("VEIL_WECHAT_PAY_PRIVATE_KEY", env) : env[key]?.trim();
   if (direct) {
     return normalizePemValue(direct);
   }
@@ -121,7 +123,7 @@ function readWechatPayRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Wecha
   const merchantId = env.VEIL_WECHAT_PAY_MERCHANT_ID?.trim();
   const merchantCertificateSerial = env.VEIL_WECHAT_PAY_CERT_SERIAL?.trim();
   const platformCertificateSerial = env.VEIL_WECHAT_PAY_PLATFORM_SERIAL?.trim();
-  const apiV3Key = env.VEIL_WECHAT_PAY_API_V3_KEY?.trim();
+  const apiV3Key = readRuntimeSecret("VEIL_WECHAT_PAY_API_V3_KEY", env);
   const notifyUrl = env.VEIL_WECHAT_PAY_NOTIFY_URL?.trim();
   const merchantPrivateKey = readPemValue(env, "VEIL_WECHAT_PAY_PRIVATE_KEY");
   const platformPublicKey = readPemValue(env, "VEIL_WECHAT_PAY_PLATFORM_PUBLIC_KEY");
@@ -433,7 +435,7 @@ function isPaymentOpsStoreReady(store: RoomSnapshotStore | null): store is RoomS
 }
 
 function readAdminToken(): string | null {
-  const token = process.env.VEIL_ADMIN_TOKEN?.trim();
+  const token = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   return token ? token : null;
 }
 

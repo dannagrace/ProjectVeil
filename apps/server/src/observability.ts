@@ -20,6 +20,7 @@ import {
 import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -655,7 +656,8 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
   const alerts: string[] = [];
   const isTestEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim());
+  const wechatAppSecret = readRuntimeSecret("WECHAT_APP_SECRET");
+  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && wechatAppSecret);
   const wechatMode =
     normalizedWechatMode === "mock" && isTestEnvironment
       ? "mock"
@@ -670,7 +672,7 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
               : "disabled";
   const wechatCredentialsStatus =
     wechatMode === "production"
-      ? process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim()
+      ? process.env.WECHAT_APP_ID?.trim() && wechatAppSecret
         ? "configured"
         : "missing"
       : "not_required";

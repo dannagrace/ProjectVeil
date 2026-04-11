@@ -11,6 +11,7 @@ import {
   setAuthTokenDeliveryQueueCount,
   setAuthTokenDeliveryQueueLatency
 } from "./observability";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 export type AccountTokenDeliveryKind = "account-registration" | "password-recovery";
 export type AccountTokenDeliveryMode = "disabled" | "dev-token" | "smtp" | "webhook";
@@ -203,6 +204,7 @@ function readSharedTransportConfig(env: NodeJS.ProcessEnv): Pick<
 
 function readWebhookDeliveryConfig(env: NodeJS.ProcessEnv): WebhookDeliveryConfig {
   const url = env.VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL?.trim();
+  const bearerToken = readRuntimeSecret("VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_BEARER_TOKEN", env);
   if (!url) {
     throw new AccountTokenDeliveryConfigurationError(
       "VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL must be set when webhook delivery mode is enabled"
@@ -212,9 +214,7 @@ function readWebhookDeliveryConfig(env: NodeJS.ProcessEnv): WebhookDeliveryConfi
   return {
     kind: "webhook",
     url,
-    ...(env.VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_BEARER_TOKEN?.trim()
-      ? { bearerToken: env.VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_BEARER_TOKEN.trim() }
-      : {}),
+    ...(bearerToken ? { bearerToken } : {}),
     ...readSharedTransportConfig(env)
   };
 }
@@ -243,7 +243,7 @@ function readSmtpDeliveryConfig(env: NodeJS.ProcessEnv): SmtpDeliveryConfig {
 
   const secure = parseEnvBoolean(env.VEIL_AUTH_TOKEN_DELIVERY_SMTP_SECURE, false);
   const username = env.VEIL_AUTH_TOKEN_DELIVERY_SMTP_USERNAME?.trim();
-  const password = env.VEIL_AUTH_TOKEN_DELIVERY_SMTP_PASSWORD?.trim();
+  const password = readRuntimeSecret("VEIL_AUTH_TOKEN_DELIVERY_SMTP_PASSWORD", env);
   if ((username && !password) || (!username && password)) {
     throw new AccountTokenDeliveryConfigurationError(
       "VEIL_AUTH_TOKEN_DELIVERY_SMTP_USERNAME and VEIL_AUTH_TOKEN_DELIVERY_SMTP_PASSWORD must be provided together"

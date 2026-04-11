@@ -6,6 +6,7 @@ import { GuildService } from "./guilds";
 import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 import { recordLeaderboardAbuseAlert } from "./observability";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 class InvalidAdminJsonError extends Error {
   constructor() {
@@ -36,17 +37,17 @@ type BanApproval = {
 };
 
 function readAdminSecret(): string | null {
-  const secret = process.env.ADMIN_SECRET?.trim();
+  const secret = readRuntimeSecret("ADMIN_SECRET");
   return secret ? secret : null;
 }
 
 function readSupportModeratorSecret(): string | null {
-  const secret = process.env.SUPPORT_MODERATOR_SECRET?.trim();
+  const secret = readRuntimeSecret("SUPPORT_MODERATOR_SECRET");
   return secret ? secret : null;
 }
 
 function readSupportSupervisorSecret(): string | null {
-  const secret = process.env.SUPPORT_SUPERVISOR_SECRET?.trim();
+  const secret = readRuntimeSecret("SUPPORT_SUPERVISOR_SECRET");
   return secret ? secret : null;
 }
 
