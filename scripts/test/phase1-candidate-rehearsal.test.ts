@@ -179,6 +179,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "phase1-exit-audit")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-exit-dossier-freshness-gate")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "go-no-go-packet")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "release-pr-summary")?.status, "passed");
   assert.match(report.artifacts.releaseReadinessSnapshotPath ?? "", /release-readiness-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
@@ -197,6 +198,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.phase1ExitDossierFreshnessGatePath ?? "", /phase1-exit-dossier-freshness-gate-phase1-mainline-/);
   assert.match(report.artifacts.goNoGoPacketPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
   assert.match(report.artifacts.goNoGoPacketMarkdownPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
+  assert.match(report.artifacts.releasePrCommentPath ?? "", /release-pr-comment-phase1-mainline-/);
   assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
 
   const markdown = fs.readFileSync(markdownPath, "utf8");
@@ -211,6 +213,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
   assert.match(markdown, /Manual evidence owner ledger:/);
+  assert.match(markdown, /Release PR summary:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessGuardPath:/);
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
@@ -219,4 +222,5 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
   assert.match(markdown, /goNoGoPacketPath:/);
+  assert.match(markdown, /releasePrCommentPath:/);
 });
