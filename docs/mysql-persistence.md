@@ -362,6 +362,7 @@ The script performs:
 - upload to a daily object prefix
 - weekly mirror upload on the configured weekday
 - retention pruning for daily backups older than 30 days and weekly backups older than 183 days
+- upload of a `latest-success.json` status marker used by server startup validation and Prometheus
 - optional failure notification through `VEIL_BACKUP_NOTIFY_COMMAND`
 
 ### Required Environment
@@ -378,6 +379,7 @@ The backup script reuses the existing `VEIL_MYSQL_*` connection settings and exp
 | `VEIL_BACKUP_KEEP_DAILY_DAYS` | No | `30` | Daily retention window in days |
 | `VEIL_BACKUP_KEEP_WEEKLY_DAYS` | No | `183` | Weekly retention window in days |
 | `VEIL_BACKUP_WEEKLY_DAY` | No | `7` | Day of week used for weekly copies; `7` means Sunday |
+| `VEIL_BACKUP_STATUS_KEY` | No | `<prefix>/_status/latest-success.json` | Object key updated after a fully successful backup run |
 | `VEIL_BACKUP_NOTIFY_COMMAND` | No | - | Shell command executed on failure with `VEIL_BACKUP_FAILURE_MESSAGE` exported |
 
 The script requires `mysqldump`, `gzip`, `aws`, and `sha256sum` (or `shasum`) on the runner host.
@@ -402,18 +404,25 @@ The uploaded object layout is:
 - `s3://<bucket>/<prefix>/daily/<database>-<timestamp>.sql.gz.sha256`
 - `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz` on the configured weekly day
 - `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz.sha256` on the configured weekly day
+- `s3://<bucket>/<prefix>/_status/latest-success.json` after a successful backup run
 
 ### Cron Schedule
 
-Install the example cron from [`ops/mysql-backup.cron.example`](../ops/mysql-backup.cron.example) to run at `03:00` server local time every day.
+Install the example cron from [`ops/mysql-backup.cron.example`](../ops/mysql-backup.cron.example) to run backups every `6` hours and a restore verification weekly.
 
 Recommended rollout:
 
 1. Copy `.env.example` to the deployment host and fill in `VEIL_MYSQL_*` plus `VEIL_BACKUP_*`.
 2. Confirm `aws s3 ls` can reach the bucket with the selected profile or credentials.
 3. Run `./scripts/db-backup.sh` manually once.
-4. Install the cron entry.
+4. Install the cron entries for both backup and restore verification.
 5. Wire `VEIL_BACKUP_NOTIFY_COMMAND` to your pager, webhook, or mail wrapper so failures are visible without waiting for cron mail.
+
+### Startup Validation And Metrics
+
+When `VEIL_BACKUP_S3_BUCKET` is configured, the server now validates bucket reachability during startup. If the bucket or prefix is unreachable, startup continues but emits a loud `BACKUP WARNING` log entry so the deployment is visibly degraded instead of silently assuming backups are healthy.
+
+The server also exposes `veil_db_backup_last_success_timestamp` on `/metrics` and `/api/runtime/metrics`. The metric is populated from the uploaded `latest-success.json` marker and falls back to the most recent visible backup object timestamp when the marker is missing. A value of `0` means startup could not determine a successful backup time.
 
 ### Restore
 
@@ -429,6 +438,17 @@ RESTORE_MYSQL_USER=root \
 RESTORE_MYSQL_PASSWORD=change_me \
 RESTORE_MYSQL_DATABASE=project_veil_restore \
 npm run db:restore:rehearsal
+```
+
+For the automated weekly drill that always selects the latest available backup, run:
+
+```bash
+RESTORE_MYSQL_HOST=127.0.0.1 \
+RESTORE_MYSQL_PORT=3306 \
+RESTORE_MYSQL_USER=root \
+RESTORE_MYSQL_PASSWORD=change_me \
+RESTORE_MYSQL_DATABASE=project_veil_restore_test \
+npm run db:restore:test
 ```
 
 That flow downloads the archive and `.sha256`, verifies integrity before touching MySQL, restores into the target schema, runs the table-count sanity query, and then executes `npm run test:phase1-release-persistence -- --storage mysql` against the recovered instance unless `VEIL_RESTORE_SKIP_REGRESSION=1`.

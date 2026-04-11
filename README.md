@@ -113,7 +113,7 @@ npm run dev:client:h5
 
 如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
 
-如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每日 03:00 的 cron。恢复步骤见 `docs/db-restore-runbook.md`。
+如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每 6 小时备份一次、每周一次 `./scripts/db-restore-test.sh` 的 cron。服务端启动时会校验该 S3 目标是否可达，并把最近一次成功备份时间暴露为 Prometheus 指标 `veil_db_backup_last_success_timestamp`；恢复步骤见 `docs/db-restore-runbook.md`。
 
 如果你要把 analytics 事件接到生产环境，请配置 `ANALYTICS_SINK=http`、`ANALYTICS_ENDPOINT`、`ANALYTICS_WAREHOUSE_*`、`ANALYTICS_RAW_BUCKET`、`ANALYTICS_RETENTION_DAYS` 和 `ANALYTICS_DELETION_WORKFLOW`，然后用 `/api/runtime/analytics-pipeline` 与 `/metrics` 核对投递状态。完整流程、查询模板和合规删除说明见 `docs/analytics-pipeline-runbook.md`。
 

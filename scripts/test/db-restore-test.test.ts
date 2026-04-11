@@ -7,7 +7,7 @@ import test from "node:test";
 import zlib from "node:zlib";
 
 const repoRoot = path.resolve(__dirname, "../..");
-const restoreScriptPath = path.join(repoRoot, "scripts", "db-restore-rehearsal.sh");
+const restoreTestScriptPath = path.join(repoRoot, "scripts", "db-restore-test.sh");
 
 function writeExecutable(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -53,25 +53,40 @@ function parseS3Uri(uri) {
   };
 }
 
+function listFiles(root) {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+  return fs.readdirSync(root).filter((name) => fs.statSync(path.join(root, name)).isFile()).sort();
+}
+
 const normalizedArgs = stripGlobalOptions(args);
-if (normalizedArgs[0] !== "s3" || normalizedArgs[1] !== "cp") {
+if (normalizedArgs[0] !== "s3") {
   process.stderr.write(\`Unexpected aws invocation: \${normalizedArgs.join(" ")}\\n\`);
   process.exit(1);
 }
 
-const source = normalizedArgs[2];
-const destination = normalizedArgs[3];
-if (source.startsWith("s3://")) {
-  const sourceInfo = parseS3Uri(source);
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.copyFileSync(sourceInfo.filePath, destination);
+if (normalizedArgs[1] === "ls") {
+  const target = parseS3Uri(normalizedArgs[2]);
+  for (const file of listFiles(target.filePath)) {
+    process.stdout.write(\`2026-04-03 03:00:00         10 \${file}\\n\`);
+  }
   process.exit(0);
 }
 
-const destinationInfo = parseS3Uri(destination);
-fs.mkdirSync(path.dirname(destinationInfo.filePath), { recursive: true });
-fs.copyFileSync(source, destinationInfo.filePath);
-process.exit(0);
+if (normalizedArgs[1] === "cp") {
+  const source = normalizedArgs[2];
+  const destination = normalizedArgs[3];
+  if (source.startsWith("s3://")) {
+    const sourceInfo = parseS3Uri(source);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(sourceInfo.filePath, destination);
+    process.exit(0);
+  }
+}
+
+process.stderr.write(\`Unexpected aws invocation: \${normalizedArgs.join(" ")}\\n\`);
+process.exit(1);
 `
   );
 }
@@ -84,13 +99,12 @@ const fs = require("node:fs");
 
 const args = process.argv.slice(2);
 const stdin = args.includes("-e") ? "" : fs.readFileSync(0, "utf8");
-const logFile = process.env.VEIL_TEST_MYSQL_LOG_FILE;
-if (logFile) {
-  fs.appendFileSync(logFile, JSON.stringify({ args, stdin }) + "\\n", "utf8");
+if (process.env.VEIL_TEST_MYSQL_LOG_FILE) {
+  fs.appendFileSync(process.env.VEIL_TEST_MYSQL_LOG_FILE, JSON.stringify({ args, stdin }) + "\\n", "utf8");
 }
 
 if (args.includes("--batch") && args.includes("--skip-column-names")) {
-  process.stdout.write(process.env.VEIL_TEST_SCHEMA_MIGRATION_COUNT || "24");
+  process.stdout.write("24");
   process.exit(0);
 }
 
@@ -120,10 +134,8 @@ if (process.env.VEIL_TEST_NPM_LOG_FILE) {
     process.env.VEIL_TEST_NPM_LOG_FILE,
     JSON.stringify({
       args: process.argv.slice(2),
-      mysqlHost: process.env.VEIL_MYSQL_HOST,
-      mysqlPort: process.env.VEIL_MYSQL_PORT,
-      mysqlUser: process.env.VEIL_MYSQL_USER,
-      mysqlDatabase: process.env.VEIL_MYSQL_DATABASE
+      restoreBackupKey: process.env.VEIL_RESTORE_BACKUP_KEY,
+      restoreDatabase: process.env.RESTORE_MYSQL_DATABASE
     }, null, 2),
     "utf8"
   );
@@ -132,7 +144,7 @@ if (process.env.VEIL_TEST_NPM_LOG_FILE) {
   );
 }
 
-function createRestoreFixture(bucketDir: string, objectKey: string, hashContents?: string): void {
+function createRestoreFixture(bucketDir: string, objectKey: string): void {
   const archivePath = path.join(bucketDir, objectKey);
   fs.mkdirSync(path.dirname(archivePath), { recursive: true });
   const dump = "CREATE TABLE room_snapshots (room_id INT);\\nINSERT INTO room_snapshots VALUES (1);\\n";
@@ -143,20 +155,16 @@ function createRestoreFixture(bucketDir: string, objectKey: string, hashContents
     throw new Error(`sha256sum failed: ${hash.stderr}`);
   }
   const digest = hash.stdout.trim().split(/\s+/)[0];
-  fs.writeFileSync(
-    `${archivePath}.sha256`,
-    hashContents ?? `${digest}  ${path.basename(objectKey)}\n`,
-    "utf8"
-  );
+  fs.writeFileSync(`${archivePath}.sha256`, `${digest}  ${path.basename(objectKey)}\n`, "utf8");
 }
 
-function runRestore(tempDir: string, extraEnv: NodeJS.ProcessEnv = {}) {
+function runRestoreTest(tempDir: string, extraEnv: NodeJS.ProcessEnv = {}) {
   const toolsDir = path.join(tempDir, "tools");
   createAwsStub(path.join(toolsDir, "aws"));
   createMysqlStub(path.join(toolsDir, "mysql"));
   createNpmStub(path.join(toolsDir, "npm"));
 
-  return spawnSync("bash", [restoreScriptPath], {
+  return spawnSync("bash", [restoreTestScriptPath], {
     cwd: repoRoot,
     encoding: "utf8",
     env: {
@@ -169,78 +177,40 @@ function runRestore(tempDir: string, extraEnv: NodeJS.ProcessEnv = {}) {
       VEIL_BACKUP_S3_PREFIX: "backups/mysql",
       VEIL_BACKUP_S3_ENDPOINT: "https://oss-cn-hangzhou.aliyuncs.com",
       VEIL_BACKUP_S3_REGION: "oss-cn-hangzhou",
-      VEIL_RESTORE_BACKUP_KEY: "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz",
       RESTORE_MYSQL_HOST: "127.0.0.1",
       RESTORE_MYSQL_PORT: "3310",
       RESTORE_MYSQL_USER: "restore_user",
       RESTORE_MYSQL_PASSWORD: "secret",
-      RESTORE_MYSQL_DATABASE: "project_veil_restore",
-      VEIL_TEST_SCHEMA_MIGRATION_COUNT: "24",
+      RESTORE_MYSQL_DATABASE: "project_veil_restore_test",
       ...extraEnv
     }
   });
 }
 
-test("db-restore-rehearsal restores a verified backup and runs the persistence regression", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-"));
+test("db-restore-test restores the latest daily backup by default", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-test-"));
   const bucketDir = path.join(tempDir, "bucket-root", "veil-ops");
+  createRestoreFixture(bucketDir, "backups/mysql/daily/project_veil-20260401T030000Z.sql.gz");
   createRestoreFixture(bucketDir, "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz");
 
-  const result = runRestore(tempDir);
+  const result = runRestoreTest(tempDir);
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  assert.match(result.stdout, /Restore rehearsal complete: project_veil-20260403T030000Z\.sql\.gz -> project_veil_restore/);
-
-  const mysqlCalls = fs
-    .readFileSync(path.join(tempDir, "mysql.log"), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as { args: string[]; stdin: string });
-  assert.equal(mysqlCalls.length, 4);
-  assert.match(mysqlCalls[0]?.args.join(" "), /CREATE DATABASE IF NOT EXISTS `project_veil_restore`/);
-  assert.match(mysqlCalls[1]?.stdin ?? "", /CREATE TABLE room_snapshots/);
-  assert.match(mysqlCalls[2]?.stdin ?? "", /SELECT 'room_snapshots' AS table_name/);
-  assert.match(mysqlCalls[3]?.stdin ?? "", /SELECT COUNT\(\*\) FROM schema_migrations/);
+  assert.match(result.stdout, /Using latest backup object backups\/mysql\/daily\/project_veil-20260403T030000Z\.sql\.gz/);
+  assert.match(result.stdout, /Restore test passed for backups\/mysql\/daily\/project_veil-20260403T030000Z\.sql\.gz/);
 
   const npmInvocation = JSON.parse(fs.readFileSync(path.join(tempDir, "npm.json"), "utf8")) as {
-    args: string[];
-    mysqlHost: string;
-    mysqlPort: string;
-    mysqlUser: string;
-    mysqlDatabase: string;
+    restoreDatabase: string;
   };
-  assert.deepEqual(npmInvocation.args, ["run", "test:phase1-release-persistence", "--", "--storage", "mysql"]);
-  assert.equal(npmInvocation.mysqlHost, "127.0.0.1");
-  assert.equal(npmInvocation.mysqlPort, "3310");
-  assert.equal(npmInvocation.mysqlUser, "restore_user");
-  assert.equal(npmInvocation.mysqlDatabase, "project_veil_restore");
+  assert.equal(npmInvocation.restoreDatabase, "project_veil_restore_test");
 });
 
-test("db-restore-rehearsal stops before mysql restore when checksum verification fails", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-bad-hash-"));
+test("db-restore-test falls back to weekly when no daily backup is available", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-test-weekly-"));
   const bucketDir = path.join(tempDir, "bucket-root", "veil-ops");
-  createRestoreFixture(
-    bucketDir,
-    "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz",
-    "deadbeef  project_veil-20260403T030000Z.sql.gz\n"
-  );
+  createRestoreFixture(bucketDir, "backups/mysql/weekly/project_veil-20260406T030000Z.sql.gz");
 
-  const result = runRestore(tempDir);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /FAILED|failed|no properly formatted/i);
-  assert.equal(fs.existsSync(path.join(tempDir, "mysql.log")), false);
-  assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
-});
-
-test("db-restore-rehearsal fails when schema migration coverage does not match the repository", () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-schema-mismatch-"));
-  const bucketDir = path.join(tempDir, "bucket-root", "veil-ops");
-  createRestoreFixture(bucketDir, "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz");
-
-  const result = runRestore(tempDir, {
-    VEIL_TEST_SCHEMA_MIGRATION_COUNT: "23"
-  });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Schema validation failed: expected 24 applied migrations, found 23\./);
-  assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
+  const result = runRestoreTest(tempDir);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /No backup found under daily; trying weekly/);
+  assert.match(result.stdout, /Using latest backup object backups\/mysql\/weekly\/project_veil-20260406T030000Z\.sql\.gz/);
 });

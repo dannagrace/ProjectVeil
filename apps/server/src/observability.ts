@@ -177,6 +177,7 @@ interface RuntimeObservabilityState {
   errorEvents: RuntimeDiagnosticsErrorEvent[];
   counters: RuntimeObservabilityCounters;
   prometheus: {
+    dbBackupLastSuccessTimestamp: number | null;
     battleDurationSeconds: HistogramMetricState;
     httpRequestDurationSeconds: HistogramMetricState;
     actionValidationFailuresTotal: Map<string, number>;
@@ -373,6 +374,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     websocketActionKickTotal: 0
   },
   prometheus: {
+    dbBackupLastSuccessTimestamp: null,
     battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
     httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
     actionValidationFailuresTotal: new Map<string, number>(),
@@ -921,6 +923,9 @@ export function buildPrometheusMetricsDocument(): string {
   }
 
   lines.push(
+    "# HELP veil_db_backup_last_success_timestamp Unix timestamp of the latest verified database backup success marker.",
+    "# TYPE veil_db_backup_last_success_timestamp gauge",
+    `veil_db_backup_last_success_timestamp ${runtimeObservability.prometheus.dbBackupLastSuccessTimestamp ?? 0}`,
     ...renderHistogramMetric(
       "veil_battle_duration_seconds",
       "Battle duration from start until resolution.",
@@ -1906,6 +1911,11 @@ export function recordReconnectWindowResolved(
   }
 }
 
+export function setDbBackupLastSuccessTimestamp(timestampSeconds: number | null): void {
+  runtimeObservability.prometheus.dbBackupLastSuccessTimestamp =
+    timestampSeconds != null && Number.isFinite(timestampSeconds) ? Math.max(0, Math.floor(timestampSeconds)) : null;
+}
+
 export function resetRuntimeObservability(): void {
   resetTrackedMySqlPools();
   runtimeObservability.startedAt = Date.now();
@@ -1916,6 +1926,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.battleActionsTotal = 0;
   runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
   runtimeObservability.counters.websocketActionKickTotal = 0;
+  runtimeObservability.prometheus.dbBackupLastSuccessTimestamp = null;
   resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
   resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
   runtimeObservability.prometheus.actionValidationFailuresTotal.clear();
