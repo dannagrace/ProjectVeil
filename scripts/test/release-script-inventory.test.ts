@@ -28,7 +28,7 @@ test("release script inventory records key release artifact families", () => {
 
   assert.match(entries.get("release:gate:summary")?.producedArtifacts.join("\n") ?? "", /release-gate-summary-/);
   assert.match(entries.get("release:phase1:candidate-dossier")?.producedArtifacts.join("\n") ?? "", /phase1-candidate-dossier-/);
-  assert.match(entries.get("release:phase1:candidate-rehearsal")?.purpose ?? "", /canonical packet-level entrypoint/i);
+  assert.match(entries.get("release:phase1:candidate-rehearsal")?.purpose ?? "", /canonical packet-level reviewer entrypoint/i);
   assert.match(entries.get("release:phase1:candidate-rehearsal")?.producedArtifacts.join("\n") ?? "", /runtime observability gate/i);
   assert.match(entries.get("validate:wechat-rc")?.producedArtifacts.join("\n") ?? "", /codex\.wechat\.release-candidate-summary/);
   assert.match(entries.get("release:readiness:snapshot")?.requiredInputs.join("\n") ?? "", /validate:map-object-visuals/);
