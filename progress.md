@@ -1886,3 +1886,18 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 reviewer front door 对 `phase1ExitDossierFreshnessGatePath` 的展示
+
+## Issue #1269 - Phase 1 rehearsal go/no-go front door - 2026-04-11
+
+- 本轮把 `go-no-go packet` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `goNoGoPacketPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 final go/no-go packet 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 go/no-go packet front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `goNoGoPacketPath` 的展示
