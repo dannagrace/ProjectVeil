@@ -569,6 +569,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${report.artifacts.wechatCandidateSummaryPath}\``);
   }
+  if (report.artifacts.runtimeObservabilityGatePath) {
+    lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
+  }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
   }
