@@ -60,6 +60,61 @@ Escalation thresholds:
 - escalate to the runtime owner if `veil_connected_players` stays above `150` for another 15 minutes after load shedding
 - escalate immediately if it rises above `200`, or if room density and HTTP latency alerts fire at the same time
 
+## Alert: VeilActiveRoomsHigh
+
+Likely causes:
+
+- the single node is carrying more than the currently published 10-room safe limit can comfortably absorb
+- room disposal is lagging and stale rooms are not draining after test or player traffic ends
+- a launch spike or replayed synthetic traffic is creating rooms faster than the node can retire them
+
+Immediate triage commands:
+
+```bash
+grep -E '^(veil_active_rooms_total|veil_matchmaking_queue_depth|veil_connected_players) ' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq '{activeRoomCount: .runtime.activeRoomCount, connectionCount: .runtime.connectionCount, gameplayTraffic: .runtime.gameplayTraffic}'
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/room-lifecycle-summary?format=text"
+```
+
+Mitigation steps:
+
+1. Treat `8` active rooms as the scale-out threshold, not as a debugging curiosity. The current in-repo capacity sweep shows world-action p95 at the 100ms hard limit by 10 rooms and breaching by 50 rooms.
+2. If the load is expected, add another runtime before `veil_active_rooms_total` reaches `10` and keep new admissions off the hot node until it falls back below `8`.
+3. If the load is not expected, stop synthetic traffic first, then check whether room disposal is stuck.
+4. If room count stays high while connections are low, investigate zombie rooms or disposal regressions before restarting the node.
+
+Escalation thresholds:
+
+- escalate if the alert survives one full extra 5-minute window after traffic shedding or scale-out
+- escalate immediately if `veil_active_rooms_total >= 10`, if `veil_matchmaking_queue_depth > 50`, or if HTTP latency is also elevated
+
+## Alert: VeilMatchmakingQueueDepthHigh
+
+Likely causes:
+
+- room admission is saturated and new PvP requests are queueing faster than rooms can be provisioned
+- a shard is already above the documented 8-room scale-out threshold
+- Redis-backed matchmaking is healthy, but the available room capacity behind it is not
+
+Immediate triage commands:
+
+```bash
+grep -E '^(veil_matchmaking_queue_depth|veil_active_rooms_total|veil_connected_players) ' /tmp/project-veil.metrics
+curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq '{activeRoomCount: .runtime.activeRoomCount, connectionCount: .runtime.connectionCount}'
+curl -fsS "$VEIL_RUNTIME_URL/api/matchmaking/status" || true
+```
+
+Mitigation steps:
+
+1. Scale out room capacity as the first move if `veil_active_rooms_total >= 8`.
+2. If room count is still low, inspect room creation/disposal churn and Redis health before adding more nodes.
+3. Keep the alert open until queue depth stays below `50` for at least one full minute and new players are matching normally again.
+
+Escalation thresholds:
+
+- escalate immediately if queue depth stays above `50` for more than 5 minutes
+- escalate immediately if queue depth keeps rising after scale-out or if room count is already pinned at the safe limit
+
 ## Alert: VeilRoomsHot
 
 Likely causes:

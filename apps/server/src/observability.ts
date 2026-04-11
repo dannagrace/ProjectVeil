@@ -59,6 +59,7 @@ interface AuthObservabilityCounters {
 
 interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
+  queueDepth: number;
 }
 
 interface LeaderboardAbuseObservabilityCounters {
@@ -460,7 +461,8 @@ const runtimeObservability: RuntimeObservabilityState = {
   },
   matchmaking: {
     counters: {
-      rateLimitedTotal: 0
+      rateLimitedTotal: 0,
+      queueDepth: 0
     }
   },
   leaderboardAbuse: {
@@ -1177,6 +1179,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
+    "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
+    "# TYPE veil_matchmaking_queue_depth gauge",
+    `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
     "# HELP veil_leaderboard_abuse_alerts_total Total leaderboard anti-abuse alerts emitted by this process.",
     "# TYPE veil_leaderboard_abuse_alerts_total counter",
     `veil_leaderboard_abuse_alerts_total ${health.runtime.leaderboardAbuse.counters.alertsTotal}`,
@@ -1839,6 +1844,10 @@ export function recordMatchmakingRateLimited(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
 }
 
+export function setMatchmakingQueueDepth(count: number): void {
+  runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
+}
+
 export function recordLeaderboardAbuseAlert(alert: LeaderboardAlertEvent): void {
   runtimeObservability.leaderboardAbuse.counters.alertsTotal += 1;
   runtimeObservability.leaderboardAbuse.recentAlerts.unshift({ ...alert });
@@ -2047,6 +2056,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
+  runtimeObservability.matchmaking.counters.queueDepth = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
   runtimeObservability.antiCheat.counters.alertsTotal = 0;

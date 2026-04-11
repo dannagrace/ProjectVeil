@@ -252,7 +252,11 @@ curl -fsS "$VEIL_RUNTIME_URL/api/runtime/diagnostic-snapshot" | jq '.diagnostics
 
 ### Alert-VeilActiveRoomsHigh
 
-先确认 `veil_active_rooms_total` 是否和 `activeRoomCount`、房间摘要、以及最近 `room.disposed` 事件一致。若连接数不高但房间数持续上升，优先按僵尸房间或房间退役失败处理；若确实在跑大规模压测，则保留告警并监控是否继续自行回落。
+先确认 `veil_active_rooms_total` 是否和 `activeRoomCount`、房间摘要、以及最近 `room.disposed` 事件一致。当前容量规划把 `10 rooms/node` 作为安全上限、`8 rooms/node` 作为扩容触发点；若连接数不高但房间数持续上升，优先按僵尸房间或房间退役失败处理；若确实在跑大规模压测，则在达到 `8` 前先扩容，不要等到节点打满。
+
+### Alert-VeilMatchmakingQueueDepthHigh
+
+把它视为房间容量已经跟不上 PvP 进入速度的信号。先对照 `veil_active_rooms_total` 和 `veil_connected_players` 判断是否已经到达 `8 rooms/node` 扩容点；若是，先扩容或摘流，再检查 Redis/匹配逻辑本身。
 
 ### Alert-VeilRoomsHot
 

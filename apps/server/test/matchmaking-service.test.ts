@@ -103,6 +103,7 @@ test("matchmaking service reports queued positions from maintained queue state",
     position: 3,
     estimatedWaitSeconds: 30
   });
+  assert.equal(service.getQueueDepth(), 3);
 });
 
 test("matchmaking service updates maintained positions after dequeue and prune", () => {
@@ -134,6 +135,7 @@ test("matchmaking service updates maintained positions after dequeue and prune",
     position: 1,
     estimatedWaitSeconds: 0
   });
+  assert.equal(service.getQueueDepth(), 1);
 });
 
 test("redis matchmaking service shares queue state and match results across service instances", async (t) => {
@@ -174,6 +176,7 @@ test("redis matchmaking service shares queue state and match results across serv
   assert.equal(statusB.status, "matched");
   assert.equal(statusA.roomId, statusB.roomId);
   assert.deepEqual(statusA.playerIds, ["player-alpha", "player-beta"]);
+  assert.equal(await serviceA.getQueueDepth(), 0);
 });
 
 test("redis matchmaking service prunes stale queue entries across shared instances", async (t) => {
@@ -210,6 +213,7 @@ test("redis matchmaking service prunes stale queue entries across shared instanc
     position: 1,
     estimatedWaitSeconds: 0
   });
+  assert.equal(await serviceA.getQueueDepth(), 1);
 });
 
 test("redis matchmaking service shares queued positions and dequeue updates across service instances", async (t) => {
@@ -258,4 +262,5 @@ test("redis matchmaking service shares queued positions and dequeue updates acro
     estimatedWaitSeconds: 0
   });
   assert.equal((await serviceA.getStatus("player-rookie")).status, "idle");
+  assert.equal(await serviceB.getQueueDepth(), 1);
 });

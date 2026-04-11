@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "artifactType": "capacity-planning-report",
+  "generatedAt": "2026-04-11T16:32:04.758Z",
+  "revision": {
+    "commit": "e5e752d852fea23e2ef909cdd5fe5e8b065ee841",
+    "shortCommit": "e5e752d",
+    "branch": "codex/issue-1304-load-test-capacity-thresholds-0412-0019",
+    "dirty": true
+  },
+  "environment": {
+    "hostname": "VM-0-13-tencentos",
+    "cpuCount": 2,
+    "totalMemoryMb": 3656,
+    "platform": "linux",
+    "release": "5.4.241-24.0017.26"
+  },
+  "assumptions": {
+    "latencyHardLimitMs": 100,
+    "peakConcurrencyRatio": 0.1,
+    "playersPerRoom": 2,
+    "instanceMonthlyCostUsd": 48
+  },
+  "samples": [
+    {
+      "rooms": 10,
+      "artifactPath": "artifacts/release-readiness/capacity-planning/stress-rooms-10.json",
+      "status": "passed",
+      "scenarioCount": 2,
+      "failedScenarios": 0,
+      "worstScenario": "world_progression",
+      "worstLatencyP95Ms": 100.03,
+      "worstLatencyMaxMs": 100.22,
+      "peakCpuCoreUtilizationPct": 68.53,
+      "peakRssMb": 242.6,
+      "peakHeapMb": 77.26,
+      "averageActionsPerSecond": 57.2,
+      "notes": []
+    },
+    {
+      "rooms": 50,
+      "artifactPath": "artifacts/release-readiness/capacity-planning/stress-rooms-50.json",
+      "status": "failed",
+      "scenarioCount": 2,
+      "failedScenarios": 0,
+      "worstScenario": "world_progression",
+      "worstLatencyP95Ms": 153.76,
+      "worstLatencyMaxMs": 154.21,
+      "peakCpuCoreUtilizationPct": 59.12,
+      "peakRssMb": 249.29,
+      "peakHeapMb": 104.59,
+      "averageActionsPerSecond": 92.85,
+      "notes": [
+        "p95 action latency breached 100ms"
+      ]
+    },
+    {
+      "rooms": 100,
+      "artifactPath": "artifacts/release-readiness/capacity-planning/stress-rooms-100.json",
+      "status": "failed",
+      "scenarioCount": 2,
+      "failedScenarios": 0,
+      "worstScenario": "world_progression",
+      "worstLatencyP95Ms": 333.16,
+      "worstLatencyMaxMs": 334.34,
+      "peakCpuCoreUtilizationPct": 57.98,
+      "peakRssMb": 318.45,
+      "peakHeapMb": 128.71,
+      "averageActionsPerSecond": 123.03,
+      "notes": [
+        "p95 action latency breached 100ms"
+      ]
+    },
+    {
+      "rooms": 200,
+      "artifactPath": "artifacts/release-readiness/capacity-planning/stress-rooms-200.json",
+      "status": "failed",
+      "scenarioCount": 2,
+      "failedScenarios": 0,
+      "worstScenario": "world_progression",
+      "worstLatencyP95Ms": 553.99,
+      "worstLatencyMaxMs": 555.21,
+      "peakCpuCoreUtilizationPct": 56.5,
+      "peakRssMb": 358.6,
+      "peakHeapMb": 156.46,
+      "averageActionsPerSecond": 154.5,
+      "notes": [
+        "p95 action latency breached 100ms"
+      ]
+    }
+  ],
+  "summary": {
+    "safeLimitRooms": 10,
+    "alertThresholdRooms": 8,
+    "firstLatencyBreachRooms": 50,
+    "scaleOutTriggerRooms": 8,
+    "scaleOutReason": "Scale out when a single node sustains 8+ active rooms because that is 80% of the current 10-room safe limit.",
+    "estimatedPeakRoomsPer1000Dau": 50,
+    "estimatedInstancesPer1000Dau": 5,
+    "estimatedMonthlyCostPer1000DauUsd": 240
+  }
+}

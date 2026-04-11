@@ -12,7 +12,7 @@ import {
   type MatchmakingRequest
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
-import { recordMatchmakingRateLimited } from "./observability";
+import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "./redis";
 import { sendWechatSubscribeMessage } from "./wechat-subscribe";
@@ -218,6 +218,7 @@ export interface MatchmakingServiceController {
   dequeue(playerId: string): boolean | Promise<boolean>;
   getStatus(playerId: string): MatchmakingStatusResponse | Promise<MatchmakingStatusResponse>;
   pruneStaleEntries(maxAgeMs: number, now?: Date): number | Promise<number>;
+  getQueueDepth(): number | Promise<number>;
   close?(): Promise<void>;
 }
 
@@ -342,6 +343,10 @@ export class MatchmakingService implements MatchmakingServiceController {
       }
     }
     return removed;
+  }
+
+  getQueueDepth(): number {
+    return this.queueOrder.length;
   }
 
   private insertQueuedPlayer(request: MatchmakingRequest): void {
@@ -505,6 +510,10 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     await this.redis.quit?.();
   }
 
+  async getQueueDepth(): Promise<number> {
+    return await this.redis.llen(this.queueKey);
+  }
+
   private get lockKey(): string {
     return `${this.keyPrefix}:lock`;
   }
@@ -648,6 +657,11 @@ export function resetMatchmakingService(): void {
   configuredMatchmakingNotificationStore = null;
   configuredMatchmakingService = createConfiguredMatchmakingService();
   matchmakingRateLimitCounters.clear();
+  setMatchmakingQueueDepth(0);
+}
+
+async function refreshMatchmakingQueueDepth(service: MatchmakingServiceController): Promise<void> {
+  setMatchmakingQueueDepth(await Promise.resolve(service.getQueueDepth()));
 }
 
 function describeMatchmakingMapName(roomId: string): string {
@@ -755,6 +769,7 @@ export function registerMatchmakingRoutes(
 
     if (queueTtlMs > 0) {
       await Promise.resolve(service.pruneStaleEntries(queueTtlMs));
+      await refreshMatchmakingQueueDepth(service);
     }
 
     const authSession = await requireAuthSession(request, response, options.store);
@@ -797,6 +812,7 @@ export function registerMatchmakingRoutes(
         enqueuedAt: new Date().toISOString(),
         protectedPvpMatchesRemaining: countRemainingProtectedPvpMatches(account.recentBattleReplays)
       }));
+      await refreshMatchmakingQueueDepth(service);
       sendJson(response, 200, queued);
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -815,6 +831,7 @@ export function registerMatchmakingRoutes(
 
     try {
       const dequeued = await Promise.resolve(service.dequeue(authSession.playerId));
+      await refreshMatchmakingQueueDepth(service);
       sendJson(response, 200, {
         status: dequeued ? "dequeued" : "idle"
       });
@@ -837,6 +854,7 @@ export function registerMatchmakingRoutes(
     }
 
     try {
+      await refreshMatchmakingQueueDepth(service);
       sendJson(response, 200, await Promise.resolve(service.getStatus(authSession.playerId)));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
