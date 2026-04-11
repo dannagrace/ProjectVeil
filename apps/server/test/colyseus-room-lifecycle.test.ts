@@ -1746,6 +1746,73 @@ test("battle replay survives a reconnect mid-battle and persists once from the r
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
 });
 
+test("reconnect into a replacement room compensates unresolved neutral battles from a retired room", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const retiredRoomId = `lifecycle-battle-comp-retired-${Date.now()}`;
+  const seededRoom = createRoom(retiredRoomId, 1001);
+  const seededState = seededRoom.getInternalState();
+  const hero = seededState.heroes.find((candidate) => candidate.id === "hero-1");
+  const neutralArmy = seededState.neutralArmies["neutral-1"];
+
+  t.after(() => {
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  assert.ok(hero);
+  assert.ok(neutralArmy);
+  const interruptedBattle = createNeutralBattleState(hero, neutralArmy, 1001, seededState);
+  await store.saveBattleSnapshotStart({
+    roomId: retiredRoomId,
+    battleId: interruptedBattle.id,
+    heroId: "hero-1",
+    attackerPlayerId: "player-1",
+    encounterKind: "neutral",
+    neutralArmyId: neutralArmy.id,
+    initiator: "hero",
+    path: [hero.position, neutralArmy.position],
+    moveCost: 1,
+    playerIds: ["player-1"],
+    initialState: interruptedBattle,
+    estimatedCompensationGrant: {
+      resources: {
+        gold: neutralArmy.reward?.kind === "gold" ? neutralArmy.reward.amount : 0,
+        wood: neutralArmy.reward?.kind === "wood" ? neutralArmy.reward.amount : 0,
+        ore: neutralArmy.reward?.kind === "ore" ? neutralArmy.reward.amount : 0
+      }
+    }
+  });
+
+  const replacementRoom = await createTestRoom(`lifecycle-battle-comp-replacement-${Date.now()}`);
+  const reconnectingClient = createFakeClient("session-battle-comp-replacement");
+
+  try {
+    await connectPlayer(replacementRoom, reconnectingClient, "player-1", "connect-battle-comp-replacement");
+    const account = await store.loadPlayerAccount("player-1");
+    const mailboxMessage = account?.mailbox?.find((entry) => entry.id === `${interruptedBattle.id}:disconnect-recovery`);
+    const history = await store.listBattleSnapshotsForPlayer?.("player-1", { limit: 10 });
+
+    assert.ok(
+      mailboxMessage,
+      `expected compensation mailbox message; mailbox=${JSON.stringify(account?.mailbox ?? [])} history=${JSON.stringify(history ?? [])}`
+    );
+    assert.ok(history?.[0], `expected interrupted battle history; mailbox=${JSON.stringify(account?.mailbox ?? [])}`);
+    assert.equal(mailboxMessage?.kind, "compensation");
+    assert.ok(
+      (mailboxMessage?.grant?.resources?.gold ?? 0) > 0 ||
+        (mailboxMessage?.grant?.resources?.wood ?? 0) > 0 ||
+        (mailboxMessage?.grant?.resources?.ore ?? 0) > 0
+    );
+    assert.equal(history?.[0]?.battleId, interruptedBattle.id);
+    assert.equal(history?.[0]?.status, "compensated");
+    assert.equal(history?.[0]?.resolutionReason, "room_missing_after_disconnect");
+  } finally {
+    cleanupRoom(replacementRoom);
+  }
+});
+
 test("pvp replay persistence captures both attacker and defender accounts from room settlement", async (t) => {
   resetLobbyRoomRegistry();
   const store = new InstrumentedRoomSnapshotStore();

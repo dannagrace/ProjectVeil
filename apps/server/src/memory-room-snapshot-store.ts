@@ -30,6 +30,12 @@ import {
   type PaymentOrderSettlement,
   type PaymentOrderSnapshot,
   type RoomSnapshotStore,
+  type BattleSnapshotCompensation,
+  type BattleSnapshotInterruptedSettlementInput,
+  type BattleSnapshotListOptions,
+  type BattleSnapshotRecord,
+  type BattleSnapshotResolutionInput,
+  type BattleSnapshotStartInput,
   type PlayerAccountBanHistoryListOptions,
   type PlayerAccountBanInput,
   type PlayerAccountBanSnapshot,
@@ -148,6 +154,7 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
 
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
+  private readonly battleSnapshots = new Map<string, BattleSnapshotRecord>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
@@ -435,6 +442,126 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
   async loadPlayerQuestState(playerId: string): Promise<PlayerQuestState | null> {
     return structuredClone(this.playerQuestStates.get(normalizePlayerId(playerId)) ?? null);
+  }
+
+  async saveBattleSnapshotStart(input: BattleSnapshotStartInput): Promise<BattleSnapshotRecord> {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    if (Number.isNaN(startedAt.getTime())) {
+      throw new Error("startedAt must be a valid ISO timestamp");
+    }
+
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    const next: BattleSnapshotRecord = {
+      roomId: input.roomId,
+      battleId: input.battleId,
+      heroId: input.heroId,
+      attackerPlayerId: normalizePlayerId(input.attackerPlayerId),
+      ...(input.defenderPlayerId ? { defenderPlayerId: normalizePlayerId(input.defenderPlayerId) } : {}),
+      ...(input.defenderHeroId ? { defenderHeroId: input.defenderHeroId } : {}),
+      ...(input.neutralArmyId ? { neutralArmyId: input.neutralArmyId } : {}),
+      encounterKind: input.encounterKind,
+      ...(input.initiator ? { initiator: input.initiator } : {}),
+      path: structuredClone(input.path),
+      moveCost: Math.max(0, Math.floor(input.moveCost)),
+      playerIds: Array.from(new Set(input.playerIds.map((playerId) => normalizePlayerId(playerId)))),
+      initialState: structuredClone(input.initialState),
+      ...(input.estimatedCompensationGrant
+        ? { estimatedCompensationGrant: structuredClone(input.estimatedCompensationGrant) }
+        : {}),
+      status: "active",
+      startedAt: startedAt.toISOString(),
+      createdAt: existing?.createdAt ?? startedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async saveBattleSnapshotResolution(input: BattleSnapshotResolutionInput): Promise<BattleSnapshotRecord | null> {
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    if (!existing) {
+      return null;
+    }
+
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    const next: BattleSnapshotRecord = {
+      ...existing,
+      status: "resolved",
+      result: input.result,
+      resolutionReason: input.resolutionReason ?? "battle_resolved",
+      resolvedAt: resolvedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    delete next.compensation;
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async settleInterruptedBattleSnapshot(
+    input: BattleSnapshotInterruptedSettlementInput
+  ): Promise<BattleSnapshotRecord | null> {
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    if (!existing) {
+      return null;
+    }
+
+    if (existing.status !== "active") {
+      return structuredClone(existing);
+    }
+
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    if (input.compensation) {
+      await this.deliverPlayerMailbox({
+        playerIds: input.compensation.playerIds,
+        message: normalizePlayerMailboxMessage(
+          {
+            id: input.compensation.mailboxMessageId,
+            kind: input.compensation.kind,
+            title: input.compensation.title,
+            body: input.compensation.body,
+            ...(input.compensation.grant ? { grant: input.compensation.grant } : {})
+          },
+          resolvedAt
+        )
+      });
+    }
+
+    const next: BattleSnapshotRecord = {
+      ...existing,
+      status: input.status,
+      resolutionReason: input.resolutionReason,
+      ...(input.compensation ? { compensation: structuredClone(input.compensation) } : {}),
+      resolvedAt: resolvedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async listBattleSnapshotsForPlayer(
+    playerId: string,
+    options: BattleSnapshotListOptions = {}
+  ): Promise<BattleSnapshotRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const statuses = options.statuses ? new Set(options.statuses) : null;
+    const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+
+    return Array.from(this.battleSnapshots.values())
+      .filter((record) => record.playerIds.includes(normalizedPlayerId) && (!statuses || statuses.has(record.status)))
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.battleId.localeCompare(right.battleId))
+      .slice(0, limit)
+      .map((record) => structuredClone(record));
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {

@@ -33,6 +33,9 @@ import {
   type PlayerAchievementProgress,
   type NotificationPreferences,
   type PlayerMailboxMessage,
+  type PlayerMailboxGrant,
+  type BattleState,
+  type Vec2,
   type RankedWeeklyProgress,
   type ResourceLedger,
   type SeasonalEventState,
@@ -108,6 +111,82 @@ export interface BattlePassClaimResult {
   granted: BattlePassRewardGrant;
   seasonPassPremiumApplied: boolean;
   account: PlayerAccountSnapshot;
+}
+
+export type BattleSnapshotStatus = "active" | "resolved" | "compensated" | "aborted";
+
+export interface BattleSnapshotCompensation {
+  mailboxMessageId: string;
+  playerIds: string[];
+  title: string;
+  body: string;
+  kind: PlayerMailboxMessage["kind"];
+  grant?: PlayerMailboxGrant;
+}
+
+export interface BattleSnapshotRecord {
+  roomId: string;
+  battleId: string;
+  heroId: string;
+  attackerPlayerId: string;
+  defenderPlayerId?: string;
+  defenderHeroId?: string;
+  neutralArmyId?: string;
+  encounterKind: "neutral" | "hero";
+  initiator?: "hero" | "neutral";
+  path: Vec2[];
+  moveCost: number;
+  playerIds: string[];
+  initialState: BattleState;
+  estimatedCompensationGrant?: PlayerMailboxGrant;
+  status: BattleSnapshotStatus;
+  result?: "attacker_victory" | "defender_victory";
+  resolutionReason?: string;
+  compensation?: BattleSnapshotCompensation;
+  startedAt: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BattleSnapshotStartInput {
+  roomId: string;
+  battleId: string;
+  heroId: string;
+  attackerPlayerId: string;
+  defenderPlayerId?: string;
+  defenderHeroId?: string;
+  neutralArmyId?: string;
+  encounterKind: "neutral" | "hero";
+  initiator?: "hero" | "neutral";
+  path: Vec2[];
+  moveCost: number;
+  playerIds: string[];
+  initialState: BattleState;
+  estimatedCompensationGrant?: PlayerMailboxGrant;
+  startedAt?: string;
+}
+
+export interface BattleSnapshotResolutionInput {
+  roomId: string;
+  battleId: string;
+  result: "attacker_victory" | "defender_victory";
+  resolutionReason?: string;
+  resolvedAt?: string;
+}
+
+export interface BattleSnapshotInterruptedSettlementInput {
+  roomId: string;
+  battleId: string;
+  status: Extract<BattleSnapshotStatus, "compensated" | "aborted">;
+  resolutionReason: string;
+  compensation?: BattleSnapshotCompensation;
+  resolvedAt?: string;
+}
+
+export interface BattleSnapshotListOptions {
+  statuses?: BattleSnapshotStatus[];
+  limit?: number;
 }
 
 export interface RoomSnapshotStore {
@@ -189,6 +268,10 @@ export interface RoomSnapshotStore {
   resolvePlayerReport?(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
+  saveBattleSnapshotStart?(input: BattleSnapshotStartInput): Promise<BattleSnapshotRecord>;
+  saveBattleSnapshotResolution?(input: BattleSnapshotResolutionInput): Promise<BattleSnapshotRecord | null>;
+  settleInterruptedBattleSnapshot?(input: BattleSnapshotInterruptedSettlementInput): Promise<BattleSnapshotRecord | null>;
+  listBattleSnapshotsForPlayer?(playerId: string, options?: BattleSnapshotListOptions): Promise<BattleSnapshotRecord[]>;
   savePlayerQuestState?(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState>;
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
@@ -465,6 +548,31 @@ interface PlayerReportRow extends RowDataPacket {
   status: string;
   created_at: Date | string;
   resolved_at: Date | string | null;
+}
+
+interface BattleSnapshotRow extends RowDataPacket {
+  room_id: string;
+  battle_id: string;
+  hero_id: string;
+  attacker_player_id: string;
+  defender_player_id: string | null;
+  defender_hero_id: string | null;
+  neutral_army_id: string | null;
+  encounter_kind: "neutral" | "hero";
+  initiator: "hero" | "neutral" | null;
+  path_json: string | Vec2[];
+  move_cost: number;
+  player_ids_json: string | string[];
+  initial_state_json: string | BattleState;
+  estimated_compensation_grant_json: string | PlayerMailboxGrant | null;
+  status: BattleSnapshotStatus;
+  result: "attacker_victory" | "defender_victory" | null;
+  resolution_reason: string | null;
+  compensation_json: string | BattleSnapshotCompensation | null;
+  started_at: Date | string;
+  resolved_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
 }
 
 export interface RoomSnapshotSummary {
@@ -930,6 +1038,8 @@ export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archi
 export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
 export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
 export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
+export const MYSQL_BATTLE_SNAPSHOT_TABLE = "battle_snapshots";
+export const MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX = "idx_battle_snapshots_status_updated";
 export const MYSQL_GUILD_TABLE = "guilds";
 export const MYSQL_GUILD_UPDATED_AT_INDEX = "idx_guilds_updated_at";
 export const MYSQL_GUILD_TAG_INDEX = "uidx_guilds_tag";
@@ -1674,6 +1784,23 @@ function normalizePlayerId(playerId: string): string {
   const normalized = playerId.trim();
   if (normalized.length === 0) {
     throw new Error("playerId must not be empty");
+  }
+
+  return normalized;
+}
+
+function normalizeBattleSnapshotStatus(status: BattleSnapshotStatus): BattleSnapshotStatus {
+  if (status !== "active" && status !== "resolved" && status !== "compensated" && status !== "aborted") {
+    throw new Error("battle snapshot status is invalid");
+  }
+
+  return status;
+}
+
+function normalizeBattleSnapshotPlayerIds(playerIds: string[]): string[] {
+  const normalized = Array.from(new Set(playerIds.map((playerId) => normalizePlayerId(playerId))));
+  if (normalized.length === 0) {
+    throw new Error("battle snapshot must include at least one playerId");
   }
 
   return normalized;
@@ -2490,6 +2617,32 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REPORT_TABLE}\` (
   UNIQUE KEY \`${MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX}\` (room_id, reporter_id, target_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\` (
+  room_id VARCHAR(191) NOT NULL,
+  battle_id VARCHAR(191) NOT NULL,
+  hero_id VARCHAR(191) NOT NULL,
+  attacker_player_id VARCHAR(191) NOT NULL,
+  defender_player_id VARCHAR(191) NULL,
+  defender_hero_id VARCHAR(191) NULL,
+  neutral_army_id VARCHAR(191) NULL,
+  encounter_kind VARCHAR(16) NOT NULL,
+  initiator VARCHAR(16) NULL,
+  path_json LONGTEXT NOT NULL,
+  move_cost INT NOT NULL,
+  player_ids_json LONGTEXT NOT NULL,
+  initial_state_json LONGTEXT NOT NULL,
+  estimated_compensation_grant_json LONGTEXT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'active',
+  result VARCHAR(32) NULL,
+  resolution_reason VARCHAR(64) NULL,
+  compensation_json LONGTEXT NULL,
+  started_at DATETIME NOT NULL,
+  resolved_at DATETIME NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (room_id, battle_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET @veil_player_accounts_display_name_exists := (
   SELECT COUNT(*)
   FROM INFORMATION_SCHEMA.COLUMNS
@@ -2543,6 +2696,24 @@ SET @veil_player_reports_idx_sql := IF(
 PREPARE veil_player_reports_idx_stmt FROM @veil_player_reports_idx_sql;
 EXECUTE veil_player_reports_idx_stmt;
 DEALLOCATE PREPARE veil_player_reports_idx_stmt;
+
+SET @veil_battle_snapshots_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_BATTLE_SNAPSHOT_TABLE}'
+    AND INDEX_NAME = '${MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX}'
+);
+
+SET @veil_battle_snapshots_idx_sql := IF(
+  @veil_battle_snapshots_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX}\` ON \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\` (status, updated_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_battle_snapshots_idx_stmt FROM @veil_battle_snapshots_idx_sql;
+EXECUTE veil_battle_snapshots_idx_stmt;
+DEALLOCATE PREPARE veil_battle_snapshots_idx_stmt;
 
 SET @veil_player_referrals_idx_exists := (
   SELECT COUNT(*)
@@ -3999,6 +4170,47 @@ function toPlayerReportRecord(row: PlayerReportRow): PlayerReportRecord {
   });
 }
 
+function toBattleSnapshotRecord(row: BattleSnapshotRow): BattleSnapshotRecord {
+  const startedAt = formatTimestamp(row.started_at);
+  const createdAt = formatTimestamp(row.created_at);
+  const updatedAt = formatTimestamp(row.updated_at);
+  if (!startedAt || !createdAt || !updatedAt) {
+    throw new Error("battle snapshot timestamps must be present");
+  }
+
+  const resolvedAt = formatTimestamp(row.resolved_at);
+  const compensation = row.compensation_json
+    ? parseJsonColumn<BattleSnapshotCompensation>(row.compensation_json)
+    : null;
+
+  return {
+    roomId: row.room_id,
+    battleId: row.battle_id,
+    heroId: row.hero_id,
+    attackerPlayerId: normalizePlayerId(row.attacker_player_id),
+    ...(row.defender_player_id ? { defenderPlayerId: normalizePlayerId(row.defender_player_id) } : {}),
+    ...(row.defender_hero_id ? { defenderHeroId: row.defender_hero_id } : {}),
+    ...(row.neutral_army_id ? { neutralArmyId: row.neutral_army_id } : {}),
+    encounterKind: row.encounter_kind,
+    ...(row.initiator ? { initiator: row.initiator } : {}),
+    path: parseJsonColumn<Vec2[]>(row.path_json),
+    moveCost: Math.max(0, Math.floor(row.move_cost)),
+    playerIds: normalizeBattleSnapshotPlayerIds(parseJsonColumn<string[]>(row.player_ids_json)),
+    initialState: parseJsonColumn<BattleState>(row.initial_state_json),
+    ...(row.estimated_compensation_grant_json
+      ? { estimatedCompensationGrant: parseJsonColumn<PlayerMailboxGrant>(row.estimated_compensation_grant_json) }
+      : {}),
+    status: normalizeBattleSnapshotStatus(row.status),
+    ...(row.result ? { result: row.result } : {}),
+    ...(row.resolution_reason ? { resolutionReason: row.resolution_reason } : {}),
+    ...(compensation ? { compensation } : {}),
+    startedAt,
+    ...(resolvedAt ? { resolvedAt } : {}),
+    createdAt,
+    updatedAt
+  };
+}
+
 async function appendPlayerEventHistoryEntries(
   queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
   playerId: string,
@@ -5142,6 +5354,199 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPlayerQuestState(row) : null;
+  }
+
+  async saveBattleSnapshotStart(input: BattleSnapshotStartInput): Promise<BattleSnapshotRecord> {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    if (Number.isNaN(startedAt.getTime())) {
+      throw new Error("startedAt must be a valid ISO timestamp");
+    }
+
+    const normalizedPlayerIds = normalizeBattleSnapshotPlayerIds(input.playerIds);
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\` (
+         room_id,
+         battle_id,
+         hero_id,
+         attacker_player_id,
+         defender_player_id,
+         defender_hero_id,
+         neutral_army_id,
+         encounter_kind,
+         initiator,
+         path_json,
+         move_cost,
+         player_ids_json,
+         initial_state_json,
+         estimated_compensation_grant_json,
+         status,
+         started_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+       ON DUPLICATE KEY UPDATE
+         hero_id = VALUES(hero_id),
+         attacker_player_id = VALUES(attacker_player_id),
+         defender_player_id = VALUES(defender_player_id),
+         defender_hero_id = VALUES(defender_hero_id),
+         neutral_army_id = VALUES(neutral_army_id),
+         encounter_kind = VALUES(encounter_kind),
+         initiator = VALUES(initiator),
+         path_json = VALUES(path_json),
+         move_cost = VALUES(move_cost),
+         player_ids_json = VALUES(player_ids_json),
+         initial_state_json = VALUES(initial_state_json),
+         estimated_compensation_grant_json = VALUES(estimated_compensation_grant_json),
+         status = 'active',
+         result = NULL,
+         resolution_reason = NULL,
+         compensation_json = NULL,
+         started_at = VALUES(started_at),
+         resolved_at = NULL`,
+      [
+        input.roomId,
+        input.battleId,
+        input.heroId,
+        normalizePlayerId(input.attackerPlayerId),
+        input.defenderPlayerId ? normalizePlayerId(input.defenderPlayerId) : null,
+        input.defenderHeroId ?? null,
+        input.neutralArmyId ?? null,
+        input.encounterKind,
+        input.initiator ?? null,
+        JSON.stringify(input.path),
+        Math.max(0, Math.floor(input.moveCost)),
+        JSON.stringify(normalizedPlayerIds),
+        JSON.stringify(input.initialState),
+        JSON.stringify(input.estimatedCompensationGrant ?? null),
+        startedAt
+      ]
+    );
+
+    const [rows] = await this.pool.query<BattleSnapshotRow[]>(
+      `SELECT *
+       FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       WHERE room_id = ?
+         AND battle_id = ?
+       LIMIT 1`,
+      [input.roomId, input.battleId]
+    );
+
+    return toBattleSnapshotRecord(rows[0]!);
+  }
+
+  async saveBattleSnapshotResolution(input: BattleSnapshotResolutionInput): Promise<BattleSnapshotRecord | null> {
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       SET status = 'resolved',
+           result = ?,
+           resolution_reason = ?,
+           compensation_json = NULL,
+           resolved_at = ?
+       WHERE room_id = ?
+         AND battle_id = ?`,
+      [input.result, input.resolutionReason ?? "battle_resolved", resolvedAt, input.roomId, input.battleId]
+    );
+
+    const [rows] = await this.pool.query<BattleSnapshotRow[]>(
+      `SELECT *
+       FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       WHERE room_id = ?
+         AND battle_id = ?
+       LIMIT 1`,
+      [input.roomId, input.battleId]
+    );
+
+    return rows[0] ? toBattleSnapshotRecord(rows[0]) : null;
+  }
+
+  async settleInterruptedBattleSnapshot(
+    input: BattleSnapshotInterruptedSettlementInput
+  ): Promise<BattleSnapshotRecord | null> {
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    if (input.compensation && this.deliverPlayerMailbox) {
+      const message: PlayerMailboxMessage = normalizePlayerMailboxMessage(
+        {
+          id: input.compensation.mailboxMessageId,
+          kind: input.compensation.kind,
+          title: input.compensation.title,
+          body: input.compensation.body,
+          ...(input.compensation.grant ? { grant: input.compensation.grant } : {})
+        },
+        resolvedAt
+      );
+      await this.deliverPlayerMailbox({
+        playerIds: input.compensation.playerIds,
+        message
+      });
+    }
+
+    await this.pool.query(
+      `UPDATE \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       SET status = ?,
+           resolution_reason = ?,
+           compensation_json = ?,
+           resolved_at = ?
+       WHERE room_id = ?
+         AND battle_id = ?
+         AND status = 'active'`,
+      [
+        normalizeBattleSnapshotStatus(input.status),
+        input.resolutionReason,
+        JSON.stringify(input.compensation ?? null),
+        resolvedAt,
+        input.roomId,
+        input.battleId
+      ]
+    );
+
+    const [rows] = await this.pool.query<BattleSnapshotRow[]>(
+      `SELECT *
+       FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       WHERE room_id = ?
+         AND battle_id = ?
+       LIMIT 1`,
+      [input.roomId, input.battleId]
+    );
+
+    return rows[0] ? toBattleSnapshotRecord(rows[0]) : null;
+  }
+
+  async listBattleSnapshotsForPlayer(
+    playerId: string,
+    options: BattleSnapshotListOptions = {}
+  ): Promise<BattleSnapshotRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+    const normalizedStatuses = Array.from(
+      new Set((options.statuses ?? []).map((status) => normalizeBattleSnapshotStatus(status)))
+    );
+    const whereClauses = ["JSON_CONTAINS(player_ids_json, JSON_QUOTE(?), '$')"];
+    const params: Array<string | number> = [normalizedPlayerId];
+
+    if (normalizedStatuses.length > 0) {
+      whereClauses.push(`status IN (${normalizedStatuses.map(() => "?").join(", ")})`);
+      params.push(...normalizedStatuses);
+    }
+
+    params.push(safeLimit);
+    const [rows] = await this.pool.query<BattleSnapshotRow[]>(
+      `SELECT *
+       FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+       WHERE ${whereClauses.join(" AND ")}
+       ORDER BY started_at DESC, battle_id ASC
+       LIMIT ?`,
+      params
+    );
+
+    return rows.map((row) => toBattleSnapshotRecord(row));
   }
 
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
