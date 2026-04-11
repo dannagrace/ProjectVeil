@@ -1823,3 +1823,21 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 `cocos-primary-journey-evidence` 阶段、artifact path 与 summary 呈现
+
+## Issue #1259 - Phase 1 rehearsal main-journey replay gate - 2026-04-11
+
+- 本轮把 `cocos-main-journey-replay-gate` 从 `release:cocos-rc:bundle` 的内部产物提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer packet 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - 新增 `cocos-main-journey-replay-gate` staging 阶段
+    - 显式登记：
+      - `cocosMainJourneyReplayGatePath`
+      - `cocosMainJourneyReplayGateMarkdownPath`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出 Cocos main-journey replay gate
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 现在包含 standalone 的 Cocos main-journey replay gate
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 main-journey replay gate
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 `cocos-main-journey-replay-gate` 阶段、artifact path 与 summary 呈现

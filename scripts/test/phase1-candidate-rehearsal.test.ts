@@ -171,6 +171,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "cocos-primary-diagnostics")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "candidate-revision-triage-digest")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "cocos-main-journey-replay-gate")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-bundle")?.status, "skipped");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-same-revision-evidence-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-release-evidence-drift-gate")?.status, "passed");
@@ -186,6 +187,8 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.releaseReadinessSnapshotPath ?? "", /release-readiness-phase1-mainline-/);
   assert.match(report.artifacts.cocosPrimaryJourneyEvidencePath ?? "", /cocos-primary-journey-evidence-phase1-mainline-/);
   assert.match(report.artifacts.cocosPrimaryJourneyEvidenceMarkdownPath ?? "", /cocos-primary-journey-evidence-phase1-mainline-/);
+  assert.match(report.artifacts.cocosMainJourneyReplayGatePath ?? "", /cocos-main-journey-replay-gate-phase1-mainline-/);
+  assert.match(report.artifacts.cocosMainJourneyReplayGateMarkdownPath ?? "", /cocos-main-journey-replay-gate-phase1-mainline-/);
   assert.match(report.artifacts.cocosPrimaryDiagnosticsPath ?? "", /cocos-primary-client-diagnostic-snapshots-/);
   assert.match(report.artifacts.cocosPrimaryDiagnosticsMarkdownPath ?? "", /cocos-primary-client-diagnostic-snapshots-/);
   assert.match(report.artifacts.candidateRevisionTriageInputPath ?? "", /candidate-revision-triage-input-phase1-mainline-/);
@@ -223,12 +226,15 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
   assert.match(markdown, /Manual evidence owner ledger:/);
-  assert.match(markdown, /Cocos primary diagnostics:/);
   assert.match(markdown, /Cocos primary journey evidence:/);
+  assert.match(markdown, /Cocos main-journey replay gate:/);
+  assert.match(markdown, /Cocos primary diagnostics:/);
   assert.match(markdown, /Candidate revision triage digest:/);
   assert.match(markdown, /Release PR summary:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidencePath:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidenceMarkdownPath:/);
+  assert.match(markdown, /cocosMainJourneyReplayGatePath:/);
+  assert.match(markdown, /cocosMainJourneyReplayGateMarkdownPath:/);
   assert.match(markdown, /cocosPrimaryDiagnosticsPath:/);
   assert.match(markdown, /candidateRevisionTriageInputPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestPath:/);
