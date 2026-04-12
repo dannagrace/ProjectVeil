@@ -114,6 +114,18 @@ groups:
           description: Replica lag has exceeded 30 seconds for 10 minutes. Freeze failover and backup promotion decisions until replication catches up or a deliberate recovery point is chosen.
           runbook_url: ./incident-response-runbook.md#alert-veilmysqlreplicationlaghigh
 
+      - alert: VeilConfigCenterFilesystemFallback
+        expr: max(veil_config_center_store_type) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: project-veil-server
+          notify: ops-slack
+        annotations:
+          summary: Project Veil config center is running on filesystem fallback
+          description: At least one Project Veil server process is exporting `veil_config_center_store_type=1`, which means config-center writes are not durable in MySQL and can be lost on restart or deploy.
+          runbook_url: ./alerting-runbook.md#alert-veilconfigcenterfilesystemfallback
+
       - alert: VeilWechatPaymentFraudSignalsHigh
         expr: increase(veil_runtime_error_events_total{feature_area="payment",error_code="payment_fraud_signal"}[15m]) > 0
         for: 5m

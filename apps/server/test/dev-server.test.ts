@@ -378,6 +378,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(memoryStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
   assert.deepEqual(base.process.exitCodes, [0]);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_config_center_store_type 1$/m);
 });
 
 test("dev server loads runtime secrets before reading persistence config", async () => {
@@ -882,6 +883,118 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
   assert.equal(base.logger.errors[0]?.message, "MySQL migration/bootstrap failed during production startup");
 });
 
+test("dev server logs and exports filesystem config center fallback when MySQL config center bootstrap fails in non-production", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const filesystemConfigCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const mysqlStore = createMySqlStore(
+    {
+      ttlHours: 24,
+      cleanupIntervalMinutes: 30
+    },
+    async () => 0
+  );
+  const mysqlConfig: MySqlPersistenceConfig = {
+    host: "127.0.0.1",
+    port: 3306,
+    user: "veil",
+    password: "veil",
+    database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
+    retention: {
+      ttlHours: 24,
+      cleanupIntervalMinutes: 30
+    }
+  };
+  const bootstrapError = new Error("config center access denied");
+
+  await startDevServer(3204, "127.0.0.1", {
+    readMySqlPersistenceConfig: () => mysqlConfig,
+    getSchemaMigrationStatus: async () => ({ pending: [] }),
+    createFileSystemConfigCenterStore: () => filesystemConfigCenterStore,
+    createMySqlRoomSnapshotStore: async () => mysqlStore,
+    createMySqlConfigCenterStore: async () => {
+      throw bootstrapError;
+    },
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: (store) => {
+      assert.equal(store, memoryStore);
+    },
+    createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
+    registerAuthRoutes: () => undefined,
+    registerAnalyticsRoutes: () => undefined,
+    registerConfigCenterRoutes: (_app, store) => {
+      assert.equal(store, filesystemConfigCenterStore);
+    },
+    registerConfigViewerRoutes: (_app, store) => {
+      assert.equal(store, filesystemConfigCenterStore);
+    },
+    registerEventRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerApplePaymentRoutes: () => undefined,
+    registerGooglePlayRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: (_app, dependencies) => {
+      assert.equal(dependencies.store, memoryStore);
+    },
+    registerMinorProtectionRoutes: () => undefined,
+    registerLeaderboardRoutes: () => undefined,
+    registerSeasonRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
+    registerRetentionSummaryRoute: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
+    registerAdminRoutes: (_app, store) => {
+      assert.equal(store, memoryStore);
+    },
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  assert.equal(mysqlStore.closeCalls, 1);
+  assert.equal(filesystemConfigCenterStore.initializeCalls, 1);
+  assert.deepEqual(base.logger.warnings, []);
+  assert.deepEqual(base.logger.errors, [
+    {
+      message: "MySQL bootstrap failed; falling back to in-memory room persistence and filesystem config center in non-production mode",
+      error: bootstrapError
+    }
+  ]);
+  assertStartupLogIncludes(base.logger, [
+    /Config center storage: filesystem/,
+    /Persistence mode: degraded\/in-memory/
+  ]);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_config_center_store_type 1$/m);
+});
+
 test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL is set", async () => {
   resetRuntimeObservability();
   const base = createBaseDependencies();
@@ -1099,6 +1212,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(scheduledTimers[0]?.unrefCalls, 1);
   assert.equal(scheduledTimers[1]?.delayMs, 60 * 60 * 1000);
   assert.equal(scheduledTimers[1]?.unrefCalls, 1);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_config_center_store_type 0$/m);
 
   scheduledTimers[0]?.callback();
   scheduledTimers[1]?.callback();

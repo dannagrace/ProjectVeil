@@ -190,6 +190,7 @@ interface RuntimeObservabilityState {
   errorEvents: RuntimeDiagnosticsErrorEvent[];
   counters: RuntimeObservabilityCounters;
   prometheus: {
+    configCenterStoreType: 0 | 1;
     dbBackupLastSuccessTimestamp: number | null;
     battleDurationSeconds: HistogramMetricState;
     httpRequestDurationSeconds: HistogramMetricState;
@@ -404,6 +405,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     socialShareActivityRequestsTotal: 0
   },
   prometheus: {
+    configCenterStoreType: 1,
     dbBackupLastSuccessTimestamp: null,
     battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
     httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
@@ -976,6 +978,9 @@ export function buildPrometheusMetricsDocument(): string {
   }
 
   lines.push(
+    "# HELP veil_config_center_store_type Config center storage backend for this process (0=mysql, 1=filesystem).",
+    "# TYPE veil_config_center_store_type gauge",
+    `veil_config_center_store_type ${runtimeObservability.prometheus.configCenterStoreType}`,
     "# HELP veil_db_backup_last_success_timestamp Unix timestamp of the latest verified database backup success marker.",
     "# TYPE veil_db_backup_last_success_timestamp gauge",
     `veil_db_backup_last_success_timestamp ${runtimeObservability.prometheus.dbBackupLastSuccessTimestamp ?? 0}`,
@@ -2036,6 +2041,10 @@ export function recordReconnectWindowResolved(
   }
 }
 
+export function setConfigCenterStoreType(mode: "mysql" | "filesystem"): void {
+  runtimeObservability.prometheus.configCenterStoreType = mode === "mysql" ? 0 : 1;
+}
+
 export function setDbBackupLastSuccessTimestamp(timestampSeconds: number | null): void {
   runtimeObservability.prometheus.dbBackupLastSuccessTimestamp =
     timestampSeconds != null && Number.isFinite(timestampSeconds) ? Math.max(0, Math.floor(timestampSeconds)) : null;
@@ -2051,6 +2060,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.battleActionsTotal = 0;
   runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
   runtimeObservability.counters.websocketActionKickTotal = 0;
+  runtimeObservability.prometheus.configCenterStoreType = 1;
   runtimeObservability.prometheus.dbBackupLastSuccessTimestamp = null;
   resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
   resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
