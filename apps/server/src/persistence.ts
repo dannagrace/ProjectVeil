@@ -8485,63 +8485,197 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     const deletedAt = normalizePrivacyConsentAt(input.deletedAt) ?? new Date().toISOString();
     const anonymizedDisplayName = `deleted-${normalizedPlayerId}`;
 
-    await this.pool.query(
-      `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
-       WHERE player_id = ?`,
-      [normalizedPlayerId]
-    );
-    await this.pool.query(
-      `DELETE FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
-       WHERE player_id = ?`,
-      [normalizedPlayerId]
-    );
-    await this.pool.query(
-      `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-       SET display_name = ?,
-           avatar_url = NULL,
-           global_resources_json = ?,
-           achievements_json = ?,
-           last_room_id = NULL,
-           last_seen_at = NULL,
-           login_id = NULL,
-           password_hash = NULL,
-           credential_bound_at = NULL,
-           privacy_consent_at = NULL,
-           phone_number = NULL,
-           phone_number_bound_at = NULL,
-           age_verified = 0,
-           is_minor = 0,
-           daily_play_minutes = 0,
-           last_play_date = NULL,
-           login_streak = 0,
-           ban_status = 'none',
-           ban_expiry = NULL,
-           ban_reason = NULL,
-           account_session_version = account_session_version + 1,
-           refresh_session_id = NULL,
-           refresh_token_hash = NULL,
-           refresh_token_expires_at = NULL,
-           wechat_open_id = NULL,
-           wechat_union_id = NULL,
-           wechat_mini_game_open_id = NULL,
-           wechat_mini_game_union_id = NULL,
-           wechat_mini_game_bound_at = NULL,
-           guest_migrated_to_player_id = NULL,
-           version = version + 1
-       WHERE player_id = ?`,
-      [anonymizedDisplayName, JSON.stringify(normalizeResourceLedger()), JSON.stringify([]), normalizedPlayerId]
-    );
-    await appendPlayerEventHistoryEntries(this.pool, normalizedPlayerId, [
-      {
-        id: `${normalizedPlayerId}:${deletedAt}:account-deleted`,
-        timestamp: deletedAt,
-        roomId: "auth",
-        playerId: normalizedPlayerId,
-        category: "account",
-        description: "Account deleted and personal data anonymized.",
-        rewards: []
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
+         WHERE attacker_player_id = ? OR defender_player_id = ?`,
+        [normalizedPlayerId, normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_SEASON_REWARD_LOG_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+
+      const verificationChecks = [
+        {
+          label: MYSQL_PLAYER_ACCOUNT_SESSION_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_ACCOUNT_SESSION_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_QUEST_STATE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_QUEST_STATE_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_EVENT_HISTORY_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_GUILD_MEMBERSHIP_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_BATTLE_SNAPSHOT_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\` WHERE attacker_player_id = ? OR defender_player_id = ?`,
+          params: [normalizedPlayerId, normalizedPlayerId]
+        },
+        {
+          label: MYSQL_SEASON_RANKINGS_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_SEASON_REWARD_LOG_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        }
+      ];
+
+      for (const check of verificationChecks) {
+        const [rows] = await connection.query<Array<RowDataPacket & { total: number }>>(check.sql, check.params);
+        if ((rows[0]?.total ?? 0) > 0) {
+          throw new Error(`gdpr_delete_verification_failed:${check.label}`);
+        }
       }
-    ]);
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET display_name = ?,
+             avatar_url = NULL,
+             elo_rating = NULL,
+             rank_division = NULL,
+             peak_rank_division = NULL,
+             promotion_series_json = NULL,
+             demotion_shield_json = NULL,
+             season_history_json = ?,
+             ranked_weekly_progress_json = NULL,
+             gems = 0,
+             season_xp = 0,
+             season_pass_tier = 1,
+             season_pass_premium = 0,
+             season_pass_claimed_tiers_json = ?,
+             season_badges_json = ?,
+             campaign_progress_json = NULL,
+             seasonal_event_states_json = NULL,
+             mailbox_json = NULL,
+             cosmetic_inventory_json = ?,
+             equipped_cosmetics_json = ?,
+             global_resources_json = ?,
+             achievements_json = ?,
+             recent_event_log_json = ?,
+             recent_battle_replays_json = ?,
+             daily_dungeon_state_json = NULL,
+             leaderboard_abuse_state_json = NULL,
+             leaderboard_moderation_state_json = ?,
+             tutorial_step = ?,
+             last_room_id = NULL,
+             last_seen_at = NULL,
+             login_id = NULL,
+             age_verified = 0,
+             is_minor = 0,
+             daily_play_minutes = 0,
+             last_play_date = NULL,
+             login_streak = 0,
+             ban_status = 'none',
+             ban_expiry = NULL,
+             ban_reason = NULL,
+             wechat_open_id = NULL,
+             wechat_union_id = NULL,
+             wechat_mini_game_open_id = NULL,
+             wechat_mini_game_union_id = NULL,
+             wechat_mini_game_bound_at = NULL,
+             guest_migrated_to_player_id = NULL,
+             password_hash = NULL,
+             credential_bound_at = NULL,
+             privacy_consent_at = NULL,
+             phone_number = NULL,
+             phone_number_bound_at = NULL,
+             notification_preferences_json = NULL,
+             account_session_version = account_session_version + 1,
+             refresh_session_id = NULL,
+             refresh_token_hash = NULL,
+             refresh_token_expires_at = NULL,
+             version = version + 1
+         WHERE player_id = ?`,
+        [
+          anonymizedDisplayName,
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify({ ownedIds: [] }),
+          JSON.stringify({}),
+          JSON.stringify(normalizeResourceLedger()),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify({
+            hiddenAt: deletedAt,
+            hiddenByPlayerId: "system:gdpr-delete"
+          }),
+          DEFAULT_TUTORIAL_STEP,
+          normalizedPlayerId
+        ]
+      );
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
 
     return this.loadPlayerAccount(normalizedPlayerId);
   }

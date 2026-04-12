@@ -540,6 +540,188 @@ test("mysql player event history query applies inclusive timestamp filters", asy
   assert.deepEqual(queries[1].params, ["player-1", "2026-03-20T00:00:00.000Z", "2026-03-20T00:06:00.000Z"]);
 });
 
+test("deletePlayerAccount deletes dependent rows, verifies cascade cleanup, and scrubs leaderboard state", async () => {
+  const existingAccount = createExistingAccount({
+    displayName: "Veil Ranger",
+    loginId: "veil-ranger",
+    privacyConsentAt: "2026-03-20T01:00:00.000Z",
+    eloRating: 1660,
+    rankDivision: "platinum_i",
+    peakRankDivision: "diamond_v",
+    seasonHistory: [
+      {
+        seasonId: "season-1",
+        finalRating: 1640,
+        rankDivision: "platinum_i",
+        archivedAt: "2026-03-19T00:00:00.000Z"
+      }
+    ],
+    recentEventLog: [
+      {
+        id: "delete-me-event",
+        timestamp: "2026-03-20T00:01:00.000Z",
+        roomId: "room-1",
+        playerId: "player-1",
+        category: "combat",
+        description: "delete me",
+        rewards: []
+      }
+    ],
+    recentBattleReplays: [
+      {
+        id: "delete-me-replay",
+        battleId: "battle-1",
+        roomId: "room-1",
+        createdAt: "2026-03-20T00:02:00.000Z",
+        participants: [],
+        result: "victory",
+        rewardSummary: []
+      }
+    ],
+    mailbox: [
+      {
+        id: "mail-1",
+        kind: "system",
+        title: "Delete me",
+        body: "Delete me",
+        sentAt: "2026-03-20T00:03:00.000Z"
+      }
+    ]
+  });
+  const deletedAccount = createExistingAccount({
+    displayName: "deleted-player-1",
+    eloRating: undefined,
+    rankDivision: undefined,
+    peakRankDivision: undefined,
+    seasonHistory: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    mailbox: undefined,
+    leaderboardModerationState: {
+      hiddenAt: "2026-03-21T00:00:00.000Z",
+      hiddenByPlayerId: "system:gdpr-delete"
+    },
+    loginId: undefined,
+    privacyConsentAt: undefined
+  });
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let loadCount = 0;
+  let committed = false;
+  let rolledBack = false;
+  const connection = {
+    async beginTransaction() {},
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 0 }]];
+      }
+
+      return [{ affectedRows: 1 }];
+    },
+    async commit() {
+      committed = true;
+    },
+    async rollback() {
+      rolledBack = true;
+    },
+    release() {}
+  };
+
+  const store = createStoreHarness();
+  store.loadPlayerAccount = async (playerId: string) => {
+    assert.equal(playerId, "player-1");
+    loadCount += 1;
+    return loadCount === 1 ? existingAccount : deletedAccount;
+  };
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.ensurePlayerAccount = async () => existingAccount;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used by deletePlayerAccount");
+    },
+    getConnection: async () => connection
+  };
+
+  const account = await store.deletePlayerAccount("player-1", {
+    deletedAt: "2026-03-21T00:00:00.000Z"
+  });
+
+  assert.equal(account?.displayName, "deleted-player-1");
+  assert.equal(account?.eloRating, undefined);
+  assert.equal(account?.leaderboardModerationState?.hiddenByPlayerId, "system:gdpr-delete");
+  assert.equal(committed, true);
+  assert.equal(rolledBack, false);
+  assert.match(queries[0]?.sql ?? "", /DELETE FROM `player_account_sessions`/);
+  assert.ok(queries.some((entry) => /DELETE FROM `player_compensation_history`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `guild_memberships`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `battle_snapshots`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `veil_season_rankings`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `season_reward_log`/.test(entry.sql)));
+  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 9);
+  const updateQuery = queries.find((entry) => /UPDATE `player_accounts`/.test(entry.sql));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery?.params[0], "deleted-player-1");
+  assert.equal(updateQuery?.params[10], JSON.stringify({
+    hiddenAt: "2026-03-21T00:00:00.000Z",
+    hiddenByPlayerId: "system:gdpr-delete"
+  }));
+});
+
+test("deletePlayerAccount rolls back when post-delete verification finds remaining dependent rows", async () => {
+  const existingAccount = createExistingAccount({
+    displayName: "Veil Ranger",
+    loginId: "veil-ranger"
+  });
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let committed = false;
+  let rolledBack = false;
+  const connection = {
+    async beginTransaction() {},
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/FROM `guild_memberships`/.test(sql) && /SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 1 }]];
+      }
+      if (/SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 0 }]];
+      }
+
+      return [{ affectedRows: 1 }];
+    },
+    async commit() {
+      committed = true;
+    },
+    async rollback() {
+      rolledBack = true;
+    },
+    release() {}
+  };
+
+  const store = createStoreHarness();
+  store.loadPlayerAccount = async () => existingAccount;
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.ensurePlayerAccount = async () => existingAccount;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used by deletePlayerAccount");
+    },
+    getConnection: async () => connection
+  };
+
+  await assert.rejects(
+    () =>
+      store.deletePlayerAccount("player-1", {
+        deletedAt: "2026-03-21T00:00:00.000Z"
+      }),
+    /gdpr_delete_verification_failed:guild_memberships/
+  );
+
+  assert.equal(committed, false);
+  assert.equal(rolledBack, true);
+  assert.ok(queries.some((entry) => /SELECT COUNT\(\*\) AS total FROM `guild_memberships`/.test(entry.sql)));
+  assert.ok(queries.every((entry) => !/UPDATE `player_accounts`/.test(entry.sql)));
+});
+
 test("creditGems updates balance and appends a ledger entry in one transaction", async () => {
   const store = createStoreHarness();
   const queries: Array<{ sql: string; params: unknown[] }> = [];
