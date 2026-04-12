@@ -215,6 +215,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.releaseHealthSummaryPath ?? "", /release-health-summary-/);
   assert.match(report.artifacts.ciTrendSummaryPath ?? "", /ci-trend-summary-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
+  assert.match(report.artifacts.phase1CandidateDossierMarkdownPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitAuditPath ?? "", /phase1-exit-audit-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitDossierFreshnessGatePath ?? "", /phase1-exit-dossier-freshness-gate-phase1-mainline-/);
   assert.match(report.artifacts.goNoGoPacketPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
@@ -255,6 +256,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Phase 1 exit audit:/);
   assert.match(markdown, /Phase 1 exit dossier freshness gate:/);
   assert.match(markdown, /Phase 1 candidate dossier:/);
+  assert.match(markdown, /Phase 1 candidate dossier markdown:/);
   assert.match(markdown, /Manual evidence owner ledger:/);
   assert.match(markdown, /Cocos primary journey evidence:/);
   assert.match(markdown, /Cocos main-journey replay gate:/);
@@ -292,6 +294,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);
+  assert.match(markdown, /phase1CandidateDossierMarkdownPath:/);
   assert.match(markdown, /goNoGoPacketPath:/);
   assert.match(markdown, /releasePrCommentPath:/);
 });

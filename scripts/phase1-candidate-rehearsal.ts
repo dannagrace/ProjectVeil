@@ -622,6 +622,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.phase1CandidateDossierPath) {
     lines.push(`- Phase 1 candidate dossier: \`${report.artifacts.phase1CandidateDossierPath}\``);
   }
+  if (report.artifacts.phase1CandidateDossierMarkdownPath) {
+    lines.push(`- Phase 1 candidate dossier markdown: \`${report.artifacts.phase1CandidateDossierMarkdownPath}\``);
+  }
   if (report.artifacts.manualEvidenceLedgerPath) {
     lines.push(`- Manual evidence owner ledger: \`${report.artifacts.manualEvidenceLedgerPath}\``);
   }
