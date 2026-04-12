@@ -1804,6 +1804,39 @@ test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movemen
   assert.ok(payload.account.leaderboardModerationState?.frozenAt);
 });
 
+test("POST /api/admin/players/:id/leaderboard/freeze rejects oversized JSON bodies with 413", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/leaderboard/freeze");
+  const response = createResponse();
+  const oversizedBody = JSON.stringify({
+    reason: "x".repeat(2 * 1024 * 1024)
+  });
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-freeze" },
+      body: oversizedBody,
+      headers: {
+        "content-length": String(Buffer.byteLength(oversizedBody, "utf8")),
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      code: "payload_too_large",
+      message: "Request body exceeds 32768 bytes"
+    }
+  });
+});
+
 test("GET /api/admin/players/:id/leaderboard/abuse-state returns structured abuse state and alert history", async (t) => {
   const { moderator } = withSupportSecrets(t);
   const store = createStore({

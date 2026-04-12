@@ -15,6 +15,15 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
   };
 }
 
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
+const MAX_JSON_BODY_BYTES = 32 * 1024;
+
 function isAdminAuthorized(request: IncomingMessage): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   if (!adminToken) {
@@ -26,9 +35,21 @@ function isAdminAuthorized(request: IncomingMessage): boolean {
 
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const declaredLength = Number(request.headers["content-length"]);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      if (typeof request.resume === "function") {
+        request.resume();
+      }
+      reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+      return;
+    }
+
     let body = "";
     request.on("data", (chunk: Buffer) => {
       body += chunk.toString();
+      if (Buffer.byteLength(body, "utf8") > MAX_JSON_BODY_BYTES) {
+        reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+      }
     });
     request.on("end", () => {
       try {
@@ -94,6 +115,10 @@ export function registerSeasonRoutes(
       const season = await store.getCurrentSeason();
       sendJson(response, 200, { season });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -115,6 +140,10 @@ export function registerSeasonRoutes(
       });
       sendJson(response, 200, { seasons });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -145,6 +174,10 @@ export function registerSeasonRoutes(
       });
       sendJson(response, 200, { seasons });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -171,6 +204,10 @@ export function registerSeasonRoutes(
       const season = await store.createSeason(seasonId || `season_${Date.now()}`);
       sendJson(response, 201, { season });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });

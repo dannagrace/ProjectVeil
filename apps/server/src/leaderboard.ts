@@ -18,6 +18,15 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
   };
 }
 
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
+const MAX_JSON_BODY_BYTES = 32 * 1024;
+
 const TIER_THRESHOLDS = [
   { tier: "bronze", minRating: 0, maxRating: 1099 },
   { tier: "silver", minRating: 1100, maxRating: 1299 },
@@ -49,9 +58,21 @@ function readLimit(request: IncomingMessage, fallback = 100): number {
 
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const declaredLength = Number(request.headers["content-length"]);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      if (typeof request.resume === "function") {
+        request.resume();
+      }
+      reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+      return;
+    }
+
     let body = "";
     request.on("data", (chunk: Buffer) => {
       body += chunk.toString();
+      if (Buffer.byteLength(body, "utf8") > MAX_JSON_BODY_BYTES) {
+        reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+      }
     });
     request.on("end", () => {
       try {
@@ -115,6 +136,10 @@ export function registerLeaderboardRoutes(
 
       sendJson(response, 200, { players });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -131,6 +156,10 @@ export function registerLeaderboardRoutes(
       const { current, previous } = getCurrentAndPreviousWeeklyEntries(accounts);
       sendJson(response, 200, { current, previous });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -151,6 +180,10 @@ export function registerLeaderboardRoutes(
       const account = await store.loadPlayerAccount(playerId);
       sendJson(response, 200, { history: account?.seasonHistory ?? [] });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
@@ -248,6 +281,10 @@ export function registerLeaderboardRoutes(
         summary: closeSummary
       });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });

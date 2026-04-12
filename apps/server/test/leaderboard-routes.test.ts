@@ -636,6 +636,43 @@ test("POST /api/admin/leaderboard/season-rollover is idempotent for the same sea
   assert.equal((await store.getCurrentSeason())?.seasonId, "season-12");
 });
 
+test("POST /api/admin/leaderboard/season-rollover rejects oversized JSON bodies with 413", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+  const response = createResponse();
+  const oversizedBody = JSON.stringify({
+    seasonId: "season-12",
+    nextSeasonId: "season-13",
+    notes: "x".repeat(2 * 1024 * 1024)
+  });
+
+  await store.createSeason("season-12");
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/leaderboard/season-rollover",
+      headers: {
+        "content-length": String(Buffer.byteLength(oversizedBody, "utf8")),
+        "x-veil-admin-token": token
+      },
+      body: oversizedBody
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      code: "payload_too_large",
+      message: "Request body exceeds 32768 bytes"
+    }
+  });
+  assert.equal((await store.getCurrentSeason())?.seasonId, "season-12");
+});
+
 test("GET /api/matchmaking/tiers returns the published tier thresholds", async () => {
   const { gets } = registerRoutes();
   const handler = gets.get("/api/matchmaking/tiers");

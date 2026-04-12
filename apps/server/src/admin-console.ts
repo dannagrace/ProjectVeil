@@ -29,6 +29,13 @@ class InvalidAdminPayloadError extends Error {
   }
 }
 
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
 type AdminRequest = IncomingMessage & { params: Record<string, string> };
 type AdminMiddleware = (request: IncomingMessage, response: ServerResponse, next: () => void) => void;
 type AdminRouteHandler = (request: AdminRequest, response: ServerResponse) => void | Promise<void>;
@@ -43,6 +50,8 @@ type BanApproval = {
   approvedBy: string;
   approvalReference: string;
 };
+
+const MAX_JSON_BODY_BYTES = 32 * 1024;
 
 function readAdminSecret(): string | null {
   const secret = readRuntimeSecret("ADMIN_SECRET");
@@ -230,6 +239,31 @@ function sendInvalidJson(response: ServerResponse): void {
 
 function sendInvalidPayload(response: ServerResponse, message: string): void {
   sendJson(response, 400, { error: message });
+}
+
+function sendPayloadTooLarge(response: ServerResponse, error: PayloadTooLargeError): void {
+  sendJson(response, 413, {
+    error: {
+      code: error.name,
+      message: error.message
+    }
+  });
+}
+
+function sendAdminRequestBodyError(response: ServerResponse, error: unknown): boolean {
+  if (error instanceof PayloadTooLargeError) {
+    sendPayloadTooLarge(response, error);
+    return true;
+  }
+  if (error instanceof InvalidAdminJsonError) {
+    sendInvalidJson(response);
+    return true;
+  }
+  if (error instanceof InvalidAdminPayloadError) {
+    sendInvalidPayload(response, error.message);
+    return true;
+  }
+  return false;
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
@@ -673,9 +707,23 @@ function requireSupportRole(response: ServerResponse, request: IncomingMessage, 
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    if (typeof request.resume === "function") {
+      request.resume();
+    }
+    throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+  }
+
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_JSON_BODY_BYTES) {
+      throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+    }
+    chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) {
@@ -888,12 +936,7 @@ export function registerAdminRoutes(
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       console.error("[Admin] Sync error:", error);
@@ -936,12 +979,7 @@ export function registerAdminRoutes(
         syncedToRoom
       });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       console.error("[Admin] Compensation error:", error);
@@ -959,8 +997,7 @@ export function registerAdminRoutes(
       const items = await store.listPlayerCompensationHistory(playerId, { limit: readLimit(request) });
       sendJson(response, 200, { items });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -998,8 +1035,7 @@ export function registerAdminRoutes(
         ...(itemId ? { itemId } : {})
       });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1017,12 +1053,7 @@ export function registerAdminRoutes(
       }
       sendJson(response, 200, { ok: true });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 500, { error: String(error) });
@@ -1051,12 +1082,7 @@ export function registerAdminRoutes(
       }
       sendJson(response, 200, { ok: true, account, disconnectedClients });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1079,12 +1105,7 @@ export function registerAdminRoutes(
       const account = await store.clearPlayerBan(playerId, input);
       sendJson(response, 200, { ok: true, account });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1101,8 +1122,7 @@ export function registerAdminRoutes(
       const currentBan = await store.loadPlayerBan(playerId);
       sendJson(response, 200, { items, currentBan });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1118,8 +1138,7 @@ export function registerAdminRoutes(
       const items = await store.listPlayerReports({ status, limit: readLimit(request, 50) });
       sendJson(response, 200, { items, status });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1157,12 +1176,7 @@ export function registerAdminRoutes(
 
       sendJson(response, 200, { ok: true, report, disconnectedClients });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1200,8 +1214,7 @@ export function registerAdminRoutes(
         battleHistory
       });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1245,12 +1258,7 @@ export function registerAdminRoutes(
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1276,8 +1284,7 @@ export function registerAdminRoutes(
         alertHistory: buildLeaderboardAlertHistory(account)
       });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1330,12 +1337,7 @@ export function registerAdminRoutes(
         }
       });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1377,8 +1379,7 @@ export function registerAdminRoutes(
         ...(flagType ? { flagType } : {})
       });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1405,12 +1406,7 @@ export function registerAdminRoutes(
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1427,8 +1423,7 @@ export function registerAdminRoutes(
       const audit = await guildService.listGuildAuditLogs(guildId, readLimit(request, 50));
       sendJson(response, 200, { guild, audit });
     } catch (error) {
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1446,12 +1441,7 @@ export function registerAdminRoutes(
       const guild = await guildService.hideGuild(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1469,12 +1459,7 @@ export function registerAdminRoutes(
       const guild = await guildService.unhideGuild(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
@@ -1492,12 +1477,7 @@ export function registerAdminRoutes(
       await guildService.deleteGuildAsAdmin(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guildId });
     } catch (error) {
-      if (error instanceof InvalidAdminJsonError) {
-        sendInvalidJson(response);
-        return;
-      }
-      if (error instanceof InvalidAdminPayloadError) {
-        sendInvalidPayload(response, error.message);
+      if (sendAdminRequestBodyError(response, error)) {
         return;
       }
       sendJson(response, 400, { error: String(error) });
