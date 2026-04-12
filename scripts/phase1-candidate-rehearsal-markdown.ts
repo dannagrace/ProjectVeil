@@ -142,6 +142,9 @@ export function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.candidateEvidenceManifestMarkdownPath) {
     lines.push(`- Release candidate manifest markdown: \`${report.artifacts.candidateEvidenceManifestMarkdownPath}\``);
   }
+  if (report.artifacts.candidateEvidenceAuditMarkdownPath) {
+    lines.push(`- Same-candidate evidence audit markdown: \`${report.artifacts.candidateEvidenceAuditMarkdownPath}\``);
+  }
   if (report.artifacts.candidateEvidenceManifestPath) {
     lines.push(`- Release candidate manifest JSON: \`${report.artifacts.candidateEvidenceManifestPath}\``);
   }
