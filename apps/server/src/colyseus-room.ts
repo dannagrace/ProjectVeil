@@ -82,6 +82,7 @@ import {
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
+import { sendMobilePushNotification } from "./mobile-push";
 import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import { captureServerError } from "./error-monitoring";
@@ -288,6 +289,12 @@ interface RoomRuntimeDependencies {
     data: Record<string, unknown>,
     options?: { store?: RoomSnapshotStore | null }
   ): Promise<boolean>;
+  sendMobilePushNotification(
+    playerId: string,
+    templateKey: WechatSubscribeTemplateKey,
+    data: Record<string, unknown>,
+    options?: { store?: RoomSnapshotStore | null }
+  ): Promise<boolean>;
 }
 
 const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
@@ -296,7 +303,9 @@ const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
   isMySqlSnapshotStore: (store) => Boolean(store && "getRetentionPolicy" in store),
   now: () => Date.now(),
   sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
-    sendWechatSubscribeMessage(playerId, templateKey, data, options)
+    sendWechatSubscribeMessage(playerId, templateKey, data, options),
+  sendMobilePushNotification: (playerId, templateKey, data, options) =>
+    sendMobilePushNotification(playerId, templateKey, data, options)
 };
 
 let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDependencies;
@@ -2855,8 +2864,19 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           store: configuredRoomSnapshotStore
         }
       );
+      await roomRuntimeDependencies.sendMobilePushNotification(
+        nextTurnOwnerPlayerId,
+        "turn_reminder",
+        {
+          roomId: this.metadata.logicalRoomId,
+          turnNumber: this.worldRoom.getInternalState().meta.day
+        },
+        {
+          store: configuredRoomSnapshotStore
+        }
+      );
     } catch (error) {
-      console.error("[VeilRoom] Failed to send WeChat turn reminder subscribe message", {
+      console.error("[VeilRoom] Failed to send turn reminder notification", {
         roomId: this.metadata.logicalRoomId,
         playerId: nextTurnOwnerPlayerId,
         turnNumber: this.worldRoom.getInternalState().meta.day,

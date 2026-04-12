@@ -27,6 +27,7 @@ import {
   type EquipmentId,
   type GuildState,
   type HeroState,
+  type MobilePushTokenRegistration,
   type PlayerBanStatus,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
@@ -42,6 +43,7 @@ import {
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
+import { normalizeMobilePushTokenRegistrations } from "./mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,
   buildBannedAccountNameReservationExpiry,
@@ -423,6 +425,7 @@ interface PlayerAccountRow extends RowDataPacket {
   phone_number: string | null;
   phone_number_bound_at: Date | string | null;
   notification_preferences_json: string | NotificationPreferences | null;
+  push_tokens_json: string | MobilePushTokenRegistration[] | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -671,6 +674,7 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   updatedAt?: string;
   phoneNumber?: string;
   phoneNumberBoundAt?: string;
+  pushTokens?: MobilePushTokenRegistration[];
 }
 
 export interface PlayerAccountBanSnapshot {
@@ -936,6 +940,7 @@ export interface PlayerAccountProfilePatch {
   phoneNumber?: string | null;
   phoneNumberBoundAt?: string | null;
   notificationPreferences?: NotificationPreferences | null;
+  pushTokens?: MobilePushTokenRegistration[] | null;
 }
 
 export interface PlayerAccountProgressPatch {
@@ -2326,6 +2331,7 @@ function normalizePlayerAccountSnapshot(account: {
   phoneNumber?: string | null | undefined;
   phoneNumberBoundAt?: string | Date | null | undefined;
   notificationPreferences?: NotificationPreferences | null | undefined;
+  pushTokens?: MobilePushTokenRegistration[] | null | undefined;
   accountSessionVersion?: number | null | undefined;
   refreshSessionId?: string | null | undefined;
   refreshTokenExpiresAt?: string | Date | null | undefined;
@@ -2340,6 +2346,7 @@ function normalizePlayerAccountSnapshot(account: {
     ? normalizeWechatMiniGameUnionId(account.wechatMiniGameUnionId)
     : undefined;
   const phoneNumberBoundAt = formatTimestamp(account.phoneNumberBoundAt);
+  const pushTokens = normalizeMobilePushTokenRegistrations(account.pushTokens);
 
   return {
     ...normalizePlayerAccountReadModel({
@@ -2396,6 +2403,7 @@ function normalizePlayerAccountSnapshot(account: {
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
     ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
+    ...(pushTokens ? { pushTokens } : {}),
     ...(account.guestMigratedToPlayerId?.trim()
       ? { guestMigratedToPlayerId: normalizePlayerId(account.guestMigratedToPlayerId) }
       : {}),
@@ -2780,6 +2788,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   phone_number VARCHAR(32) NULL,
   phone_number_bound_at DATETIME NULL DEFAULT NULL,
   notification_preferences_json LONGTEXT NULL,
+  push_tokens_json LONGTEXT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -4507,6 +4516,9 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(row.notification_preferences_json != null
       ? { notificationPreferences: parseJsonColumn<NotificationPreferences>(row.notification_preferences_json) }
       : {}),
+    ...(row.push_tokens_json != null
+      ? { pushTokens: parseJsonColumn<MobilePushTokenRegistration[]>(row.push_tokens_json) }
+      : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
   });
@@ -5233,9 +5245,10 @@ async function upsertPlayerAccountForMigration(
        privacy_consent_at,
        phone_number,
        phone_number_bound_at,
-       notification_preferences_json
+       notification_preferences_json,
+       push_tokens_json
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        display_name = VALUES(display_name),
        avatar_url = VALUES(avatar_url),
@@ -5282,6 +5295,7 @@ async function upsertPlayerAccountForMigration(
        phone_number = VALUES(phone_number),
        phone_number_bound_at = VALUES(phone_number_bound_at),
        notification_preferences_json = VALUES(notification_preferences_json),
+       push_tokens_json = VALUES(push_tokens_json),
        version = version + 1`,
     [
       nextAccount.playerId,
@@ -5329,7 +5343,8 @@ async function upsertPlayerAccountForMigration(
       nextAccount.privacyConsentAt ? new Date(nextAccount.privacyConsentAt) : null,
       nextAccount.phoneNumber ?? null,
       nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
-      JSON.stringify(nextAccount.notificationPreferences ?? null)
+      JSON.stringify(nextAccount.notificationPreferences ?? null),
+      JSON.stringify(nextAccount.pushTokens ?? null)
     ]
   );
 }
@@ -5901,6 +5916,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -5968,6 +5984,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -6331,6 +6348,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -8627,6 +8645,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.notificationPreferences
           ? { notificationPreferences: existing.notificationPreferences }
+          : {}),
+      ...(patch.pushTokens !== undefined
+        ? { pushTokens: patch.pushTokens ?? null }
+        : existing.pushTokens?.length
+          ? { pushTokens: existing.pushTokens }
           : {})
     });
 
@@ -8661,9 +8684,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_seen_at,
          phone_number,
          phone_number_bound_at,
-         notification_preferences_json
+         notification_preferences_json,
+         push_tokens_json
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -8692,6 +8716,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number = VALUES(phone_number),
          phone_number_bound_at = VALUES(phone_number_bound_at),
          notification_preferences_json = COALESCE(VALUES(notification_preferences_json), notification_preferences_json),
+         push_tokens_json = COALESCE(VALUES(push_tokens_json), push_tokens_json),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
       [
@@ -8724,7 +8749,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.phoneNumber ?? null,
         nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
-        JSON.stringify(nextAccount.notificationPreferences ?? null)
+        JSON.stringify(nextAccount.notificationPreferences ?? null),
+        JSON.stringify(nextAccount.pushTokens ?? null)
       ]
     );
 
@@ -9025,6 +9051,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
