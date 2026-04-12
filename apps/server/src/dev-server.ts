@@ -380,6 +380,8 @@ export async function startDevServer(
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
 
+  const errorMonitoringEnabled = isErrorMonitoringEnabled();
+
   deps.logger.log(`Project Veil Colyseus dev server listening on ws://${host}:${port}`);
   deps.logger.log(`Config center API available at http://${host}:${port}/api/config-center/configs`);
   deps.logger.log(`Config viewer available at http://${host}:${port}/config-viewer`);
@@ -408,11 +410,15 @@ export async function startDevServer(
     deps.logger.log("Persistence mode: degraded/in-memory");
     deps.logger.log(persistenceHealth.message);
   }
-  deps.logger.log(
-    isErrorMonitoringEnabled()
-      ? "Error monitoring: SENTRY_DSN configured; Sentry delivery enabled"
-      : "Error monitoring: SENTRY_DSN not configured; external delivery skipped"
-  );
+  if (errorMonitoringEnabled) {
+    deps.logger.log("Error monitoring: SENTRY_DSN configured; Sentry delivery enabled");
+  } else if (isProductionEnvironment) {
+    deps.logger.warn(
+      "OBSERVABILITY WARNING: SENTRY_DSN is not configured for production startup; runtime errors will not be delivered to Sentry."
+    );
+  } else {
+    deps.logger.log("Error monitoring: SENTRY_DSN not configured; external delivery skipped");
+  }
 
   let cleanupTimer: CleanupTimerHandle | null = null;
   if (deps.isMySqlSnapshotStore(effectiveSnapshotStore)) {
