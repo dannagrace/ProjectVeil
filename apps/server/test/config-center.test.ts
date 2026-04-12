@@ -174,6 +174,7 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
 }
 
 test.afterEach(() => {
+  delete process.env.CONFIG_ROLLBACK_WINDOW_MS;
   resetRuntimeConfigs();
   resetConfigHotReloadState();
   resetConfigCenterRuntimeDependencies();
@@ -842,15 +843,18 @@ test("config center rolls back hot reloads after a room error spike within the s
   await store.initializeRuntimeConfigs();
 
   let scheduledHandler: (() => void) | null = null;
+  let scheduledDelayMs: number | null = null;
   const baselineMs = Date.parse("2026-04-11T16:15:00.000Z");
   configureConfigCenterRuntimeDependencies({
     now: () => baselineMs,
-    setTimeout: (handler) => {
+    setTimeout: (handler, delayMs) => {
       scheduledHandler = handler;
+      scheduledDelayMs = delayMs;
       return {};
     },
     clearTimeout: () => {
       scheduledHandler = null;
+      scheduledDelayMs = null;
     }
   });
 
@@ -863,6 +867,7 @@ test("config center rolls back hot reloads after a room error spike within the s
   );
   assert.equal(getDefaultWorldConfig().width, 10);
   assert.ok(scheduledHandler);
+  assert.equal(scheduledDelayMs, 120_000);
 
   for (let index = 0; index < 3; index += 1) {
     recordRuntimeErrorEvent({
@@ -891,4 +896,34 @@ test("config center rolls back hot reloads after a room error spike within the s
 
   scheduledHandler?.();
   assert.equal(getDefaultWorldConfig().width, WORLD_CONFIG.width);
+});
+
+test("config center honors CONFIG_ROLLBACK_WINDOW_MS when scheduling the hot reload safety window", async () => {
+  process.env.CONFIG_ROLLBACK_WINDOW_MS = "45000";
+
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  let scheduledDelayMs: number | null = null;
+  configureConfigCenterRuntimeDependencies({
+    setTimeout: (_handler, delayMs) => {
+      scheduledDelayMs = delayMs;
+      return {};
+    },
+    clearTimeout: () => {
+      scheduledDelayMs = null;
+    }
+  });
+
+  await store.saveDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 11
+    })
+  );
+
+  assert.equal(scheduledDelayMs, 45_000);
 });
