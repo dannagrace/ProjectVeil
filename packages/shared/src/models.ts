@@ -314,6 +314,15 @@ export interface NotificationPreferences {
   updatedAt?: string;
 }
 
+export type MobilePushPlatform = "ios" | "android";
+
+export interface MobilePushTokenRegistration {
+  platform: MobilePushPlatform;
+  token: string;
+  registeredAt: string;
+  updatedAt: string;
+}
+
 export interface HeroProgression {
   level: number;
   experience: number;

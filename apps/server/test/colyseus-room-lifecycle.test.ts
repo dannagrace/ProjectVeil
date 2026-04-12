@@ -2336,10 +2336,15 @@ test("turn reminder subscribe message is skipped while the next player is still 
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
   const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  const pushCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
   configureRoomSnapshotStore(store);
   configureRoomRuntimeDependencies({
     sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
       subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    },
+    sendMobilePushNotification: async (playerId, templateKey, data) => {
+      pushCalls.push({ playerId, templateKey, data });
       return true;
     }
   });
@@ -2371,19 +2376,25 @@ test("turn reminder subscribe message is skipped while the next player is still 
   });
 
   assert.deepEqual(subscribeCalls, []);
+  assert.deepEqual(pushCalls, []);
   assert.equal(lastSessionState(defenderClient, "push").payload.world.meta.day, 2);
   assert.equal(timer.nowMs, Date.parse("2026-04-04T00:00:00.000Z"));
 });
 
-test("turn reminder subscribe message is sent after the next player has been disconnected for over 30 seconds", async (t) => {
+test("turn reminder notifications are sent after the next player has been disconnected for over 30 seconds", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
   const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  const pushCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
   configureRoomSnapshotStore(store);
   configureRoomRuntimeDependencies({
     sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
       subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    },
+    sendMobilePushNotification: async (playerId, templateKey, data) => {
+      pushCalls.push({ playerId, templateKey, data });
       return true;
     }
   });
@@ -2427,9 +2438,10 @@ test("turn reminder subscribe message is sent after the next player has been dis
       }
     }
   ]);
+  assert.deepEqual(pushCalls, subscribeCalls);
 });
 
-test("turn reminder subscribe failures are logged without blocking turn advancement", async (t) => {
+test("turn reminder notification failures are logged without blocking turn advancement", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
@@ -2484,7 +2496,7 @@ test("turn reminder subscribe failures are logged without blocking turn advancem
   };
   assert.equal(internalRoom.worldRoom.getInternalState().meta.day, 2);
   assert.equal(errorCalls.length, 1);
-  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to send WeChat turn reminder subscribe message");
+  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to send turn reminder notification");
   assert.deepEqual(errorCalls[0]?.[1], {
     roomId: room.roomId,
     playerId: "player-2",

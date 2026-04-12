@@ -71,6 +71,7 @@ import {
   normalizeNotificationPreferences,
   validateGroupChallengeToken
 } from "./wechat-social";
+import { removeMobilePushToken, upsertMobilePushToken } from "./mobile-push-tokens";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
 
@@ -893,6 +894,7 @@ function toPublicPlayerAccount(
   | "phoneNumberBoundAt"
   | "wechatMiniGameOpenId"
   | "wechatMiniGameUnionId"
+  | "pushTokens"
   | "banStatus"
   | "banExpiry"
   | "banReason"
@@ -906,6 +908,7 @@ function toPublicPlayerAccount(
     phoneNumberBoundAt: _phoneNumberBoundAt,
     wechatMiniGameOpenId: _wechatMiniGameOpenId,
     wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    pushTokens: _pushTokens,
     banStatus: _banStatus,
     banExpiry: _banExpiry,
     banReason: _banReason,
@@ -1406,6 +1409,80 @@ export function registerPlayerAccountRoutes(
       sendJson(response, 200, {
         notificationPreferences: account.notificationPreferences ?? notificationPreferences,
         account: withBattleReportCenter(account)
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.put("/api/players/me/push-token", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "persistence_unavailable",
+          message: "Push token registration requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { platform: string; token: string };
+      const existing = await store.loadPlayerAccount(authSession.playerId);
+      const pushTokens = upsertMobilePushToken(existing?.pushTokens, body);
+      const account = await store.savePlayerAccountProfile(authSession.playerId, { pushTokens });
+      sendJson(response, 200, {
+        pushTokens: account.pushTokens ?? pushTokens
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.delete("/api/players/me/push-token", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "persistence_unavailable",
+          message: "Push token removal requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { platform?: string; token?: string };
+      if (!body.platform?.trim() && !body.token?.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_push_token",
+            message: "platform or token is required"
+          }
+        });
+        return;
+      }
+
+      const existing = await store.loadPlayerAccount(authSession.playerId);
+      const pushTokens = removeMobilePushToken(existing?.pushTokens, body) ?? null;
+      const account = await store.savePlayerAccountProfile(authSession.playerId, { pushTokens });
+      sendJson(response, 200, {
+        pushTokens: account.pushTokens ?? []
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {

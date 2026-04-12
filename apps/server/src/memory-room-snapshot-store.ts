@@ -81,6 +81,7 @@ import {
   type ShopPurchaseMutationInput,
   type ShopPurchaseResult
 } from "./persistence";
+import { normalizeMobilePushTokenRegistrations } from "./mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,
   buildBannedAccountNameReservationExpiry
@@ -765,6 +766,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const playerId = normalizePlayerId(input.playerId);
     const existing = this.accounts.get(playerId);
+    const existingPushTokens = existing?.pushTokens ? normalizeMobilePushTokenRegistrations(existing.pushTokens) : undefined;
     const nextDisplayName = normalizeDisplayName(playerId, input.displayName ?? existing?.displayName);
     if (!existing || nextDisplayName !== existing.displayName) {
       await assertDisplayNameAvailableOrThrow(this, nextDisplayName, playerId);
@@ -819,6 +821,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.notificationPreferences
         ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
         : {}),
+      ...(existingPushTokens ? { pushTokens: existingPushTokens } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -2069,6 +2072,14 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const nextPushTokens =
+      patch.pushTokens !== undefined
+        ? patch.pushTokens?.length
+          ? normalizeMobilePushTokenRegistrations(patch.pushTokens)
+          : undefined
+        : existing.pushTokens
+          ? normalizeMobilePushTokenRegistrations(existing.pushTokens)
+          : undefined;
     const normalizedAvatarUrl =
       patch.avatarUrl !== undefined ? normalizeAvatarUrl(patch.avatarUrl) : existing.avatarUrl;
     const nextDisplayName =
@@ -2094,8 +2105,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.notificationPreferences
           ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
           : {}),
+      ...(nextPushTokens ? { pushTokens: nextPushTokens } : {}),
       updatedAt: new Date().toISOString()
     };
+    if (patch.pushTokens !== undefined && !nextPushTokens) {
+      delete nextAccount.pushTokens;
+    }
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     if (nextDisplayName !== existing.displayName) {
       this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
