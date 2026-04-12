@@ -399,6 +399,9 @@ export function buildCampaignMissionStates(
       ...mission,
       missionId: mission.id,
       attempts: Math.max(0, progress?.attempts ?? 0),
+      ...(progress?.acknowledgedDialogueLineIds?.length
+        ? { acknowledgedDialogueLineIds: progress.acknowledgedDialogueLineIds }
+        : {}),
       ...(progress?.completedAt ? { completedAt: progress.completedAt } : {}),
       ...(unlockRequirements.length > 0 ? { unlockRequirements } : {}),
       status: completed ? "completed" : unlocked ? "available" : "locked"
@@ -425,9 +428,13 @@ export function completeCampaignMission(
   }
 
   const progressByMissionId = new Map((campaignProgress?.missions ?? []).map((progress) => [progress.missionId, progress] as const));
+  const existingProgress = progressByMissionId.get(missionId);
   progressByMissionId.set(missionId, {
     missionId,
-    attempts: Math.max(0, progressByMissionId.get(missionId)?.attempts ?? 0) + 1,
+    attempts: Math.max(0, existingProgress?.attempts ?? 0) + 1,
+    ...(existingProgress?.acknowledgedDialogueLineIds?.length
+      ? { acknowledgedDialogueLineIds: existingProgress.acknowledgedDialogueLineIds }
+      : {}),
     completedAt
   });
 
@@ -435,6 +442,9 @@ export function completeCampaignMission(
     mission: {
       ...mission,
       attempts: Math.max(0, mission.attempts) + 1,
+      ...(mission.acknowledgedDialogueLineIds?.length
+        ? { acknowledgedDialogueLineIds: mission.acknowledgedDialogueLineIds }
+        : {}),
       completedAt,
       status: "completed"
     },
@@ -442,6 +452,43 @@ export function completeCampaignMission(
       missions: Array.from(progressByMissionId.values()).sort((left, right) => left.missionId.localeCompare(right.missionId))
     },
     reward: mission.reward
+  };
+}
+
+export function acknowledgeCampaignDialogueLine(
+  missions: CampaignMission[],
+  campaignProgress: CampaignProgressState | undefined,
+  input: {
+    missionId: string;
+    sequence: "intro" | "outro";
+    dialogueLineId: string;
+  }
+): CampaignProgressState {
+  const mission = missions.find((entry) => entry.id === input.missionId);
+  if (!mission) {
+    throw new Error("campaign_mission_not_found");
+  }
+
+  const dialogue = input.sequence === "intro" ? mission.introDialogue ?? [] : mission.outroDialogue ?? [];
+  if (!dialogue.some((line) => line.id === input.dialogueLineId)) {
+    throw new Error("campaign_dialogue_line_not_found");
+  }
+
+  const progressByMissionId = new Map((campaignProgress?.missions ?? []).map((progress) => [progress.missionId, progress] as const));
+  const existing = progressByMissionId.get(input.missionId);
+  const acknowledgedDialogueLineIds = Array.from(
+    new Set([...(existing?.acknowledgedDialogueLineIds ?? []), input.dialogueLineId])
+  ).sort((left, right) => left.localeCompare(right));
+
+  progressByMissionId.set(input.missionId, {
+    missionId: input.missionId,
+    attempts: Math.max(0, existing?.attempts ?? 0),
+    ...(acknowledgedDialogueLineIds.length > 0 ? { acknowledgedDialogueLineIds } : {}),
+    ...(existing?.completedAt ? { completedAt: existing.completedAt } : {})
+  });
+
+  return {
+    missions: Array.from(progressByMissionId.values()).sort((left, right) => left.missionId.localeCompare(right.missionId))
   };
 }
 

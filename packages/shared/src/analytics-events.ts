@@ -119,7 +119,8 @@ export const ANALYTICS_EVENT_CATALOG = {
   }),
   tutorial_step: defineAnalyticsEvent("tutorial_step", 1, "Tutorial milestone advanced by the player.", {
     stepId: "movement_intro",
-    status: "completed"
+    status: "completed",
+    reason: "advance"
   }),
   experiment_exposure: defineAnalyticsEvent("experiment_exposure", 1, "Experiment assignment was exposed to a player in a product surface.", {
     experimentKey: "account_portal_copy",

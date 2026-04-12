@@ -1390,6 +1390,7 @@ export interface CampaignMissionProgress {
   missionId: string;
   attempts: number;
   completedAt?: string;
+  acknowledgedDialogueLineIds?: string[];
 }
 
 export interface CampaignProgressState {

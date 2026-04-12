@@ -637,6 +637,17 @@ function normalizeCampaignProgressState(
             {
               missionId,
               attempts: Math.max(0, Math.floor(mission.attempts ?? 0)),
+              ...(Array.isArray(mission.acknowledgedDialogueLineIds)
+                ? {
+                    acknowledgedDialogueLineIds: Array.from(
+                      new Set(
+                        mission.acknowledgedDialogueLineIds
+                          .map((lineId) => lineId?.trim())
+                          .filter((lineId): lineId is string => Boolean(lineId))
+                      )
+                    ).sort((left, right) => left.localeCompare(right))
+                  }
+                : {}),
               ...(normalizeTimestamp(mission.completedAt) ? { completedAt: normalizeTimestamp(mission.completedAt) } : {})
             }
           ] as const;
