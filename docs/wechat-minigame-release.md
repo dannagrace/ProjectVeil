@@ -123,18 +123,20 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 11. 完成自动导入或人工补录后，执行 `npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]`，确认登录、进房、重连、分享回流、关键资源加载都已有结果记录。
    - `reconnect-recovery` 必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的 canonical scenario、最小成功信号和失败诊断口径。
 12. 按 [`docs/wechat-runtime-observability-signoff.md`](./wechat-runtime-observability-signoff.md) 与 [`docs/release-evidence/wechat-runtime-observability-signoff.template.md`](./release-evidence/wechat-runtime-observability-signoff.template.md) 为同一 candidate revision 回填 runtime observability sign-off，确认 release 环境的 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics` 都已有可追溯证据，并记录 reviewer 与 `recordedAt`。
-13. 运行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json [--release-readiness-snapshot artifacts/release-readiness/<candidate>.json]`，脚本会先自动生成 candidate+revision 命名的 `cocos-primary-journey-evidence` JSON / Markdown 与 milestone diagnostics，再一次性输出 bundle manifest、Markdown 摘要、RC snapshot、checklist 与 blockers，并把微信 smoke 的 Lobby / 进房 / 重连证据并入统一的 Cocos RC 快照；若设备 evidence 缺失，会在快照和摘要里显式标成 `partial` 或 `blocked`，而不是默认为通过。
-14. 紧接着运行 `node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts --candidate <candidate-name> --expected-revision <git-sha>`，确认 release-readiness snapshot、gate summary、primary journey evidence、RC snapshot、main-journey manifest 与 bundle manifest 仍指向同一 candidate revision，且都在 freshness window 内；若任何 artifact 缺失、revision 漂移或引用了旧快照，这一步会直接失败并写出 JSON / Markdown 摘要。
-15. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
-16. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
-17. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
-18. 当目标是外部放量、提审或正式商运，而不只是 RC 技术验收时，再运行 `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`。
+13. 运行 `npm run release:cocos:rc-reconnect-replay -- --candidate <candidate-name> [--output-dir artifacts/release-readiness]`，为 `apps/cocos-client` 生成 candidate+revision 命名的 reconnect replay 证据，稳定覆盖 stored-token resume 成功和 resume 失败后 fresh join fallback 两个关键分支。该脚本会输出 JSON / Markdown 摘要以及 milestone diagnostics JSON，可直接挂到 RC 审阅或 PR。
+14. 运行 `npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface wechat_preview --wechat-smoke-report <release-artifacts-dir>/codex.wechat.smoke-report.json [--release-readiness-snapshot artifacts/release-readiness/<candidate>.json]`，脚本会先自动生成 candidate+revision 命名的 `cocos-primary-journey-evidence` 与 `cocos-rc-reconnect-replay` JSON / Markdown，再一次性输出 bundle manifest、Markdown 摘要、RC snapshot、checklist 与 blockers，并把微信 smoke 的 Lobby / 进房 / 重连证据并入统一的 Cocos RC 快照；若设备 evidence 缺失，会在快照和摘要里显式标成 `partial` 或 `blocked`，而不是默认为通过。
+15. 紧接着运行 `node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts --candidate <candidate-name> --expected-revision <git-sha>`，确认 release-readiness snapshot、gate summary、primary journey evidence、reconnect replay、RC snapshot、main-journey manifest 与 bundle manifest 仍指向同一 candidate revision，且都在 freshness window 内；若任何 artifact 缺失、revision 漂移或引用了旧快照，这一步会直接失败并写出 JSON / Markdown 摘要。
+16. 再运行 `npm run release:gate:summary -- --target-surface wechat --cocos-rc-reconnect-replay artifacts/release-readiness/cocos-rc-reconnect-replay-<candidate>-<short-sha>.json`，把这条主客户端 reconnect replay 证据并入顶层 release gate handoff；在 rehearsal bundle 下也可以依赖自动发现。
+17. 直接回填同一 bundle 里的 checklist / blockers 文件，仅补充自动化未覆盖的设备、observability 结论和 blocker；不要再额外复制模板或在 PR 里发明另一套字段。
+18. 运行 `npm run upload:wechat-release -- --artifacts-dir <release-artifacts-dir> --version <wechat-version> [--desc <upload-desc>]`，脚本会先复用 `verify:wechat-release` 验收，再调用 `miniprogram-ci` 上传，并在 artifact 目录旁写入 `*.upload.json` 回执。
+19. 将远程资源上传到 CDN，并在微信后台 / 开发者工具中完成提审。
+20. 当目标是外部放量、提审或正式商运，而不只是 RC 技术验收时，再运行 `npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`。
     - 该脚本会先读取同目录下的 `codex.wechat.release-candidate-summary.json`；如果技术 gate 仍是 `blocked`，商运摘要会直接保持 `blocked`。
     - 商运 contract 默认覆盖 5 条 required checks：支付链路、订阅消息/触达、数据分析/埋点、合规/提审物料、真机体验。
     - required checks 都要求 `owner`、`recordedAt`、`revision`、`artifactPath`；缺失、超 24h freshness window 或 revision 不匹配都会继续阻塞。
     - 输出固定为 `codex.wechat.commercial-verification-<short-sha>.json` 和 `.md`，便于在 PR、提审记录或 release call 里直接引用。
     - `acceptedRisks[]` 会被原样汇总进摘要，用来记录“可接受但需持续观察”的外放风险，而不是把它们埋在 notes 里。
-19. 生成商运验证产物后，直接运行 `npm run release:go-no-go-packet -- --candidate <candidate-name> --candidate-revision <git-sha>`；脚本会优先自动发现同一 artifacts dir 下最新的 `codex.wechat.commercial-verification-<short-sha>.json`，不需要再额外手填一份独立的 `commercial-review` 文件。
+21. 生成商运验证产物后，直接运行 `npm run release:go-no-go-packet -- --candidate <candidate-name> --candidate-revision <git-sha>`；脚本会优先自动发现同一 artifacts dir 下最新的 `codex.wechat.commercial-verification-<short-sha>.json`，不需要再额外手填一份独立的 `commercial-review` 文件。
 
 ## 发布彩排摘要
 
