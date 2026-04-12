@@ -15,6 +15,7 @@ import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./
 import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerEventRoutes } from "./event-engine";
 import { registerGuildRoutes } from "./guilds";
+import { registerHttpRateLimitMiddleware } from "./http-rate-limit";
 import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
@@ -140,6 +141,7 @@ export interface DevServerBootstrapDependencies {
   validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
+  registerHttpRateLimitMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
@@ -219,6 +221,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerRetentionSummaryRoute: (app, store) =>
       registerRetentionSummaryRoute(app as never, store as RoomSnapshotStore | null),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
+    registerHttpRateLimitMiddleware: (app) => registerHttpRateLimitMiddleware(app as DevServerHttpApp),
     registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
@@ -343,6 +346,7 @@ export async function startDevServer(
   const expressApp = transport.getExpressApp();
   installHttpRequestObservability(expressApp as unknown as Parameters<typeof installHttpRequestObservability>[0], deps.logger);
   deps.registerPrometheusMetricsMiddleware(expressApp);
+  deps.registerHttpRateLimitMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerAnalyticsRoutes(expressApp);

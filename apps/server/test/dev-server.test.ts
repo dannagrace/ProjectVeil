@@ -263,6 +263,10 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(app, base.expressApp);
       base.routeCalls.push("prometheus-middleware");
     },
+    registerHttpRateLimitMiddleware: (app) => {
+      assert.equal(app, base.expressApp);
+      base.routeCalls.push("http-rate-limit");
+    },
     registerPrometheusMetricsRoute: (app) => {
       assert.equal(app, base.expressApp);
       base.routeCalls.push("prometheus-route");
@@ -310,6 +314,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(lobbyListRooms, listLobbyRooms);
   assert.deepEqual(base.routeCalls, [
     "prometheus-middleware",
+    "http-rate-limit",
     "prometheus-route",
     "auth",
     "config-center",
@@ -404,6 +409,7 @@ test("dev server loads runtime secrets before reading persistence config", async
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -457,6 +463,7 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -523,6 +530,7 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -619,6 +627,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -731,6 +740,7 @@ test("dev server exits non-zero in production when schema migrations are pending
         registerMatchmakingRoutes: () => undefined,
         registerMinorProtectionRoutes: () => undefined,
         registerPrometheusMetricsMiddleware: () => undefined,
+        registerHttpRateLimitMiddleware: () => undefined,
         registerPrometheusMetricsRoute: () => undefined,
         registerLeaderboardRoutes: () => undefined,
         registerSeasonRoutes: () => undefined,
@@ -827,6 +837,7 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
         registerMatchmakingRoutes: () => undefined,
         registerMinorProtectionRoutes: () => undefined,
         registerPrometheusMetricsMiddleware: () => undefined,
+        registerHttpRateLimitMiddleware: () => undefined,
         registerPrometheusMetricsRoute: () => undefined,
         registerLeaderboardRoutes: () => undefined,
         registerSeasonRoutes: () => undefined,
@@ -900,6 +911,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -1001,6 +1013,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
@@ -1108,6 +1121,7 @@ test("dev server warns loudly when backup storage is unreachable and exports the
     registerMatchmakingRoutes: () => undefined,
     registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
+    registerHttpRateLimitMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,

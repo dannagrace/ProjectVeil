@@ -160,6 +160,10 @@ interface RoomLifecycleObservabilityCounters {
   battleAbortsTotal: number;
 }
 
+interface HttpObservabilityCounters {
+  rateLimitedTotal: number;
+}
+
 type RoomLifecycleEventKind =
   | "room.created"
   | "room.disposed"
@@ -198,6 +202,9 @@ interface RuntimeObservabilityState {
   roomLifecycle: {
     counters: RoomLifecycleObservabilityCounters;
     recentEvents: RoomLifecycleEvent[];
+  };
+  http: {
+    counters: HttpObservabilityCounters;
   };
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
@@ -278,6 +285,9 @@ interface RuntimeHealthPayload {
     roomLifecycle: {
       counters: RoomLifecycleObservabilityCounters;
       recentEventsTracked: number;
+    };
+    http: {
+      counters: HttpObservabilityCounters;
     };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
@@ -460,6 +470,11 @@ const runtimeObservability: RuntimeObservabilityState = {
     },
     recentEvents: []
   },
+  http: {
+    counters: {
+      rateLimitedTotal: 0
+    }
+  },
   matchmaking: {
     counters: {
       rateLimitedTotal: 0,
@@ -635,6 +650,9 @@ function buildHealthPayload(
       roomLifecycle: {
         counters: { ...runtimeObservability.roomLifecycle.counters },
         recentEventsTracked: runtimeObservability.roomLifecycle.recentEvents.length
+      },
+      http: {
+        counters: { ...runtimeObservability.http.counters }
       },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
@@ -1175,6 +1193,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_http_rate_limited_total Total HTTP requests rejected by rate limiting.",
+    "# TYPE veil_http_rate_limited_total counter",
+    `veil_http_rate_limited_total ${health.runtime.http.counters.rateLimitedTotal}`,
     "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
     "# TYPE veil_auth_credential_stuffing_blocked_total counter",
     `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
@@ -1838,6 +1859,10 @@ export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
 }
 
+export function recordHttpRateLimited(): void {
+  runtimeObservability.http.counters.rateLimitedTotal += 1;
+}
+
 export function recordAuthCredentialStuffingBlocked(): void {
   runtimeObservability.auth.counters.credentialStuffingBlockedTotal += 1;
 }
@@ -2057,6 +2082,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.battleCompletionsTotal = 0;
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
+  runtimeObservability.http.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.queueDepth = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
