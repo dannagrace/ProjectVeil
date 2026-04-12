@@ -1854,6 +1854,34 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
     }
     this.authSessionsByPlayerId.delete(normalizedPlayerId);
+    this.playerQuestStates.delete(normalizedPlayerId);
+    this.compensationHistoryByPlayerId.delete(normalizedPlayerId);
+    this.guildIdByPlayerId.delete(normalizedPlayerId);
+    for (const [key, snapshot] of Array.from(this.battleSnapshots.entries())) {
+      if (snapshot.attackerPlayerId === normalizedPlayerId || snapshot.defenderPlayerId === normalizedPlayerId) {
+        this.battleSnapshots.delete(key);
+      }
+    }
+    for (const key of Array.from(this.shopPurchases.keys())) {
+      if (key.startsWith(`${normalizedPlayerId}:`)) {
+        this.shopPurchases.delete(key);
+      }
+    }
+    for (const [reportId, report] of Array.from(this.reports.entries())) {
+      if (report.reporterId === normalizedPlayerId || report.targetId === normalizedPlayerId) {
+        this.reports.delete(reportId);
+      }
+    }
+    for (const referral of Array.from(this.referrals)) {
+      if (referral.includes(`:${normalizedPlayerId}:`) || referral.endsWith(`:${normalizedPlayerId}`)) {
+        this.referrals.delete(referral);
+      }
+    }
+    for (const key of Array.from(this.seasonRewardLog.keys())) {
+      if (key.endsWith(`:${normalizedPlayerId}`)) {
+        this.seasonRewardLog.delete(key);
+      }
+    }
     for (const key of Array.from(this.heroArchives.keys())) {
       if (key.startsWith(`${normalizedPlayerId}:`)) {
         this.heroArchives.delete(key);
@@ -1864,13 +1892,39 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
       displayName: `deleted-${normalizedPlayerId}`,
+      seasonHistory: [],
       globalResources: { gold: 0, wood: 0, ore: 0 },
       achievements: [],
+      recentEventLog: [],
+      recentBattleReplays: [],
+      seasonXp: 0,
+      seasonPassTier: 1,
+      seasonPassPremium: false,
+      seasonPassClaimedTiers: [],
+      seasonBadges: [],
+      cosmeticInventory: { ownedIds: [] },
+      equippedCosmetics: {},
+      leaderboardModerationState: {
+        hiddenAt: deletedAt,
+        hiddenByPlayerId: "system:gdpr-delete"
+      },
+      tutorialStep: DEFAULT_TUTORIAL_STEP,
       banStatus: "none",
       accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
       updatedAt: deletedAt
     };
     delete nextAccount.avatarUrl;
+    delete nextAccount.eloRating;
+    delete nextAccount.rankDivision;
+    delete nextAccount.peakRankDivision;
+    delete nextAccount.promotionSeries;
+    delete nextAccount.demotionShield;
+    delete nextAccount.rankedWeeklyProgress;
+    delete nextAccount.campaignProgress;
+    delete nextAccount.seasonalEventStates;
+    delete nextAccount.mailbox;
+    delete nextAccount.dailyDungeonState;
+    delete nextAccount.leaderboardAbuseState;
     delete nextAccount.lastSeenAt;
     delete nextAccount.lastRoomId;
     delete nextAccount.loginId;
@@ -1882,6 +1936,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     delete nextAccount.lastPlayDate;
     delete nextAccount.banExpiry;
     delete nextAccount.banReason;
+    delete nextAccount.phoneNumber;
+    delete nextAccount.phoneNumberBoundAt;
+    delete nextAccount.notificationPreferences;
     delete nextAccount.refreshSessionId;
     delete nextAccount.refreshTokenExpiresAt;
     delete nextAccount.wechatMiniGameOpenId;
