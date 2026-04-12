@@ -62,10 +62,10 @@ import {
   recordAntiCheatAlert,
   recordLeaderboardAbuseAlert,
   recordBattleLifecycleResolved,
+  recordRuntimeErrorEvent,
   recordConnectMessage,
   recordRoomCreated,
   recordRoomDisposed,
-  recordRuntimeErrorEvent,
   recordReconnectWindowOpened,
   recordReconnectWindowResolved,
   recordRuntimeRoom,
@@ -114,6 +114,81 @@ const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
 let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
+
+type BackgroundTaskType = "minor_playtime" | "turn_timer" | "zombie_room_cleanup";
+
+function formatBackgroundTaskDetail(taskType: BackgroundTaskType, error: unknown, extras: Record<string, string | number | null> = {}): string {
+  const detailParts = [`task=${taskType}`];
+  for (const [key, value] of Object.entries(extras)) {
+    if (value == null) {
+      continue;
+    }
+    detailParts.push(`${key}=${value}`);
+  }
+  detailParts.push(`error=${error instanceof Error ? error.message : String(error)}`);
+  return detailParts.join(" ");
+}
+
+function reportBackgroundTaskFailure(input: {
+  taskType: BackgroundTaskType;
+  errorCode: string;
+  message: string;
+  logMessage: string;
+  error: unknown;
+  roomId?: string | null;
+  playerId?: string | null;
+  roomDay?: number | null;
+  detail?: string | null;
+}): void {
+  const detail = input.detail ?? formatBackgroundTaskDetail(input.taskType, input.error);
+
+  console.error(input.logMessage, {
+    ...(input.roomId ? { roomId: input.roomId } : {}),
+    ...(input.playerId ? { playerId: input.playerId } : {}),
+    ...(input.roomDay != null ? { roomDay: input.roomDay } : {}),
+    error: input.error
+  });
+
+  recordRuntimeErrorEvent({
+    id: `${input.errorCode}:${input.roomId ?? "global"}:${Date.now()}`,
+    recordedAt: new Date().toISOString(),
+    source: "server",
+    surface: "colyseus-room",
+    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || "workspace",
+    featureArea: "runtime",
+    ownerArea: "multiplayer",
+    severity: "error",
+    errorCode: input.errorCode,
+    message: input.message,
+    context: {
+      roomId: input.roomId ?? null,
+      playerId: input.playerId ?? null,
+      requestId: null,
+      route: null,
+      action: input.taskType,
+      statusCode: null,
+      crash: false,
+      detail
+    }
+  });
+
+  void captureServerError({
+    errorCode: input.errorCode,
+    message: input.message,
+    error: input.error,
+    severity: "error",
+    featureArea: "runtime",
+    ownerArea: "multiplayer",
+    surface: "colyseus-room",
+    context: {
+      roomId: input.roomId ?? null,
+      playerId: input.playerId ?? null,
+      action: input.taskType,
+      roomDay: input.roomDay ?? null,
+      detail
+    }
+  });
+}
 
 function reportPersistenceSaveFailure(
   room: AuthoritativeWorldRoom,
@@ -315,7 +390,24 @@ export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
 
 export async function runZombieRoomCleanup(now = roomRuntimeDependencies.now()): Promise<void> {
   for (const room of Array.from(activeRoomInstances.values())) {
-    await room.runExpiredEmptyRoomCleanup(now);
+    try {
+      await room.runExpiredEmptyRoomCleanup(now);
+    } catch (error) {
+      const roomState = room.worldRoom.getInternalState();
+      reportBackgroundTaskFailure({
+        taskType: "zombie_room_cleanup",
+        errorCode: "zombie_room_cleanup_tick_failed",
+        message: "Background zombie-room cleanup tick failed.",
+        logMessage: "[VeilRoom] Zombie room cleanup failed",
+        error,
+        roomId: room.roomId,
+        roomDay: roomState.meta.day,
+        detail: formatBackgroundTaskDetail("zombie_room_cleanup", error, {
+          activeBattles: room.worldRoom.getActiveBattles().length,
+          connectedPlayers: room.clients.length
+        })
+      });
+    }
   }
 }
 
@@ -1262,7 +1354,23 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     this.turnTimerHandle = roomRuntimeDependencies.setInterval(() => {
-      void this.tickTurnTimer();
+      void this.tickTurnTimer().catch((error) => {
+        const context = this.resolveTurnContext();
+        reportBackgroundTaskFailure({
+          taskType: "turn_timer",
+          errorCode: "turn_timer_tick_failed",
+          message: "Background turn timer tick failed.",
+          logMessage: "[VeilRoom] Turn timer tick failed",
+          error,
+          roomId: this.metadata.logicalRoomId,
+          playerId: context?.playerId ?? this.turnOwnerPlayerId ?? null,
+          roomDay: this.worldRoom.getInternalState().meta.day,
+          detail: formatBackgroundTaskDetail("turn_timer", error, {
+            mode: context?.mode ?? null,
+            turnOwnerPlayerId: context?.playerId ?? this.turnOwnerPlayerId ?? null
+          })
+        });
+      });
     }, TURN_TIMER_TICK_MS);
     this.turnTimerHandle.unref?.();
   }
@@ -1684,9 +1792,18 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         })
       );
     } catch (error) {
-      console.error("[VeilRoom] Failed to update minor playtime", {
+      reportBackgroundTaskFailure({
+        taskType: "minor_playtime",
+        errorCode: "minor_playtime_tick_failed",
+        message: "Background minor-playtime tick failed.",
+        logMessage: "[VeilRoom] Failed to update minor playtime",
+        error,
         roomId: this.metadata.logicalRoomId,
-        error
+        roomDay: this.worldRoom.getInternalState().meta.day,
+        detail: formatBackgroundTaskDetail("minor_playtime", error, {
+          connectedPlayers: playerIds.length,
+          playerIds: playerIds.join(",") || null
+        })
       });
     }
   }
