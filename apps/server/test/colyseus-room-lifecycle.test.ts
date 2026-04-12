@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ import {
   resetAnalyticsRuntimeDependencies
 } from "../src/analytics";
 import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "../src/config-center";
+import { issueAccountAuthSession, issueNextAuthSession, type GuestAuthSession } from "../src/auth";
 import {
   VeilColyseusRoom,
   configureRoomRuntimeDependencies,
@@ -312,7 +314,8 @@ async function connectPlayer(
   room: VeilColyseusRoom,
   client: FakeClient,
   playerId: string,
-  requestId: string
+  requestId: string,
+  authToken?: string
 ): Promise<void> {
   room.clients.push(client);
   room.onJoin(client, { playerId });
@@ -320,8 +323,37 @@ async function connectPlayer(
     type: "connect",
     requestId,
     roomId: room.roomId,
-    playerId
+    playerId,
+    ...(authToken ? { authToken } : {})
   });
+}
+
+function cloneSessionWithExpiresAt(session: GuestAuthSession, expiresAt: string): GuestAuthSession {
+  const [encodedPayload] = session.token.split(".");
+  assert.ok(encodedPayload, "expected a signed auth token");
+  const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
+    issuedAt: string;
+    expiresAt: string;
+  };
+  const issuedAt = new Date(Date.now() - 1_000).toISOString();
+  const nextPayload = Buffer.from(
+    JSON.stringify({
+      ...payload,
+      issuedAt,
+      expiresAt
+    })
+  ).toString("base64url");
+  const signature = createHmac("sha256", process.env.VEIL_AUTH_SECRET ?? "project-veil-dev-secret")
+    .update(nextPayload)
+    .digest("base64url");
+
+  return {
+    ...session,
+    token: `${nextPayload}.${signature}`,
+    issuedAt,
+    expiresAt,
+    lastUsedAt: new Date().toISOString()
+  };
 }
 
 function getBattleForPlayer(room: VeilColyseusRoom, playerId: string): BattleState | null {
@@ -834,6 +866,98 @@ test("stale leave after a successful reconnect does not clear the resumed player
 
   assert.equal(internalRoom.playerIdBySessionId.get("session-stale-reconnected"), "player-1");
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+});
+
+test("reconnect with an expired tracked auth token sends SESSION_EXPIRED and rejects the resumed client", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-expired-token-${Date.now()}`);
+  const originalClient = createFakeClient("session-expired-token-original");
+  const reconnectedClient = createFakeClient("session-expired-token-resumed");
+  const expiringSession = cloneSessionWithExpiresAt(
+    issueAccountAuthSession({
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    }),
+    new Date(Date.now() + 20).toISOString()
+  );
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-expired-token", expiringSession.token);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  internalRoom.allowReconnection = async () => reconnectedClient;
+  await room.onDrop(originalClient);
+
+  const expiredMessage = reconnectedClient.sent.find(
+    (message): message is Extract<ServerMessage, { type: "SESSION_EXPIRED" }> => message.type === "SESSION_EXPIRED"
+  );
+  assert.ok(expiredMessage);
+  assert.equal(expiredMessage.reason, "token_expired");
+  assert.equal(internalRoom.playerIdBySessionId.has(reconnectedClient.sessionId), false);
+  assert.equal(reconnectedClient.leaveCalls.at(-1)?.reason, "session_expired");
+  assert.equal(reconnectedClient.sent.some((message) => message.type === "session.state"), false);
+});
+
+test("TOKEN_REFRESH updates the tracked auth session so reconnect accepts the refreshed token", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-token-refresh-${Date.now()}`);
+  const originalClient = createFakeClient("session-token-refresh-original");
+  const reconnectedClient = createFakeClient("session-token-refresh-resumed");
+  const expiringSession = cloneSessionWithExpiresAt(
+    issueAccountAuthSession({
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    }),
+    new Date(Date.now() + 20).toISOString()
+  );
+  const refreshedSession = issueNextAuthSession(
+    {
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    },
+    expiringSession
+  );
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-token-refresh", expiringSession.token);
+  await emitRoomMessage(room, "TOKEN_REFRESH", originalClient, {
+    type: "TOKEN_REFRESH",
+    requestId: "token-refresh",
+    authToken: refreshedSession.token
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  internalRoom.allowReconnection = async () => reconnectedClient;
+  await room.onDrop(originalClient);
+
+  assert.equal(internalRoom.playerIdBySessionId.get(reconnectedClient.sessionId), "player-1");
+  assert.equal(reconnectedClient.sent.some((message) => message.type === "SESSION_EXPIRED"), false);
+  assert.equal(reconnectedClient.leaveCalls.length, 0);
+  assert.equal(lastSessionState(originalClient, "reply").requestId, "token-refresh");
+  assert.equal(lastSessionState(reconnectedClient, "push").requestId, "push");
 });
 
 test("client that misses the reconnect window is cleaned up from the player slot map", async (t) => {
