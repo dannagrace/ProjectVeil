@@ -1,0 +1,66 @@
+name: Smoke CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-smoke:
+    name: Repository Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NPM_CONFIG_LOGS_DIR: ${{ runner.temp }}/npm-logs
+      SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/smoke-ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pin npm runtime
+        run: npm install --global npm@10.9.3
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run repository smoke gate
+        run: |
+          mkdir -p "${SMOKE_ARTIFACT_DIR}"
+          npm run smoke:ci -- \
+            --output "${SMOKE_ARTIFACT_DIR}/smoke-ci-${GITHUB_SHA}.json" \
+            --markdown-output "${SMOKE_ARTIFACT_DIR}/smoke-ci-${GITHUB_SHA}.md" \
+            --log-dir "${SMOKE_ARTIFACT_DIR}/logs" \
+            --github-step-summary "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload smoke CI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-ci-${{ github.sha }}
+          path: ${{ runner.temp }}/smoke-ci
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload smoke CI npm logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-ci-npm-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/npm-logs
+          if-no-files-found: ignore
+          retention-days: 14
