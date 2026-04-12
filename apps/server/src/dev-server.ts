@@ -5,6 +5,7 @@ import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { registerAnalyticsRoutes } from "./analytics";
 import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
+import { registerClientErrorRoutes } from "./client-error";
 import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
@@ -124,6 +125,7 @@ export interface DevServerBootstrapDependencies {
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerAnalyticsRoutes(app: unknown): void;
+  registerClientErrorRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -205,6 +207,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerAnalyticsRoutes: (app) => registerAnalyticsRoutes(app as never),
+    registerClientErrorRoutes: (app, store) => registerClientErrorRoutes(app as never, store as RoomSnapshotStore | null),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
@@ -354,6 +357,7 @@ export async function startDevServer(
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerAnalyticsRoutes(expressApp);
+  deps.registerClientErrorRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
   if ("use" in (expressApp as object) && "get" in (expressApp as object)) {

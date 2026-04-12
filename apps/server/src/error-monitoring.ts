@@ -31,6 +31,13 @@ export interface ServerErrorMonitoringContext {
   detail?: string | null;
 }
 
+export interface ClientErrorMonitoringContext {
+  playerId?: string | null;
+  requestId?: string | null;
+  clientVersion?: string | null;
+  detail?: string | null;
+}
+
 interface CaptureServerErrorInput {
   errorCode: StructuredErrorCode | string;
   message: string;
@@ -41,6 +48,31 @@ interface CaptureServerErrorInput {
   surface?: string;
   tags?: string[];
   context?: ServerErrorMonitoringContext;
+}
+
+interface SentryEventInput {
+  errorCode: StructuredErrorCode | string;
+  message: string;
+  error?: unknown;
+  severity?: MonitoringSeverity;
+  featureArea?: string;
+  ownerArea?: string;
+  surface?: string;
+  tags?: string[];
+  tagValues?: Record<string, string>;
+  context?: ServerErrorMonitoringContext;
+  platform?: string;
+  logger?: string;
+  serverName?: string;
+}
+
+export interface CaptureClientErrorInput {
+  platform: string;
+  version: string;
+  errorMessage: string;
+  stack?: string | null;
+  context?: ClientErrorMonitoringContext;
+  authenticated?: boolean;
 }
 
 const defaultErrorMonitoringRuntimeDependencies: ErrorMonitoringRuntimeDependencies = {
@@ -104,7 +136,7 @@ function normalizeError(error: unknown): { type: string; value: string; stack?: 
 }
 
 function buildSentryEvent(
-  input: CaptureServerErrorInput,
+  input: SentryEventInput,
   env: NodeJS.ProcessEnv
 ): { endpoint: string; body: string } | null {
   const parsedDsn = parseSentryDsn(env.SENTRY_DSN);
@@ -123,10 +155,10 @@ function buildSentryEvent(
   const payload = {
     event_id: eventId,
     timestamp,
-    platform: "node",
+    platform: input.platform ?? "node",
     level: severity === "warn" ? "warning" : severity,
-    logger: "project-veil-server",
-    server_name: "project-veil-server",
+    logger: input.logger ?? "project-veil-server",
+    server_name: input.serverName ?? "project-veil-server",
     environment: env.NODE_ENV?.trim() || "development",
     release: candidateRevision ?? undefined,
     message: {
@@ -152,7 +184,8 @@ function buildSentryEvent(
       owner_area: ownerArea,
       surface: input.surface ?? "server",
       ...(input.context?.route ? { route: input.context.route } : {}),
-      ...(input.context?.action ? { action: input.context.action } : {})
+      ...(input.context?.action ? { action: input.context.action } : {}),
+      ...input.tagValues
     },
     fingerprint: [
       input.surface ?? "server",
@@ -212,6 +245,67 @@ export async function captureServerError(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<void> {
   const event = buildSentryEvent(input, env);
+  if (!event) {
+    return;
+  }
+
+  try {
+    const response = await errorMonitoringRuntimeDependencies.fetch(event.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-sentry-envelope"
+      },
+      body: event.body
+    });
+    if (!response.ok) {
+      errorMonitoringRuntimeDependencies.error(`[ErrorMonitoring] Failed to deliver Sentry envelope: ${response.status}`);
+    }
+  } catch (error) {
+    errorMonitoringRuntimeDependencies.error("[ErrorMonitoring] Failed to deliver Sentry envelope", error);
+  }
+}
+
+function normalizeClientStack(errorMessage: string, stack: string | null | undefined): Error {
+  const error = new Error(errorMessage);
+  if (stack?.trim()) {
+    error.stack = stack.trim().includes(errorMessage)
+      ? stack.trim()
+      : `${error.name}: ${errorMessage}\n${stack.trim()}`;
+  }
+  return error;
+}
+
+export async function captureClientError(
+  input: CaptureClientErrorInput,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const event = buildSentryEvent(
+    {
+      errorCode: "client_error_boundary_triggered",
+      message: `Client error reported from ${input.platform} ${input.version}: ${input.errorMessage}`,
+      error: normalizeClientStack(input.errorMessage, input.stack),
+      severity: "error",
+      featureArea: "runtime",
+      ownerArea: "client",
+      surface: "client-error-report",
+      platform: "javascript",
+      logger: "project-veil-client",
+      serverName: "project-veil-client",
+      tagValues: {
+        client_platform: input.platform,
+        client_version: input.version,
+        auth: input.authenticated ? "authenticated" : "anonymous"
+      },
+      context: {
+        playerId: input.context?.playerId ?? null,
+        requestId: input.context?.requestId ?? null,
+        route: "/api/client-error",
+        clientVersion: input.context?.clientVersion ?? input.version,
+        detail: input.context?.detail ?? null
+      }
+    },
+    env
+  );
   if (!event) {
     return;
   }
