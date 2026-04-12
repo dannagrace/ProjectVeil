@@ -20,6 +20,9 @@ import {
 import {
   createPlayerAccountsFromWorldState,
   type GuildAuditLogCreateInput,
+  type GuildChatMessageCreateInput,
+  type GuildChatMessageListOptions,
+  type GuildChatMessageRecord,
   type GuildAuditLogListOptions,
   type GuildAuditLogRecord,
   type GuildListOptions,
@@ -148,6 +151,30 @@ function normalizeDisplayNameLookup(displayName: string): string {
   return normalized.slice(0, 191);
 }
 
+function parseGuildChatCursor(cursor?: string): { createdAt: string; messageId: string } | null {
+  const normalized = cursor?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const separatorIndex = normalized.indexOf("|");
+  if (separatorIndex <= 0 || separatorIndex === normalized.length - 1) {
+    throw new Error("beforeCursor must be formatted as createdAt|messageId");
+  }
+
+  const createdAt = normalized.slice(0, separatorIndex);
+  const messageId = normalized.slice(separatorIndex + 1).trim();
+  const createdAtDate = new Date(createdAt);
+  if (Number.isNaN(createdAtDate.getTime()) || !messageId) {
+    throw new Error("beforeCursor is invalid");
+  }
+
+  return {
+    createdAt: createdAtDate.toISOString(),
+    messageId
+  };
+}
+
 function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
   const normalized = avatarUrl?.trim();
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
@@ -194,6 +221,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly guildAuditLogs: GuildAuditLogRecord[] = [];
+  private readonly guildMessages = new Map<string, GuildChatMessageRecord[]>();
   private readonly nameHistoryByPlayerId = new Map<string, Array<{
     id: number;
     playerId: string;
@@ -313,6 +341,68 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.guildAuditLogs.push(entry);
     return structuredClone(entry);
+  }
+
+  async listGuildChatMessages(options: GuildChatMessageListOptions): Promise<GuildChatMessageRecord[]> {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 50)));
+    const cursor = parseGuildChatCursor(options.beforeCursor);
+    const items = (this.guildMessages.get(options.guildId.trim()) ?? [])
+      .filter((message) => new Date(message.expiresAt).getTime() > Date.now())
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.messageId.localeCompare(left.messageId))
+      .filter((message) => {
+        if (!cursor) {
+          return true;
+        }
+
+        return (
+          message.createdAt < cursor.createdAt ||
+          (message.createdAt === cursor.createdAt && message.messageId < cursor.messageId)
+        );
+      })
+      .slice(0, safeLimit);
+
+    return items.map((message) => structuredClone(message));
+  }
+
+  async loadGuildChatMessage(guildId: string, messageId: string): Promise<GuildChatMessageRecord | null> {
+    const item = (this.guildMessages.get(guildId.trim()) ?? []).find((message) => message.messageId === messageId.trim());
+    if (!item || new Date(item.expiresAt).getTime() <= Date.now()) {
+      return null;
+    }
+
+    return structuredClone(item);
+  }
+
+  async createGuildChatMessage(input: GuildChatMessageCreateInput): Promise<GuildChatMessageRecord> {
+    const record: GuildChatMessageRecord = {
+      messageId: randomUUID(),
+      guildId: input.guildId.trim(),
+      authorPlayerId: normalizePlayerId(input.authorPlayerId),
+      authorDisplayName: normalizeDisplayName(input.authorPlayerId, input.authorDisplayName),
+      content: input.content.trim().slice(0, 500),
+      createdAt: new Date(input.createdAt ?? Date.now()).toISOString(),
+      expiresAt: new Date(input.expiresAt).toISOString()
+    };
+    const existing = this.guildMessages.get(record.guildId) ?? [];
+    existing.push(structuredClone(record));
+    this.guildMessages.set(record.guildId, existing);
+    return structuredClone(record);
+  }
+
+  async deleteGuildChatMessage(guildId: string, messageId: string): Promise<boolean> {
+    const normalizedGuildId = guildId.trim();
+    const existing = this.guildMessages.get(normalizedGuildId) ?? [];
+    const next = existing.filter((message) => message.messageId !== messageId.trim());
+    if (next.length === existing.length) {
+      return false;
+    }
+
+    if (next.length === 0) {
+      this.guildMessages.delete(normalizedGuildId);
+    } else {
+      this.guildMessages.set(normalizedGuildId, next);
+    }
+    return true;
   }
 
   async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
@@ -2326,6 +2416,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.guildIdByPlayerId.delete(member.playerId);
     }
     this.guilds.delete(normalizedGuildId);
+    this.guildMessages.delete(normalizedGuildId);
   }
 
   async pruneExpired(): Promise<number> {
@@ -2345,6 +2436,19 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           updatedAt: now.toISOString()
         })
       );
+    }
+
+    for (const [guildId, messages] of this.guildMessages.entries()) {
+      const nextMessages = messages.filter((message) => new Date(message.expiresAt).getTime() > now.getTime());
+      removedCount += messages.length - nextMessages.length;
+      if (nextMessages.length === 0) {
+        this.guildMessages.delete(guildId);
+      } else if (nextMessages.length !== messages.length) {
+        this.guildMessages.set(
+          guildId,
+          nextMessages.map((message) => structuredClone(message))
+        );
+      }
     }
     return removedCount;
   }

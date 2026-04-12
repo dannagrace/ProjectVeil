@@ -2,17 +2,21 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createGuild,
+  normalizeGuildChatMessageContent,
   createGuildRosterView,
   createGuildSummaryView,
   findDisplayNameModerationViolation,
   joinGuild,
   leaveGuild,
+  type GuildChatMessage,
+  type GuildChatSendAction,
   type GuildCreateAction,
   type GuildState,
-  type GuildMembershipEvent,
+  type GuildMembershipEvent
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
-import type { GuildAuditLogRecord, RoomSnapshotStore } from "./persistence";
+import { recordHttpRateLimited } from "./observability";
+import type { GuildAuditLogRecord, GuildChatMessageRecord, RoomSnapshotStore } from "./persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -30,6 +34,128 @@ class PayloadTooLargeError extends Error {
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const GUILD_CREATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const GUILD_CREATE_MAX_PER_WINDOW = 2;
+const DEFAULT_GUILD_CHAT_HISTORY_LIMIT = 50;
+const MAX_GUILD_CHAT_HISTORY_LIMIT = 50;
+const DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_WINDOW_MS = 60_000;
+const DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_MAX = 10;
+const DEFAULT_GUILD_CHAT_MESSAGE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface RateLimitResult {
+  allowed: boolean;
+  retryAfterSeconds?: number;
+}
+
+interface GuildChatEventEnvelope {
+  type: "guild.chat.message" | "guild.chat.deleted";
+  guildId: string;
+  message?: GuildChatMessage;
+  messageId?: string;
+}
+
+function readGuildChatMessageRateLimitWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env.VEIL_GUILD_CHAT_RATE_LIMIT_WINDOW_MS);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_WINDOW_MS;
+}
+
+function readGuildChatMessageRateLimitMax(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_MAX;
+}
+
+function readGuildChatMessageTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  const ttlDays = Number(env.VEIL_GUILD_CHAT_TTL_DAYS);
+  if (Number.isFinite(ttlDays) && ttlDays > 0) {
+    return Math.floor(ttlDays * 24 * 60 * 60 * 1000);
+  }
+
+  const ttlMs = Number(env.VEIL_GUILD_CHAT_TTL_MS);
+  return Number.isFinite(ttlMs) && ttlMs > 0 ? Math.floor(ttlMs) : DEFAULT_GUILD_CHAT_MESSAGE_TTL_MS;
+}
+
+function parseChatLimit(request: IncomingMessage): number {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = Number(url.searchParams.get("limit"));
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GUILD_CHAT_HISTORY_LIMIT;
+  }
+
+  return Math.max(1, Math.min(MAX_GUILD_CHAT_HISTORY_LIMIT, Math.floor(value)));
+}
+
+function parseChatBeforeCursor(request: IncomingMessage): string | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get("before")?.trim();
+  return value ? value : undefined;
+}
+
+function encodeGuildChatCursor(message: Pick<GuildChatMessage, "createdAt" | "messageId">): string {
+  return `${message.createdAt}|${message.messageId}`;
+}
+
+function toGuildChatMessage(record: GuildChatMessageRecord): GuildChatMessage {
+  return { ...record };
+}
+
+function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const headerValue = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  const normalizedHeader = headerValue?.split(",")[0]?.trim();
+  const rawIp = normalizedHeader || request.socket.remoteAddress?.trim() || "unknown";
+  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+}
+
+class GuildChatRateLimiter {
+  private readonly counters = new Map<string, number[]>();
+  private readonly windowMs = readGuildChatMessageRateLimitWindowMs();
+  private readonly max = readGuildChatMessageRateLimitMax();
+
+  consume(playerId: string, request: Pick<IncomingMessage, "headers" | "socket">): RateLimitResult {
+    const now = Date.now();
+    const windowStart = now - this.windowMs;
+    const key = `${playerId.trim()}:${resolveRequestIp(request)}`;
+    const timestamps = (this.counters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+    if (timestamps.length >= this.max) {
+      this.counters.set(key, timestamps);
+      const oldestTimestamp = timestamps[0] ?? now;
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + this.windowMs - now) / 1000))
+      };
+    }
+
+    timestamps.push(now);
+    this.counters.set(key, timestamps);
+    return { allowed: true };
+  }
+}
+
+class GuildChatRealtimeHub {
+  private readonly subscribers = new Map<string, Set<(event: GuildChatEventEnvelope) => void>>();
+
+  subscribe(guildId: string, listener: (event: GuildChatEventEnvelope) => void): () => void {
+    const normalizedGuildId = guildId.trim();
+    const listeners = this.subscribers.get(normalizedGuildId) ?? new Set<(event: GuildChatEventEnvelope) => void>();
+    listeners.add(listener);
+    this.subscribers.set(normalizedGuildId, listeners);
+    return () => {
+      const activeListeners = this.subscribers.get(normalizedGuildId);
+      if (!activeListeners) {
+        return;
+      }
+
+      activeListeners.delete(listener);
+      if (activeListeners.size === 0) {
+        this.subscribers.delete(normalizedGuildId);
+      }
+    };
+  }
+
+  publish(event: GuildChatEventEnvelope): void {
+    for (const listener of this.subscribers.get(event.guildId.trim()) ?? []) {
+      listener(event);
+    }
+  }
+}
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
@@ -103,7 +229,7 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
 
   if (
     error instanceof SyntaxError ||
-    /guild_create_.*required|guild_create_.*blocked|guild_join_player_required|guild_leave_player_required|payload_too_large|Unexpected token/.test(
+    /guild_create_.*required|guild_create_.*blocked|guild_join_player_required|guild_leave_player_required|guild_chat_message_required|guild_chat_message_too_long|guild_chat_message_html_not_allowed|beforeCursor|payload_too_large|Unexpected token/.test(
       message
     )
   ) {
@@ -111,6 +237,12 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
   }
   if (/guild_not_found/.test(message)) {
     return { status: 404, code: "guild_not_found", message };
+  }
+  if (/guild_chat_message_not_found/.test(message)) {
+    return { status: 404, code: "guild_chat_message_not_found", message };
+  }
+  if (/guild_chat_forbidden|guild_chat_delete_forbidden/.test(message)) {
+    return { status: 403, code: "guild_chat_forbidden", message };
   }
   if (/guild_member_not_found|guild_leave_member_not_found/.test(message)) {
     return { status: 409, code: "guild_membership_invalid", message };
@@ -123,6 +255,9 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
   }
   if (/guild_create_rate_limited/.test(message)) {
     return { status: 429, code: "guild_create_rate_limited", message };
+  }
+  if (/guild_chat_rate_limited/.test(message)) {
+    return { status: 429, code: "guild_chat_rate_limited", message };
   }
 
   return { status: 500, code: "guild_error", message };
@@ -140,6 +275,10 @@ function ensureGuildPubliclyVisible(guild: GuildState): GuildState {
 }
 
 function validateGuildCreateModeration(action: GuildCreateAction): void {
+  if (!action.name.trim() || !action.tag.trim()) {
+    return;
+  }
+
   const nameViolation = findDisplayNameModerationViolation(action.name);
   if (nameViolation) {
     throw new Error(`guild_create_name_blocked: Guild name contains blocked content (${nameViolation.term})`);
@@ -151,7 +290,10 @@ function validateGuildCreateModeration(action: GuildCreateAction): void {
 }
 
 export class GuildService {
-  constructor(private readonly store: RoomSnapshotStore | null) {}
+  constructor(
+    private readonly store: RoomSnapshotStore | null,
+    private readonly guildChatRateLimiter = new GuildChatRateLimiter()
+  ) {}
 
   private requireStore(): {
     ensurePlayerAccount: RoomSnapshotStore["ensurePlayerAccount"];
@@ -188,6 +330,30 @@ export class GuildService {
     };
   }
 
+  private requireChatStore(): {
+    createGuildChatMessage: NonNullable<RoomSnapshotStore["createGuildChatMessage"]>;
+    deleteGuildChatMessage: NonNullable<RoomSnapshotStore["deleteGuildChatMessage"]>;
+    listGuildChatMessages: NonNullable<RoomSnapshotStore["listGuildChatMessages"]>;
+    loadGuildChatMessage: NonNullable<RoomSnapshotStore["loadGuildChatMessage"]>;
+  } {
+    if (
+      !this.store ||
+      !this.store.createGuildChatMessage ||
+      !this.store.deleteGuildChatMessage ||
+      !this.store.listGuildChatMessages ||
+      !this.store.loadGuildChatMessage
+    ) {
+      throw new Error("guild_store_unavailable");
+    }
+
+    return {
+      createGuildChatMessage: this.store.createGuildChatMessage.bind(this.store),
+      deleteGuildChatMessage: this.store.deleteGuildChatMessage.bind(this.store),
+      listGuildChatMessages: this.store.listGuildChatMessages.bind(this.store),
+      loadGuildChatMessage: this.store.loadGuildChatMessage.bind(this.store)
+    };
+  }
+
   async listGuilds(limit?: number): Promise<GuildState[]> {
     const store = this.requireStore();
     return (await store.listGuilds({ ...(limit != null ? { limit } : {}) })).filter((guild) => !isGuildHidden(guild));
@@ -219,6 +385,98 @@ export class GuildService {
       guildId,
       ...(limit != null ? { limit } : {})
     });
+  }
+
+  private async requireGuildMembership(guildId: string, playerId: string): Promise<GuildState> {
+    const store = this.requireStore();
+    const guild = await store.loadGuild(guildId);
+    if (!guild) {
+      throw new Error("guild_not_found");
+    }
+
+    ensureGuildPubliclyVisible(guild);
+    if (!guild.members.some((member) => member.playerId === playerId.trim())) {
+      throw new Error("guild_chat_forbidden");
+    }
+
+    return guild;
+  }
+
+  async listGuildChatMessagesForPlayer(
+    authSession: { playerId: string; displayName: string },
+    guildId: string,
+    options: { beforeCursor?: string; limit?: number } = {}
+  ): Promise<{ items: GuildChatMessage[]; nextCursor?: string }> {
+    const store = this.requireChatStore();
+    await this.requireGuildMembership(guildId, authSession.playerId);
+    const items = (
+      await store.listGuildChatMessages({
+        guildId,
+        ...(options.beforeCursor ? { beforeCursor: options.beforeCursor } : {}),
+        ...(options.limit != null ? { limit: options.limit } : {})
+      })
+    ).map((record) => toGuildChatMessage(record));
+
+    const lastMessage = items.at(-1);
+    return {
+      items,
+      ...(lastMessage ? { nextCursor: encodeGuildChatCursor(lastMessage) } : {})
+    };
+  }
+
+  async createGuildChatMessageForPlayer(
+    authSession: { playerId: string; displayName: string },
+    guildId: string,
+    action: GuildChatSendAction,
+    request: Pick<IncomingMessage, "headers" | "socket">
+  ): Promise<GuildChatMessage> {
+    const store = this.requireChatStore();
+    const baseStore = this.requireStore();
+    await baseStore.ensurePlayerAccount({
+      playerId: authSession.playerId,
+      displayName: authSession.displayName
+    });
+    const guild = await this.requireGuildMembership(guildId, authSession.playerId);
+    const normalizedContent = normalizeGuildChatMessageContent(typeof action.content === "string" ? action.content : "");
+    const rateLimitResult = this.guildChatRateLimiter.consume(authSession.playerId, request);
+    if (!rateLimitResult.allowed) {
+      throw new Error(`guild_chat_rate_limited: retry after ${rateLimitResult.retryAfterSeconds ?? 1} seconds`);
+    }
+
+    const message = await store.createGuildChatMessage({
+      guildId: guild.id,
+      authorPlayerId: authSession.playerId,
+      authorDisplayName: authSession.displayName,
+      content: normalizedContent,
+      expiresAt: new Date(Date.now() + readGuildChatMessageTtlMs()).toISOString()
+    });
+    return toGuildChatMessage(message);
+  }
+
+  async deleteGuildChatMessageForPlayer(
+    authSession: { playerId: string; displayName: string },
+    guildId: string,
+    messageId: string
+  ): Promise<{ messageId: string }> {
+    const store = this.requireChatStore();
+    const guild = await this.requireGuildMembership(guildId, authSession.playerId);
+    const message = await store.loadGuildChatMessage(guild.id, messageId);
+    if (!message) {
+      throw new Error("guild_chat_message_not_found");
+    }
+
+    const actorMembership = guild.members.find((member) => member.playerId === authSession.playerId);
+    const canDelete = actorMembership?.role === "owner" || message.authorPlayerId === authSession.playerId;
+    if (!canDelete) {
+      throw new Error("guild_chat_delete_forbidden");
+    }
+
+    const deleted = await store.deleteGuildChatMessage(guild.id, message.messageId);
+    if (!deleted) {
+      throw new Error("guild_chat_message_not_found");
+    }
+
+    return { messageId: message.messageId };
   }
 
   async createGuildForPlayer(
@@ -405,6 +663,7 @@ export function registerGuildRoutes(
   store: RoomSnapshotStore | null
 ): void {
   const service = new GuildService(store);
+  const guildChatHub = new GuildChatRealtimeHub();
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -452,6 +711,67 @@ export function registerGuildRoutes(
       sendJson(response, 200, {
         roster: createGuildRosterView(guild)
       });
+    } catch (error) {
+      const mapped = mapGuildError(error);
+      sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
+    }
+  });
+
+  app.get("/api/guilds/:guildId/chat", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const guildId = request.params.guildId ?? "";
+      const beforeCursor = parseChatBeforeCursor(request);
+      const result = await service.listGuildChatMessagesForPlayer(authSession, guildId, {
+        limit: parseChatLimit(request),
+        ...(beforeCursor ? { beforeCursor } : {})
+      });
+      sendJson(response, 200, result);
+    } catch (error) {
+      const mapped = mapGuildError(error);
+      sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
+    }
+  });
+
+  app.get("/api/guilds/:guildId/chat/stream", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const guildId = request.params.guildId ?? "";
+      await service.listGuildChatMessagesForPlayer(authSession, guildId, { limit: 1 });
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      response.setHeader("Cache-Control", "no-cache, no-transform");
+      response.setHeader("Connection", "keep-alive");
+      response.setHeader("X-Accel-Buffering", "no");
+      response.flushHeaders?.();
+
+      const writeEvent = (event: GuildChatEventEnvelope): void => {
+        response.write(`event: ${event.type}\n`);
+        response.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      response.write(": connected\n\n");
+      const unsubscribe = guildChatHub.subscribe(guildId, writeEvent);
+      const heartbeat = setInterval(() => {
+        response.write(": keepalive\n\n");
+      }, 25_000);
+      heartbeat.unref?.();
+
+      const close = (): void => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      };
+
+      request.once("close", close);
+      response.once("close", close);
     } catch (error) {
       const mapped = mapGuildError(error);
       sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
@@ -521,6 +841,53 @@ export function registerGuildRoutes(
               deleted: false
             }
       );
+    } catch (error) {
+      const mapped = mapGuildError(error);
+      sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
+    }
+  });
+
+  app.post("/api/guilds/:guildId/chat", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const guildId = request.params.guildId ?? "";
+      const payload = (await readJsonBody(request)) as GuildChatSendAction;
+      const message = await service.createGuildChatMessageForPlayer(authSession, guildId, payload, request);
+      guildChatHub.publish({
+        type: "guild.chat.message",
+        guildId,
+        message
+      });
+      sendJson(response, 201, { message });
+    } catch (error) {
+      const mapped = mapGuildError(error);
+      if (mapped.status === 429) {
+        recordHttpRateLimited();
+      }
+      sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
+    }
+  });
+
+  app.post("/api/guilds/:guildId/chat/:messageId/delete", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    try {
+      const guildId = request.params.guildId ?? "";
+      const messageId = request.params.messageId ?? "";
+      const deleted = await service.deleteGuildChatMessageForPlayer(authSession, guildId, messageId);
+      guildChatHub.publish({
+        type: "guild.chat.deleted",
+        guildId,
+        messageId: deleted.messageId
+      });
+      sendJson(response, 200, { deleted: true, ...deleted });
     } catch (error) {
       const mapped = mapGuildError(error);
       sendJson(response, mapped.status, { error: { code: mapped.code, message: mapped.message } });
