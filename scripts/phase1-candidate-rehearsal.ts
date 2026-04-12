@@ -373,6 +373,68 @@ function runCommandStage(id: string, title: string, command: string[], outputs: 
   };
 }
 
+function runOptionalFailingDiagnosticStage(id: string, title: string, command: string[], outputs: string[]): StageResult {
+  const result = spawnSync(command[0], command.slice(1), {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 20
+  });
+  const stdout = tailText(result.stdout);
+  const stderr = tailText(result.stderr);
+  if (result.error) {
+    return {
+      id,
+      title,
+      status: "failed",
+      summary: result.error.message,
+      command: formatCommand(command),
+      exitCode: result.status ?? 1,
+      outputs: outputs.map(toRelative)
+    };
+  }
+
+  const missingOutputs = outputs.filter((filePath) => !fs.existsSync(filePath));
+  if (missingOutputs.length > 0) {
+    return {
+      id,
+      title,
+      status: "failed",
+      summary: `Expected output(s) missing: ${missingOutputs.map(toRelative).join(", ")}`,
+      command: formatCommand(command),
+      exitCode: result.status,
+      outputs: outputs.map(toRelative)
+    };
+  }
+
+  if (result.status !== 0 && result.status !== 1) {
+    const summary = stderr ?? stdout ?? `Command exited with code ${result.status}.`;
+    return {
+      id,
+      title,
+      status: "failed",
+      summary,
+      command: formatCommand(command),
+      exitCode: result.status,
+      outputs: outputs.map(toRelative)
+    };
+  }
+
+  const outputLines = `${stdout ?? ""}\n${stderr ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  return {
+    id,
+    title,
+    status: "passed",
+    summary: outputLines.at(-1) ?? "ok",
+    command: formatCommand(command),
+    exitCode: result.status,
+    outputs: outputs.map(toRelative)
+  };
+}
+
 function copyFileIfPresent(sourcePath: string | undefined, destinationPath: string): boolean {
   if (!sourcePath || !fs.existsSync(sourcePath)) {
     return false;
@@ -451,6 +513,12 @@ async function main(): Promise<void> {
   const stableReconnectSoakPath = path.join(outputDir, `colyseus-reconnect-soak-summary-${candidateSlug}-${revision.shortCommit}.json`);
   const stableRuntimeReportPath = path.join(outputDir, `runtime-regression-report-${candidateSlug}-${revision.shortCommit}.json`);
   const runtimeObservabilityBundleDir = path.join(outputDir, `runtime-observability-bundle-${candidateSlug}-${revision.shortCommit}`);
+  const runtimeSloSummaryPath = path.join(runtimeObservabilityBundleDir, `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeSloSummaryMarkdownPath = path.join(
+    runtimeObservabilityBundleDir,
+    `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.md`
+  );
+  const runtimeSloSummaryTextPath = path.join(runtimeObservabilityBundleDir, `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.txt`);
   const runtimeObservabilityBundlePath = path.join(runtimeObservabilityBundleDir, "runtime-observability-bundle.json");
   const runtimeObservabilityBundleMarkdownPath = path.join(runtimeObservabilityBundleDir, "runtime-observability-bundle.md");
   const runtimeObservabilityEvidencePath = path.join(
@@ -584,6 +652,9 @@ async function main(): Promise<void> {
   artifacts.candidateRevisionTriageInputPath = toRelative(candidateRevisionTriageInputPath);
   artifacts.candidateRevisionTriageDigestPath = toRelative(candidateRevisionTriageDigestPath);
   artifacts.candidateRevisionTriageDigestMarkdownPath = toRelative(candidateRevisionTriageDigestMarkdownPath);
+  artifacts.runtimeSloSummaryPath = toRelative(runtimeSloSummaryPath);
+  artifacts.runtimeSloSummaryMarkdownPath = toRelative(runtimeSloSummaryMarkdownPath);
+  artifacts.runtimeSloSummaryTextPath = toRelative(runtimeSloSummaryTextPath);
   artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
   artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
@@ -872,6 +943,37 @@ async function main(): Promise<void> {
           summary: "Cocos RC bundle produced the main-journey replay gate artifacts for reviewer staging.",
           outputs: outputs.map(toRelative)
         };
+      }
+    },
+    {
+      id: "runtime-slo-summary",
+      title: "Capture runtime SLO summary",
+      run: () => {
+        if (!args.serverUrl) {
+          return {
+            id: "runtime-slo-summary",
+            title: "Capture runtime SLO summary",
+            status: "skipped",
+            summary: "No --server-url was provided, so the runtime SLO summary was skipped."
+          };
+        }
+
+        return runOptionalFailingDiagnosticStage("runtime-slo-summary", "Capture runtime SLO summary", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/runtime-slo-summary.ts",
+          "--server-url",
+          args.serverUrl,
+          "--profile",
+          "candidate_gate",
+          "--output",
+          runtimeSloSummaryPath,
+          "--markdown-output",
+          runtimeSloSummaryMarkdownPath,
+          "--text-output",
+          runtimeSloSummaryTextPath
+        ], [runtimeSloSummaryPath, runtimeSloSummaryMarkdownPath, runtimeSloSummaryTextPath]);
       }
     },
     {

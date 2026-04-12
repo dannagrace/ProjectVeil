@@ -176,6 +176,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "candidate-revision-triage-digest")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-main-journey-replay-gate")?.status, "passed");
+  assert.equal(report.stages.find((stage) => stage.id === "runtime-slo-summary")?.status, "skipped");
   assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-bundle")?.status, "skipped");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-same-revision-evidence-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-release-evidence-drift-gate")?.status, "passed");
@@ -198,6 +199,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.candidateRevisionTriageInputPath ?? "", /candidate-revision-triage-input-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestMarkdownPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryPath ?? "", /runtime-slo-summary-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryMarkdownPath ?? "", /runtime-slo-summary-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryTextPath ?? "", /runtime-slo-summary-phase1-mainline-/);
   assert.match(report.artifacts.cocosBundlePath ?? "", /cocos-rc-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
@@ -267,6 +271,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /CI trend summary:/);
   assert.match(markdown, /CI trend summary markdown:/);
   assert.match(markdown, /Release readiness snapshot:/);
+  assert.match(markdown, /Runtime SLO summary markdown:/);
+  assert.match(markdown, /Runtime SLO summary:/);
+  assert.match(markdown, /Runtime SLO summary text:/);
   assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
   assert.match(markdown, /Runtime observability gate markdown:/);
   assert.match(markdown, /H5 candidate smoke:/);
@@ -303,6 +310,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateRevisionTriageInputPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestMarkdownPath:/);
+  assert.match(markdown, /runtimeSloSummaryPath:/);
+  assert.match(markdown, /runtimeSloSummaryMarkdownPath:/);
+  assert.match(markdown, /runtimeSloSummaryTextPath:/);
   assert.match(markdown, /cocosBundlePath:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /candidateEvidenceAuditMarkdownPath:/);
@@ -333,4 +343,10 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /phase1CandidateDossierMarkdownPath:/);
   assert.match(markdown, /goNoGoPacketPath:/);
   assert.match(markdown, /releasePrCommentPath:/);
+
+  const runtimeSloMarkdownIndex = markdown.indexOf("Runtime SLO summary markdown:");
+  const runtimeObservabilityGateIndex = markdown.indexOf("Runtime observability gate:");
+  assert.notEqual(runtimeSloMarkdownIndex, -1);
+  assert.notEqual(runtimeObservabilityGateIndex, -1);
+  assert.ok(runtimeSloMarkdownIndex < runtimeObservabilityGateIndex);
 });

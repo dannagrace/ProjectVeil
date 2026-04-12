@@ -18,6 +18,9 @@ export interface RehearsalArtifacts {
   cocosRcReconnectReplayPath?: string;
   cocosRcReconnectReplayMarkdownPath?: string;
   stableRuntimeReportPath?: string;
+  runtimeSloSummaryPath?: string;
+  runtimeSloSummaryMarkdownPath?: string;
+  runtimeSloSummaryTextPath?: string;
   runtimeObservabilityBundlePath?: string;
   runtimeObservabilityBundleMarkdownPath?: string;
   runtimeObservabilityEvidencePath?: string;
@@ -174,6 +177,15 @@ export function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.releaseReadinessSnapshotPath) {
     lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
+  }
+  if (report.artifacts.runtimeSloSummaryMarkdownPath) {
+    lines.push(`- Runtime SLO summary markdown: \`${report.artifacts.runtimeSloSummaryMarkdownPath}\``);
+  }
+  if (report.artifacts.runtimeSloSummaryPath) {
+    lines.push(`- Runtime SLO summary: \`${report.artifacts.runtimeSloSummaryPath}\``);
+  }
+  if (report.artifacts.runtimeSloSummaryTextPath) {
+    lines.push(`- Runtime SLO summary text: \`${report.artifacts.runtimeSloSummaryTextPath}\``);
   }
   if (report.artifacts.runtimeObservabilityGatePath) {
     lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
