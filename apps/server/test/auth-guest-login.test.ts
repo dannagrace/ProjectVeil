@@ -1807,7 +1807,7 @@ test("password changes revoke the current account session family", async (t) => 
   assert.equal(revokedRefreshPayload.error.code, "session_revoked");
 });
 
-test("guest auth route returns 429 after the per-IP rate limit is exceeded", async (t) => {
+test("guest auth route returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
@@ -1857,7 +1857,10 @@ test("guest auth route returns 429 after the per-IP rate limit is exceeded", asy
   assert.equal(limitedResponse.headers.get("Retry-After"), "60");
 });
 
-test("account login locks after repeated invalid credentials and returns lockedUntil", async (t) => {
+test(
+  "account login locks after repeated invalid credentials and returns lockedUntil on the next attempt",
+  { concurrency: false },
+  async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
@@ -1899,17 +1902,9 @@ test("account login locks after repeated invalid credentials and returns lockedU
       })
     });
 
-    if (index === 0) {
-      const payload = (await response.json()) as { error: { code: string } };
-      assert.equal(response.status, 401);
-      assert.equal(payload.error.code, "invalid_credentials");
-      continue;
-    }
-
-    const payload = (await response.json()) as { error: { code: string; lockedUntil?: string } };
-    assert.equal(response.status, 403);
-    assert.equal(payload.error.code, "account_locked");
-    assert.ok(payload.error.lockedUntil);
+    const payload = (await response.json()) as { error: { code: string } };
+    assert.equal(response.status, 401);
+    assert.equal(payload.error.code, "invalid_credentials");
   }
 
   const lockedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
@@ -1919,7 +1914,7 @@ test("account login locks after repeated invalid credentials and returns lockedU
     },
     body: JSON.stringify({
       loginId: "lockout-ranger",
-      password: "hunter2",
+      password: "wrong-password",
       privacyConsentAccepted: true
     })
   });
@@ -1928,9 +1923,10 @@ test("account login locks after repeated invalid credentials and returns lockedU
   assert.equal(lockedResponse.status, 403);
   assert.equal(lockedPayload.error.code, "account_locked");
   assert.ok(lockedPayload.error.lockedUntil);
-});
+  }
+);
 
-test("account login lockout expires after the configured duration", async (t) => {
+test("account login lockout expires after the configured duration", { concurrency: false }, async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
@@ -1996,7 +1992,10 @@ test("account login lockout expires after the configured duration", async (t) =>
   assert.equal(payload.session.loginId, "expiry-ranger");
 });
 
-test("account login blocks suspected credential stuffing across distinct login IDs and surfaces it in auth observability", async (t) => {
+test(
+  "account login blocks suspected credential stuffing across distinct login IDs on the next attempt and surfaces it in auth observability",
+  { concurrency: false },
+  async (t) => {
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
@@ -2040,13 +2039,28 @@ test("account login blocks suspected credential stuffing across distinct login I
   assert.equal(firstFailureResponse.status, 401);
   assert.equal(firstFailurePayload.error.code, "invalid_credentials");
 
-  const blockTriggerResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+  const secondFailureResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-b",
+      password: "wrong-password",
+      privacyConsentAccepted: true
+    })
+  });
+  const secondFailurePayload = (await secondFailureResponse.json()) as { error: { code: string } };
+  assert.equal(secondFailureResponse.status, 401);
+  assert.equal(secondFailurePayload.error.code, "invalid_credentials");
+
+  const blockTriggerResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "credential-stuffing-real",
       password: "wrong-password",
       privacyConsentAccepted: true
     })
@@ -2120,7 +2134,8 @@ test("account login blocks suspected credential stuffing across distinct login I
   };
   assert.equal(successfulLoginResponse.status, 200);
   assert.equal(successfulLoginPayload.account.playerId, "credential-stuffing-player");
-});
+  }
+);
 
 test("guest auth session LRU eviction invalidates the oldest idle guest token", async (t) => {
   const cleanup: Array<() => void> = [];
