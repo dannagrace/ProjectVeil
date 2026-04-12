@@ -1002,6 +1002,7 @@ test("config center publish stage sends optional candidate and revision metadata
     createdAt: "2026-03-30T05:00:00.000Z",
     updatedAt: "2026-03-30T05:00:00.000Z",
     valid: true,
+    previewHash: "stage-hash-1",
     documents: [
       {
         id: "world",
@@ -1012,6 +1013,31 @@ test("config center publish stage sends optional candidate and revision metadata
         validation: createValidationReport(true)
       }
     ]
+  };
+  controller.state.publishDiffStageHash = "stage-hash-1";
+  controller.state.publishDiffPreviews = {
+    world: {
+      documentId: "world",
+      hash: "preview-world-1",
+      stageHash: "stage-hash-1",
+      changeCount: 1,
+      structuralChangeCount: 0,
+      added: [],
+      modified: [
+        {
+          key: "width",
+          before: "8",
+          after: "10",
+          kind: "value",
+          required: true,
+          fieldType: "integer",
+          description: "地图宽度",
+          blastRadius: ["世界预览"]
+        }
+      ],
+      removed: [],
+      impactSummary: null
+    }
   };
 
   await controller.publishStageDrafts();
@@ -1024,7 +1050,8 @@ test("config center publish stage sends optional candidate and revision metadata
     author: "ConfigOps",
     summary: "扩图并补资源",
     candidate: "phase1-rc",
-    revision: "abc1234"
+    revision: "abc1234",
+    confirmedDiffHash: "stage-hash-1"
   });
 });
 

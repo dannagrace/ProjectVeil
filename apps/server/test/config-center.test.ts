@@ -780,6 +780,106 @@ test("config center staged publish blocks invalid drafts", async () => {
   );
 });
 
+test("config center staged diff preview returns grouped added, modified, and removed entries with a stable stage hash", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const live = {
+    ...MAP_OBJECTS_CONFIG,
+    buildings: MAP_OBJECTS_CONFIG.buildings.map((building) =>
+      building.kind === "resource_mine"
+        ? {
+            ...building,
+            lastHarvestDay: 2
+          }
+        : building
+    )
+  };
+  await store.saveDocument("mapObjects", JSON.stringify(live));
+
+  const staged = {
+    ...live,
+    buildings: live.buildings.map((building) => {
+      if (building.kind === "resource_mine") {
+        const { lastHarvestDay: _lastHarvestDay, ...rest } = building;
+        return {
+          ...rest,
+          income: building.income + 1
+        };
+      }
+      if (building.kind === "attribute_shrine") {
+        return {
+          ...building,
+          lastUsedDay: 3
+        };
+      }
+      return building;
+    })
+  };
+  await store.saveStagedDraft([
+    {
+      id: "mapObjects",
+      content: JSON.stringify(staged)
+    }
+  ]);
+
+  const preview = await store.previewStagedDiff("mapObjects");
+
+  assert.equal(preview.documentId, "mapObjects");
+  assert.equal(typeof preview.hash, "string");
+  assert.equal(typeof preview.stageHash, "string");
+  assert.ok(preview.stageHash.length > 0);
+  assert.equal(preview.added.some((entry) => entry.key === "buildings[1].lastUsedDay" && entry.after === "3"), true);
+  assert.equal(
+    preview.modified.some(
+      (entry) => entry.key === "buildings[2].income" && entry.before === "2" && entry.after === "3"
+    ),
+    true
+  );
+  assert.equal(
+    preview.removed.some((entry) => entry.key === "buildings[2].lastHarvestDay" && entry.before === "2"),
+    true
+  );
+});
+
+test("config center staged publish rejects confirmed diff hashes after staged drift", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: WORLD_CONFIG.width + 1
+      })
+    }
+  ]);
+  const preview = await store.previewStagedDiff("world");
+
+  await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: WORLD_CONFIG.width + 2
+      })
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      store.publishStagedDraft({
+        author: "ConfigOps",
+        summary: "stale preview",
+        confirmedDiffHash: preview.stageHash
+      }),
+    /漂移.*diff-preview|diff-preview.*漂移/
+  );
+});
+
 test("config center delays hot reload while battles are active and applies it once rooms are safe", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
   await seedConfigRoot(rootDir);

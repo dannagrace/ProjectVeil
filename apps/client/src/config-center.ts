@@ -134,6 +134,49 @@ interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+interface ConfigDiffPreviewAddedEntry {
+  key: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreviewModifiedEntry {
+  key: string;
+  before: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreviewRemovedEntry {
+  key: string;
+  before: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreview {
+  documentId: ConfigDocumentId;
+  hash: string;
+  stageHash: string;
+  changeCount: number;
+  structuralChangeCount: number;
+  added: ConfigDiffPreviewAddedEntry[];
+  modified: ConfigDiffPreviewModifiedEntry[];
+  removed: ConfigDiffPreviewRemovedEntry[];
+  impactSummary: ConfigImpactSummary | null;
+}
+
 type ConfigImpactRiskLevel = "low" | "medium" | "high";
 
 interface ConfigImpactSummary {
@@ -213,6 +256,7 @@ interface ConfigStageState {
   updatedAt: string;
   documents: ConfigStageDocumentSummary[];
   valid: boolean;
+  previewHash: string | null;
 }
 
 interface WorldConfigPreviewTile {
@@ -338,6 +382,9 @@ interface AppState {
   publishAuditFilterRevision: string;
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
+  publishDiffPreviews: Partial<Record<ConfigDocumentId, ConfigDiffPreview>>;
+  publishDiffStageHash: string | null;
+  publishDiffLoading: boolean;
 }
 
 const WORLD_PREVIEW_DEBOUNCE_MS = 260;
@@ -376,6 +423,22 @@ function sortDiffEntries(entries: ConfigDiffEntry[]): ConfigDiffEntry[] {
 
 function countStructuralEntries(diff: ConfigDiff): number {
   return diff.entries.filter(isStructuralDiff).length;
+}
+
+function isStructuralPreviewEntry(
+  entry: ConfigDiffPreviewAddedEntry | ConfigDiffPreviewModifiedEntry | ConfigDiffPreviewRemovedEntry
+): boolean {
+  return entry.kind !== "value";
+}
+
+function sortPreviewEntries<T extends { key: string; kind: ConfigDiffChangeKind }>(entries: T[]): T[] {
+  return [...entries].sort((left, right) => {
+    const riskDelta = Number(right.kind !== "value") - Number(left.kind !== "value");
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+    return left.key.localeCompare(right.key);
+  });
 }
 
 function impactRiskLabel(riskLevel: ConfigImpactRiskLevel): string {
@@ -806,6 +869,7 @@ let loadSnapshots!: ReturnType<typeof createConfigCenterController>["loadSnapsho
 let loadPresets!: ReturnType<typeof createConfigCenterController>["loadPresets"];
 let loadSnapshotDiff!: ReturnType<typeof createConfigCenterController>["loadSnapshotDiff"];
 let loadPublishStage!: ReturnType<typeof createConfigCenterController>["loadPublishStage"];
+let loadPublishDiffPreviews!: ReturnType<typeof createConfigCenterController>["loadPublishDiffPreviews"];
 let loadPublishAuditHistory!: ReturnType<typeof createConfigCenterController>["loadPublishAuditHistory"];
 let loadWorldPreview!: ReturnType<typeof createConfigCenterController>["loadWorldPreview"];
 let loadValidation!: ReturnType<typeof createConfigCenterController>["loadValidation"];
@@ -863,6 +927,7 @@ function initializeConfigCenterRuntime(): void {
     loadPresets,
     loadSnapshotDiff,
     loadPublishStage,
+    loadPublishDiffPreviews,
     loadPublishAuditHistory,
     loadWorldPreview,
     loadValidation,
@@ -1611,6 +1676,11 @@ function renderPublishStageSection(): string {
   const activeDocumentId = state.current?.id ?? null;
   const isCurrentInStage = documents.some((document) => document.id === activeDocumentId);
   const limitReached = !isCurrentInStage && stagedCount >= MAX_STAGE_DOCUMENTS;
+  const previewReady =
+    !!stage &&
+    !!state.publishDiffStageHash &&
+    documents.length > 0 &&
+    documents.every((document) => state.publishDiffPreviews[document.id]?.stageHash === state.publishDiffStageHash);
   const stageMeta = stage
     ? `${stagedCount}/${MAX_STAGE_DOCUMENTS} 个草稿 · ${stage.valid ? "全部通过校验" : "存在阻塞"}`
     : `0/${MAX_STAGE_DOCUMENTS} 个草稿`;
@@ -1625,8 +1695,20 @@ function renderPublishStageSection(): string {
       <div class="history-actions">
         <button class="config-button is-secondary config-button-compact" data-action="stage-current" ${state.current && !limitReached && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "同步中..." : "将当前草稿加入队列"}</button>
         <button class="config-button is-secondary config-button-compact" data-action="clear-stage" ${stage && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>清空草稿</button>
-        <button class="config-button config-button-compact" data-action="publish-stage" ${stage && stage.valid && stagedCount > 0 && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "处理中..." : "发布草稿"}</button>
+        <button class="config-button is-secondary config-button-compact" data-action="refresh-stage-preview" ${stage && stagedCount > 0 && !state.publishStageLoading && !state.publishDiffLoading ? "" : "disabled"}>${state.publishDiffLoading ? "加载 diff..." : "刷新 diff-preview"}</button>
+        <button class="config-button config-button-compact" data-action="publish-stage" ${stage && stage.valid && stagedCount > 0 && previewReady && !state.publishStageLoading ? "" : "disabled"}>${state.publishStageLoading ? "处理中..." : "发布草稿"}</button>
       </div>
+      <p class="config-hint">
+        ${
+          stagedCount === 0
+            ? "先将草稿加入队列。"
+            : state.publishDiffLoading
+              ? "正在拉取 staged draft 与 live 配置的 diff-preview，发布按钮会在全部草稿预览完成后启用。"
+              : previewReady
+                ? "diff-preview 已同步，当前可发布。"
+                : "发布前必须先查看最新 diff-preview；草稿或 live 配置发生漂移时需要重新刷新。"
+        }
+      </p>
       ${
         state.publishStageLoading && stagedCount === 0
           ? `<div class="world-preview-empty">正在加载发布草稿...</div>`
@@ -1644,6 +1726,45 @@ function renderPublishStageSection(): string {
                     <small>最近同步：${formatTime(document.updatedAt)}</small>
                   </div>
                   <button class="config-button is-secondary config-button-compact" data-action="remove-stage-doc" data-doc-id="${document.id}">移除</button>
+                  ${
+                    state.publishDiffPreviews[document.id]
+                      ? (() => {
+                          const preview = state.publishDiffPreviews[document.id]!;
+                          const previewEntries = [
+                            ...sortPreviewEntries(preview.modified),
+                            ...sortPreviewEntries(preview.added),
+                            ...sortPreviewEntries(preview.removed)
+                          ].slice(0, 6);
+                          return `
+                            <div class="publish-diff-summary">
+                              ${
+                                previewEntries.length > 0
+                                  ? previewEntries
+                                      .map((entry) => {
+                                        const from = "before" in entry ? serializeDisplayValue(entry.before) : "新增";
+                                        const to = "after" in entry ? serializeDisplayValue(entry.after) : "删除";
+                                        return `
+                                          <span class="publish-diff-chip">
+                                            ${escapeHtml(entry.key)} · ${escapeHtml(diffKindLabel(entry.kind))} · ${escapeHtml(from)} → ${escapeHtml(to)}
+                                          </span>
+                                        `;
+                                      })
+                                      .join("")
+                                  : `<span class="publish-diff-chip">无字段差异</span>`
+                              }
+                            </div>
+                            <small class="config-meta">
+                              ${preview.changeCount} 项差异${preview.structuralChangeCount ? ` · ${preview.structuralChangeCount} 项结构风险` : ""}
+                            </small>
+                            ${
+                              preview.impactSummary
+                                ? `<small class="diff-blast">影响：${preview.impactSummary.impactedModules.map((label) => `<span>${escapeHtml(label)}</span>`).join(" / ")}</small>`
+                                : ""
+                            }
+                          `;
+                        })()
+                      : `<small class="config-meta">尚未加载 diff-preview</small>`
+                  }
                 </article>
               `
             )
@@ -2108,6 +2229,10 @@ function bindPublishStageControls(): void {
 
   document.querySelector<HTMLButtonElement>("[data-action='clear-stage']")?.addEventListener("click", () => {
     void clearPublishStage();
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-action='refresh-stage-preview']")?.addEventListener("click", () => {
+    void loadPublishDiffPreviews();
   });
 
   document.querySelector<HTMLButtonElement>("[data-action='publish-stage']")?.addEventListener("click", () => {

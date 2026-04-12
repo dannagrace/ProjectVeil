@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
@@ -152,6 +153,49 @@ export interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+export interface ConfigDiffPreviewAddedEntry {
+  key: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+export interface ConfigDiffPreviewModifiedEntry {
+  key: string;
+  before: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+export interface ConfigDiffPreviewRemovedEntry {
+  key: string;
+  before: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+export interface ConfigDiffPreview {
+  documentId: ConfigDocumentId;
+  hash: string;
+  stageHash: string;
+  changeCount: number;
+  structuralChangeCount: number;
+  added: ConfigDiffPreviewAddedEntry[];
+  modified: ConfigDiffPreviewModifiedEntry[];
+  removed: ConfigDiffPreviewRemovedEntry[];
+  impactSummary: ConfigImpactSummary | null;
+}
+
 export type ConfigImpactRiskLevel = "low" | "medium" | "high";
 
 export interface ConfigImpactSummary {
@@ -253,6 +297,7 @@ export interface ConfigStageState {
   updatedAt: string;
   documents: ConfigStageDocumentSummary[];
   valid: boolean;
+  previewHash: string | null;
 }
 
 export interface WorldConfigPreviewTile {
@@ -359,11 +404,13 @@ export interface ConfigCenterStore {
   importDocumentFromWorkbook(id: ConfigDocumentId, workbook: Buffer): Promise<ConfigDocument>;
   getStagedDraft(): Promise<ConfigStageState | null>;
   saveStagedDraft(documents: ConfigStageDocumentInput[]): Promise<ConfigStageState | null>;
+  previewStagedDiff(id: ConfigDocumentId): Promise<ConfigDiffPreview>;
   publishStagedDraft(metadata: {
     author: string;
     summary: string;
     candidate?: string | null;
     revision?: string | null;
+    confirmedDiffHash?: string | null;
   }): Promise<{
     stage: ConfigStageState | null;
     publish: ConfigPublishEventSummary;
@@ -433,6 +480,7 @@ interface ConfigStageRecord {
   createdAt: string;
   updatedAt: string;
   documents: ConfigStageDocumentRecord[];
+  previewHash: string | null;
 }
 
 interface ConfigCenterLibraryState {
@@ -1231,6 +1279,59 @@ function buildConfigDiffEntries(
         }
       ];
     });
+}
+
+function createConfigDiffPreview(entries: ConfigDiffEntry[]): Pick<
+  ConfigDiffPreview,
+  "added" | "modified" | "removed" | "changeCount" | "structuralChangeCount"
+> {
+  const added: ConfigDiffPreviewAddedEntry[] = [];
+  const modified: ConfigDiffPreviewModifiedEntry[] = [];
+  const removed: ConfigDiffPreviewRemovedEntry[] = [];
+
+  for (const entry of entries) {
+    const base = {
+      kind: entry.kind,
+      required: entry.required,
+      fieldType: entry.fieldType,
+      description: entry.description,
+      blastRadius: [...entry.blastRadius]
+    };
+    if (entry.change === "added") {
+      added.push({
+        key: entry.path,
+        after: entry.nextValue,
+        ...base
+      });
+      continue;
+    }
+    if (entry.change === "removed") {
+      removed.push({
+        key: entry.path,
+        before: entry.previousValue,
+        ...base
+      });
+      continue;
+    }
+    modified.push({
+      key: entry.path,
+      before: entry.previousValue,
+      after: entry.nextValue,
+      ...base
+    });
+  }
+
+  return {
+    added,
+    modified,
+    removed,
+    changeCount: entries.length,
+    structuralChangeCount: entries.filter((entry) => entry.kind !== "value").length
+  };
+}
+
+function createConfigHash(input: unknown): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
 function typeLabelForSchema(node: JsonSchemaNode): string {
@@ -3272,6 +3373,14 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
   async getStagedDraft(): Promise<ConfigStageState | null> {
     const state = await this.readLibraryState();
+    if (!state.stagedDraft) {
+      return null;
+    }
+    const previewHash = await this.computeStagePreviewHash(state.stagedDraft);
+    if (state.stagedDraft.previewHash !== previewHash) {
+      state.stagedDraft.previewHash = previewHash;
+      await this.writeLibraryState(state);
+    }
     return this.mapStageRecordToState(state.stagedDraft);
   }
 
@@ -3294,6 +3403,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
     summary: string;
     candidate?: string | null;
     revision?: string | null;
+    confirmedDiffHash?: string | null;
   }): Promise<{
     stage: ConfigStageState | null;
     publish: ConfigPublishEventSummary;
@@ -3306,6 +3416,11 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
     if (staged.documents.some((entry) => !entry.validation.valid)) {
       throw new Error("存在未通过校验的草稿，发布前请先修复。");
+    }
+
+    const previewHash = await this.computeStagePreviewHash(staged);
+    if (metadata.confirmedDiffHash?.trim() && metadata.confirmedDiffHash.trim() !== previewHash) {
+      throw new Error("发布前差异预览已漂移，请先刷新 diff-preview 再重试。");
     }
 
     const publishId = createId("publish");
@@ -3498,7 +3613,44 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
           validation: document.validation
         };
       }),
-      valid: stage.documents.every((document) => document.validation.valid)
+      valid: stage.documents.every((document) => document.validation.valid),
+      previewHash: stage.previewHash
+    };
+  }
+
+  async previewStagedDiff(id: ConfigDocumentId): Promise<ConfigDiffPreview> {
+    const state = await this.readLibraryState();
+    const staged = state.stagedDraft;
+    if (!staged || staged.documents.length === 0) {
+      throw new Error("当前没有待发布的草稿。");
+    }
+
+    const stagedDocument = staged.documents.find((document) => document.id === id);
+    if (!stagedDocument) {
+      throw new Error("当前配置未加入发布草稿。");
+    }
+
+    const current = await this.loadDocument(id);
+    const diffEntries = buildConfigDiffEntries(id, current.content, stagedDocument.content);
+    const grouped = createConfigDiffPreview(diffEntries);
+    const definition = configDefinitionFor(id);
+    const documentHash = createConfigHash({
+      id,
+      current: normalizeJsonContent(JSON.parse(current.content) as ParsedConfigDocument),
+      staged: stagedDocument.content
+    });
+    const stageHash = await this.computeStagePreviewHash(staged);
+
+    return {
+      documentId: id,
+      hash: documentHash,
+      stageHash,
+      changeCount: grouped.changeCount,
+      structuralChangeCount: grouped.structuralChangeCount,
+      added: grouped.added,
+      modified: grouped.modified,
+      removed: grouped.removed,
+      impactSummary: buildConfigImpactSummary(id, definition?.title ?? id, diffEntries)
     };
   }
 
@@ -3535,7 +3687,8 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       id: existing?.id ?? createId("stage"),
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
-      documents: []
+      documents: [],
+      previewHash: null
     };
 
     for (const normalized of normalizedDocuments) {
@@ -3547,7 +3700,22 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
       });
     }
 
+    stageRecord.previewHash = await this.computeStagePreviewHash(stageRecord);
+
     return stageRecord;
+  }
+
+  private async computeStagePreviewHash(stage: ConfigStageRecord): Promise<string> {
+    const hashInput = [];
+    for (const document of [...stage.documents].sort((left, right) => left.id.localeCompare(right.id))) {
+      const current = await this.loadDocument(document.id);
+      hashInput.push({
+        id: document.id,
+        current: normalizeJsonContent(JSON.parse(current.content) as ParsedConfigDocument),
+        staged: document.content
+      });
+    }
+    return createConfigHash(hashInput);
   }
 
   async listPresets(id: ConfigDocumentId): Promise<ConfigPresetSummary[]> {
@@ -3895,6 +4063,24 @@ export function registerConfigCenterRoutes(
     }
   });
 
+  app.get("/api/config-center/configs/:id/diff-preview", async (request, response) => {
+    const configId = request.params.id;
+    const definition = configId ? configDefinitionFor(configId) : undefined;
+    if (!definition) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      sendJson(response, 200, {
+        storage: store.mode,
+        preview: await store.previewStagedDiff(definition.id)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
   app.post("/api/config-center/configs/:id/preview", async (request, response) => {
     const configId = request.params.id;
     if (configId !== "world") {
@@ -4052,6 +4238,7 @@ export function registerConfigCenterRoutes(
         summary?: string;
         candidate?: string | null;
         revision?: string | null;
+        confirmedDiffHash?: string | null;
       };
       if (typeof body.author !== "string" || !body.author.trim() || typeof body.summary !== "string" || !body.summary.trim()) {
         sendJson(response, 400, {
@@ -4067,7 +4254,8 @@ export function registerConfigCenterRoutes(
         author: body.author.trim(),
         summary: body.summary.trim(),
         candidate: typeof body.candidate === "string" ? body.candidate : null,
-        revision: typeof body.revision === "string" ? body.revision : null
+        revision: typeof body.revision === "string" ? body.revision : null,
+        confirmedDiffHash: typeof body.confirmedDiffHash === "string" ? body.confirmedDiffHash : null
       });
       sendJson(response, 200, {
         storage: store.mode,
