@@ -238,6 +238,10 @@ export interface RoomSnapshotStore {
     playerId: string,
     options?: PlayerCompensationListOptions
   ): Promise<PlayerCompensationRecord[]>;
+  listPlayerPurchaseHistory?(
+    playerId: string,
+    query?: PlayerPurchaseHistoryQuery
+  ): Promise<PlayerPurchaseHistorySnapshot>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
@@ -529,6 +533,10 @@ interface ShopPurchaseRow extends RowDataPacket {
   total_price: number;
   result_json: string | ShopPurchaseResult;
   created_at: Date | string;
+}
+
+interface CountRow extends RowDataPacket {
+  total: number;
 }
 
 interface PaymentOrderRow extends RowDataPacket {
@@ -1088,6 +1096,32 @@ export interface PlayerCompensationCreateInput {
 
 export interface PlayerCompensationListOptions {
   limit?: number;
+}
+
+export interface PlayerPurchaseHistoryRecord {
+  purchaseId: string;
+  itemId: string;
+  quantity: number;
+  currency: "gems";
+  amount: number;
+  paymentMethod: "gems";
+  grantedAt: string;
+  status: "completed";
+}
+
+export interface PlayerPurchaseHistoryQuery {
+  from?: string;
+  to?: string;
+  itemId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PlayerPurchaseHistorySnapshot {
+  items: PlayerPurchaseHistoryRecord[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface PlayerRoomProfileListOptions {
@@ -4229,6 +4263,20 @@ function toShopPurchaseResult(row: ShopPurchaseRow): ShopPurchaseResult {
   };
 }
 
+function toPlayerPurchaseHistoryRecord(row: ShopPurchaseRow): PlayerPurchaseHistoryRecord {
+  const result = toShopPurchaseResult(row);
+  return {
+    purchaseId: result.purchaseId,
+    itemId: result.productId,
+    quantity: result.quantity,
+    currency: "gems",
+    amount: result.totalPrice,
+    paymentMethod: "gems",
+    grantedAt: result.processedAt,
+    status: "completed"
+  };
+}
+
 function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
   const lastSeenAt = formatTimestamp(row.last_seen_at);
   const banExpiry = formatTimestamp(row.ban_expiry);
@@ -6241,6 +6289,77 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerCompensationRecord(row));
+  }
+
+  async listPlayerPurchaseHistory(
+    playerId: string,
+    query: PlayerPurchaseHistoryQuery = {}
+  ): Promise<PlayerPurchaseHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(query.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
+    const filters = ["player_id = ?"];
+    const filterParams: Array<string | number | Date> = [normalizedPlayerId];
+
+    if (query.from) {
+      const fromDate = new Date(query.from);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new Error("from must be a valid ISO timestamp");
+      }
+      filters.push("created_at >= ?");
+      filterParams.push(fromDate);
+    }
+
+    if (query.to) {
+      const toDate = new Date(query.to);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new Error("to must be a valid ISO timestamp");
+      }
+      filters.push("created_at <= ?");
+      filterParams.push(toDate);
+    }
+
+    if (query.from && query.to && new Date(query.from).getTime() > new Date(query.to).getTime()) {
+      throw new Error("from must be earlier than or equal to to");
+    }
+
+    if (query.itemId?.trim()) {
+      filters.push("product_id = ?");
+      filterParams.push(normalizeShopProductId(query.itemId));
+    }
+
+    const whereClause = filters.join(" AND ");
+    const [countRows] = await this.pool.query<CountRow[]>(
+      `SELECT COUNT(*) AS total
+       FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+       WHERE ${whereClause}`,
+      filterParams
+    );
+
+    const [rows] = await this.pool.query<ShopPurchaseRow[]>(
+      `SELECT
+         player_id,
+         purchase_id,
+         product_id,
+         quantity,
+         unit_price,
+         total_price,
+         result_json,
+         created_at
+       FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+       WHERE ${whereClause}
+       ORDER BY created_at DESC, purchase_id DESC
+       LIMIT ?
+       OFFSET ?`,
+      [...filterParams, safeLimit, safeOffset]
+    );
+
+    return {
+      items: rows.map((row) => toPlayerPurchaseHistoryRecord(row)),
+      total: Math.max(0, Math.floor(countRows[0]?.total ?? 0)),
+      limit: safeLimit,
+      offset: safeOffset
+    };
   }
 
   async listPlayerNameHistory(

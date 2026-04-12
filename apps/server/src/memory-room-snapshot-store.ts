@@ -56,6 +56,9 @@ import {
   type PlayerCompensationCreateInput,
   type PlayerCompensationListOptions,
   type PlayerCompensationRecord,
+  type PlayerPurchaseHistoryQuery,
+  type PlayerPurchaseHistoryRecord,
+  type PlayerPurchaseHistorySnapshot,
   type PlayerAccountWechatMiniGameIdentityInput,
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
@@ -174,6 +177,14 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
     wood: Math.max(0, Math.floor(resources?.wood ?? 0)),
     ore: Math.max(0, Math.floor(resources?.ore ?? 0))
   };
+}
+
+function normalizePurchaseHistoryDate(value: string, field: "from" | "to"): number {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${field} must be a valid ISO timestamp`);
+  }
+  return timestamp;
 }
 
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
@@ -1401,6 +1412,57 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
     return structuredClone((this.banHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
+  }
+
+  async listPlayerPurchaseHistory(
+    playerId: string,
+    query: PlayerPurchaseHistoryQuery = {}
+  ): Promise<PlayerPurchaseHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(query.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
+    const normalizedItemId = query.itemId?.trim();
+    const fromTimestamp = query.from ? normalizePurchaseHistoryDate(query.from, "from") : Number.NEGATIVE_INFINITY;
+    const toTimestamp = query.to ? normalizePurchaseHistoryDate(query.to, "to") : Number.POSITIVE_INFINITY;
+    if (fromTimestamp > toTimestamp) {
+      throw new Error("from must be earlier than or equal to to");
+    }
+
+    const items: PlayerPurchaseHistoryRecord[] = [];
+    for (const [key, purchase] of this.shopPurchases.entries()) {
+      const [entryPlayerId] = key.split(":", 1);
+      if (entryPlayerId !== normalizedPlayerId) {
+        continue;
+      }
+      if (normalizedItemId && purchase.productId !== normalizedItemId) {
+        continue;
+      }
+      const grantedAtTimestamp = new Date(purchase.processedAt).getTime();
+      if (grantedAtTimestamp < fromTimestamp || grantedAtTimestamp > toTimestamp) {
+        continue;
+      }
+      items.push({
+        purchaseId: purchase.purchaseId,
+        itemId: purchase.productId,
+        quantity: purchase.quantity,
+        currency: "gems",
+        amount: purchase.totalPrice,
+        paymentMethod: "gems",
+        grantedAt: purchase.processedAt,
+        status: "completed"
+      });
+    }
+
+    items.sort(
+      (left, right) =>
+        right.grantedAt.localeCompare(left.grantedAt) || right.purchaseId.localeCompare(left.purchaseId)
+    );
+    return {
+      items: structuredClone(items.slice(safeOffset, safeOffset + safeLimit)),
+      total: items.length,
+      limit: safeLimit,
+      offset: safeOffset
+    };
   }
 
   async appendPlayerCompensationRecord(

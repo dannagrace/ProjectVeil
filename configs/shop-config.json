@@ -1,4 +1,12 @@
 {
+  "purchaseControls": {
+    "limitTimezone": "UTC",
+    "dailyGemSpendCap": 0,
+    "highValuePurchaseThreshold": 100,
+    "perItemDailyQuantityLimits": {
+      "season-pass-premium": 1
+    }
+  },
   "products": [
     {
       "productId": "resource-bundle-starter",

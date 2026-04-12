@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
-import type { PlayerBanHistoryRecord, PlayerCompensationRecord, RoomSnapshotStore } from "../src/persistence";
+import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "../src/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -144,6 +144,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
   );
   const banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   const compensationHistoryByPlayerId = new Map<string, PlayerCompensationRecord[]>();
+  const purchaseHistoryByPlayerId = new Map<string, PlayerPurchaseHistoryRecord[]>();
   const reports = new Map<string, {
     reportId: string;
     reporterId: string;
@@ -361,6 +362,28 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     async listPlayerCompensationHistory(playerId: string, options: { limit?: number } = {}) {
       return (compensationHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
     },
+    async listPlayerPurchaseHistory(
+      playerId: string,
+      query: { from?: string; to?: string; itemId?: string; limit?: number; offset?: number } = {}
+    ) {
+      const from = query.from ? new Date(query.from).getTime() : Number.NEGATIVE_INFINITY;
+      const to = query.to ? new Date(query.to).getTime() : Number.POSITIVE_INFINITY;
+      const limit = Math.max(1, Math.floor(query.limit ?? 20));
+      const offset = Math.max(0, Math.floor(query.offset ?? 0));
+      const items = (purchaseHistoryByPlayerId.get(playerId) ?? [])
+        .filter((item) => !query.itemId || item.itemId === query.itemId)
+        .filter((item) => {
+          const grantedAt = new Date(item.grantedAt).getTime();
+          return grantedAt >= from && grantedAt <= to;
+        })
+        .sort((left, right) => right.grantedAt.localeCompare(left.grantedAt) || right.purchaseId.localeCompare(left.purchaseId));
+      return {
+        items: items.slice(offset, offset + limit),
+        total: items.length,
+        limit,
+        offset
+      };
+    },
     async savePlayerBan(playerId: string, input: { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string }) {
       const account =
         (await this.loadPlayerAccount(playerId)) ??
@@ -411,6 +434,9 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     },
     async listBattleSnapshotsForPlayer(playerId: string, options: { limit?: number } = {}) {
       return (battleHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
+    },
+    seedPurchaseHistory(playerId: string, items: PlayerPurchaseHistoryRecord[]) {
+      purchaseHistoryByPlayerId.set(playerId, items);
     },
     seedBattleHistory(
       playerId: string,
@@ -468,11 +494,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "listPlayerBanHistory"
     | "appendPlayerCompensationRecord"
     | "listPlayerCompensationHistory"
+    | "listPlayerPurchaseHistory"
     | "listBattleSnapshotsForPlayer"
     | "listPlayerReports"
     | "resolvePlayerReport"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
+    seedPurchaseHistory(playerId: string, items: PlayerPurchaseHistoryRecord[]): void;
     seedBattleHistory(
       playerId: string,
       items: Array<{
@@ -942,6 +970,75 @@ test("GET /api/admin/players/:id/compensation/history returns compensation audit
   assert.equal(payload.items.length, 2);
   assert.equal(payload.items[0]?.reason, "Chargeback reversal");
   assert.equal(payload.items[1]?.reason, "Outage compensation");
+});
+
+test("GET /api/admin/players/:id/purchase-history returns filtered purchase audit records", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore();
+  store.seedPurchaseHistory("player-1", [
+    {
+      purchaseId: "purchase-3",
+      itemId: "starter-bundle",
+      quantity: 1,
+      currency: "gems",
+      amount: 30,
+      paymentMethod: "gems",
+      grantedAt: "2026-02-03T11:00:00.000Z",
+      status: "completed"
+    },
+    {
+      purchaseId: "purchase-2",
+      itemId: "starter-bundle",
+      quantity: 2,
+      currency: "gems",
+      amount: 60,
+      paymentMethod: "gems",
+      grantedAt: "2026-02-02T10:00:00.000Z",
+      status: "completed"
+    },
+    {
+      purchaseId: "purchase-1",
+      itemId: "sunforged-spear",
+      quantity: 1,
+      currency: "gems",
+      amount: 20,
+      paymentMethod: "gems",
+      grantedAt: "2026-01-30T08:00:00.000Z",
+      status: "completed"
+    }
+  ]);
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/purchase-history");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      url: "/api/admin/players/player-1/purchase-history?from=2026-02-01T00:00:00.000Z&to=2026-02-28T23:59:59.999Z&itemId=starter-bundle&limit=1&page=2"
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    items: PlayerPurchaseHistoryRecord[];
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.page, 2);
+  assert.equal(payload.limit, 1);
+  assert.equal(payload.total, 2);
+  assert.equal(payload.totalPages, 2);
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0]?.purchaseId, "purchase-2");
+  assert.equal(payload.items[0]?.itemId, "starter-bundle");
 });
 
 test("admin console html includes compensation form and history table", async () => {
@@ -1897,6 +1994,9 @@ test("GET /api/admin/leaderboard/moderation-queue paginates and filters by flag 
       freezeReason: "Manual hold"
     }
   });
+  (await store.loadPlayerAccount("player-queue-flagged"))!.updatedAt = "2026-04-12T10:00:00.000Z";
+  (await store.loadPlayerAccount("player-queue-watch"))!.updatedAt = "2026-04-12T09:00:00.000Z";
+  (await store.loadPlayerAccount("player-queue-frozen"))!.updatedAt = "2026-04-12T08:00:00.000Z";
   const { gets } = registerRoutes(store as RoomSnapshotStore);
   const handler = gets.get("/api/admin/leaderboard/moderation-queue");
   const filteredResponse = createResponse();
