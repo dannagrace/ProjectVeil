@@ -2314,17 +2314,26 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       return;
     }
 
-    await roomRuntimeDependencies.sendWechatSubscribeMessage(
-      nextTurnOwnerPlayerId,
-      "turn_reminder",
-      {
+    try {
+      await roomRuntimeDependencies.sendWechatSubscribeMessage(
+        nextTurnOwnerPlayerId,
+        "turn_reminder",
+        {
+          roomId: this.metadata.logicalRoomId,
+          turnNumber: this.worldRoom.getInternalState().meta.day
+        },
+        {
+          store: configuredRoomSnapshotStore
+        }
+      );
+    } catch (error) {
+      console.error("[VeilRoom] Failed to send WeChat turn reminder subscribe message", {
         roomId: this.metadata.logicalRoomId,
-        turnNumber: this.worldRoom.getInternalState().meta.day
-      },
-      {
-        store: configuredRoomSnapshotStore
-      }
-    );
+        playerId: nextTurnOwnerPlayerId,
+        turnNumber: this.worldRoom.getInternalState().meta.day,
+        error
+      });
+    }
   }
 
   private getPlayerId(client: ColyseusClient, fallback?: string): string | undefined {
