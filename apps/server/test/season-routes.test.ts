@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerSeasonRoutes } from "../src/seasons";
@@ -29,12 +30,19 @@ function createRequest(options: {
   method?: string;
   headers?: Record<string, string | undefined>;
   url?: string;
+  body?: string;
 } = {}): IncomingMessage {
-  const request = {} as IncomingMessage;
+  const request = new EventEmitter() as IncomingMessage & EventEmitter;
   Object.assign(request, {
     method: options.method ?? "GET",
     headers: options.headers ?? {},
     url: options.url ?? "/"
+  });
+  queueMicrotask(() => {
+    if (options.body !== undefined) {
+      request.emit("data", Buffer.from(options.body, "utf8"));
+    }
+    request.emit("end");
   });
   return request;
 }
@@ -288,5 +296,32 @@ test("POST /api/admin/seasons/close returns the reward distribution summary", as
     seasonId: "season-9",
     playersRewarded: 2,
     totalGemsGranted: 75
+  });
+});
+
+test("POST /api/admin/seasons/create returns 400 for malformed JSON", async (t) => {
+  const token = withAdminToken(t);
+  const store = createSeasonStore([], []);
+  const { posts } = registerRoutes(store);
+  const handler = posts.get("/api/admin/seasons/create");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/seasons/create",
+      headers: { "x-veil-admin-token": token },
+      body: "{\"seasonId\":"
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      code: "invalid_json",
+      message: "Request body must be valid JSON"
+    }
   });
 });
