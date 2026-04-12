@@ -273,18 +273,29 @@ export async function startDevServer(
   const mysqlConfig = deps.readMySqlPersistenceConfig();
 
   if (mysqlConfig) {
+    let migrationStatus;
+
     try {
-      const migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
-      if (migrationStatus.pending.length > 0) {
-        const warning = deps.formatSchemaMigrationWarning(migrationStatus);
-        if (isProductionEnvironment) {
-          await failStartup(
-            "Refusing to start with in-memory persistence in production while schema migrations are pending",
-            new Error(warning)
-          );
-        }
-        deps.logger.warn(warning);
-      } else {
+      migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
+    } catch (error) {
+      if (isProductionEnvironment) {
+        await failStartup("MySQL migration/bootstrap failed during production startup", error);
+      }
+      deps.logger.warn(
+        `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    if (migrationStatus?.pending.length > 0) {
+      const warning = deps.formatSchemaMigrationWarning(migrationStatus);
+      if (isProductionEnvironment) {
+        await failStartup("Schema migrations are pending during production startup", new Error(warning));
+      }
+      deps.logger.warn(warning);
+    } else if (migrationStatus) {
+      try {
         const mysqlSnapshotStore = await deps.createMySqlRoomSnapshotStore(mysqlConfig);
         try {
           const mysqlConfigCenterStore = await deps.createMySqlConfigCenterStore(mysqlConfig);
@@ -301,16 +312,16 @@ export async function startDevServer(
           });
           throw error;
         }
+      } catch (error) {
+        if (isProductionEnvironment) {
+          await failStartup("MySQL migration/bootstrap failed during production startup", error);
+        }
+        deps.logger.warn(
+          `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
-    } catch (error) {
-      if (isProductionEnvironment) {
-        await failStartup("MySQL migration/bootstrap failed during production startup", error);
-      }
-      deps.logger.warn(
-        `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
     }
   }
 
