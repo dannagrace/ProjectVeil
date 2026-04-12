@@ -171,7 +171,7 @@
     "test:db-restore-rehearsal": "node --import tsx --test ./scripts/test/db-restore-rehearsal.test.ts",
     "test:db-restore-test": "node --import tsx --test ./scripts/test/db-restore-test.test.ts",
     "test:player-names:scan": "node --import tsx --test ./scripts/test/scan-player-display-names.test.ts",
-    "test:client:config-center": "node --import tsx --test ./apps/client/test/config-center.test.ts ./apps/client/test/config-center-render.test.ts",
+    "test:client:config-center": "node --import tsx --test ./apps/client/test/config-center-controller.test.ts ./apps/client/test/config-center.test.ts ./apps/client/test/config-center-render.test.ts",
     "test:shared": "node --import tsx --test \"packages/shared/test/**/*.test.ts\"",
     "test:contracts": "node --import tsx --test ./packages/shared/test/client-payload-contracts.test.ts",
     "typecheck:ci": "npm run typecheck:shared && npm run typecheck:server && npm run typecheck:client:h5 && npm run typecheck:cocos",
