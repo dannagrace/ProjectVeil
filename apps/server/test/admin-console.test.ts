@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
-import type { PlayerBanHistoryRecord, RoomSnapshotStore } from "../src/persistence";
+import type { PlayerBanHistoryRecord, PlayerCompensationRecord, RoomSnapshotStore } from "../src/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -137,6 +138,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     ])
   );
   const banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
+  const compensationHistoryByPlayerId = new Map<string, PlayerCompensationRecord[]>();
   const reports = new Map<string, {
     reportId: string;
     reporterId: string;
@@ -280,8 +282,10 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     async savePlayerAccountProgress(
       playerId: string,
       patch: {
+        gems?: number;
         globalResources?: { gold: number; wood: number; ore: number };
         leaderboardModerationState?: Record<string, unknown>;
+        recentEventLog?: Array<Record<string, unknown>>;
       }
     ) {
       const account =
@@ -290,6 +294,9 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
           playerId,
           displayName: playerId
         }));
+      if (patch.gems !== undefined) {
+        account.gems = patch.gems;
+      }
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
       if (patch.leaderboardModerationState) {
         account.leaderboardModerationState = {
@@ -297,8 +304,41 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
           ...patch.leaderboardModerationState
         };
       }
+      if (patch.recentEventLog) {
+        account.recentEventLog = [...patch.recentEventLog];
+      }
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
+    },
+    async appendPlayerCompensationRecord(
+      playerId: string,
+      input: {
+        type: "add" | "deduct";
+        currency: "gems" | "gold" | "wood" | "ore";
+        amount: number;
+        reason: string;
+        previousBalance: number;
+        balanceAfter: number;
+      }
+    ) {
+      const history = compensationHistoryByPlayerId.get(playerId) ?? [];
+      const record = {
+        auditId: `comp-${history.length + 1}`,
+        playerId,
+        type: input.type,
+        currency: input.currency,
+        amount: input.amount,
+        reason: input.reason,
+        previousBalance: input.previousBalance,
+        balanceAfter: input.balanceAfter,
+        createdAt: new Date().toISOString()
+      } satisfies PlayerCompensationRecord;
+      history.unshift(record);
+      compensationHistoryByPlayerId.set(playerId, history);
+      return record;
+    },
+    async listPlayerCompensationHistory(playerId: string, options: { limit?: number } = {}) {
+      return (compensationHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
     },
     async savePlayerBan(playerId: string, input: { banStatus: "temporary" | "permanent"; banReason: string; banExpiry?: string }) {
       const account =
@@ -404,6 +444,8 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "savePlayerBan"
     | "clearPlayerBan"
     | "listPlayerBanHistory"
+    | "appendPlayerCompensationRecord"
+    | "listPlayerCompensationHistory"
     | "listBattleSnapshotsForPlayer"
     | "listPlayerReports"
     | "resolvePlayerReport"
@@ -667,6 +709,225 @@ test("POST /api/admin/players/:id/resources adds and clamps resources and syncs 
   assert.deepEqual(buildStatePayloadCalls, ["player-1", "player-2"]);
   assert.equal(sentMessages.length, 2);
   assert.equal(sentMessages[0]?.type, "session.state");
+});
+
+test("POST /api/admin/players/:id/compensation returns 400 for invalid payloads", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(createStore() as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/compensation");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({ type: "grant", currency: "credits", amount: 0, reason: "" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(JSON.parse(response.body), { error: '"type" must be "add" or "deduct"' });
+});
+
+test("POST /api/admin/players/:id/compensation adds gems, writes audit history, and returns balances", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-1": { gold: 10, wood: 4, ore: 1 }
+  });
+  const existing = await store.ensurePlayerAccount({ playerId: "player-1", displayName: "player-1" });
+  existing.gems = 25;
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/compensation");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({
+        type: "add",
+        currency: "gems",
+        amount: 40,
+        reason: "Failed payment refund"
+      })
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: true;
+    compensation: PlayerCompensationRecord;
+    balances: { gems: number; resources: { gold: number; wood: number; ore: number } };
+    syncedToRoom: boolean;
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.compensation.type, "add");
+  assert.equal(payload.compensation.currency, "gems");
+  assert.equal(payload.compensation.amount, 40);
+  assert.equal(payload.compensation.previousBalance, 25);
+  assert.equal(payload.compensation.balanceAfter, 65);
+  assert.equal(payload.compensation.reason, "Failed payment refund");
+  assert.equal(payload.balances.gems, 65);
+  assert.deepEqual(payload.balances.resources, { gold: 10, wood: 4, ore: 1 });
+  assert.equal(payload.syncedToRoom, false);
+
+  const history = await store.listPlayerCompensationHistory("player-1");
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.reason, "Failed payment refund");
+  assert.equal((await store.loadPlayerAccount("player-1"))?.recentEventLog?.[0]?.category, "account");
+  assert.match((await store.loadPlayerAccount("player-1"))?.recentEventLog?.[0]?.description ?? "", /Failed payment refund/);
+});
+
+test("POST /api/admin/players/:id/compensation deducts resources with clamping and syncs rooms", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-1": { gold: 10, wood: 4, ore: 1 }
+  });
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/compensation");
+  assert.ok(handler);
+
+  const internalState = {
+    resources: {
+      "player-1": { gold: 10, wood: 4, ore: 1 }
+    },
+    playerResources: {
+      "player-1": { gold: 10, wood: 4, ore: 1 }
+    }
+  };
+  const snapshot = {
+    state: {
+      resources: { gold: 10, wood: 4, ore: 1 }
+    }
+  };
+
+  getActiveRoomInstances().set("room-alpha", {
+    getPlayerId() {
+      return "player-1";
+    },
+    buildStatePayload() {
+      return {
+        world: {
+          playerId: "player-1",
+          resources: { gold: 0, wood: 4, ore: 1 }
+        },
+        battle: null,
+        events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
+        movementPlan: null,
+        reachableTiles: [],
+        featureFlags: {
+          quest_system_enabled: false,
+          battle_pass_enabled: false,
+          pve_enabled: true,
+          tutorial_enabled: false
+        }
+      };
+    },
+    worldRoom: {
+      getInternalState() {
+        return internalState;
+      },
+      getSnapshot() {
+        return snapshot;
+      }
+    },
+    clients: [
+      {
+        send() {}
+      }
+    ]
+  } as never);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      body: JSON.stringify({
+        type: "deduct",
+        currency: "gold",
+        amount: 25,
+        reason: "Reverse erroneous grant"
+      })
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    balances: { gems: number; resources: { gold: number; wood: number; ore: number } };
+    syncedToRoom: boolean;
+  };
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(payload.balances.resources, { gold: 0, wood: 4, ore: 1 });
+  assert.equal(payload.syncedToRoom, true);
+  assert.deepEqual(internalState.resources["player-1"], { gold: 0, wood: 4, ore: 1 });
+  assert.deepEqual(snapshot.state.resources, { gold: 0, wood: 4, ore: 1 });
+});
+
+test("GET /api/admin/players/:id/compensation/history returns compensation audit records", async (t) => {
+  const secret = withAdminSecret(t);
+  const store = createStore({
+    "player-1": { gold: 10, wood: 4, ore: 1 }
+  });
+  await store.appendPlayerCompensationRecord("player-1", {
+    type: "add",
+    currency: "gold",
+    amount: 15,
+    reason: "Outage compensation",
+    previousBalance: 10,
+    balanceAfter: 25
+  });
+  await store.appendPlayerCompensationRecord("player-1", {
+    type: "deduct",
+    currency: "gems",
+    amount: 5,
+    reason: "Chargeback reversal",
+    previousBalance: 20,
+    balanceAfter: 15
+  });
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/compensation/history");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-1" },
+      headers: {
+        "x-veil-admin-secret": secret
+      },
+      url: "/api/admin/players/player-1/compensation/history?limit=2"
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as { items: PlayerCompensationRecord[] };
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.items.length, 2);
+  assert.equal(payload.items[0]?.reason, "Chargeback reversal");
+  assert.equal(payload.items[1]?.reason, "Outage compensation");
+});
+
+test("admin console html includes compensation form and history table", async () => {
+  const html = await readFile("/home/gpt/project/ProjectVeil/apps/client/admin.html", "utf8");
+  assert.match(html, /玩家补偿 \/ 退款/);
+  assert.match(html, /compensationHistoryBody/);
+  assert.match(html, /submitCompensation/);
+  assert.match(html, /fetchCompensationHistory/);
 });
 
 test("POST /api/admin/broadcast returns 401 without a valid admin secret", async (t) => {

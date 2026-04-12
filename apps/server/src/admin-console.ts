@@ -1,9 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ResourceLedger, ServerMessage, WorldState } from "../../../packages/shared/src/index";
+import { appendEventLogEntries, type ResourceLedger, type ServerMessage, type WorldState } from "../../../packages/shared/src/index";
 import { GuildService } from "./guilds";
-import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
+import type {
+  PlayerCompensationCreateInput,
+  PlayerCompensationRecord,
+  PlayerReportResolveInput,
+  PlayerReportStatus,
+  RoomSnapshotStore
+} from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 import { recordLeaderboardAbuseAlert } from "./observability";
 import { readRuntimeSecret } from "./runtime-secrets";
@@ -170,6 +176,38 @@ function hasPlayerAccountStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "loadPlayerAccount" | "savePlayerAccountProgress">> {
   return Boolean(store?.loadPlayerAccount && store.savePlayerAccountProgress);
+}
+
+type PlayerCompensationCurrency = "gems" | keyof ResourceLedger;
+type PlayerCompensationRequest = {
+  type: PlayerCompensationCreateInput["type"];
+  currency: PlayerCompensationCurrency;
+  amount: number;
+  reason: string;
+};
+type PlayerBalanceSnapshot = {
+  gems: number;
+  resources: ResourceLedger;
+};
+
+function hasPlayerCompensationStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<
+    Pick<
+      RoomSnapshotStore,
+      | "loadPlayerAccount"
+      | "ensurePlayerAccount"
+      | "savePlayerAccountProgress"
+      | "appendPlayerCompensationRecord"
+      | "listPlayerCompensationHistory"
+    >
+  > {
+  return Boolean(
+    store &&
+      store.appendPlayerCompensationRecord &&
+      store.listPlayerCompensationHistory
+  );
 }
 
 function hasBattleSnapshotHistoryStore(
@@ -339,6 +377,34 @@ function parseResourceDeltaBody(value: unknown): ResourceLedger {
   };
 }
 
+function parseCompensationBody(value: unknown): PlayerCompensationRequest {
+  const payload = readRequiredObjectBody(value);
+  const type = readOptionalTrimmedString(payload, "type");
+  const currency = readOptionalTrimmedString(payload, "currency")?.toLowerCase();
+  const reason = readOptionalTrimmedString(payload, "reason");
+  const amount = payload.amount;
+
+  if (type !== "add" && type !== "deduct") {
+    throw new InvalidAdminPayloadError('"type" must be "add" or "deduct"');
+  }
+  if (currency !== "gems" && currency !== "gold" && currency !== "wood" && currency !== "ore") {
+    throw new InvalidAdminPayloadError('"currency" must be one of "gems", "gold", "wood", or "ore"');
+  }
+  if (typeof amount !== "number" || !Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0) {
+    throw new InvalidAdminPayloadError('"amount" must be a positive integer');
+  }
+  if (!reason) {
+    throw new InvalidAdminPayloadError('"reason" must be a non-empty string');
+  }
+
+  return {
+    type,
+    currency,
+    amount,
+    reason
+  };
+}
+
 function parseBroadcastBody(value: unknown): { message: string; type: string } {
   const payload = readRequiredObjectBody(value);
   const message = payload.message;
@@ -423,6 +489,128 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+function snapshotPlayerBalances(account: {
+  gems?: number;
+  globalResources?: Partial<ResourceLedger>;
+} | null): PlayerBalanceSnapshot {
+  return {
+    gems: Math.max(0, Math.floor(account?.gems ?? 0)),
+    resources: {
+      gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
+      wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),
+      ore: Math.max(0, Math.floor(account?.globalResources?.ore ?? 0))
+    }
+  };
+}
+
+function applyCompensationToBalance(
+  current: PlayerBalanceSnapshot,
+  input: PlayerCompensationRequest
+): {
+  previousBalance: number;
+  next: PlayerBalanceSnapshot;
+} {
+  const previousBalance = input.currency === "gems" ? current.gems : current.resources[input.currency];
+  const delta = input.type === "add" ? input.amount : -input.amount;
+  const balanceAfter = Math.max(0, previousBalance + delta);
+
+  return {
+    previousBalance,
+    next: {
+      gems: input.currency === "gems" ? balanceAfter : current.gems,
+      resources:
+        input.currency === "gems"
+          ? { ...current.resources }
+          : {
+              ...current.resources,
+              [input.currency]: balanceAfter
+            }
+    }
+  };
+}
+
+function renderCompensationEvent(record: PlayerCompensationRecord): string {
+  const actionLabel = record.type === "deduct" ? "扣减" : "发放";
+  return `${actionLabel} ${record.currency} ${record.amount}（原因：${record.reason}，变更前 ${record.previousBalance}，变更后 ${record.balanceAfter}）`;
+}
+
+function buildCompensationEventEntry(
+  playerId: string,
+  record: PlayerCompensationRecord,
+  balances: PlayerBalanceSnapshot
+): {
+  id: string;
+  timestamp: string;
+  roomId: string;
+  playerId: string;
+  category: "account";
+  description: string;
+  rewards: [];
+} {
+  return {
+    id: `compensation:${record.auditId}`,
+    timestamp: record.createdAt,
+    roomId: "admin-console",
+    playerId,
+    category: "account",
+    description: `${renderCompensationEvent(record)}。当前余额：gems=${balances.gems}, gold=${balances.resources.gold}, wood=${balances.resources.wood}, ore=${balances.resources.ore}`,
+    rewards: []
+  };
+}
+
+function syncPlayerBalancesToActiveRooms(playerId: string, nextResources: ResourceLedger): boolean {
+  let syncedToRoom = false;
+  const activeRooms = getActiveRoomInstances();
+
+  for (const [roomId, vRoom] of activeRooms) {
+    if (vRoom.worldRoom) {
+      const roomInternals = vRoom as unknown as {
+        getPlayerId(client: { sessionId?: string }, fallback?: string): string | undefined;
+        buildStatePayload(
+          playerId: string,
+          extras?: {
+            events?: Array<{ type: "system.announcement"; text: string; tone: "system" }>;
+            movementPlan?: null;
+            reason?: string;
+          }
+        ): ServerMessage extends { type: "session.state"; payload: infer T } ? T : never;
+      };
+      const internalState = vRoom.worldRoom.getInternalState() as WorldState & {
+        playerResources?: Record<string, ResourceLedger>;
+      };
+
+      if (internalState.resources && internalState.resources[playerId]) {
+        internalState.resources[playerId] = { ...nextResources };
+      }
+
+      if (internalState.playerResources && internalState.playerResources[playerId]) {
+        internalState.playerResources[playerId] = { ...nextResources };
+      }
+
+      console.log(`[Admin] Patched room ${roomId} for ${playerId}:`, nextResources);
+
+      const snapshot = vRoom.worldRoom.getSnapshot(playerId);
+      snapshot.state.resources = { ...nextResources };
+
+      for (const client of vRoom.clients) {
+        const clientPlayerId = roomInternals.getPlayerId(client, playerId) ?? playerId;
+        client.send("session.state", {
+          requestId: "push",
+          delivery: "push",
+          payload: roomInternals.buildStatePayload(clientPlayerId, {
+            events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
+            movementPlan: null
+          })
+        });
+      }
+
+      syncedToRoom = true;
+    }
+  }
+
+  return syncedToRoom;
+}
+
 export function registerAdminRoutes(
   app: AdminApp,
   store: RoomSnapshotStore | null,
@@ -490,55 +678,7 @@ export function registerAdminRoutes(
       };
 
       if (store) await store.savePlayerAccountProgress(playerId, { globalResources: nextResources });
-
-      let syncedToRoom = false;
-      const activeRooms = getActiveRoomInstances();
-
-      for (const [roomId, vRoom] of activeRooms) {
-        if (vRoom.worldRoom) {
-          const roomInternals = vRoom as unknown as {
-            getPlayerId(client: { sessionId?: string }, fallback?: string): string | undefined;
-            buildStatePayload(
-              playerId: string,
-              extras?: {
-                events?: Array<{ type: "system.announcement"; text: string; tone: "system" }>;
-                movementPlan?: null;
-                reason?: string;
-              }
-            ): ServerMessage extends { type: "session.state"; payload: infer T } ? T : never;
-          };
-          const internalState = vRoom.worldRoom.getInternalState() as WorldState & {
-            playerResources?: Record<string, ResourceLedger>;
-          };
-
-          if (internalState.resources && internalState.resources[playerId]) {
-            internalState.resources[playerId] = { ...nextResources };
-          }
-
-          if (internalState.playerResources && internalState.playerResources[playerId]) {
-            internalState.playerResources[playerId] = { ...nextResources };
-          }
-
-          console.log(`[Admin] Patched room ${roomId} for ${playerId}:`, nextResources);
-
-          const snapshot = vRoom.worldRoom.getSnapshot(playerId);
-          snapshot.state.resources = { ...nextResources };
-
-          for (const client of vRoom.clients) {
-            const clientPlayerId = roomInternals.getPlayerId(client, playerId) ?? playerId;
-            client.send("session.state", {
-              requestId: "push",
-              delivery: "push",
-              payload: roomInternals.buildStatePayload(clientPlayerId, {
-                events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
-                movementPlan: null
-              })
-            });
-          }
-
-          syncedToRoom = true;
-        }
-      }
+      const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, nextResources);
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
@@ -552,6 +692,72 @@ export function registerAdminRoutes(
       }
       console.error("[Admin] Sync error:", error);
       sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/compensation", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerCompensationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseCompensationBody(await readJsonBody(request));
+      const account = (await store.loadPlayerAccount(playerId)) ?? (await store.ensurePlayerAccount({ playerId, displayName: playerId }));
+      const currentBalances = snapshotPlayerBalances(account);
+      const { previousBalance, next } = applyCompensationToBalance(currentBalances, input);
+
+      const record = await store.appendPlayerCompensationRecord(playerId, {
+        type: input.type,
+        currency: input.currency,
+        amount: input.amount,
+        reason: input.reason,
+        previousBalance,
+        balanceAfter: input.currency === "gems" ? next.gems : next.resources[input.currency]
+      });
+      const updatedAccount = await store.savePlayerAccountProgress(playerId, {
+        gems: next.gems,
+        globalResources: next.resources,
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [buildCompensationEventEntry(playerId, record, next)])
+      });
+      const balances = snapshotPlayerBalances(updatedAccount);
+      const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, balances.resources);
+
+      sendJson(response, 200, {
+        ok: true,
+        compensation: record,
+        balances,
+        syncedToRoom
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      console.error("[Admin] Compensation error:", error);
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/compensation/history", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerCompensationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request as AdminRequest, "id");
+      const items = await store.listPlayerCompensationHistory(playerId, { limit: readLimit(request) });
+      sendJson(response, 200, { items });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
     }
   });
 

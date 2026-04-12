@@ -216,6 +216,14 @@ export interface RoomSnapshotStore {
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   listPlayerReports?(options?: PlayerReportListOptions): Promise<PlayerReportRecord[]>;
   listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
+  appendPlayerCompensationRecord?(
+    playerId: string,
+    input: PlayerCompensationCreateInput
+  ): Promise<PlayerCompensationRecord>;
+  listPlayerCompensationHistory?(
+    playerId: string,
+    options?: PlayerCompensationListOptions
+  ): Promise<PlayerCompensationRecord[]>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
@@ -427,6 +435,18 @@ interface PlayerNameHistoryRow extends RowDataPacket {
   display_name: string;
   normalized_name: string;
   changed_at: Date | string;
+  created_at: Date | string;
+}
+
+interface PlayerCompensationHistoryRow extends RowDataPacket {
+  audit_id: string;
+  player_id: string;
+  type: PlayerCompensationType;
+  currency: PlayerCompensationRecord["currency"];
+  amount: number;
+  reason: string;
+  previous_balance: number;
+  balance_after: number;
   created_at: Date | string;
 }
 
@@ -1027,6 +1047,34 @@ export interface PlayerAccountBanHistoryListOptions {
   limit?: number;
 }
 
+export type PlayerCompensationType = "add" | "deduct";
+
+export interface PlayerCompensationRecord {
+  auditId: string;
+  playerId: string;
+  type: PlayerCompensationType;
+  currency: "gems" | keyof ResourceLedger;
+  amount: number;
+  reason: string;
+  previousBalance: number;
+  balanceAfter: number;
+  createdAt: string;
+}
+
+export interface PlayerCompensationCreateInput {
+  type: PlayerCompensationType;
+  currency: "gems" | keyof ResourceLedger;
+  amount: number;
+  reason: string;
+  previousBalance: number;
+  balanceAfter: number;
+  createdAt?: string;
+}
+
+export interface PlayerCompensationListOptions {
+  limit?: number;
+}
+
 export interface PlayerRoomProfileListOptions {
   limit?: number;
   roomId?: string;
@@ -1059,6 +1107,8 @@ export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
 export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
 export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
 export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
+export const MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE = "player_compensation_history";
+export const MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX = "idx_player_compensation_history_player_created";
 export const MYSQL_PLAYER_NAME_HISTORY_TABLE = "player_name_history";
 export const MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX = "idx_player_name_history_player_changed";
 export const MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX = "idx_player_name_history_normalized_changed";
@@ -2677,6 +2727,19 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_BAN_HISTORY_TABLE}\` (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\` (
+  audit_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  type VARCHAR(16) NOT NULL,
+  currency VARCHAR(16) NOT NULL,
+  amount INT NOT NULL,
+  reason VARCHAR(512) NOT NULL,
+  previous_balance INT NOT NULL,
+  balance_after INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (audit_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   event_id VARCHAR(191) NOT NULL,
@@ -3874,6 +3937,24 @@ PREPARE veil_player_ban_history_idx_stmt FROM @veil_player_ban_history_idx_sql;
 EXECUTE veil_player_ban_history_idx_stmt;
 DEALLOCATE PREPARE veil_player_ban_history_idx_stmt;
 
+SET @veil_player_compensation_history_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}'
+    AND INDEX_NAME = '${MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_player_compensation_history_idx_sql := IF(
+  @veil_player_compensation_history_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_player_compensation_history_idx_stmt FROM @veil_player_compensation_history_idx_sql;
+EXECUTE veil_player_compensation_history_idx_stmt;
+DEALLOCATE PREPARE veil_player_compensation_history_idx_stmt;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   hero_id VARCHAR(191) NOT NULL,
@@ -4350,6 +4431,32 @@ function toPlayerBanHistoryRecord(row: PlayerBanHistoryRow): PlayerBanHistoryRec
   };
 }
 
+function normalizePlayerCompensationCurrency(value: string): PlayerCompensationRecord["currency"] {
+  if (value === "gems" || value === "gold" || value === "wood" || value === "ore") {
+    return value;
+  }
+  throw new Error("player compensation currency must be gems, gold, wood, or ore");
+}
+
+function toPlayerCompensationRecord(row: PlayerCompensationHistoryRow): PlayerCompensationRecord {
+  const createdAt = formatTimestamp(row.created_at);
+  if (!createdAt) {
+    throw new Error("player compensation history created_at must be present");
+  }
+
+  return {
+    auditId: row.audit_id,
+    playerId: normalizePlayerId(row.player_id),
+    type: row.type === "deduct" ? "deduct" : "add",
+    currency: normalizePlayerCompensationCurrency(row.currency),
+    amount: Math.max(0, Math.floor(row.amount)),
+    reason: row.reason.trim(),
+    previousBalance: Math.max(0, Math.floor(row.previous_balance)),
+    balanceAfter: Math.max(0, Math.floor(row.balance_after)),
+    createdAt
+  };
+}
+
 function toPlayerNameHistoryRecord(row: PlayerNameHistoryRow): PlayerNameHistoryRecord {
   const changedAt = formatTimestamp(row.changed_at) ?? formatTimestamp(row.created_at);
   if (!changedAt) {
@@ -4500,6 +4607,58 @@ async function appendPlayerBanHistoryEntry(
      VALUES (?, ?, ?, ?, ?)`,
     [playerId, entry.action, entry.banStatus, banExpiry, entry.banReason ?? null]
   );
+}
+
+async function appendPlayerCompensationHistoryEntry(
+  queryable: Pick<Pool, "query"> | Pick<PoolConnection, "query">,
+  playerId: string,
+  input: PlayerCompensationCreateInput
+): Promise<PlayerCompensationRecord> {
+  const auditId = randomUUID();
+  const createdAt = new Date(input.createdAt ?? Date.now());
+  if (Number.isNaN(createdAt.getTime())) {
+    throw new Error("createdAt must be a valid ISO timestamp");
+  }
+
+  const record: PlayerCompensationRecord = {
+    auditId,
+    playerId: normalizePlayerId(playerId),
+    type: input.type,
+    currency: input.currency,
+    amount: Math.max(1, Math.floor(input.amount)),
+    reason: input.reason.trim().slice(0, 512),
+    previousBalance: Math.max(0, Math.floor(input.previousBalance)),
+    balanceAfter: Math.max(0, Math.floor(input.balanceAfter)),
+    createdAt: createdAt.toISOString()
+  };
+
+  await queryable.query(
+    `INSERT INTO \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\` (
+       audit_id,
+       player_id,
+       type,
+       currency,
+       amount,
+       reason,
+       previous_balance,
+       balance_after,
+       created_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      record.auditId,
+      record.playerId,
+      record.type,
+      record.currency,
+      record.amount,
+      record.reason,
+      record.previousBalance,
+      record.balanceAfter,
+      createdAt
+    ]
+  );
+
+  return record;
 }
 
 async function appendPlayerNameHistoryEntry(
@@ -6030,6 +6189,40 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerBanHistoryRecord(row));
+  }
+
+  async appendPlayerCompensationRecord(
+    playerId: string,
+    input: PlayerCompensationCreateInput
+  ): Promise<PlayerCompensationRecord> {
+    return appendPlayerCompensationHistoryEntry(this.pool, normalizePlayerId(playerId), input);
+  }
+
+  async listPlayerCompensationHistory(
+    playerId: string,
+    options: PlayerCompensationListOptions = {}
+  ): Promise<PlayerCompensationRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    const [rows] = await this.pool.query<PlayerCompensationHistoryRow[]>(
+      `SELECT
+         audit_id,
+         player_id,
+         type,
+         currency,
+         amount,
+         reason,
+         previous_balance,
+         balance_after,
+         created_at
+       FROM \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\`
+       WHERE player_id = ?
+       ORDER BY created_at DESC, audit_id DESC
+       LIMIT ?`,
+      [normalizedPlayerId, safeLimit]
+    );
+
+    return rows.map((row) => toPlayerCompensationRecord(row));
   }
 
   async listPlayerNameHistory(
