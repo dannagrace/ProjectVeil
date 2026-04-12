@@ -31,7 +31,21 @@ interface RateLimitResult {
   retryAfterSeconds?: number;
 }
 
+interface MatchmakingRuntimeDependencies {
+  sendWechatSubscribeMessage(
+    playerId: string,
+    templateKey: "match_found",
+    data: Record<string, unknown>,
+    options?: { store?: RoomSnapshotStore | null }
+  ): Promise<boolean>;
+}
+
 const matchmakingRateLimitCounters = new Map<string, number[]>();
+const defaultMatchmakingRuntimeDependencies: MatchmakingRuntimeDependencies = {
+  sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
+    sendWechatSubscribeMessage(playerId, templateKey, data, options)
+};
+let matchmakingRuntimeDependencies: MatchmakingRuntimeDependencies = defaultMatchmakingRuntimeDependencies;
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -652,6 +666,17 @@ function compareQueuedPlayers(left: MatchmakingRequest, right: MatchmakingReques
 let configuredMatchmakingNotificationStore: RoomSnapshotStore | null = null;
 let configuredMatchmakingService: MatchmakingServiceController = createConfiguredMatchmakingService();
 
+export function configureMatchmakingRuntimeDependencies(overrides: Partial<MatchmakingRuntimeDependencies>): void {
+  matchmakingRuntimeDependencies = {
+    ...matchmakingRuntimeDependencies,
+    ...overrides
+  };
+}
+
+export function resetMatchmakingRuntimeDependencies(): void {
+  matchmakingRuntimeDependencies = defaultMatchmakingRuntimeDependencies;
+}
+
 export function resetMatchmakingService(): void {
   void configuredMatchmakingService.close?.();
   configuredMatchmakingNotificationStore = null;
@@ -701,15 +726,24 @@ async function notifyPlayersAboutMatchFound(
 
         const account = accountsByPlayerId.get(playerId);
         const opponentAccount = accountsByPlayerId.get(opponentId);
-        await sendWechatSubscribeMessage(
-          playerId,
-          "match_found",
-          {
-            mapName: describeMatchmakingMapName(account?.lastRoomId ?? result.roomId),
-            opponentName: opponentAccount?.displayName?.trim() || opponentId
-          },
-          { store }
-        );
+        try {
+          await matchmakingRuntimeDependencies.sendWechatSubscribeMessage(
+            playerId,
+            "match_found",
+            {
+              mapName: describeMatchmakingMapName(account?.lastRoomId ?? result.roomId),
+              opponentName: opponentAccount?.displayName?.trim() || opponentId
+            },
+            { store }
+          );
+        } catch (error) {
+          console.error("[matchmaking] Failed to send WeChat match-found notification", {
+            roomId: result.roomId,
+            playerId,
+            opponentId,
+            error
+          });
+        }
       })
     );
   } catch (error) {
