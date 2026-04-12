@@ -162,6 +162,8 @@ interface MainJourneyManifest {
   summary: string;
   linkedEvidence: {
     snapshot: string;
+    cocosRcReconnectReplay: string;
+    cocosRcReconnectReplayMarkdown: string;
     primaryJourneyEvidence: string;
     primaryJourneyEvidenceMarkdown: string;
   };
@@ -183,6 +185,8 @@ interface BundleManifest {
     summary: string;
   };
   artifacts: {
+    cocosRcReconnectReplay: string;
+    cocosRcReconnectReplayMarkdown: string;
     primaryJourneyEvidence: string;
     primaryJourneyEvidenceMarkdown: string;
     mainJourneyManifest: string;
@@ -535,6 +539,35 @@ function runPrimaryJourneyEvidenceCommand(args: Args, outputPath: string, markdo
   }
 }
 
+function runCocosRcReconnectReplayCommand(args: Args, outputPath: string, markdownOutputPath: string): void {
+  const commandArgs = [
+    "--import",
+    "tsx",
+    "./scripts/cocos-rc-reconnect-replay.ts",
+    "--candidate",
+    args.candidate,
+    "--output",
+    outputPath,
+    "--markdown-output",
+    markdownOutputPath
+  ];
+
+  if (args.owner) {
+    commandArgs.push("--owner", args.owner);
+  }
+  if (args.server) {
+    commandArgs.push("--server", args.server);
+  }
+
+  const result = spawnSync(process.execPath, commandArgs, {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    fail(result.stderr.trim() || result.stdout.trim() || "Failed to generate Cocos RC reconnect replay artifact.");
+  }
+}
+
 function runMainJourneyReplayGateCommand(
   args: Args,
   artifacts: Pick<
@@ -638,6 +671,8 @@ function buildMainJourneyManifest(snapshot: CocosReleaseCandidateSnapshot, artif
       "Candidate-scoped canonical Cocos main-journey manifest for lobby/login, room join, map exploration, encounter battle, settlement, and reconnect/session recovery.",
     linkedEvidence: {
       snapshot: toRepoRelative(artifacts.snapshot),
+      cocosRcReconnectReplay: toRepoRelative(artifacts.cocosRcReconnectReplay),
+      cocosRcReconnectReplayMarkdown: toRepoRelative(artifacts.cocosRcReconnectReplayMarkdown),
       primaryJourneyEvidence: toRepoRelative(artifacts.primaryJourneyEvidence),
       primaryJourneyEvidenceMarkdown: toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)
     },
@@ -660,6 +695,8 @@ function renderMainJourneyManifestMarkdown(manifest: MainJourneyManifest): strin
   lines.push("## Linked Evidence");
   lines.push("");
   lines.push(`- RC snapshot: \`${manifest.linkedEvidence.snapshot}\``);
+  lines.push(`- RC reconnect replay JSON: \`${manifest.linkedEvidence.cocosRcReconnectReplay}\``);
+  lines.push(`- RC reconnect replay Markdown: \`${manifest.linkedEvidence.cocosRcReconnectReplayMarkdown}\``);
   lines.push(`- Primary journey evidence JSON: \`${manifest.linkedEvidence.primaryJourneyEvidence}\``);
   lines.push(`- Primary journey evidence Markdown: \`${manifest.linkedEvidence.primaryJourneyEvidenceMarkdown}\``);
   lines.push("");
@@ -695,6 +732,8 @@ function renderBundleMarkdown(snapshot: CocosReleaseCandidateSnapshot, artifacts
   lines.push("");
   lines.push("## Artifacts");
   lines.push("");
+  lines.push(`- RC reconnect replay JSON: \`${toRepoRelative(artifacts.cocosRcReconnectReplay)}\``);
+  lines.push(`- RC reconnect replay markdown: \`${toRepoRelative(artifacts.cocosRcReconnectReplayMarkdown)}\``);
   lines.push(`- Primary journey evidence: \`${toRepoRelative(artifacts.primaryJourneyEvidence)}\``);
   lines.push(`- Primary journey markdown: \`${toRepoRelative(artifacts.primaryJourneyEvidenceMarkdown)}\``);
   lines.push(`- Main-journey manifest: \`${toRepoRelative(artifacts.mainJourneyManifest)}\``);
@@ -1203,6 +1242,8 @@ function main(): void {
   const baseName = `${slug}-${shortCommit}`;
   const primaryJourneyEvidencePath = path.join(outputDir, `cocos-primary-journey-evidence-${baseName}.json`);
   const primaryJourneyEvidenceMarkdownPath = path.join(outputDir, `cocos-primary-journey-evidence-${baseName}.md`);
+  const cocosRcReconnectReplayPath = path.join(outputDir, `cocos-rc-reconnect-replay-${baseName}.json`);
+  const cocosRcReconnectReplayMarkdownPath = path.join(outputDir, `cocos-rc-reconnect-replay-${baseName}.md`);
   const snapshotPath = path.join(outputDir, `cocos-rc-snapshot-${baseName}.json`);
   const summaryMarkdownPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.md`);
   const manifestPath = path.join(outputDir, `cocos-rc-evidence-bundle-${baseName}.json`);
@@ -1215,6 +1256,7 @@ function main(): void {
   const checklistPath = path.join(outputDir, `cocos-rc-checklist-${baseName}.md`);
   const blockersPath = path.join(outputDir, `cocos-rc-blockers-${baseName}.md`);
 
+  runCocosRcReconnectReplayCommand(args, cocosRcReconnectReplayPath, cocosRcReconnectReplayMarkdownPath);
   runPrimaryJourneyEvidenceCommand(args, primaryJourneyEvidencePath, primaryJourneyEvidenceMarkdownPath);
   runSnapshotCommand(args, snapshotPath);
 
@@ -1224,6 +1266,8 @@ function main(): void {
   }
 
   const artifacts: BundleManifest["artifacts"] = {
+    cocosRcReconnectReplay: path.resolve(cocosRcReconnectReplayPath),
+    cocosRcReconnectReplayMarkdown: path.resolve(cocosRcReconnectReplayMarkdownPath),
     primaryJourneyEvidence: path.resolve(primaryJourneyEvidencePath),
     primaryJourneyEvidenceMarkdown: path.resolve(primaryJourneyEvidenceMarkdownPath),
     mainJourneyManifest: path.resolve(mainJourneyManifestPath),

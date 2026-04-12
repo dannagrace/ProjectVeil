@@ -72,6 +72,8 @@ interface StageResult {
 interface RehearsalArtifacts {
   stableH5SmokePath?: string;
   stableReconnectSoakPath?: string;
+  cocosRcReconnectReplayPath?: string;
+  cocosRcReconnectReplayMarkdownPath?: string;
   stableRuntimeReportPath?: string;
   runtimeObservabilityBundlePath?: string;
   runtimeObservabilityBundleMarkdownPath?: string;
@@ -582,6 +584,9 @@ function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.stableReconnectSoakPath) {
     lines.push(`- Reconnect soak summary: \`${report.artifacts.stableReconnectSoakPath}\``);
+  }
+  if (report.artifacts.cocosRcReconnectReplayPath) {
+    lines.push(`- Cocos reconnect replay: \`${report.artifacts.cocosRcReconnectReplayPath}\``);
   }
   if (report.artifacts.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${report.artifacts.wechatCandidateSummaryPath}\``);
@@ -1180,6 +1185,11 @@ async function main(): Promise<void> {
         if (artifacts.stableReconnectSoakPath) {
           command.push("--reconnect-soak", stableReconnectSoakPath);
         }
+        const cocosReconnectReplayPath =
+          findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".json") ?? path.join(outputDir, "missing-cocos-rc-reconnect-replay.json");
+        if (fs.existsSync(cocosReconnectReplayPath)) {
+          command.push("--cocos-rc-reconnect-replay", cocosReconnectReplayPath);
+        }
         if (artifacts.stableWechatArtifactsDir) {
           command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
         }
@@ -1654,11 +1664,19 @@ async function main(): Promise<void> {
 
   const cocosBundlePath = findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".json");
   const cocosBundleMarkdownPath = findFirstMatching(outputDir, "cocos-rc-evidence-bundle-", ".md");
+  const cocosRcReconnectReplayPath = findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".json");
+  const cocosRcReconnectReplayMarkdownPath = findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".md");
   if (cocosBundlePath) {
     artifacts.cocosBundlePath = toRelative(cocosBundlePath);
   }
   if (cocosBundleMarkdownPath) {
     artifacts.cocosBundleMarkdownPath = toRelative(cocosBundleMarkdownPath);
+  }
+  if (cocosRcReconnectReplayPath) {
+    artifacts.cocosRcReconnectReplayPath = toRelative(cocosRcReconnectReplayPath);
+  }
+  if (cocosRcReconnectReplayMarkdownPath) {
+    artifacts.cocosRcReconnectReplayMarkdownPath = toRelative(cocosRcReconnectReplayMarkdownPath);
   }
 
   const releaseGate = readOptionalJson(releaseGateSummaryPath);
@@ -1729,6 +1747,12 @@ async function main(): Promise<void> {
   }
   if (cocosBundleMarkdownPath) {
     requiredArtifacts.push(cocosBundleMarkdownPath);
+  }
+  if (cocosRcReconnectReplayPath) {
+    requiredArtifacts.push(cocosRcReconnectReplayPath);
+  }
+  if (cocosRcReconnectReplayMarkdownPath) {
+    requiredArtifacts.push(cocosRcReconnectReplayMarkdownPath);
   }
 
   const missingArtifacts = requiredArtifacts.filter((filePath) => !fs.existsSync(filePath)).map(toRelative);

@@ -277,10 +277,10 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.equal(report.triage.blockers.length, 0);
   assert.equal(report.triage.warnings.length, 1);
   assert.match(report.triage.warnings[0]?.summary ?? "", /HIGH risk/);
-  assert.equal(report.summary.totalGates, 5);
+  assert.equal(report.summary.totalGates, 6);
   assert.equal(report.gates.every((gate) => gate.status === "passed"), true);
-  assert.equal(report.gates[2]?.id, "multiplayer-reconnect-soak");
-  assert.equal(report.gates[4]?.id, "phase1-evidence-consistency");
+  assert.equal(report.gates.find((gate) => gate.id === "multiplayer-reconnect-soak")?.status, "passed");
+  assert.equal(report.gates.find((gate) => gate.id === "phase1-evidence-consistency")?.status, "passed");
   assert.equal(report.configChangeRisk.status, "available");
   assert.equal(report.configChangeRisk.overallRisk, "high");
   assert.equal(report.configChangeRisk.recommendRehearsal, true);
@@ -1027,9 +1027,9 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
   assert.match(report.triage.blockers[0]?.nextStep ?? "", /release:gate:summary -- --target-surface wechat/);
   assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
-  assert.match(report.gates[3]?.summary ?? "", /blocked/i);
+  assert.match(report.gates.find((entry) => entry.id === "wechat-release")?.summary ?? "", /blocked/i);
   assert.match(
-    report.gates[3]?.failures.join("\n") ?? "",
+    report.gates.find((entry) => entry.id === "wechat-release")?.failures.join("\n") ?? "",
     /blocked pending device evidence|WeChat smoke case is blocked|WeChat candidate summary status is "blocked"|Manual review pending/
   );
   assert.match(renderMarkdown(report), /### Blockers \(2\)/);
@@ -1298,6 +1298,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate 
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,
+    undefined,
     wechatRcValidationPath,
     undefined,
     undefined,
@@ -1399,6 +1400,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestam
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,
+    undefined,
     wechatRcValidationPath,
     undefined,
     undefined,
@@ -1533,6 +1535,7 @@ test("evaluatePhase1EvidenceConsistencyGate fails when manual evidence owner led
     h5SmokePath,
     reconnectSoakPath,
     undefined,
+    undefined,
     wechatCandidateSummaryPath,
     undefined,
     manualEvidenceLedgerPath
@@ -1639,7 +1642,10 @@ test("buildReleaseGateSummaryReport fails when all artifacts are stale for the c
 
   assert.equal(report.summary.status, "failed");
   assert.deepEqual(report.summary.failedGateIds, ["phase1-evidence-consistency"]);
-  assert.match(report.gates[4]?.summary ?? "", /artifact commit deadbeef.*does not match candidate abc123/);
+  assert.match(
+    report.gates.find((entry) => entry.id === "phase1-evidence-consistency")?.summary ?? "",
+    /artifact commit deadbeef.*does not match candidate abc123/
+  );
   assert.match(renderMarkdown(report), /Phase 1 evidence consistency/);
 });
 
