@@ -12,6 +12,7 @@ type RouteHandler = (request: any, response: ServerResponse) => void | Promise<v
 function createTestApp() {
   const gets = new Map<string, RouteHandler>();
   const posts = new Map<string, RouteHandler>();
+  const deletes = new Map<string, RouteHandler>();
 
   return {
     app: {
@@ -21,10 +22,14 @@ function createTestApp() {
       },
       post(path: string, handler: RouteHandler) {
         posts.set(path, handler);
+      },
+      delete(path: string, handler: RouteHandler) {
+        deletes.set(path, handler);
       }
     },
     gets,
-    posts
+    posts,
+    deletes
   };
 }
 
@@ -121,9 +126,9 @@ function withSupportSecrets(
 }
 
 function registerRoutes(store: RoomSnapshotStore | null = null) {
-  const { app, gets, posts } = createTestApp();
+  const { app, gets, posts, deletes } = createTestApp();
   registerAdminRoutes(app, store);
-  return { gets, posts };
+  return { gets, posts, deletes };
 }
 
 function createStore(initialResourcesByPlayer: Record<string, { gold: number; wood: number; ore: number }> = {}) {
@@ -175,6 +180,14 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     saveCalls,
     async loadPlayerAccount(playerId: string) {
       return accounts.get(playerId) ?? null;
+    },
+    async listPlayerAccounts(options: { limit?: number; offset?: number } = {}) {
+      const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+      const safeOffset = Math.max(0, Math.floor(options.offset ?? 0));
+      return Array.from(accounts.values())
+        .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")))
+        .slice(safeOffset, safeOffset + safeLimit)
+        .map((account) => structuredClone(account));
     },
     async createPlayerReport(input: {
       reporterId: string;
@@ -284,6 +297,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       patch: {
         gems?: number;
         globalResources?: { gold: number; wood: number; ore: number };
+        leaderboardAbuseState?: Record<string, unknown>;
         leaderboardModerationState?: Record<string, unknown>;
         recentEventLog?: Array<Record<string, unknown>>;
       }
@@ -298,15 +312,22 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         account.gems = patch.gems;
       }
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
-      if (patch.leaderboardModerationState) {
+      if (patch.leaderboardAbuseState !== undefined) {
+        account.leaderboardAbuseState =
+          Object.keys(patch.leaderboardAbuseState).length > 0 ? { ...patch.leaderboardAbuseState } : undefined;
+      }
+      if (patch.leaderboardModerationState !== undefined) {
         account.leaderboardModerationState = {
-          ...(account.leaderboardModerationState ?? {}),
           ...patch.leaderboardModerationState
         };
+        if (Object.keys(account.leaderboardModerationState).length === 0) {
+          delete account.leaderboardModerationState;
+        }
       }
       if (patch.recentEventLog) {
         account.recentEventLog = [...patch.recentEventLog];
       }
+      account.updatedAt = new Date().toISOString();
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
     },
@@ -430,6 +451,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
   return store as Pick<
     RoomSnapshotStore,
     | "loadPlayerAccount"
+    | "listPlayerAccounts"
     | "createPlayerReport"
     | "loadPlayerBan"
     | "ensurePlayerAccount"
@@ -1683,6 +1705,248 @@ test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movemen
   assert.equal(payload.account.leaderboardModerationState?.frozenByPlayerId, "support-moderator:admin-console");
   assert.equal(payload.account.leaderboardModerationState?.freezeReason, "Suspicious ELO spike");
   assert.ok(payload.account.leaderboardModerationState?.frozenAt);
+});
+
+test("GET /api/admin/players/:id/leaderboard/abuse-state returns structured abuse state and alert history", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore({
+    "player-abuse": { gold: 0, wood: 0, ore: 0 }
+  });
+  await store.savePlayerAccountProgress("player-abuse", {
+    leaderboardAbuseState: {
+      currentDay: "2026-04-12",
+      dailyEloGain: 120,
+      dailyEloLoss: 0,
+      status: "flagged",
+      lastAlertAt: "2026-04-12T08:00:00.000Z",
+      lastAlertReasons: ["daily_gain_cap_hit", "repeated_opponent_watch"]
+    },
+    leaderboardModerationState: {
+      frozenAt: "2026-04-12T08:05:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console",
+      freezeReason: "Manual review"
+    },
+    recentEventLog: [
+      {
+        id: "leaderboard:freeze_cleared:2026-04-12T09:00:00.000Z:player-abuse",
+        timestamp: "2026-04-12T09:00:00.000Z",
+        roomId: "admin-console",
+        playerId: "player-abuse",
+        category: "account",
+        description: "解除排行榜冻结（操作人：support-moderator:admin-console，原因：False positive）",
+        rewards: []
+      }
+    ]
+  });
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/leaderboard/abuse-state");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      params: { id: "player-abuse" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    playerId: string;
+    abuseState: { status?: string; lastAlertReasons?: string[] };
+    moderationState: { frozenByPlayerId?: string };
+    alertHistory: Array<{ type: string; source: string; detail: string }>;
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.playerId, "player-abuse");
+  assert.equal(payload.abuseState.status, "flagged");
+  assert.deepEqual(payload.abuseState.lastAlertReasons, ["daily_gain_cap_hit", "repeated_opponent_watch"]);
+  assert.equal(payload.moderationState.frozenByPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.alertHistory.some((entry) => entry.type === "freeze_cleared" && entry.source === "event-log"), true);
+  assert.equal(payload.alertHistory.some((entry) => entry.type === "leaderboard_daily_gain_cap" && entry.source === "abuse-state"), true);
+  assert.equal(payload.alertHistory.some((entry) => /Manual review/.test(entry.detail)), true);
+});
+
+test("GET /api/admin/players/:id/leaderboard/abuse-state returns 404 for unknown players", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/leaderboard/abuse-state");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      params: { id: "missing-player" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(JSON.parse(response.body), { error: "Player account not found" });
+});
+
+test("DELETE /api/admin/players/:id/leaderboard/freeze clears frozen state and appends an audit record", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore({
+    "player-clear-freeze": { gold: 0, wood: 0, ore: 0 }
+  });
+  await store.savePlayerAccountProgress("player-clear-freeze", {
+    leaderboardModerationState: {
+      frozenAt: "2026-04-12T08:00:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console",
+      freezeReason: "Suspicious ELO spike"
+    },
+    recentEventLog: []
+  });
+  const { deletes } = registerRoutes(store as RoomSnapshotStore);
+  const handler = deletes.get("/api/admin/players/:id/leaderboard/freeze");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "DELETE",
+      params: { id: "player-clear-freeze" },
+      body: JSON.stringify({ reason: "Investigation complete" }),
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    account: { leaderboardModerationState?: { frozenAt?: string; freezeReason?: string } };
+    audit: { action: string; actorPlayerId: string; reason?: string };
+  };
+  const updatedAccount = await store.loadPlayerAccount("player-clear-freeze");
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.audit.action, "freeze_cleared");
+  assert.equal(payload.audit.actorPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.audit.reason, "Investigation complete");
+  assert.deepEqual(payload.account.leaderboardModerationState ?? {}, {});
+  assert.deepEqual(updatedAccount?.leaderboardModerationState ?? {}, {});
+  assert.equal(updatedAccount?.recentEventLog?.[0]?.id.startsWith("leaderboard:freeze_cleared:"), true);
+  assert.match(updatedAccount?.recentEventLog?.[0]?.description ?? "", /Investigation complete/);
+});
+
+test("DELETE /api/admin/players/:id/leaderboard/freeze returns 404 for unknown players", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { deletes } = registerRoutes(store as RoomSnapshotStore);
+  const handler = deletes.get("/api/admin/players/:id/leaderboard/freeze");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "DELETE",
+      params: { id: "missing-player" },
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(JSON.parse(response.body), { error: "Player account not found" });
+});
+
+test("GET /api/admin/leaderboard/moderation-queue paginates and filters by flag type", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore({
+    "player-queue-flagged": { gold: 0, wood: 0, ore: 0 },
+    "player-queue-watch": { gold: 0, wood: 0, ore: 0 },
+    "player-queue-frozen": { gold: 0, wood: 0, ore: 0 }
+  });
+  await store.savePlayerAccountProgress("player-queue-flagged", {
+    leaderboardAbuseState: {
+      currentDay: "2026-04-12",
+      dailyEloGain: 120,
+      dailyEloLoss: 0,
+      status: "flagged",
+      lastAlertAt: "2026-04-12T10:00:00.000Z",
+      lastAlertReasons: ["daily_gain_cap_hit"]
+    }
+  });
+  await store.savePlayerAccountProgress("player-queue-watch", {
+    leaderboardAbuseState: {
+      currentDay: "2026-04-12",
+      dailyEloGain: 40,
+      dailyEloLoss: 0,
+      status: "watch",
+      lastAlertAt: "2026-04-12T09:00:00.000Z",
+      lastAlertReasons: ["repeated_opponent_watch"]
+    }
+  });
+  await store.savePlayerAccountProgress("player-queue-frozen", {
+    leaderboardModerationState: {
+      frozenAt: "2026-04-12T08:00:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console",
+      freezeReason: "Manual hold"
+    }
+  });
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/leaderboard/moderation-queue");
+  const filteredResponse = createResponse();
+  const paginatedResponse = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      url: "/api/admin/leaderboard/moderation-queue?flagType=repeated_opponent_watch&limit=10&page=1",
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    filteredResponse
+  );
+  await handler(
+    createRequest({
+      url: "/api/admin/leaderboard/moderation-queue?limit=1&page=2",
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    paginatedResponse
+  );
+
+  const filteredPayload = JSON.parse(filteredResponse.body) as {
+    items: Array<{ playerId: string; flagTypes: string[] }>;
+    total: number;
+    flagType?: string;
+  };
+  const paginatedPayload = JSON.parse(paginatedResponse.body) as {
+    items: Array<{ playerId: string; lastFlagAt: string }>;
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+
+  assert.equal(filteredResponse.statusCode, 200);
+  assert.equal(filteredPayload.flagType, "repeated_opponent_watch");
+  assert.equal(filteredPayload.total, 1);
+  assert.deepEqual(filteredPayload.items.map((item) => item.playerId), ["player-queue-watch"]);
+  assert.deepEqual(filteredPayload.items[0]?.flagTypes, ["repeated_opponent_watch", "watch"]);
+
+  assert.equal(paginatedResponse.statusCode, 200);
+  assert.equal(paginatedPayload.page, 2);
+  assert.equal(paginatedPayload.limit, 1);
+  assert.equal(paginatedPayload.total, 3);
+  assert.equal(paginatedPayload.totalPages, 3);
+  assert.deepEqual(paginatedPayload.items.map((item) => item.playerId), ["player-queue-watch"]);
 });
 
 test("POST /api/admin/players/:id/leaderboard/remove hides a player from leaderboard output", async (t) => {
