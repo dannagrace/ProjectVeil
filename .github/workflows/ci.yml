@@ -36,6 +36,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  kubernetes-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.1
+
+      - name: Setup kind
+        uses: engineerd/setup-kind@v0.6.2
+        with:
+          version: v0.24.0
+
+      - name: Dry-run Kubernetes manifests
+        run: kubectl apply --dry-run=client -k k8s
+
   readme-script-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 10

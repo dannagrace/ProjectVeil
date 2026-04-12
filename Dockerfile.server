@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS base
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
 ENV npm_config_update_notifier=false
@@ -12,13 +12,32 @@ RUN npm ci --no-audit --no-fund
 
 COPY . .
 
+RUN npm run build:server
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+
 ENV NODE_ENV=production
+ENV npm_config_update_notifier=false
 ENV HOST=0.0.0.0
 ENV PORT=2567
+ENV VEIL_MIGRATIONS_PATH=/app/dist/scripts/migrations
+
+COPY package.json package-lock.json ./
+COPY apps/client/package.json ./apps/client/package.json
+COPY apps/cocos-client/package.json ./apps/cocos-client/package.json
+COPY packages/cc-runtime-stub/package.json ./packages/cc-runtime-stub/package.json
+COPY packages/cc-runtime-stub/index.js ./packages/cc-runtime-stub/index.js
+
+RUN npm ci --omit=dev --no-audit --no-fund
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/configs ./configs
+COPY --from=build /app/apps/client/admin.html ./apps/client/admin.html
 
 EXPOSE 2567
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:2567/api/runtime/health').then((res) => { if (!res.ok) process.exit(1); }).catch(() => process.exit(1));"
 
-CMD ["node", "--import", "tsx", "./apps/server/src/dev-server.ts"]
+CMD ["node", "./dist/server/server.mjs"]
