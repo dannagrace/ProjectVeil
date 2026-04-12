@@ -10,6 +10,10 @@ import {
   type PlayerBattleReplaySummary
 } from "../../../packages/shared/src/index";
 import type { PlayerAccountSnapshot } from "./persistence";
+import {
+  applyBattleReplayRetentionToSummary,
+  readBattleReplayRetentionPolicy
+} from "./battle-replay-retention";
 
 const RECENT_BATTLE_REPLAY_LIMIT = 5;
 
@@ -99,23 +103,26 @@ export function buildPlayerBattleReplaySummary(
   heroId: string,
   playerCamp: BattleReplayCamp,
   opponentHeroId?: string
-): PlayerBattleReplaySummary {
-  return {
-    id: buildPlayerReplayId(replay, playerId),
-    roomId: replay.roomId,
-    playerId,
-    battleId: replay.battleId,
-    battleKind: battleKindOf(replay.battleState),
-    playerCamp,
-    heroId,
-    ...(opponentHeroId ? { opponentHeroId } : {}),
-    ...(replay.battleState.neutralArmyId ? { neutralArmyId: replay.battleState.neutralArmyId } : {}),
-    startedAt: replay.startedAt,
-    completedAt: replay.completedAt,
-    initialState: replay.initialState,
-    steps: replay.steps,
-    result: replay.result
-  };
+): PlayerBattleReplaySummary | null {
+  return applyBattleReplayRetentionToSummary(
+    {
+      id: buildPlayerReplayId(replay, playerId),
+      roomId: replay.roomId,
+      playerId,
+      battleId: replay.battleId,
+      battleKind: battleKindOf(replay.battleState),
+      playerCamp,
+      heroId,
+      ...(opponentHeroId ? { opponentHeroId } : {}),
+      ...(replay.battleState.neutralArmyId ? { neutralArmyId: replay.battleState.neutralArmyId } : {}),
+      startedAt: replay.startedAt,
+      completedAt: replay.completedAt,
+      initialState: replay.initialState,
+      steps: replay.steps,
+      result: replay.result
+    },
+    readBattleReplayRetentionPolicy()
+  );
 }
 
 export function buildPlayerBattleReplaySummariesForPlayer(
@@ -123,27 +130,25 @@ export function buildPlayerBattleReplaySummariesForPlayer(
   playerId: string
 ): PlayerBattleReplaySummary[] {
   if (replay.attackerPlayerId === playerId && replay.battleState.worldHeroId) {
-    return [
-      buildPlayerBattleReplaySummary(
-        replay,
-        playerId,
-        replay.battleState.worldHeroId,
-        "attacker",
-        replay.battleState.defenderHeroId
-      )
-    ];
+    const summary = buildPlayerBattleReplaySummary(
+      replay,
+      playerId,
+      replay.battleState.worldHeroId,
+      "attacker",
+      replay.battleState.defenderHeroId
+    );
+    return summary ? [summary] : [];
   }
 
   if (replay.defenderPlayerId === playerId && replay.battleState.defenderHeroId) {
-    return [
-      buildPlayerBattleReplaySummary(
-        replay,
-        playerId,
-        replay.battleState.defenderHeroId,
-        "defender",
-        replay.battleState.worldHeroId
-      )
-    ];
+    const summary = buildPlayerBattleReplaySummary(
+      replay,
+      playerId,
+      replay.battleState.defenderHeroId,
+      "defender",
+      replay.battleState.worldHeroId
+    );
+    return summary ? [summary] : [];
   }
 
   return [];
