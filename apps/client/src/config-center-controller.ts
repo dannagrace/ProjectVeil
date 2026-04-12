@@ -260,6 +260,7 @@ interface AppState {
   statusMessage: string;
   lastSavedImpactSummary: ConfigImpactSummary | null;
   draft: string;
+  previewApplied: boolean;
   previewSeed: number;
   worldPreview: WorldConfigPreview | null;
   previewLoading: boolean;
@@ -390,6 +391,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     statusMessage: "正在加载配置中心...",
     lastSavedImpactSummary: null,
     draft: "",
+    previewApplied: false,
     previewSeed: 1001,
     worldPreview: null,
     previewLoading: false,
@@ -416,6 +418,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
   let previewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let validationRequestVersion = 0;
   let validationDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const documentLocks = new Map<ConfigDocumentId, ReturnType<typeof setTimeout> | null>();
 
   function isWorldDocumentSelected(): boolean {
     return state.current?.id === "world";
@@ -516,6 +519,38 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     state.draft = nextDraft;
   }
 
+  function lockDocument(documentId = state.current?.id ?? null, timeoutMs = 5_000): boolean {
+    if (!documentId || documentLocks.has(documentId)) {
+      return false;
+    }
+
+    const timer =
+      timeoutMs > 0
+        ? setTimer(() => {
+            documentLocks.delete(documentId);
+          }, timeoutMs)
+        : null;
+    documentLocks.set(documentId, timer);
+    return true;
+  }
+
+  function unlockDocument(documentId = state.current?.id ?? null): boolean {
+    if (!documentId) {
+      return false;
+    }
+
+    const timer = documentLocks.get(documentId);
+    if (timer === undefined) {
+      return false;
+    }
+
+    if (timer != null) {
+      clearTimer(timer);
+    }
+    documentLocks.delete(documentId);
+    return true;
+  }
+
   async function loadList(): Promise<void> {
     const response = await requestJson<{
       storage: "filesystem" | "mysql";
@@ -593,6 +628,10 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       notify();
     }
     return response.diff;
+  }
+
+  async function computeDiff(snapshotId = state.selectedSnapshotId): Promise<ConfigDiff | null> {
+    return loadSnapshotDiff(snapshotId);
   }
 
   async function ensureSnapshotDiff(snapshotId: string): Promise<ConfigDiff | null> {
@@ -1039,6 +1078,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.current = response.document;
       state.selectedId = response.document.id;
       state.draft = response.document.content;
+      state.previewApplied = false;
       state.validation = null;
       state.lastSavedImpactSummary = null;
       state.snapshots = [];
@@ -1107,6 +1147,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.current = response.document;
       state.lastSavedImpactSummary = response.impactSummary ?? null;
       state.draft = response.document.content;
+      state.previewApplied = false;
       state.statusTone = "success";
       state.statusMessage = `${response.document.title} 已保存，并同步刷新服务端运行时配置`;
       await loadList();
@@ -1135,6 +1176,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     }
 
     state.draft = state.current.content;
+    state.previewApplied = false;
     state.statusTone = "neutral";
     state.statusMessage = `${state.current.title} 已恢复到上次加载内容`;
 
@@ -1151,12 +1193,11 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     void loadValidation();
   }
 
-  async function createSnapshot(): Promise<void> {
+  async function commitSnapshot(label = ""): Promise<ConfigSnapshotSummary | null> {
     if (!state.current) {
-      return;
+      return null;
     }
 
-    const label = promptImpl("快照名称（可选）", `${state.current.title} v${state.current.version ?? 1}`) ?? "";
     try {
       const response = await requestJson<{
         storage: "filesystem" | "mysql";
@@ -1172,15 +1213,27 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
         })
       });
       state.storageMode = response.storage;
+      state.previewApplied = false;
       state.statusTone = "success";
       state.statusMessage = `已保存快照 ${response.snapshot.label}`;
       await loadSnapshots(state.current.id);
       notify();
+      return response.snapshot;
     } catch (error) {
       state.statusTone = "error";
       state.statusMessage = error instanceof Error ? error.message : "保存快照失败";
       notify();
+      return null;
     }
+  }
+
+  async function createSnapshot(): Promise<void> {
+    if (!state.current) {
+      return;
+    }
+
+    const label = promptImpl("快照名称（可选）", `${state.current.title} v${state.current.version ?? 1}`) ?? "";
+    await commitSnapshot(label);
   }
 
   async function rollbackSnapshot(snapshotId: string): Promise<void> {
@@ -1220,6 +1273,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.storageMode = response.storage;
       state.current = response.document;
       state.draft = response.document.content;
+      state.previewApplied = false;
       state.statusTone = "success";
       state.statusMessage = `已回滚到快照 ${snapshotId}`;
       await loadList();
@@ -1251,6 +1305,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.storageMode = response.storage;
       state.current = response.document;
       state.draft = response.document.content;
+      state.previewApplied = false;
       state.statusTone = "success";
       state.statusMessage = `已应用预设 ${presetId}，运行时配置已刷新`;
       await loadList();
@@ -1353,6 +1408,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       state.storageMode = response.storage;
       state.current = response.document;
       state.draft = response.document.content;
+      state.previewApplied = false;
       state.statusTone = "success";
       state.statusMessage = `已从 ${file.name} 导入并覆盖当前配置`;
       await loadList();
@@ -1369,24 +1425,93 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     }
   }
 
+  async function applyHotloadPreview(): Promise<WorldConfigPreview | null> {
+    if (!isWorldDocumentSelected()) {
+      state.previewApplied = false;
+      clearWorldPreview();
+      notify();
+      return null;
+    }
+
+    const parseState = getDraftParseState();
+    if (!parseState.valid) {
+      state.previewApplied = false;
+      state.previewLoading = false;
+      state.worldPreview = null;
+      state.previewError = `JSON 语法无效：${parseState.detail}`;
+      notify();
+      return null;
+    }
+
+    state.previewApplied = true;
+    await loadWorldPreview();
+    return state.worldPreview;
+  }
+
+  async function validateAndSave(): Promise<{ saved: boolean; validation: ValidationReport | null }> {
+    if (!state.current) {
+      return {
+        saved: false,
+        validation: null
+      };
+    }
+
+    if (!lockDocument(state.current.id)) {
+      state.statusTone = "error";
+      state.statusMessage = `${state.current.title} 当前已被锁定，请稍后重试`;
+      notify();
+      return {
+        saved: false,
+        validation: state.validation
+      };
+    }
+
+    try {
+      await loadValidation();
+      if (!state.validation?.valid) {
+        state.statusTone = "error";
+        state.statusMessage = "当前配置存在校验问题，已阻止保存";
+        notify();
+        return {
+          saved: false,
+          validation: state.validation
+        };
+      }
+
+      await saveCurrentDocument();
+      return {
+        saved: state.statusTone === "success",
+        validation: state.validation
+      };
+    } finally {
+      unlockDocument(state.current.id);
+    }
+  }
+
   return {
     state,
     getDraftParseState,
     normalizePreviewSeed,
     setDraft,
+    lockDocument,
+    unlockDocument,
     clearWorldPreview,
     loadList,
     loadSnapshots,
     loadPresets,
     loadSnapshotDiff,
+    computeDiff,
     loadPublishStage,
     loadPublishAuditHistory,
     loadWorldPreview,
+    applyHotloadPreview,
     loadValidation,
     scheduleWorldPreview,
     loadDocument,
     saveCurrentDocument,
+    validateAndSave,
     restoreCurrentDocument,
+    commitSnapshot,
     createSnapshot,
     rollbackSnapshot,
     applyPreset,
