@@ -664,6 +664,110 @@ test("dev server falls back to in-memory persistence and warns when schema migra
   ]);
 });
 
+test("dev server exits non-zero in production when schema migrations are pending", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const mysqlConfig: MySqlPersistenceConfig = {
+    host: "127.0.0.1",
+    port: 3306,
+    user: "veil",
+    password: "veil",
+    database: "project_veil",
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    },
+    retention: {
+      ttlHours: 24,
+      cleanupIntervalMinutes: 30
+    }
+  };
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  let memoryStoreCreated = false;
+  let mysqlStoreCreated = false;
+  let mysqlConfigStoreCreated = false;
+
+  try {
+    await assert.rejects(
+      startDevServer(3203, "127.0.0.1", {
+        readMySqlPersistenceConfig: () => mysqlConfig,
+        getSchemaMigrationStatus: async () => ({ pending: [{ id: "0001" }] }),
+        formatSchemaMigrationWarning: () => "pending migration warning",
+        createFileSystemConfigCenterStore: () => configCenterStore,
+        createMySqlRoomSnapshotStore: async () => {
+          mysqlStoreCreated = true;
+          throw new Error("MySQL snapshot store should not be created when migrations are pending");
+        },
+        createMySqlConfigCenterStore: async () => {
+          mysqlConfigStoreCreated = true;
+          throw new Error("MySQL config store should not be created when migrations are pending");
+        },
+        createMemoryRoomSnapshotStore: () => {
+          memoryStoreCreated = true;
+          return createMemoryStore();
+        },
+        configureRoomSnapshotStore: () => undefined,
+        createTransport: () => base.transport,
+        readRedisUrl: () => null,
+        createRedisPresence: () => {
+          throw new Error("createRedisPresence should not be used without REDIS_URL");
+        },
+        createRedisDriver: () => {
+          throw new Error("createRedisDriver should not be used without REDIS_URL");
+        },
+        registerAuthRoutes: () => undefined,
+        registerConfigCenterRoutes: () => undefined,
+        registerConfigViewerRoutes: () => undefined,
+        registerGuildRoutes: () => undefined,
+        registerPlayerAccountRoutes: () => undefined,
+        registerShopRoutes: () => undefined,
+        registerWechatPayRoutes: () => undefined,
+        registerLobbyRoutes: () => undefined,
+        registerMatchmakingRoutes: () => undefined,
+        registerMinorProtectionRoutes: () => undefined,
+        registerPrometheusMetricsMiddleware: () => undefined,
+        registerPrometheusMetricsRoute: () => undefined,
+        registerLeaderboardRoutes: () => undefined,
+        registerSeasonRoutes: () => undefined,
+        registerRuntimeObservabilityRoutes: () => undefined,
+        validateBackupStorage: async () => backupValidationSkipped(),
+        registerAdminRoutes: () => undefined,
+        createGameServer: () => base.gameServer,
+        logger: base.logger,
+        process: base.process,
+        setInterval: () => {
+          throw new Error("setInterval should not be used when startup fails");
+        },
+        clearInterval: () => undefined,
+        isMySqlSnapshotStore: () => false
+      }),
+      /pending migration warning/
+    );
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  }
+
+  assert.equal(memoryStoreCreated, false);
+  assert.equal(mysqlStoreCreated, false);
+  assert.equal(mysqlConfigStoreCreated, false);
+  assert.equal(configCenterStore.initializeCalls, 0);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assert.deepEqual(base.gameServer.listenCalls, []);
+  assert.deepEqual(base.process.exitCodes, [1]);
+  assert.equal(base.logger.warnings.length, 0);
+  assert.equal(base.logger.errors.length, 1);
+  assert.equal(base.logger.errors[0]?.message, "Schema migrations are pending during production startup");
+});
+
 test("dev server exits non-zero in production when MySQL bootstrap fails instead of falling back to memory", async () => {
   resetRuntimeObservability();
   const base = createBaseDependencies();
