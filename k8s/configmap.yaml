@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: project-veil-server-config
+data:
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: "2567"
+  REDIS_URL: redis://project-veil-redis:6379/0
+  VEIL_MYSQL_HOST: project-veil-prod.cluster-abcdefghijkl.us-east-1.rds.amazonaws.com
+  VEIL_MYSQL_PORT: "3306"
+  VEIL_MYSQL_USER: project_veil
+  VEIL_MYSQL_DATABASE: project_veil
+  VEIL_MYSQL_SNAPSHOT_TTL_HOURS: "72"
+  VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES: "30"
+  VEIL_SECRET_PROVIDER: aws-secrets-manager
+  VEIL_AWS_SECRETS_MANAGER_SECRET_ID: projectveil/production/server
+  VEIL_AWS_SECRETS_MANAGER_REGION: us-east-1
+  VEIL_BACKUP_S3_BUCKET: project-veil-prod-backups
+  VEIL_BACKUP_S3_PREFIX: backups/mysql
+  VEIL_BACKUP_S3_ENDPOINT: https://s3.example.com
+  VEIL_BACKUP_S3_REGION: us-east-1
+  VEIL_BACKUP_AWS_PROFILE: project-veil-production
+  VEIL_BACKUP_KEEP_DAILY_DAYS: "30"
+  VEIL_BACKUP_KEEP_WEEKLY_DAYS: "183"
+  VEIL_BACKUP_WEEKLY_DAY: "7"
+  VEIL_RATE_LIMIT_AUTH_WINDOW_MS: "60000"
+  VEIL_RATE_LIMIT_AUTH_MAX: "10"
+  VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS: "1000"
+  VEIL_RATE_LIMIT_WS_ACTION_MAX: "8"
+  VEIL_AUTH_LOCKOUT_THRESHOLD: "10"
+  VEIL_AUTH_LOCKOUT_DURATION_MINUTES: "15"
+  VEIL_MAX_GUEST_SESSIONS: "10000"
+  VEIL_AUTH_ACCESS_TTL_SECONDS: "3600"
+  VEIL_AUTH_REFRESH_TTL_SECONDS: "2592000"
+  VEIL_AUTH_GUEST_TTL_SECONDS: "604800"
+  VEIL_MATCHMAKING_QUEUE_TTL_SECONDS: "300"
+  ANALYTICS_ENDPOINT: https://analytics.projectveil.example/ingest
+  SENTRY_DSN: https://public@example.ingest.sentry.io/42

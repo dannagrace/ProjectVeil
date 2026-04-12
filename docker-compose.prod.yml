@@ -49,7 +49,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["npm", "run", "db:migrate"]
+    command: ["node", "./dist/scripts/migrate.mjs"]
 
   server:
     build:

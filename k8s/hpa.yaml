@@ -1,0 +1,50 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: project-veil-server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: project-veil-server
+  minReplicas: 2
+  maxReplicas: 6
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+  metrics:
+    # docs/ops/capacity-planning.md publishes 8 active rooms/node as the
+    # scale-out warning threshold and 10 rooms/node as the current ceiling.
+    - type: Pods
+      pods:
+        metric:
+          name: veil_active_rooms_total
+        target:
+          type: AverageValue
+          averageValue: "8"
+    # The same capacity plan publishes matchmaking queue depth > 50 for 30s as
+    # the second scale-out trigger. This requires a metrics adapter that
+    # surfaces the Prometheus series as an external metric.
+    - type: External
+      external:
+        metric:
+          name: veil_matchmaking_queue_depth
+        target:
+          type: Value
+          value: "50"
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
+    "build:server": "node ./scripts/build-server.mjs",
     "client:primary": "node --eval \"console.log('Primary runtime: open apps/cocos-client in Cocos Creator 3.8.x and preview the VeilRoot scene. H5 debug shell: npm run dev:client:h5')\"",
     "dev:client": "npm run dev:client:h5",
     "dev:client:h5": "vite --config apps/client/vite.config.ts",
