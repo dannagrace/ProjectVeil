@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseSeasonRewardConfigDocument,
   normalizeSeasonRewardConfig,
   resolveSeasonRewardBracket,
+  resolveSeasonRewardConfig,
   computeSeasonReward
 } from "../src/season-rewards";
 import type { ResolvedSeasonRewardConfig } from "../src/season-rewards";
@@ -73,6 +75,32 @@ test("normalizeSeasonRewardConfig: rejects duplicate topPercentile values", () =
       ]
     }),
     /unique/
+  );
+});
+
+test("parseSeasonRewardConfigDocument: bundled season reward config is valid", () => {
+  const config = resolveSeasonRewardConfig();
+  assert.ok(config.brackets.length > 0);
+});
+
+test("parseSeasonRewardConfigDocument: rejects unexpected root properties", () => {
+  assert.throws(
+    () => parseSeasonRewardConfigDocument({ brackets: [{ topPercentile: 10, gems: 100, badge: "gold" }], extra: true }),
+    /is not allowed/
+  );
+});
+
+test("parseSeasonRewardConfigDocument: rejects non-array brackets", () => {
+  assert.throws(
+    () => parseSeasonRewardConfigDocument({ brackets: "not-an-array" }),
+    /must be an array/
+  );
+});
+
+test("parseSeasonRewardConfigDocument: rejects fractional gems in config documents", () => {
+  assert.throws(
+    () => parseSeasonRewardConfigDocument({ brackets: [{ topPercentile: 10, gems: 99.9, badge: "gold" }] }),
+    /non-negative integer/
   );
 });
 

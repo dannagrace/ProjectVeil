@@ -342,6 +342,7 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
   }
 
   if (
+    script === "validate:season-reward-config" ||
     script === "validate:analytics-schema" ||
     script === "validate:e2e:fixtures" ||
     script === "validate:quickstart" ||
@@ -390,6 +391,11 @@ export function renderReleaseOpsOwnershipMarkdown(entries: ReleaseOpsOwnershipEn
     "- For live runtime alert response, pair this ownership map with [`docs/alerting-runbook.md`](./alerting-runbook.md) so the responder can move from the owning role to the per-alert triage steps quickly.",
     "- `Decision role` distinguishes the canonical gate from supporting evidence and reviewer-facing diagnostics.",
     "- `Review treatment` makes the blocker boundary explicit: use `merge/release blocker` for changes that can stop both PR approval and candidate promotion, `release blocker` for candidate-only proof, and `review aid` for summaries that should not override the owning gate.",
+    "",
+    "## Pre-Season Ops Checklist",
+    "",
+    "- Run `validate:season-reward-config` before pre-season promotion or any seasonal reset rehearsal so malformed `configs/season-rewards.json` changes fail before runtime.",
+    "- Treat `configs/schemas/season-rewards.schema.json` as the contract for structural edits; changes to bracket fields or types should land with matching validator and test updates.",
     "",
     "## Summary",
     "",

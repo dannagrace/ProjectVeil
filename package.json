@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev:server": "node --import tsx ./apps/server/src/dev-server.ts",
-    "build:server": "node ./scripts/build-server.mjs",
+    "build:server": "npm run validate:season-reward-config && node ./scripts/build-server.mjs",
     "client:primary": "node --eval \"console.log('Primary runtime: open apps/cocos-client in Cocos Creator 3.8.x and preview the VeilRoot scene. H5 debug shell: npm run dev:client:h5')\"",
     "dev:client": "npm run dev:client:h5",
     "dev:client:h5": "vite --config apps/client/vite.config.ts",
@@ -46,6 +46,7 @@
     "validate:map-object-visuals": "node --import tsx ./scripts/validate-map-object-visuals.ts",
     "validate:content-pack:all": "npm run validate:map-object-visuals && node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack stonewatch-fork --map-pack ridgeway-crossing --map-pack highland-reach --map-pack amber-fields --map-pack ironpass-gorge --map-pack splitrock-canyon --map-pack bogfen-crossing --map-pack murkveil-delta --map-pack frostwatch-ridge --map-pack ashpeak-ascent --map-pack thornwall-divide --map-pack phase2 --map-pack phase2-frontier-expanded --map-pack phase2-verdant-vale",
     "validate:analytics-schema": "node --import tsx ./scripts/validate-analytics-schema.ts",
+    "validate:season-reward-config": "node --import tsx ./scripts/validate-season-reward-config.ts",
     "validate:quickstart:contract": "node ./scripts/run-contributor-quickstart-contract.mjs",
     "analytics:onboarding:funnel": "node --import tsx ./scripts/onboarding-funnel-report.ts",
     "stress:rooms": "node --import tsx ./scripts/stress-concurrent-rooms.ts",
