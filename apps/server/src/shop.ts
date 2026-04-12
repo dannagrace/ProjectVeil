@@ -94,6 +94,25 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
   };
 }
 
+function emitPurchaseFailedEvent(input: {
+  playerId: string;
+  purchaseId: string;
+  productId: string;
+  paymentMethod: "gems" | "wechat_pay";
+  failureReason: string;
+}): void {
+  emitAnalyticsEvent("purchase_failed", {
+    playerId: input.playerId,
+    payload: {
+      purchaseId: input.purchaseId,
+      productId: input.productId,
+      paymentMethod: input.paymentMethod,
+      failureReason: input.failureReason,
+      orderStatus: "failed"
+    }
+  });
+}
+
 function normalizePositiveInteger(value: number, field: string, allowZero = false): number {
   const normalized = Math.floor(value);
   if (!Number.isFinite(value) || (!allowZero && normalized <= 0) || (allowZero && normalized < 0)) {
@@ -323,6 +342,14 @@ export function registerShopRoutes(
       return;
     }
 
+    let analyticsPurchaseContext:
+      | {
+          playerId: string;
+          purchaseId: string;
+          productId: string;
+        }
+      | undefined;
+
     try {
       const body = (await readJsonBody(request)) as {
         productId?: string | null;
@@ -374,6 +401,12 @@ export function registerShopRoutes(
         return;
       }
 
+      analyticsPurchaseContext = {
+        playerId: authSession.playerId,
+        purchaseId,
+        productId: product.productId
+      };
+
       const result = await store.purchaseShopProduct(authSession.playerId, {
         purchaseId,
         productId: product.productId,
@@ -387,6 +420,16 @@ export function registerShopRoutes(
         payload: {
           purchaseId: result.purchaseId,
           productId: result.productId,
+          quantity: result.quantity,
+          totalPrice: result.totalPrice
+        }
+      });
+      emitAnalyticsEvent("purchase_completed", {
+        playerId: authSession.playerId,
+        payload: {
+          purchaseId: result.purchaseId,
+          productId: result.productId,
+          paymentMethod: "gems",
           quantity: result.quantity,
           totalPrice: result.totalPrice
         }
@@ -409,6 +452,13 @@ export function registerShopRoutes(
       }
 
       if (error instanceof Error && error.message === "insufficient gems") {
+        if (analyticsPurchaseContext) {
+          emitPurchaseFailedEvent({
+            ...analyticsPurchaseContext,
+            paymentMethod: "gems",
+            failureReason: "insufficient_gems"
+          });
+        }
         sendJson(response, 409, {
           error: {
             code: "insufficient_gems",
@@ -419,6 +469,13 @@ export function registerShopRoutes(
       }
 
       if (error instanceof Error && error.message === "equipment inventory full") {
+        if (analyticsPurchaseContext) {
+          emitPurchaseFailedEvent({
+            ...analyticsPurchaseContext,
+            paymentMethod: "gems",
+            failureReason: "equipment_inventory_full"
+          });
+        }
         sendJson(response, 409, {
           error: {
             code: "equipment_inventory_full",
@@ -429,6 +486,13 @@ export function registerShopRoutes(
       }
 
       if (error instanceof Error && error.message === "player hero archive not found") {
+        if (analyticsPurchaseContext) {
+          emitPurchaseFailedEvent({
+            ...analyticsPurchaseContext,
+            paymentMethod: "gems",
+            failureReason: "player_hero_archive_not_found"
+          });
+        }
         sendJson(response, 409, {
           error: {
             code: "player_hero_archive_not_found",
@@ -443,6 +507,13 @@ export function registerShopRoutes(
         return;
       }
 
+      if (analyticsPurchaseContext) {
+        emitPurchaseFailedEvent({
+          ...analyticsPurchaseContext,
+          paymentMethod: "gems",
+          failureReason: error instanceof Error ? error.message : "internal_error"
+        });
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });

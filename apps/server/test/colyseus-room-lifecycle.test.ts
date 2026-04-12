@@ -16,6 +16,11 @@ import {
 } from "../../../packages/shared/src/index";
 import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
 import { resolveBattlePassConfig } from "../src/battle-pass";
+import {
+  configureAnalyticsRuntimeDependencies,
+  flushAnalyticsEventsForTest,
+  resetAnalyticsRuntimeDependencies
+} from "../src/analytics";
 import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "../src/config-center";
 import {
   VeilColyseusRoom,
@@ -976,6 +981,60 @@ test("player leave keeps the disconnected timestamp for the departed player and 
   assert.ok(internalRoom.disconnectedAtByPlayerId.get("player-leaving"));
   assert.equal(internalRoom.disconnectedAtByPlayerId.has("player-steady"), false);
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+});
+
+test("session_end analytics records transport disconnects and room disposal duration", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  resetAnalyticsRuntimeDependencies();
+  const room = await createTestRoom(`lifecycle-session-end-${Date.now()}`);
+  const leavingClient = createFakeClient("session-analytics-leave");
+  const disposedClient = createFakeClient("session-analytics-dispose");
+  const analyticsLogs: string[] = [];
+  let nowMs = 1_000;
+
+  configureRoomRuntimeDependencies({
+    now: () => nowMs
+  });
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetAnalyticsRuntimeDependencies();
+    resetRoomRuntimeDependencies();
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, leavingClient, "player-leaving", "connect-analytics-leave");
+  await connectPlayer(room, disposedClient, "player-disposed", "connect-analytics-dispose");
+
+  nowMs = 6_500;
+  room.onLeave(leavingClient);
+  nowMs = 9_250;
+  room.onDispose();
+  await flushAnalyticsEventsForTest({ ANALYTICS_SINK: "stdout" });
+
+  const envelope = analyticsLogs
+    .filter((entry) => entry.startsWith("[Analytics] {"))
+    .map((entry) => JSON.parse(entry.slice("[Analytics] ".length)) as { events: Array<{ name: string; sessionId?: string; payload: Record<string, unknown> }> })
+    .flatMap((entry) => entry.events);
+
+  const leaveEvent = envelope.find(
+    (event) => event.name === "session_end" && event.sessionId === "session-analytics-leave"
+  );
+  const disposeEvent = envelope.find(
+    (event) => event.name === "session_end" && event.sessionId === "session-analytics-dispose"
+  );
+
+  assert.equal(leaveEvent?.payload.disconnectReason, "transport_closed");
+  assert.equal(leaveEvent?.payload.sessionDurationMs, 5_500);
+  assert.equal(disposeEvent?.payload.disconnectReason, "room_disposed");
+  assert.equal(disposeEvent?.payload.sessionDurationMs, 8_250);
 });
 
 test("room disposal after the last client leaves removes it from the active room list", async (t) => {
