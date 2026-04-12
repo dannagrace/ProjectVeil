@@ -32,6 +32,8 @@ export interface ShopProduct {
   wechatPriceFen?: number;
   appleProductId?: string;
   applePriceCents?: number;
+  googleProductId?: string;
+  googlePriceCents?: number;
   enabled: boolean;
   grant: ShopProductGrant;
 }
@@ -279,6 +281,10 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       ...(rawProduct.appleProductId?.trim() ? { appleProductId: rawProduct.appleProductId.trim() } : {}),
       ...(rawProduct.applePriceCents != null
         ? { applePriceCents: normalizePositiveInteger(rawProduct.applePriceCents, `shop product ${productId} applePriceCents`) }
+        : {}),
+      ...(rawProduct.googleProductId?.trim() ? { googleProductId: rawProduct.googleProductId.trim() } : {}),
+      ...(rawProduct.googlePriceCents != null
+        ? { googlePriceCents: normalizePositiveInteger(rawProduct.googlePriceCents, `shop product ${productId} googlePriceCents`) }
         : {}),
       enabled: rawProduct.enabled !== false,
       grant
