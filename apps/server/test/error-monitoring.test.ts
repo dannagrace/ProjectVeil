@@ -69,13 +69,48 @@ test("error monitoring posts a Sentry envelope with structured Project Veil cont
 
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0]?.input, "https://example.ingest.sentry.io/api/42/envelope/");
+  assert.equal(fetchCalls[0]?.init?.method, "POST");
+  assert.equal((fetchCalls[0]?.init?.headers as Record<string, string> | undefined)?.["Content-Type"], "application/x-sentry-envelope");
   const rawBody = String(fetchCalls[0]?.init?.body);
   const [envelopeHeader, itemHeader, payload] = rawBody.split("\n");
-  assert.match(envelopeHeader, /"dsn":"https:\/\/public@example\.ingest\.sentry\.io\/42"/);
-  assert.equal(itemHeader, JSON.stringify({ type: "event" }));
-  assert.match(payload, /"error_code":"persistence_save_failed"/);
-  assert.match(payload, /"roomId":"room-alpha"/);
-  assert.match(payload, /"playerId":"player-7"/);
-  assert.match(payload, /"battleId":"battle-1"/);
-  assert.match(payload, /"release":"abc1234"/);
+  const parsedEnvelopeHeader = JSON.parse(envelopeHeader ?? "{}") as Record<string, string>;
+  const parsedItemHeader = JSON.parse(itemHeader ?? "{}") as Record<string, string>;
+  const parsedPayload = JSON.parse(payload ?? "{}") as Record<string, unknown>;
+
+  assert.match(String(parsedEnvelopeHeader.event_id ?? ""), /^[0-9a-f]{32}$/);
+  assert.equal(parsedEnvelopeHeader.dsn, "https://public@example.ingest.sentry.io/42");
+  assert.match(String(parsedEnvelopeHeader.sent_at ?? ""), /^202\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.deepEqual(parsedItemHeader, { type: "event" });
+  assert.equal(parsedPayload.event_id, parsedEnvelopeHeader.event_id);
+  assert.equal(parsedPayload.platform, "node");
+  assert.equal(parsedPayload.release, "abc1234");
+  assert.equal(parsedPayload.level, "error");
+  assert.deepEqual(parsedPayload.message, {
+    formatted: "Room state persistence failed and the action was rolled back."
+  });
+  assert.deepEqual(parsedPayload.tags, {
+    error_code: "persistence_save_failed",
+    feature_area: "runtime",
+    owner_area: "multiplayer",
+    surface: "colyseus-room",
+    action: "world.move"
+  });
+  assert.deepEqual(parsedPayload.user, {
+    id: "player-7"
+  });
+  assert.deepEqual(parsedPayload.contexts, {
+    project_veil: {
+      candidateRevision: "abc1234",
+      roomId: "room-alpha",
+      playerId: "player-7",
+      requestId: "req-1",
+      action: "world.move",
+      route: null,
+      statusCode: null,
+      roomDay: 4,
+      battleId: "battle-1",
+      heroId: "hero-2",
+      clientVersion: null
+    }
+  });
 });
