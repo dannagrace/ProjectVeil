@@ -371,11 +371,21 @@ export function registerClientErrorRoutes(
         return;
       }
 
-      if (error instanceof PayloadValidationError || error instanceof SyntaxError) {
+      if (error instanceof PayloadValidationError) {
         sendJson(response, 400, {
           error: {
-            code: error instanceof SyntaxError ? "invalid_json" : error.name,
-            message: error instanceof SyntaxError ? "Request body must be valid JSON" : error.message
+            code: error.name,
+            message: error.message
+          }
+        });
+        return;
+      }
+
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
           }
         });
         return;

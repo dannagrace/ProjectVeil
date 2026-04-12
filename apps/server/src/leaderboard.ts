@@ -3,6 +3,7 @@ import { getRankDivisionForRating, getTierForRating } from "../../../packages/sh
 import { getCurrentAndPreviousWeeklyEntries } from "./competitive-season";
 import type { RoomSnapshotStore } from "./persistence";
 import { isLeaderboardFrozen, isLeaderboardHidden } from "./leaderboard-anti-abuse";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -25,17 +26,56 @@ const TIER_THRESHOLDS = [
   { tier: "diamond", minRating: 1800, maxRating: null }
 ] as const;
 
+function readHeaderValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0]?.trim() || null;
+  }
+  return value?.trim() || null;
+}
+
+function isAdminAuthorized(request: IncomingMessage): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  return Boolean(adminToken) && readHeaderValue(request.headers["x-veil-admin-token"]) === adminToken;
+}
+
+function readLimit(request: IncomingMessage, fallback = 100): number {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const rawLimit = Number(url.searchParams.get("limit"));
+  if (!Number.isFinite(rawLimit)) {
+    return fallback;
+  }
+  return Math.min(100, Math.max(1, Math.floor(rawLimit)));
+}
+
+function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    request.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
 export function registerLeaderboardRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
+    post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   },
   store: RoomSnapshotStore | null
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Veil-Admin-Token");
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
@@ -110,6 +150,103 @@ export function registerLeaderboardRoutes(
       }
       const account = await store.loadPlayerAccount(playerId);
       sendJson(response, 200, { history: account?.seasonHistory ?? [] });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/leaderboard/seasons/:seasonId", async (request, response) => {
+    try {
+      const url = request.url ?? "/";
+      const match = url.match(/\/api\/leaderboard\/seasons\/([^/?]+)/);
+      const seasonId = match?.[1] ? decodeURIComponent(match[1]) : "";
+      if (!seasonId) {
+        sendJson(response, 400, { error: { code: "invalid_season_id", message: "Season id is required" } });
+        return;
+      }
+      if (!store?.listLeaderboardSeasonArchive) {
+        sendJson(response, 200, { seasonId, rankings: [] });
+        return;
+      }
+
+      sendJson(response, 200, {
+        seasonId,
+        rankings: await store.listLeaderboardSeasonArchive(seasonId, readLimit(request))
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/admin/leaderboard/season-rollover", async (request, response) => {
+    try {
+      const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+      if (!adminToken) {
+        sendJson(response, 503, { error: { code: "not_configured", message: "Admin token not configured" } });
+        return;
+      }
+      if (!isAdminAuthorized(request)) {
+        sendJson(response, 403, { error: { code: "forbidden", message: "Invalid admin token" } });
+        return;
+      }
+      if (!store) {
+        sendJson(response, 503, { error: { code: "no_store", message: "No persistence store available" } });
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        sendJson(response, 400, { error: { code: "invalid_request", message: "Request body must be an object" } });
+        return;
+      }
+      const seasonId = String((body as Record<string, unknown>).seasonId ?? "").trim();
+      const nextSeasonId = String((body as Record<string, unknown>).nextSeasonId ?? "").trim();
+      if (!seasonId || !nextSeasonId) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_request",
+            message: "seasonId and nextSeasonId are required"
+          }
+        });
+        return;
+      }
+      if (seasonId === nextSeasonId) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_request",
+            message: "nextSeasonId must differ from seasonId"
+          }
+        });
+        return;
+      }
+
+      const currentSeason = await store.getCurrentSeason();
+      if (!currentSeason) {
+        sendJson(response, 404, { error: { code: "no_active_season", message: "No active season found" } });
+        return;
+      }
+      if (currentSeason.seasonId !== seasonId && currentSeason.seasonId !== nextSeasonId) {
+        sendJson(response, 409, {
+          error: {
+            code: "season_rollover_conflict",
+            message: `Active season ${currentSeason.seasonId} does not match rollover request`
+          }
+        });
+        return;
+      }
+
+      const closeSummary = await store.closeSeason(seasonId);
+      const nextSeason = currentSeason.seasonId === nextSeasonId ? currentSeason : await store.createSeason(nextSeasonId);
+      sendJson(response, 200, {
+        rolledOver: currentSeason.seasonId === seasonId,
+        seasonId,
+        nextSeason,
+        archive:
+          store.listLeaderboardSeasonArchive != null
+            ? await store.listLeaderboardSeasonArchive(seasonId, 100)
+            : [],
+        summary: closeSummary
+      });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

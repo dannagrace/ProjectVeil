@@ -368,11 +368,19 @@ export function normalizePlayerAccountReadModel(
     .filter((entry): entry is SeasonArchiveEntry => Boolean(entry?.seasonId && entry?.peakDivision && entry?.finalDivision))
     .map((entry) => ({
       seasonId: entry.seasonId.trim(),
+      ...(Number.isFinite(entry.rankPosition) ? { rankPosition: Math.max(1, Math.floor(entry.rankPosition!)) } : {}),
+      ...(Number.isFinite(entry.totalPlayers) ? { totalPlayers: Math.max(1, Math.floor(entry.totalPlayers!)) } : {}),
+      ...(Number.isFinite(entry.finalRating) ? { finalRating: Math.max(0, Math.floor(entry.finalRating!)) } : {}),
+      ...(Number.isFinite(entry.peakRating) ? { peakRating: Math.max(0, Math.floor(entry.peakRating!)) } : {}),
       peakDivision: entry.peakDivision,
       finalDivision: entry.finalDivision,
       rewardTier: entry.rewardTier,
+      ...(typeof entry.rankPercentile === "number" && Number.isFinite(entry.rankPercentile)
+        ? { rankPercentile: Math.max(0, Math.min(1, entry.rankPercentile)) }
+        : {}),
       rewardClaimed: entry.rewardClaimed === true,
-      archivedAt: normalizeTimestamp(entry.archivedAt) ?? new Date(0).toISOString()
+      archivedAt: normalizeTimestamp(entry.archivedAt) ?? new Date(0).toISOString(),
+      ...(normalizeTimestamp(entry.rewardsGrantedAt) ? { rewardsGrantedAt: normalizeTimestamp(entry.rewardsGrantedAt)! } : {})
     }))
     .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt) || left.seasonId.localeCompare(right.seasonId));
   let rankedWeeklyProgress: RankedWeeklyProgress | undefined;

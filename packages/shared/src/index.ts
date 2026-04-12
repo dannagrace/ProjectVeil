@@ -23,6 +23,7 @@ export * from "./event-log.ts";
 export * from "./feature-flags.ts";
 export * from "./feedback.ts";
 export * from "./guilds.ts";
+export * from "./guild-chat.ts";
 export * from "./hero-skills.ts";
 export * from "./hero-progression.ts";
 export * from "./map.ts";

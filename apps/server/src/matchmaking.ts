@@ -12,6 +12,7 @@ import {
   type MatchmakingRequest
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
+import { sendMobilePushNotification } from "./mobile-push";
 import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "./redis";
@@ -38,12 +39,20 @@ interface MatchmakingRuntimeDependencies {
     data: Record<string, unknown>,
     options?: { store?: RoomSnapshotStore | null }
   ): Promise<boolean>;
+  sendMobilePushNotification(
+    playerId: string,
+    templateKey: "match_found",
+    data: Record<string, unknown>,
+    options?: { store?: RoomSnapshotStore | null }
+  ): Promise<boolean>;
 }
 
 const matchmakingRateLimitCounters = new Map<string, number[]>();
 const defaultMatchmakingRuntimeDependencies: MatchmakingRuntimeDependencies = {
   sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
-    sendWechatSubscribeMessage(playerId, templateKey, data, options)
+    sendWechatSubscribeMessage(playerId, templateKey, data, options),
+  sendMobilePushNotification: (playerId, templateKey, data, options) =>
+    sendMobilePushNotification(playerId, templateKey, data, options)
 };
 let matchmakingRuntimeDependencies: MatchmakingRuntimeDependencies = defaultMatchmakingRuntimeDependencies;
 
@@ -736,8 +745,18 @@ async function notifyPlayersAboutMatchFound(
             },
             { store }
           );
+          await matchmakingRuntimeDependencies.sendMobilePushNotification(
+            playerId,
+            "match_found",
+            {
+              mapName: describeMatchmakingMapName(account?.lastRoomId ?? result.roomId),
+              opponentName: opponentAccount?.displayName?.trim() || opponentId,
+              roomId: result.roomId
+            },
+            { store }
+          );
         } catch (error) {
-          console.error("[matchmaking] Failed to send WeChat match-found notification", {
+          console.error("[matchmaking] Failed to send match-found notification", {
             roomId: result.roomId,
             playerId,
             opponentId,

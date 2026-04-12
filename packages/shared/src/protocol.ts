@@ -3,6 +3,8 @@ import type {
   BattleState,
   CosmeticId,
   EquippedCosmetics,
+  FriendLeaderboardEntry,
+  GroupChallenge,
   MovementPlan,
   Vec2,
   WorldAction,
@@ -269,6 +271,22 @@ export type ServerMessage =
       type: "guild.roster";
       requestId: string;
       roster: GuildRosterView;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      items: FriendLeaderboardEntry[];
+      friendCount: number;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId: string;
+      shareUrl: string;
+      shareMessage: string;
+      challenge?: GroupChallenge;
+      challengeToken?: string;
     }
   | {
       type: "COSMETIC_APPLIED";

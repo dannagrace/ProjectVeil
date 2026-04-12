@@ -29,7 +29,15 @@ Non-sensitive values stay in env vars:
 
 - Network and infra coordinates such as `VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_BACKUP_S3_*`, `REDIS_URL`
 - Runtime tuning such as TTLs, rate limits, and feature toggles
-- Public identifiers such as `WECHAT_APP_ID`, `VEIL_WECHAT_PAY_APP_ID`, merchant ids, notify URLs, and certificate serials
+- Public identifiers such as `WECHAT_APP_ID`, `VEIL_WECHAT_PAY_APP_ID`, merchant ids, notify URLs, certificate serials, `VEIL_APNS_KEY_ID`, `VEIL_APNS_TEAM_ID`, `VEIL_APNS_TOPIC`, `VEIL_APNS_HOST`
+- Mobile push routing knobs such as `VEIL_APNS_USE_SANDBOX` and `VEIL_FCM_SEND_URL`
+
+Additional sensitive mobile-push secrets belong in the same secret bundle:
+
+| Key | Used by | Purpose | Rotation |
+| --- | --- | --- | --- |
+| `VEIL_APNS_PRIVATE_KEY` | `apps/server/src/mobile-push.ts` | APNs ES256 signing key for provider JWT auth | On compromise or Apple key rotation |
+| `VEIL_FCM_SERVER_KEY` | `apps/server/src/mobile-push.ts` | FCM server credential for Android push sends | On compromise or Firebase project key rotation |
 
 ## Rotation Policy
 

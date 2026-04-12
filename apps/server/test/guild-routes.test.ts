@@ -14,6 +14,48 @@ async function startGuildRouteServer(store: RoomSnapshotStore, port: number): Pr
   return server;
 }
 
+async function readSseEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs = 5_000
+): Promise<{ event: string; data: unknown }> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("sse_timeout")), remainingMs))
+    ]);
+    if (chunk.done) {
+      throw new Error("sse_stream_closed");
+    }
+
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const separatorIndex = buffer.indexOf("\n\n");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const rawEvent = buffer.slice(0, separatorIndex);
+    buffer = buffer.slice(separatorIndex + 2);
+    const lines = rawEvent.split("\n");
+    const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
+    const dataLine = lines.find((line) => line.startsWith("data:"))?.slice("data:".length).trim();
+    if (!event || !dataLine) {
+      continue;
+    }
+
+    return {
+      event,
+      data: JSON.parse(dataLine)
+    };
+  }
+
+  throw new Error("sse_timeout");
+}
+
 test("guild routes create, list, fetch, and expose rosters", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
@@ -725,4 +767,309 @@ test("guild routes reject duplicate tags, invalid joins, and invalid leaves", as
   const outsiderLeavePayload = (await outsiderLeave.json()) as { error: { code: string } };
   assert.equal(outsiderLeave.status, 409);
   assert.equal(outsiderLeavePayload.error.code, "guild_membership_invalid");
+});
+
+test("guild chat routes send messages, page history, and enforce delete authorization", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 44500 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "chat-founder", displayName: "Chat Founder" });
+  const recruitSession = issueGuestAuthSession({ playerId: "chat-recruit", displayName: "Chat Recruit" });
+  const outsiderSession = issueGuestAuthSession({ playerId: "chat-outsider", displayName: "Chat Outsider" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Chat Ops", tag: "CHAT" })
+  });
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+  assert.equal(created.status, 201);
+
+  const joined = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  assert.equal(joined.status, 200);
+
+  const founderMessageResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Hold the west gate." })
+  });
+  const founderMessagePayload = (await founderMessageResponse.json()) as { message: { messageId: string; content: string } };
+  assert.equal(founderMessageResponse.status, 201);
+  assert.equal(founderMessagePayload.message.content, "Hold the west gate.");
+
+  const recruitMessageResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${recruitSession.token}`
+    },
+    body: JSON.stringify({ content: "Reinforcements are two minutes out." })
+  });
+  const recruitMessagePayload = (await recruitMessageResponse.json()) as { message: { messageId: string } };
+  assert.equal(recruitMessageResponse.status, 201);
+
+  const latestMessageResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Fallback to the inner wall if needed." })
+  });
+  assert.equal(latestMessageResponse.status, 201);
+
+  const firstPage = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat?limit=2`, {
+    headers: {
+      Authorization: `Bearer ${founderSession.token}`
+    }
+  });
+  const firstPagePayload = (await firstPage.json()) as {
+    items: Array<{ messageId: string; content: string }>;
+    nextCursor?: string;
+  };
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPagePayload.items.length, 2);
+  assert.deepEqual(firstPagePayload.items.map((message) => message.content), [
+    "Fallback to the inner wall if needed.",
+    "Reinforcements are two minutes out."
+  ]);
+  assert.equal(typeof firstPagePayload.nextCursor, "string");
+
+  const secondPage = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat?before=${encodeURIComponent(firstPagePayload.nextCursor ?? "")}&limit=2`,
+    {
+      headers: {
+        Authorization: `Bearer ${founderSession.token}`
+      }
+    }
+  );
+  const secondPagePayload = (await secondPage.json()) as { items: Array<{ content: string }> };
+  assert.equal(secondPage.status, 200);
+  assert.deepEqual(secondPagePayload.items.map((message) => message.content), ["Hold the west gate."]);
+
+  const forbiddenDelete = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat/${founderMessagePayload.message.messageId}/delete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${recruitSession.token}`
+      }
+    }
+  );
+  const forbiddenDeletePayload = (await forbiddenDelete.json()) as { error: { code: string } };
+  assert.equal(forbiddenDelete.status, 403);
+  assert.equal(forbiddenDeletePayload.error.code, "guild_chat_forbidden");
+
+  const outsiderHistory = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    headers: {
+      Authorization: `Bearer ${outsiderSession.token}`
+    }
+  });
+  assert.equal(outsiderHistory.status, 403);
+
+  const ownerDelete = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat/${recruitMessagePayload.message.messageId}/delete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${founderSession.token}`
+      }
+    }
+  );
+  assert.equal(ownerDelete.status, 200);
+
+  const ownDelete = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat/${founderMessagePayload.message.messageId}/delete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${founderSession.token}`
+      }
+    }
+  );
+  assert.equal(ownDelete.status, 200);
+});
+
+test("guild chat routes validate messages and rate limit bursts", async (t) => {
+  resetGuestAuthSessions();
+  const previousRateLimitMax = process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX;
+  process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX = "2";
+  const store = createMemoryRoomSnapshotStore();
+  const port = 44600 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "chat-rate-founder", displayName: "Rate Founder" });
+
+  t.after(async () => {
+    if (previousRateLimitMax == null) {
+      delete process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX;
+    } else {
+      process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX = previousRateLimitMax;
+    }
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Rate Chat", tag: "RATE" })
+  });
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+  assert.equal(created.status, 201);
+
+  const invalidHtml = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "<script>alert('x')</script>" })
+  });
+  assert.equal(invalidHtml.status, 400);
+
+  const tooLong = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "x".repeat(501) })
+  });
+  assert.equal(tooLong.status, 400);
+
+  for (const content of ["Alpha", "Bravo"]) {
+    const response = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${founderSession.token}`
+      },
+      body: JSON.stringify({ content })
+    });
+    assert.equal(response.status, 201);
+  }
+
+  const rateLimited = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Charlie" })
+  });
+  const rateLimitedPayload = (await rateLimited.json()) as { error: { code: string; message: string } };
+  assert.equal(rateLimited.status, 429);
+  assert.equal(rateLimitedPayload.error.code, "guild_chat_rate_limited");
+  assert.match(rateLimitedPayload.error.message, /retry after/i);
+});
+
+test("guild chat stream pushes live message and delete events to online guild members", async (t) => {
+  resetGuestAuthSessions();
+  const store = createMemoryRoomSnapshotStore();
+  const port = 44700 + Math.floor(Math.random() * 1000);
+  const server = await startGuildRouteServer(store, port);
+  const founderSession = issueGuestAuthSession({ playerId: "chat-stream-founder", displayName: "Stream Founder" });
+  const recruitSession = issueGuestAuthSession({ playerId: "chat-stream-recruit", displayName: "Stream Recruit" });
+  const controller = new AbortController();
+
+  t.after(async () => {
+    controller.abort();
+    resetGuestAuthSessions();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Stream Chat", tag: "LIVE" })
+  });
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+  assert.equal(created.status, 201);
+
+  const joined = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  assert.equal(joined.status, 200);
+
+  const streamResponse = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat/stream`,
+    {
+      headers: {
+        Authorization: `Bearer ${recruitSession.token}`,
+        Accept: "text/event-stream"
+      },
+      signal: controller.signal
+    }
+  );
+  assert.equal(streamResponse.status, 200);
+  assert.ok(streamResponse.body);
+  const reader = streamResponse.body.getReader();
+  t.after(async () => {
+    await reader.cancel().catch(() => undefined);
+  });
+
+  const createdMessage = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "All squads report in." })
+  });
+  const createdMessagePayload = (await createdMessage.json()) as { message: { messageId: string; content: string } };
+  assert.equal(createdMessage.status, 201);
+
+  const pushedMessage = await readSseEvent(reader);
+  assert.equal(pushedMessage.event, "guild.chat.message");
+  assert.equal(
+    (pushedMessage.data as { message?: { content?: string } }).message?.content,
+    "All squads report in."
+  );
+
+  const deletedMessage = await fetch(
+    `http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat/${createdMessagePayload.message.messageId}/delete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${founderSession.token}`
+      }
+    }
+  );
+  assert.equal(deletedMessage.status, 200);
+
+  const pushedDelete = await readSseEvent(reader);
+  assert.equal(pushedDelete.event, "guild.chat.deleted");
+  assert.equal(
+    (pushedDelete.data as { messageId?: string }).messageId,
+    createdMessagePayload.message.messageId
+  );
 });

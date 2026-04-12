@@ -37,6 +37,8 @@ interface RuntimeObservabilityCounters {
   battleActionsTotal: number;
   websocketActionRateLimitedTotal: number;
   websocketActionKickTotal: number;
+  socialFriendLeaderboardRequestsTotal: number;
+  socialShareActivityRequestsTotal: number;
 }
 
 interface AuthObservabilityCounters {
@@ -245,13 +247,15 @@ interface RuntimeHealthPayload {
     activeBattleCount: number;
     heroCount: number;
     gameplayTraffic: {
-        connectMessagesTotal: number;
-        worldActionsTotal: number;
-        battleActionsTotal: number;
-        actionMessagesTotal: number;
-        websocketActionRateLimitedTotal: number;
-        websocketActionKickTotal: number;
-      };
+      connectMessagesTotal: number;
+      worldActionsTotal: number;
+      battleActionsTotal: number;
+      actionMessagesTotal: number;
+      websocketActionRateLimitedTotal: number;
+      websocketActionKickTotal: number;
+      socialFriendLeaderboardRequestsTotal: number;
+      socialShareActivityRequestsTotal: number;
+    };
     auth: {
       reconnect: {
         pendingWindowCount: number;
@@ -395,7 +399,9 @@ const runtimeObservability: RuntimeObservabilityState = {
     worldActionsTotal: 0,
     battleActionsTotal: 0,
     websocketActionRateLimitedTotal: 0,
-    websocketActionKickTotal: 0
+    websocketActionKickTotal: 0,
+    socialFriendLeaderboardRequestsTotal: 0,
+    socialShareActivityRequestsTotal: 0
   },
   prometheus: {
     dbBackupLastSuccessTimestamp: null,
@@ -616,7 +622,9 @@ function buildHealthPayload(
         battleActionsTotal: runtimeObservability.counters.battleActionsTotal,
         actionMessagesTotal,
         websocketActionRateLimitedTotal: runtimeObservability.counters.websocketActionRateLimitedTotal,
-        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal
+        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal,
+        socialFriendLeaderboardRequestsTotal: runtimeObservability.counters.socialFriendLeaderboardRequestsTotal,
+        socialShareActivityRequestsTotal: runtimeObservability.counters.socialShareActivityRequestsTotal
       },
       auth: {
         reconnect: {
@@ -881,6 +889,7 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
         `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
         `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
         `ws_action_rate_limit violations=${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal} kicks=${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
+        `social friend_leaderboard=${health.runtime.gameplayTraffic.socialFriendLeaderboardRequestsTotal} share_activity=${health.runtime.gameplayTraffic.socialShareActivityRequestsTotal}`,
         `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
         `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
       ],
@@ -1124,6 +1133,12 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_ws_action_kicks_total Total client disconnects triggered by WebSocket action rate-limit violations.",
     "# TYPE veil_ws_action_kicks_total counter",
     `veil_ws_action_kicks_total ${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
+    "# HELP veil_social_friend_leaderboard_requests_total Total friend leaderboard websocket requests processed.",
+    "# TYPE veil_social_friend_leaderboard_requests_total counter",
+    `veil_social_friend_leaderboard_requests_total ${health.runtime.gameplayTraffic.socialFriendLeaderboardRequestsTotal}`,
+    "# HELP veil_social_share_activity_requests_total Total share activity websocket requests processed.",
+    "# TYPE veil_social_share_activity_requests_total counter",
+    `veil_social_share_activity_requests_total ${health.runtime.gameplayTraffic.socialShareActivityRequestsTotal}`,
     "# HELP veil_reconnect_backlog_count Players currently waiting inside the Colyseus reconnection window.",
     "# TYPE veil_reconnect_backlog_count gauge",
     `veil_reconnect_backlog_count ${health.runtime.auth.reconnect.pendingWindowCount}`,
@@ -1765,6 +1780,14 @@ export function recordWebSocketActionRateLimited(): void {
 
 export function recordWebSocketActionKick(): void {
   runtimeObservability.counters.websocketActionKickTotal += 1;
+}
+
+export function recordSocialFriendLeaderboardRequest(): void {
+  runtimeObservability.counters.socialFriendLeaderboardRequestsTotal += 1;
+}
+
+export function recordSocialShareActivityRequest(): void {
+  runtimeObservability.counters.socialShareActivityRequestsTotal += 1;
 }
 
 export function setAuthGuestSessionCount(count: number): void {

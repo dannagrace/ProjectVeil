@@ -248,11 +248,17 @@ export interface SeasonRewardConfig {
 
 export interface SeasonArchiveEntry {
   seasonId: string;
+  rankPosition?: number;
+  totalPlayers?: number;
+  finalRating?: number;
+  peakRating?: number;
   peakDivision: RankDivisionId;
   finalDivision: RankDivisionId;
   rewardTier: PlayerTier;
+  rankPercentile?: number;
   rewardClaimed: boolean;
   archivedAt: string;
+  rewardsGrantedAt?: string;
 }
 
 export interface WeeklyLeaderboardEntry {
@@ -306,6 +312,15 @@ export interface NotificationPreferences {
   groupChallenge: boolean;
   friendLeaderboard: boolean;
   updatedAt?: string;
+}
+
+export type MobilePushPlatform = "ios" | "android";
+
+export interface MobilePushTokenRegistration {
+  platform: MobilePushPlatform;
+  token: string;
+  registeredAt: string;
+  updatedAt: string;
 }
 
 export interface HeroProgression {

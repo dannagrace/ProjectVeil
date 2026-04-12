@@ -30,12 +30,17 @@ export interface ShopProduct {
   type: ShopProductType;
   price: number;
   wechatPriceFen?: number;
+  appleProductId?: string;
+  applePriceCents?: number;
+  googleProductId?: string;
+  googlePriceCents?: number;
   enabled: boolean;
   grant: ShopProductGrant;
 }
 
 interface ShopConfigDocument {
   products?: Partial<ShopProduct>[] | null;
+  purchaseControls?: Partial<ShopPurchaseControlsConfigDocument> | null;
 }
 
 interface ShopProductsResponse {
@@ -43,8 +48,23 @@ interface ShopProductsResponse {
   rotation: ShopRotation;
 }
 
+interface ShopPurchaseControlsConfigDocument {
+  limitTimezone?: string | null;
+  dailyGemSpendCap?: number | null;
+  highValuePurchaseThreshold?: number | null;
+  perItemDailyQuantityLimits?: Record<string, number | null> | null;
+}
+
+export interface ShopPurchaseControls {
+  limitTimezone: string;
+  dailyGemSpendCap: number;
+  highValuePurchaseThreshold: number;
+  perItemDailyQuantityLimits: Record<string, number>;
+}
+
 export interface RegisterShopRoutesOptions {
   products?: Partial<ShopProduct>[];
+  purchaseControls?: Partial<ShopPurchaseControlsConfigDocument>;
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -57,6 +77,16 @@ class PayloadTooLargeError extends Error {
   constructor(maxBytes: number) {
     super(`Request body exceeds ${maxBytes} bytes`);
     this.name = "payload_too_large";
+  }
+}
+
+class PurchaseLimitExceededError extends Error {
+  constructor(
+    readonly limitType: "daily_gem_spend_cap" | "daily_item_quantity_limit",
+    readonly resetAt: string
+  ) {
+    super(`Purchase limit exceeded: ${limitType}`);
+    this.name = "purchase_limit_exceeded";
   }
 }
 
@@ -122,6 +152,10 @@ function normalizePositiveInteger(value: number, field: string, allowZero = fals
   return normalized;
 }
 
+function normalizeNonNegativeInteger(value: number, field: string): number {
+  return normalizePositiveInteger(value, field, true);
+}
+
 function normalizeResourceLedger(resources?: Partial<ResourceLedger> | null): ResourceLedger {
   return {
     gold: Math.max(0, Math.floor(resources?.gold ?? 0)),
@@ -151,6 +185,39 @@ function normalizeGrant(rawGrant?: ShopProductGrant | null): ShopProductGrant {
     ...(cosmeticIds.length > 0 ? { cosmeticIds } : {}),
     ...(rawGrant?.resources ? { resources: normalizeResourceLedger(rawGrant.resources) } : {}),
     ...(rawGrant?.seasonPassPremium === true ? { seasonPassPremium: true } : {})
+  };
+}
+
+function normalizeTimeZone(value?: string | null): string {
+  const normalized = value?.trim() || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: normalized }).format(new Date());
+  } catch {
+    throw new Error(`shop purchase controls limitTimezone is invalid: ${normalized}`);
+  }
+  return normalized;
+}
+
+function normalizePerItemDailyQuantityLimits(value?: Record<string, number | null> | null): Record<string, number> {
+  const entries = Object.entries(value ?? {}).flatMap(([productId, rawLimit]) => {
+    const normalizedProductId = productId.trim();
+    if (!normalizedProductId) {
+      return [];
+    }
+    return [[normalizedProductId, normalizeNonNegativeInteger(rawLimit ?? Number.NaN, `daily quantity limit for ${normalizedProductId}`)] as const];
+  });
+  return Object.fromEntries(entries);
+}
+
+function normalizePurchaseControls(rawControls?: Partial<ShopPurchaseControlsConfigDocument> | null): ShopPurchaseControls {
+  return {
+    limitTimezone: normalizeTimeZone(rawControls?.limitTimezone),
+    dailyGemSpendCap: normalizeNonNegativeInteger(rawControls?.dailyGemSpendCap ?? 0, "shop purchase controls dailyGemSpendCap"),
+    highValuePurchaseThreshold: normalizeNonNegativeInteger(
+      rawControls?.highValuePurchaseThreshold ?? 0,
+      "shop purchase controls highValuePurchaseThreshold"
+    ),
+    perItemDailyQuantityLimits: normalizePerItemDailyQuantityLimits(rawControls?.perItemDailyQuantityLimits)
   };
 }
 
@@ -211,6 +278,14 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       ...(rawProduct.wechatPriceFen != null
         ? { wechatPriceFen: normalizePositiveInteger(rawProduct.wechatPriceFen, `shop product ${productId} wechatPriceFen`) }
         : {}),
+      ...(rawProduct.appleProductId?.trim() ? { appleProductId: rawProduct.appleProductId.trim() } : {}),
+      ...(rawProduct.applePriceCents != null
+        ? { applePriceCents: normalizePositiveInteger(rawProduct.applePriceCents, `shop product ${productId} applePriceCents`) }
+        : {}),
+      ...(rawProduct.googleProductId?.trim() ? { googleProductId: rawProduct.googleProductId.trim() } : {}),
+      ...(rawProduct.googlePriceCents != null
+        ? { googlePriceCents: normalizePositiveInteger(rawProduct.googlePriceCents, `shop product ${productId} googlePriceCents`) }
+        : {}),
       enabled: rawProduct.enabled !== false,
       grant
     };
@@ -220,6 +295,11 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
 export function resolveShopProducts(options?: RegisterShopRoutesOptions): ShopProduct[] {
   const configuredProducts = options?.products ?? (shopConfigDocument as ShopConfigDocument).products;
   return normalizeShopProducts(configuredProducts);
+}
+
+export function resolveShopPurchaseControls(options?: RegisterShopRoutesOptions): ShopPurchaseControls {
+  const configuredControls = options?.purchaseControls ?? (shopConfigDocument as ShopConfigDocument).purchaseControls;
+  return normalizePurchaseControls(configuredControls);
 }
 
 function buildRotationProducts(rotation = resolveWeeklyShopRotation()): ShopProduct[] {
@@ -292,6 +372,107 @@ function findProductById(products: ShopProduct[], productId: string): ShopProduc
   return products.find((product) => product.productId === normalizedProductId) ?? null;
 }
 
+function hasPurchaseHistoryStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "purchaseShopProduct" | "listPlayerPurchaseHistory">> {
+  return Boolean(store?.purchaseShopProduct && store.listPlayerPurchaseHistory);
+}
+
+function parseGmtOffsetMinutes(value: string): number {
+  if (value === "GMT") {
+    return 0;
+  }
+  const match = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(value);
+  if (!match) {
+    throw new Error(`Unsupported GMT offset format: ${value}`);
+  }
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] ?? "0");
+  return sign * (hours * 60 + minutes);
+}
+
+function getTimeZoneOffsetMinutes(at: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "shortOffset",
+    hour: "2-digit"
+  });
+  const offsetPart = formatter.formatToParts(at).find((part) => part.type === "timeZoneName")?.value;
+  if (!offsetPart) {
+    throw new Error(`Unable to resolve timezone offset for ${timeZone}`);
+  }
+  return parseGmtOffsetMinutes(offsetPart);
+}
+
+function getDatePartsInTimeZone(at: Date, timeZone: string): { year: number; month: number; day: number } {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = formatter.formatToParts(at);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+  return { year, month, day };
+}
+
+function getUtcInstantForTimeZoneMidnight(year: number, month: number, day: number, timeZone: string): Date {
+  const guess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  const offsetMinutes = getTimeZoneOffsetMinutes(guess, timeZone);
+  return new Date(guess.getTime() - offsetMinutes * 60_000);
+}
+
+function getCurrentPurchaseLimitWindow(referenceAt: Date, timeZone: string): { from: string; resetAt: string } {
+  const { year, month, day } = getDatePartsInTimeZone(referenceAt, timeZone);
+  const start = getUtcInstantForTimeZoneMidnight(year, month, day, timeZone);
+  const reset = getUtcInstantForTimeZoneMidnight(year, month, day + 1, timeZone);
+  return {
+    from: start.toISOString(),
+    resetAt: reset.toISOString()
+  };
+}
+
+async function enforcePurchaseLimits(input: {
+  store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPlayerPurchaseHistory">>;
+  playerId: string;
+  productId: string;
+  quantity: number;
+  totalPrice: number;
+  controls: ShopPurchaseControls;
+}): Promise<void> {
+  const itemLimit = input.controls.perItemDailyQuantityLimits[input.productId] ?? 0;
+  if (input.controls.dailyGemSpendCap <= 0 && itemLimit <= 0) {
+    return;
+  }
+
+  const window = getCurrentPurchaseLimitWindow(new Date(), input.controls.limitTimezone);
+  const history = await input.store.listPlayerPurchaseHistory(input.playerId, {
+    from: window.from,
+    limit: 10_000,
+    offset: 0
+  });
+
+  if (input.controls.dailyGemSpendCap > 0) {
+    const currentSpend = history.items.reduce((sum, item) => sum + item.amount, 0);
+    if (currentSpend + input.totalPrice > input.controls.dailyGemSpendCap) {
+      throw new PurchaseLimitExceededError("daily_gem_spend_cap", window.resetAt);
+    }
+  }
+
+  if (itemLimit > 0) {
+    const currentQuantity = history.items
+      .filter((item) => item.itemId === input.productId)
+      .reduce((sum, item) => sum + item.quantity, 0);
+    if (currentQuantity + input.quantity > itemLimit) {
+      throw new PurchaseLimitExceededError("daily_item_quantity_limit", window.resetAt);
+    }
+  }
+}
+
 export function registerShopRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -302,6 +483,7 @@ export function registerShopRoutes(
   options: RegisterShopRoutesOptions = {}
 ): void {
   const baseProducts = resolveShopProducts(options);
+  const purchaseControls = resolveShopPurchaseControls(options);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -332,7 +514,7 @@ export function registerShopRoutes(
       return;
     }
 
-    if (!store?.purchaseShopProduct) {
+    if (!hasPurchaseHistoryStore(store)) {
       sendJson(response, 503, {
         error: {
           code: "shop_persistence_unavailable",
@@ -407,6 +589,15 @@ export function registerShopRoutes(
         productId: product.productId
       };
 
+      await enforcePurchaseLimits({
+        store,
+        playerId: authSession.playerId,
+        productId: product.productId,
+        quantity,
+        totalPrice: product.price * quantity,
+        controls: purchaseControls
+      });
+
       const result = await store.purchaseShopProduct(authSession.playerId, {
         purchaseId,
         productId: product.productId,
@@ -434,6 +625,23 @@ export function registerShopRoutes(
           totalPrice: result.totalPrice
         }
       });
+      if (
+        purchaseControls.highValuePurchaseThreshold > 0 &&
+        result.totalPrice >= purchaseControls.highValuePurchaseThreshold
+      ) {
+        emitAnalyticsEvent("purchase_high_value_alert", {
+          playerId: authSession.playerId,
+          payload: {
+            purchaseId: result.purchaseId,
+            productId: result.productId,
+            quantity: result.quantity,
+            totalPrice: result.totalPrice,
+            threshold: purchaseControls.highValuePurchaseThreshold,
+            paymentMethod: "gems",
+            status: "completed"
+          }
+        });
+      }
       sendJson(response, 200, result);
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -446,6 +654,18 @@ export function registerShopRoutes(
           error: {
             code: "invalid_json",
             message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
+
+      if (error instanceof PurchaseLimitExceededError) {
+        sendJson(response, 429, {
+          error: {
+            code: error.name,
+            message: error.message,
+            limitType: error.limitType,
+            resetAt: error.resetAt
           }
         });
         return;

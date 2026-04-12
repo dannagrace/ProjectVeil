@@ -66,9 +66,21 @@ function createShopWorldSnapshot(): RoomPersistenceSnapshot {
   };
 }
 
-async function startShopRouteServer(port: number, store: MemoryRoomSnapshotStore, products: Partial<ShopProduct>[]): Promise<Server> {
+async function startShopRouteServer(
+  port: number,
+  store: MemoryRoomSnapshotStore,
+  products: Partial<ShopProduct>[],
+  options: {
+    purchaseControls?: {
+      limitTimezone?: string;
+      dailyGemSpendCap?: number;
+      highValuePurchaseThreshold?: number;
+      perItemDailyQuantityLimits?: Record<string, number>;
+    };
+  } = {}
+): Promise<Server> {
   const transport = new WebSocketTransport();
-  registerShopRoutes(transport.getExpressApp() as never, store, { products });
+  registerShopRoutes(transport.getExpressApp() as never, store, { products, purchaseControls: options.purchaseControls });
   const server = new Server({ transport });
   await server.listen(port, "127.0.0.1");
   return server;
@@ -399,4 +411,184 @@ test("shop purchase rejects insufficient gems without debiting or granting", asy
   assert.deepEqual(archives[0]?.hero.loadout.inventory, []);
   assert.equal(purchaseFailedEvent?.payload.paymentMethod, "gems");
   assert.equal(purchaseFailedEvent?.payload.failureReason, "insufficient_gems");
+});
+
+test("shop purchase enforces the configured daily gem spend cap", async (t) => {
+  const port = 42510 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  await store.save("shop-room", createShopWorldSnapshot());
+  await store.creditGems("shop-player", 200, "purchase", "seed-gems");
+  const server = await startShopRouteServer(port, store, TEST_PRODUCTS, {
+    purchaseControls: {
+      limitTimezone: "UTC",
+      dailyGemSpendCap: 50,
+      highValuePurchaseThreshold: 0
+    }
+  });
+  const session = issueAccountAuthSession({
+    playerId: "shop-player",
+    displayName: "暮潮守望",
+    loginId: "shop-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 1,
+      purchaseId: "purchase-cap-1"
+    })
+  });
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 1,
+      purchaseId: "purchase-cap-2"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    error: {
+      limitType: string;
+      resetAt: string;
+    };
+  };
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 429);
+  assert.equal(secondPayload.error.limitType, "daily_gem_spend_cap");
+  assert.match(secondPayload.error.resetAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("shop purchase enforces configured per-item daily quantity limits", async (t) => {
+  const port = 42530 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  await store.save("shop-room", createShopWorldSnapshot());
+  await store.creditGems("shop-player", 200, "purchase", "seed-gems");
+  const server = await startShopRouteServer(port, store, TEST_PRODUCTS, {
+    purchaseControls: {
+      limitTimezone: "UTC",
+      dailyGemSpendCap: 0,
+      highValuePurchaseThreshold: 0,
+      perItemDailyQuantityLimits: {
+        "starter-bundle": 2
+      }
+    }
+  });
+  const session = issueAccountAuthSession({
+    playerId: "shop-player",
+    displayName: "暮潮守望",
+    loginId: "shop-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 2,
+      purchaseId: "purchase-item-limit-1"
+    })
+  });
+
+  const secondResponse = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 1,
+      purchaseId: "purchase-item-limit-2"
+    })
+  });
+  const secondPayload = (await secondResponse.json()) as {
+    error: {
+      limitType: string;
+      resetAt: string;
+    };
+  };
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 429);
+  assert.equal(secondPayload.error.limitType, "daily_item_quantity_limit");
+  assert.match(secondPayload.error.resetAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("shop purchase emits a high-value alert analytics event when configured", async (t) => {
+  const port = 42550 + Math.floor(Math.random() * 1000);
+  const store = new MemoryRoomSnapshotStore();
+  const analyticsLogs: string[] = [];
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
+  await store.save("shop-room", createShopWorldSnapshot());
+  await store.creditGems("shop-player", 200, "purchase", "seed-gems");
+  const server = await startShopRouteServer(port, store, TEST_PRODUCTS, {
+    purchaseControls: {
+      limitTimezone: "UTC",
+      dailyGemSpendCap: 0,
+      highValuePurchaseThreshold: 100
+    }
+  });
+  const session = issueAccountAuthSession({
+    playerId: "shop-player",
+    displayName: "暮潮守望",
+    loginId: "shop-player"
+  });
+
+  t.after(async () => {
+    resetAnalyticsRuntimeDependencies();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 4,
+      purchaseId: "purchase-high-value-1"
+    })
+  });
+
+  await flushAnalyticsEventsForTest({ ANALYTICS_SINK: "stdout" });
+  const analyticsEvents = analyticsLogs
+    .filter((entry) => entry.startsWith("[Analytics] {"))
+    .map((entry) => JSON.parse(entry.slice("[Analytics] ".length)) as { events: Array<{ name: string; payload: Record<string, unknown> }> })
+    .flatMap((entry) => entry.events);
+  const alertEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_high_value_alert" && event.payload.purchaseId === "purchase-high-value-1"
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(alertEvent?.payload.productId, "starter-bundle");
+  assert.equal(alertEvent?.payload.totalPrice, 120);
+  assert.equal(alertEvent?.payload.threshold, 100);
 });

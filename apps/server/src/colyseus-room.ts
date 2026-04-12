@@ -16,6 +16,9 @@ import {
   planPlayerViewMovement,
   validateWorldAction,
   resolveCosmeticCatalog,
+  normalizeCosmeticInventory,
+  type FriendLeaderboardEntry,
+  type GroupChallenge,
   type ActionValidationFailure,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
@@ -45,6 +48,7 @@ import { didPlayerWinBattle, resolveBattlePassConfig } from "./battle-pass";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
+  equipOwnedCosmetic,
   isPlayerBanActive,
   type RoomSnapshotStore,
   type PlayerAccountSnapshot,
@@ -71,18 +75,25 @@ import {
   recordReconnectWindowOpened,
   recordReconnectWindowResolved,
   recordRuntimeRoom,
+  recordSocialFriendLeaderboardRequest,
+  recordSocialShareActivityRequest,
   recordWebSocketActionKick,
   recordWebSocketActionRateLimited,
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
+import { sendMobilePushNotification } from "./mobile-push";
 import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import { captureServerError } from "./error-monitoring";
 import { settleLeaderboardMatch } from "./leaderboard-anti-abuse";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
+import { buildFriendLeaderboard, createGroupChallenge, encodeGroupChallengeToken } from "./wechat-social";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
+
+const DEFAULT_GROUP_CHALLENGE_SECRET = "project-veil-local-group-challenge-secret";
 
 interface VeilRoomMetadata {
   logicalRoomId: string;
@@ -278,6 +289,12 @@ interface RoomRuntimeDependencies {
     data: Record<string, unknown>,
     options?: { store?: RoomSnapshotStore | null }
   ): Promise<boolean>;
+  sendMobilePushNotification(
+    playerId: string,
+    templateKey: WechatSubscribeTemplateKey,
+    data: Record<string, unknown>,
+    options?: { store?: RoomSnapshotStore | null }
+  ): Promise<boolean>;
 }
 
 const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
@@ -286,7 +303,9 @@ const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
   isMySqlSnapshotStore: (store) => Boolean(store && "getRetentionPolicy" in store),
   now: () => Date.now(),
   sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
-    sendWechatSubscribeMessage(playerId, templateKey, data, options)
+    sendWechatSubscribeMessage(playerId, templateKey, data, options),
+  sendMobilePushNotification: (playerId, templateKey, data, options) =>
+    sendMobilePushNotification(playerId, templateKey, data, options)
 };
 
 let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDependencies;
@@ -1108,6 +1127,100 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
     });
 
+    this.onMessage(
+      "FRIEND_LEADERBOARD_REQUEST",
+      async (client, message: Extract<ClientMessage, { type: "FRIEND_LEADERBOARD_REQUEST" }>) => {
+        const playerId = this.getPlayerId(client);
+        if (!playerId) {
+          sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+          return;
+        }
+        if (!configuredRoomSnapshotStore) {
+          sendMessage(client, "error", { requestId: message.requestId, reason: "social_persistence_unavailable" });
+          return;
+        }
+
+        recordSocialFriendLeaderboardRequest();
+
+        try {
+          const authSession = this.authSessionByPlayerId.get(playerId);
+          await configuredRoomSnapshotStore.ensurePlayerAccount({
+            playerId,
+            displayName: authSession?.displayName ?? playerId,
+            lastRoomId: logicalRoomId
+          });
+          const friendIds = Array.from(new Set((message.friendIds ?? []).map((entry) => entry.trim()).filter(Boolean)));
+          const accounts = await configuredRoomSnapshotStore.loadPlayerAccounts([playerId, ...friendIds]);
+          const items = buildFriendLeaderboard(playerId, accounts);
+          this.logSocialMessage("friend_leaderboard_ready", {
+            playerId,
+            requestId: message.requestId,
+            friendCount: friendIds.length,
+            itemCount: items.length
+          });
+          sendMessage(client, "FRIEND_LEADERBOARD_REQUEST", {
+            requestId: message.requestId,
+            items,
+            friendCount: friendIds.length
+          });
+        } catch (error) {
+          this.reportSocialHandlerFailure("friend_leaderboard_failed", playerId, message.requestId, error, {
+            action: "FRIEND_LEADERBOARD_REQUEST"
+          });
+          sendMessage(client, "error", { requestId: message.requestId, reason: "friend_leaderboard_failed" });
+        }
+      }
+    );
+
+    this.onMessage("SHARE_ACTIVITY", async (client, message: Extract<ClientMessage, { type: "SHARE_ACTIVITY" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "social_persistence_unavailable" });
+        return;
+      }
+
+      recordSocialShareActivityRequest();
+
+      try {
+        const authSession = this.authSessionByPlayerId.get(playerId);
+        const account =
+          (await configuredRoomSnapshotStore.loadPlayerAccount(playerId)) ??
+          (await configuredRoomSnapshotStore.ensurePlayerAccount({
+            playerId,
+            displayName: authSession?.displayName ?? playerId,
+            lastRoomId: logicalRoomId
+          }));
+        const roomId = message.roomId?.trim() || logicalRoomId;
+        const reply = this.buildShareActivityReply({
+          playerId,
+          roomId,
+          accountDisplayName: account.displayName,
+          message
+        });
+        this.logSocialMessage("share_activity_ready", {
+          playerId,
+          requestId: message.requestId,
+          activity: message.activity,
+          roomId,
+          hasChallengeToken: Boolean(reply.challengeToken)
+        });
+        sendMessage(client, "SHARE_ACTIVITY", {
+          requestId: message.requestId,
+          ...reply
+        });
+      } catch (error) {
+        this.reportSocialHandlerFailure("share_activity_failed", playerId, message.requestId, error, {
+          action: "SHARE_ACTIVITY",
+          activity: message.activity
+        });
+        sendMessage(client, "error", { requestId: message.requestId, reason: "share_activity_failed" });
+      }
+    });
+
     this.onMessage("USE_EMOTE", async (client, message: Extract<ClientMessage, { type: "USE_EMOTE" }>) => {
       const playerId = this.getPlayerId(client);
       if (!playerId) {
@@ -1150,6 +1263,107 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         action: "emote",
         ...(account.equippedCosmetics ? { equippedCosmetics: account.equippedCosmetics } : {})
       });
+    });
+
+    this.onMessage("BUY_COSMETIC", async (client, message: Extract<ClientMessage, { type: "BUY_COSMETIC" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore?.purchaseShopProduct) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetics_unavailable" });
+        return;
+      }
+
+      const cosmeticId = message.cosmeticId.trim();
+      const definition = resolveCosmeticCatalog().find((entry) => entry.id === cosmeticId);
+      if (!definition) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetic_not_found" });
+        return;
+      }
+
+      try {
+        await configuredRoomSnapshotStore.purchaseShopProduct(playerId, {
+          purchaseId: `ws:${this.metadata.logicalRoomId}:${message.requestId}`,
+          productId: `cosmetic:${cosmeticId}`,
+          productName: definition.name,
+          quantity: 1,
+          unitPrice: definition.price,
+          grant: {
+            cosmeticIds: [cosmeticId]
+          }
+        });
+
+        sendMessage(client, "COSMETIC_APPLIED", {
+          requestId: message.requestId,
+          delivery: "reply",
+          playerId,
+          cosmeticId,
+          action: "purchased"
+        });
+        this.broadcastCosmeticApplied(client, {
+          playerId,
+          cosmeticId,
+          action: "purchased"
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error
+            ? error.message === "insufficient gems"
+              ? "insufficient_gems"
+              : "cosmetics_unavailable"
+            : "cosmetics_unavailable";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
+
+    this.onMessage("EQUIP_COSMETIC", async (client, message: Extract<ClientMessage, { type: "EQUIP_COSMETIC" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore?.loadPlayerAccount || !configuredRoomSnapshotStore.savePlayerAccountProgress) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetics_unavailable" });
+        return;
+      }
+
+      try {
+        const account = await configuredRoomSnapshotStore.loadPlayerAccount(playerId);
+        if (!account) {
+          sendMessage(client, "error", { requestId: message.requestId, reason: "player_account_not_found" });
+          return;
+        }
+
+        const cosmeticId = message.cosmeticId.trim();
+        const equippedCosmetics = equipOwnedCosmetic(account, cosmeticId);
+        const nextAccount = await configuredRoomSnapshotStore.savePlayerAccountProgress(playerId, {
+          cosmeticInventory: normalizeCosmeticInventory(account.cosmeticInventory),
+          equippedCosmetics
+        });
+
+        sendMessage(client, "COSMETIC_APPLIED", {
+          requestId: message.requestId,
+          delivery: "reply",
+          playerId,
+          cosmeticId,
+          action: "equipped",
+          ...(nextAccount.equippedCosmetics ? { equippedCosmetics: nextAccount.equippedCosmetics } : {})
+        });
+        this.broadcastCosmeticApplied(client, {
+          playerId,
+          cosmeticId,
+          action: "equipped",
+          ...(nextAccount.equippedCosmetics ? { equippedCosmetics: nextAccount.equippedCosmetics } : {})
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error && (error.message === "cosmetic_not_found" || error.message === "cosmetic_not_owned")
+            ? error.message
+            : "cosmetics_unavailable";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
     });
   }
 
@@ -2650,8 +2864,19 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           store: configuredRoomSnapshotStore
         }
       );
+      await roomRuntimeDependencies.sendMobilePushNotification(
+        nextTurnOwnerPlayerId,
+        "turn_reminder",
+        {
+          roomId: this.metadata.logicalRoomId,
+          turnNumber: this.worldRoom.getInternalState().meta.day
+        },
+        {
+          store: configuredRoomSnapshotStore
+        }
+      );
     } catch (error) {
-      console.error("[VeilRoom] Failed to send WeChat turn reminder subscribe message", {
+      console.error("[VeilRoom] Failed to send turn reminder notification", {
         roomId: this.metadata.logicalRoomId,
         playerId: nextTurnOwnerPlayerId,
         turnNumber: this.worldRoom.getInternalState().meta.day,
@@ -2667,6 +2892,128 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     return playerId;
+  }
+
+  private readGroupChallengeSecret(): string {
+    return readRuntimeSecret("VEIL_WECHAT_GROUP_CHALLENGE_SECRET") || DEFAULT_GROUP_CHALLENGE_SECRET;
+  }
+
+  private buildShareActivityReply(input: {
+    playerId: string;
+    roomId: string;
+    accountDisplayName?: string | null;
+    message: Extract<ClientMessage, { type: "SHARE_ACTIVITY" }>;
+  }): Omit<Extract<ServerMessage, { type: "SHARE_ACTIVITY" }>, "type" | "requestId"> {
+    if (input.message.activity === "group_challenge") {
+      const challenge =
+        input.message.challengeToken?.trim()
+          ? null
+          : createGroupChallenge({
+              creatorPlayerId: input.playerId,
+              creatorDisplayName: input.accountDisplayName ?? input.playerId,
+              roomId: input.roomId,
+              challengeType: "victory"
+            });
+      const challengeToken =
+        input.message.challengeToken?.trim()
+        || (challenge ? encodeGroupChallengeToken(challenge, this.readGroupChallengeSecret()) : undefined);
+      const shareUrl = this.buildSocialShareUrl({
+        roomId: input.roomId,
+        inviterId: input.playerId,
+        shareScene: "lobby",
+        ...(challengeToken ? { challengeToken } : {})
+      });
+
+      return {
+        activity: input.message.activity,
+        roomId: input.roomId,
+        shareUrl,
+        shareMessage: `${input.accountDisplayName?.trim() || input.playerId} 发起了组队挑战。`,
+        ...(challenge ? { challenge } : {}),
+        ...(challengeToken ? { challengeToken } : {})
+      };
+    }
+
+    return {
+      activity: input.message.activity,
+      roomId: input.roomId,
+      shareUrl: this.buildSocialShareUrl({
+        roomId: input.roomId,
+        referrer: input.playerId,
+        shareScene: "battle"
+      }),
+      shareMessage: `${input.accountDisplayName?.trim() || input.playerId} 分享了一场胜利战报。`
+    };
+  }
+
+  private buildSocialShareUrl(query: Record<string, string>): string {
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      const normalized = value.trim();
+      if (normalized) {
+        searchParams.set(key, normalized);
+      }
+    }
+
+    const serialized = searchParams.toString();
+    return serialized ? `?${serialized}` : "?";
+  }
+
+  private logSocialMessage(
+    event: "friend_leaderboard_ready" | "share_activity_ready",
+    detail: Record<string, string | number | boolean | null>
+  ): void {
+    console.info("[VeilRoom] Social handler processed", {
+      roomId: this.metadata.logicalRoomId,
+      event,
+      ...detail
+    });
+  }
+
+  private reportSocialHandlerFailure(
+    errorCode: "friend_leaderboard_failed" | "share_activity_failed",
+    playerId: string,
+    requestId: string,
+    error: unknown,
+    extras: Record<string, string | number | boolean | null> = {}
+  ): void {
+    const detail = Object.entries(extras)
+      .filter(([, value]) => value != null)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(" ");
+
+    console.error("[VeilRoom] Social handler failed", {
+      roomId: this.metadata.logicalRoomId,
+      playerId,
+      requestId,
+      errorCode,
+      extras,
+      error
+    });
+
+    recordRuntimeErrorEvent({
+      id: `${this.metadata.logicalRoomId}:${playerId}:${requestId}:${errorCode}`,
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "colyseus-room",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || "workspace",
+      featureArea: "runtime",
+      ownerArea: "multiplayer",
+      severity: "error",
+      errorCode,
+      message: "Social websocket handler failed.",
+      tags: ["social", errorCode],
+      context: {
+        roomId: this.metadata.logicalRoomId,
+        playerId,
+        requestId,
+        route: null,
+        action: errorCode,
+        statusCode: null,
+        crash: false,
+        detail: detail || (error instanceof Error ? error.message : String(error))
+      }
+    });
   }
 
   private updatePlayerAuthSession(playerId: string, authSession: GuestAuthSession | null): void {

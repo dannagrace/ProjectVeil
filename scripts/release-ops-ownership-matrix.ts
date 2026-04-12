@@ -130,6 +130,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
           "Indexes the current revision artifact families. Use it to prove the packet is complete before deeper review; missing required families should stop release review.",
         reviewTreatment: "release blocker",
       };
+    case "release:evidence:lifecycle":
+      return {
+        owner: "release ops",
+        scope: "review-aid",
+        decisionRole: "required evidence",
+        blockingSemantics:
+          "Defines which live evidence stays reviewer-visible, which stale artifact sets move to the archive root, and which expired archive runs can be deleted. Use the dry-run report before cleanup and treat unexpected archive candidates as a release-review blocker until the policy is understood.",
+        reviewTreatment: "review aid",
+      };
     case "release:candidate:evidence-audit":
     case "release:candidate:evidence:freshness-guard":
     case "release:same-candidate:evidence-audit":

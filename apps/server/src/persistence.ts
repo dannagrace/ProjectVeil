@@ -27,6 +27,7 @@ import {
   type EquipmentId,
   type GuildState,
   type HeroState,
+  type MobilePushTokenRegistration,
   type PlayerBanStatus,
   type PlayerAccountReadModel,
   type PlayerBattleReplaySummary,
@@ -42,6 +43,7 @@ import {
   type SeasonArchiveEntry,
   type WorldState
 } from "../../../packages/shared/src/index";
+import { normalizeMobilePushTokenRegistrations } from "./mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,
   buildBannedAccountNameReservationExpiry,
@@ -102,6 +104,16 @@ export interface SeasonCloseSummary {
   seasonId: string;
   playersRewarded: number;
   totalGemsGranted: number;
+}
+
+export interface LeaderboardSeasonArchiveEntry {
+  seasonId: string;
+  rank: number;
+  playerId: string;
+  displayName: string;
+  finalRating: number;
+  tier: string;
+  archivedAt: string;
 }
 
 export interface PlayerReferralClaimResult {
@@ -200,6 +212,8 @@ export interface RoomSnapshotStore {
   loadGuild?(guildId: string): Promise<GuildState | null>;
   loadGuildByMemberPlayerId?(playerId: string): Promise<GuildState | null>;
   listGuildAuditLogs?(options?: GuildAuditLogListOptions): Promise<GuildAuditLogRecord[]>;
+  listGuildChatMessages?(options: GuildChatMessageListOptions): Promise<GuildChatMessageRecord[]>;
+  loadGuildChatMessage?(guildId: string, messageId: string): Promise<GuildChatMessageRecord | null>;
   loadPaymentOrder?(orderId: string): Promise<PaymentOrderSnapshot | null>;
   listPaymentOrders?(options?: PaymentOrderListOptions): Promise<PaymentOrderSnapshot[]>;
   loadPaymentReceiptByOrderId?(orderId: string): Promise<PaymentReceiptSnapshot | null>;
@@ -228,6 +242,10 @@ export interface RoomSnapshotStore {
     playerId: string,
     options?: PlayerCompensationListOptions
   ): Promise<PlayerCompensationRecord[]>;
+  listPlayerPurchaseHistory?(
+    playerId: string,
+    query?: PlayerPurchaseHistoryQuery
+  ): Promise<PlayerPurchaseHistorySnapshot>;
   loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerAccountAuthByPlayerId(playerId: string): Promise<PlayerAccountAuthSnapshot | null>;
   loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]>;
@@ -235,6 +253,8 @@ export interface RoomSnapshotStore {
   ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot>;
   saveGuild?(guild: GuildState): Promise<GuildState>;
   appendGuildAuditLog?(input: GuildAuditLogCreateInput): Promise<GuildAuditLogRecord>;
+  createGuildChatMessage?(input: GuildChatMessageCreateInput): Promise<GuildChatMessageRecord>;
+  deleteGuildChatMessage?(guildId: string, messageId: string): Promise<boolean>;
   savePlayerBan?(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot>;
   clearPlayerBan?(playerId: string, input?: PlayerAccountUnbanInput): Promise<PlayerAccountSnapshot>;
   bindPlayerAccountCredentials(
@@ -291,6 +311,7 @@ export interface RoomSnapshotStore {
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
   listSeasons?(options?: SeasonListOptions): Promise<SeasonSnapshot[]>;
+  listLeaderboardSeasonArchive?(seasonId: string, limit?: number): Promise<LeaderboardSeasonArchiveEntry[]>;
   createSeason(seasonId: string): Promise<SeasonSnapshot>;
   closeSeason(seasonId: string): Promise<SeasonCloseSummary>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
@@ -404,6 +425,7 @@ interface PlayerAccountRow extends RowDataPacket {
   phone_number: string | null;
   phone_number_bound_at: Date | string | null;
   notification_preferences_json: string | NotificationPreferences | null;
+  push_tokens_json: string | MobilePushTokenRegistration[] | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -520,6 +542,10 @@ interface ShopPurchaseRow extends RowDataPacket {
   created_at: Date | string;
 }
 
+interface CountRow extends RowDataPacket {
+  total: number;
+}
+
 interface PaymentOrderRow extends RowDataPacket {
   order_id: string;
   player_id: string;
@@ -569,6 +595,16 @@ interface GuildAuditLogRow extends RowDataPacket {
   name: string;
   tag: string;
   reason: string | null;
+}
+
+interface GuildChatMessageRow extends RowDataPacket {
+  message_id: string;
+  guild_id: string;
+  author_player_id: string;
+  author_display_name: string;
+  content: string;
+  created_at: Date | string;
+  expires_at: Date | string;
 }
 
 interface PlayerReportRow extends RowDataPacket {
@@ -638,6 +674,7 @@ export interface PlayerAccountSnapshot extends PlayerAccountReadModel {
   updatedAt?: string;
   phoneNumber?: string;
   phoneNumberBoundAt?: string;
+  pushTokens?: MobilePushTokenRegistration[];
 }
 
 export interface PlayerAccountBanSnapshot {
@@ -700,6 +737,16 @@ export interface GuildAuditLogRecord {
   reason?: string;
 }
 
+export interface GuildChatMessageRecord {
+  messageId: string;
+  guildId: string;
+  authorPlayerId: string;
+  authorDisplayName: string;
+  content: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface GuildAuditLogCreateInput {
   guildId: string;
   action: GuildAuditAction;
@@ -715,6 +762,21 @@ export interface GuildAuditLogListOptions {
   actorPlayerId?: string;
   since?: string;
   limit?: number;
+}
+
+export interface GuildChatMessageListOptions {
+  guildId: string;
+  beforeCursor?: string;
+  limit?: number;
+}
+
+export interface GuildChatMessageCreateInput {
+  guildId: string;
+  authorPlayerId: string;
+  authorDisplayName: string;
+  content: string;
+  createdAt?: string;
+  expiresAt: string;
 }
 
 export type GemLedgerReason = "purchase" | "reward" | "spend";
@@ -878,6 +940,7 @@ export interface PlayerAccountProfilePatch {
   phoneNumber?: string | null;
   phoneNumberBoundAt?: string | null;
   notificationPreferences?: NotificationPreferences | null;
+  pushTokens?: MobilePushTokenRegistration[] | null;
 }
 
 export interface PlayerAccountProgressPatch {
@@ -1079,6 +1142,32 @@ export interface PlayerCompensationListOptions {
   limit?: number;
 }
 
+export interface PlayerPurchaseHistoryRecord {
+  purchaseId: string;
+  itemId: string;
+  quantity: number;
+  currency: "gems";
+  amount: number;
+  paymentMethod: "gems";
+  grantedAt: string;
+  status: "completed";
+}
+
+export interface PlayerPurchaseHistoryQuery {
+  from?: string;
+  to?: string;
+  itemId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PlayerPurchaseHistorySnapshot {
+  items: PlayerPurchaseHistoryRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PlayerRoomProfileListOptions {
   limit?: number;
   roomId?: string;
@@ -1138,11 +1227,15 @@ export const MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX = "uidx_guild_memberships_playe
 export const MYSQL_GUILD_AUDIT_LOG_TABLE = "guild_audit_logs";
 export const MYSQL_GUILD_AUDIT_LOG_GUILD_OCCURRED_INDEX = "idx_guild_audit_logs_guild_occurred";
 export const MYSQL_GUILD_AUDIT_LOG_ACTOR_OCCURRED_INDEX = "idx_guild_audit_logs_actor_occurred";
+export const MYSQL_GUILD_MESSAGE_TABLE = "guild_messages";
+export const MYSQL_GUILD_MESSAGE_GUILD_CREATED_INDEX = "idx_guild_messages_guild_created";
+export const MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX = "idx_guild_messages_expires_at";
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const MYSQL_SEASON_TABLE = "veil_seasons";
-export const MYSQL_SEASON_RANKINGS_TABLE = "veil_season_rankings";
+export const MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE = "leaderboard_season_archives";
 export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
+const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
@@ -1373,6 +1466,57 @@ function normalizeGuildAuditReason(reason?: string | null): string | undefined {
   return normalized ? normalized.slice(0, 200) : undefined;
 }
 
+function normalizeGuildChatMessageId(messageId: string): string {
+  const normalized = messageId.trim();
+  if (!normalized) {
+    throw new Error("messageId must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizeGuildChatAuthorDisplayName(displayName: string): string {
+  const normalized = displayName.trim();
+  if (!normalized) {
+    throw new Error("authorDisplayName must not be empty");
+  }
+
+  return normalized.slice(0, 40);
+}
+
+function normalizeGuildChatContent(content: string): string {
+  const normalized = content.trim();
+  if (!normalized) {
+    throw new Error("content must not be empty");
+  }
+
+  return normalized.slice(0, 500);
+}
+
+function parseGuildChatCursor(cursor?: string | null): { createdAt: string; messageId: string } | null {
+  const normalized = cursor?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const separatorIndex = normalized.indexOf("|");
+  if (separatorIndex <= 0 || separatorIndex === normalized.length - 1) {
+    throw new Error("beforeCursor must be formatted as createdAt|messageId");
+  }
+
+  const createdAt = normalized.slice(0, separatorIndex);
+  const messageId = normalized.slice(separatorIndex + 1);
+  const createdAtDate = new Date(createdAt);
+  if (Number.isNaN(createdAtDate.getTime())) {
+    throw new Error("beforeCursor createdAt must be a valid ISO timestamp");
+  }
+
+  return {
+    createdAt: createdAtDate.toISOString(),
+    messageId: normalizeGuildChatMessageId(messageId)
+  };
+}
+
 function toGuildAuditLogRecord(row: GuildAuditLogRow): GuildAuditLogRecord {
   const action = row.action === "created" || row.action === "hidden" || row.action === "unhidden" || row.action === "deleted"
     ? row.action
@@ -1386,6 +1530,18 @@ function toGuildAuditLogRecord(row: GuildAuditLogRow): GuildAuditLogRecord {
     name: row.name.trim().slice(0, 40),
     tag: row.tag.trim().toUpperCase().slice(0, 4),
     ...(row.reason?.trim() ? { reason: row.reason.trim() } : {})
+  };
+}
+
+function toGuildChatMessageRecord(row: GuildChatMessageRow): GuildChatMessageRecord {
+  return {
+    messageId: normalizeGuildChatMessageId(row.message_id),
+    guildId: normalizeGuildId(row.guild_id),
+    authorPlayerId: normalizePlayerId(row.author_player_id),
+    authorDisplayName: normalizeGuildChatAuthorDisplayName(row.author_display_name),
+    content: normalizeGuildChatContent(row.content),
+    createdAt: formatTimestamp(row.created_at) ?? new Date().toISOString(),
+    expiresAt: formatTimestamp(row.expires_at) ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
   };
 }
 
@@ -2175,6 +2331,7 @@ function normalizePlayerAccountSnapshot(account: {
   phoneNumber?: string | null | undefined;
   phoneNumberBoundAt?: string | Date | null | undefined;
   notificationPreferences?: NotificationPreferences | null | undefined;
+  pushTokens?: MobilePushTokenRegistration[] | null | undefined;
   accountSessionVersion?: number | null | undefined;
   refreshSessionId?: string | null | undefined;
   refreshTokenExpiresAt?: string | Date | null | undefined;
@@ -2189,6 +2346,7 @@ function normalizePlayerAccountSnapshot(account: {
     ? normalizeWechatMiniGameUnionId(account.wechatMiniGameUnionId)
     : undefined;
   const phoneNumberBoundAt = formatTimestamp(account.phoneNumberBoundAt);
+  const pushTokens = normalizeMobilePushTokenRegistrations(account.pushTokens);
 
   return {
     ...normalizePlayerAccountReadModel({
@@ -2245,6 +2403,7 @@ function normalizePlayerAccountSnapshot(account: {
     ...(normalizedWechatMiniGameOpenId ? { wechatMiniGameOpenId: normalizedWechatMiniGameOpenId } : {}),
     ...(normalizedWechatMiniGameUnionId ? { wechatMiniGameUnionId: normalizedWechatMiniGameUnionId } : {}),
     ...(account.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: account.wechatMiniGameBoundAt } : {}),
+    ...(pushTokens ? { pushTokens } : {}),
     ...(account.guestMigratedToPlayerId?.trim()
       ? { guestMigratedToPlayerId: normalizePlayerId(account.guestMigratedToPlayerId) }
       : {}),
@@ -2629,6 +2788,7 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_ACCOUNT_TABLE}\` (
   phone_number VARCHAR(32) NULL,
   phone_number_bound_at DATETIME NULL DEFAULT NULL,
   notification_preferences_json LONGTEXT NULL,
+  push_tokens_json LONGTEXT NULL,
   version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -4120,14 +4280,16 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_TABLE}\` (
   PRIMARY KEY (\`season_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_RANKINGS_TABLE}\` (
+CREATE TABLE IF NOT EXISTS \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\` (
   \`season_id\` VARCHAR(64) NOT NULL,
+  \`rank_position\` INT NOT NULL,
   \`player_id\` VARCHAR(64) NOT NULL,
+  \`display_name\` VARCHAR(191) NOT NULL,
   \`final_rating\` INT NOT NULL,
   \`tier\` VARCHAR(32) NOT NULL,
-  \`rank_position\` INT NOT NULL,
   \`archived_at\` DATETIME NOT NULL,
-  PRIMARY KEY (\`season_id\`, \`player_id\`)
+  PRIMARY KEY (\`season_id\`, \`rank_position\`),
+  UNIQUE KEY \`uniq_leaderboard_season_archives_player\` (\`season_id\`, \`player_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET @veil_seasons_reward_distributed_exists := (
@@ -4212,6 +4374,20 @@ function toShopPurchaseResult(row: ShopPurchaseRow): ShopPurchaseResult {
     },
     gemsBalance: normalizeGemAmount(result.gemsBalance),
     processedAt: formatTimestamp(result.processedAt) ?? formatTimestamp(row.created_at) ?? new Date(0).toISOString()
+  };
+}
+
+function toPlayerPurchaseHistoryRecord(row: ShopPurchaseRow): PlayerPurchaseHistoryRecord {
+  const result = toShopPurchaseResult(row);
+  return {
+    purchaseId: result.purchaseId,
+    itemId: result.productId,
+    quantity: result.quantity,
+    currency: "gems",
+    amount: result.totalPrice,
+    paymentMethod: "gems",
+    grantedAt: result.processedAt,
+    status: "completed"
   };
 }
 
@@ -4339,6 +4515,9 @@ function toPlayerAccountSnapshot(row: PlayerAccountRow): PlayerAccountSnapshot {
     ...(phoneNumberBoundAt ? { phoneNumberBoundAt } : {}),
     ...(row.notification_preferences_json != null
       ? { notificationPreferences: parseJsonColumn<NotificationPreferences>(row.notification_preferences_json) }
+      : {}),
+    ...(row.push_tokens_json != null
+      ? { pushTokens: parseJsonColumn<MobilePushTokenRegistration[]>(row.push_tokens_json) }
       : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {})
@@ -5066,9 +5245,10 @@ async function upsertPlayerAccountForMigration(
        privacy_consent_at,
        phone_number,
        phone_number_bound_at,
-       notification_preferences_json
+       notification_preferences_json,
+       push_tokens_json
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        display_name = VALUES(display_name),
        avatar_url = VALUES(avatar_url),
@@ -5115,6 +5295,7 @@ async function upsertPlayerAccountForMigration(
        phone_number = VALUES(phone_number),
        phone_number_bound_at = VALUES(phone_number_bound_at),
        notification_preferences_json = VALUES(notification_preferences_json),
+       push_tokens_json = VALUES(push_tokens_json),
        version = version + 1`,
     [
       nextAccount.playerId,
@@ -5162,7 +5343,8 @@ async function upsertPlayerAccountForMigration(
       nextAccount.privacyConsentAt ? new Date(nextAccount.privacyConsentAt) : null,
       nextAccount.phoneNumber ?? null,
       nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
-      JSON.stringify(nextAccount.notificationPreferences ?? null)
+      JSON.stringify(nextAccount.notificationPreferences ?? null),
+      JSON.stringify(nextAccount.pushTokens ?? null)
     ]
   );
 }
@@ -5325,6 +5507,60 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return rows.map((row) => toGuildAuditLogRecord(row));
   }
 
+  async listGuildChatMessages(options: GuildChatMessageListOptions): Promise<GuildChatMessageRecord[]> {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 50)));
+    const cursor = parseGuildChatCursor(options.beforeCursor);
+    const params: Array<string | Date | number> = [normalizeGuildId(options.guildId)];
+    let cursorClause = "";
+
+    if (cursor) {
+      cursorClause = "AND (created_at < ? OR (created_at = ? AND message_id < ?))";
+      params.push(new Date(cursor.createdAt), new Date(cursor.createdAt), cursor.messageId);
+    }
+
+    const [rows] = await this.pool.query<GuildChatMessageRow[]>(
+      `SELECT
+         message_id,
+         guild_id,
+         author_player_id,
+         author_display_name,
+         content,
+         created_at,
+         expires_at
+       FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\`
+       WHERE guild_id = ?
+         AND expires_at > CURRENT_TIMESTAMP
+         ${cursorClause}
+       ORDER BY created_at DESC, message_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toGuildChatMessageRecord(row));
+  }
+
+  async loadGuildChatMessage(guildId: string, messageId: string): Promise<GuildChatMessageRecord | null> {
+    const [rows] = await this.pool.query<GuildChatMessageRow[]>(
+      `SELECT
+         message_id,
+         guild_id,
+         author_player_id,
+         author_display_name,
+         content,
+         created_at,
+         expires_at
+       FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\`
+       WHERE guild_id = ?
+         AND message_id = ?
+         AND expires_at > CURRENT_TIMESTAMP
+       LIMIT 1`,
+      [normalizeGuildId(guildId), normalizeGuildChatMessageId(messageId)]
+    );
+
+    const row = rows[0];
+    return row ? toGuildChatMessageRecord(row) : null;
+  }
+
   async appendGuildAuditLog(input: GuildAuditLogCreateInput): Promise<GuildAuditLogRecord> {
     const auditId = randomUUID();
     const occurredAt = new Date(input.occurredAt ?? Date.now());
@@ -5367,6 +5603,62 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return record;
+  }
+
+  async createGuildChatMessage(input: GuildChatMessageCreateInput): Promise<GuildChatMessageRecord> {
+    const messageId = randomUUID();
+    const createdAt = new Date(input.createdAt ?? Date.now());
+    const expiresAt = new Date(input.expiresAt);
+    if (Number.isNaN(createdAt.getTime())) {
+      throw new Error("createdAt must be a valid ISO timestamp");
+    }
+    if (Number.isNaN(expiresAt.getTime())) {
+      throw new Error("expiresAt must be a valid ISO timestamp");
+    }
+
+    const record: GuildChatMessageRecord = {
+      messageId,
+      guildId: normalizeGuildId(input.guildId),
+      authorPlayerId: normalizePlayerId(input.authorPlayerId),
+      authorDisplayName: normalizeGuildChatAuthorDisplayName(input.authorDisplayName),
+      content: normalizeGuildChatContent(input.content),
+      createdAt: createdAt.toISOString(),
+      expiresAt: expiresAt.toISOString()
+    };
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_GUILD_MESSAGE_TABLE}\` (
+         message_id,
+         guild_id,
+         author_player_id,
+         author_display_name,
+         content,
+         created_at,
+         expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.messageId,
+        record.guildId,
+        record.authorPlayerId,
+        record.authorDisplayName,
+        record.content,
+        new Date(record.createdAt),
+        new Date(record.expiresAt)
+      ]
+    );
+
+    return record;
+  }
+
+  async deleteGuildChatMessage(guildId: string, messageId: string): Promise<boolean> {
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `DELETE FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\`
+       WHERE guild_id = ?
+         AND message_id = ?`,
+      [normalizeGuildId(guildId), normalizeGuildChatMessageId(messageId)]
+    );
+
+    return result.affectedRows > 0;
   }
 
   async loadPlayerAccount(playerId: string): Promise<PlayerAccountSnapshot | null> {
@@ -5624,6 +5916,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -5691,6 +5984,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -6054,6 +6348,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -6227,6 +6522,77 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerCompensationRecord(row));
+  }
+
+  async listPlayerPurchaseHistory(
+    playerId: string,
+    query: PlayerPurchaseHistoryQuery = {}
+  ): Promise<PlayerPurchaseHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(query.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
+    const filters = ["player_id = ?"];
+    const filterParams: Array<string | number | Date> = [normalizedPlayerId];
+
+    if (query.from) {
+      const fromDate = new Date(query.from);
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new Error("from must be a valid ISO timestamp");
+      }
+      filters.push("created_at >= ?");
+      filterParams.push(fromDate);
+    }
+
+    if (query.to) {
+      const toDate = new Date(query.to);
+      if (Number.isNaN(toDate.getTime())) {
+        throw new Error("to must be a valid ISO timestamp");
+      }
+      filters.push("created_at <= ?");
+      filterParams.push(toDate);
+    }
+
+    if (query.from && query.to && new Date(query.from).getTime() > new Date(query.to).getTime()) {
+      throw new Error("from must be earlier than or equal to to");
+    }
+
+    if (query.itemId?.trim()) {
+      filters.push("product_id = ?");
+      filterParams.push(normalizeShopProductId(query.itemId));
+    }
+
+    const whereClause = filters.join(" AND ");
+    const [countRows] = await this.pool.query<CountRow[]>(
+      `SELECT COUNT(*) AS total
+       FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+       WHERE ${whereClause}`,
+      filterParams
+    );
+
+    const [rows] = await this.pool.query<ShopPurchaseRow[]>(
+      `SELECT
+         player_id,
+         purchase_id,
+         product_id,
+         quantity,
+         unit_price,
+         total_price,
+         result_json,
+         created_at
+       FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+       WHERE ${whereClause}
+       ORDER BY created_at DESC, purchase_id DESC
+       LIMIT ?
+       OFFSET ?`,
+      [...filterParams, safeLimit, safeOffset]
+    );
+
+    return {
+      items: rows.map((row) => toPlayerPurchaseHistoryRecord(row)),
+      total: Math.max(0, Math.floor(countRows[0]?.total ?? 0)),
+      limit: safeLimit,
+      offset: safeOffset
+    };
   }
 
   async listPlayerNameHistory(
@@ -8413,6 +8779,11 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           : {}
         : existing.notificationPreferences
           ? { notificationPreferences: existing.notificationPreferences }
+          : {}),
+      ...(patch.pushTokens !== undefined
+        ? { pushTokens: patch.pushTokens ?? null }
+        : existing.pushTokens?.length
+          ? { pushTokens: existing.pushTokens }
           : {})
     });
 
@@ -8447,9 +8818,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          last_seen_at,
          phone_number,
          phone_number_bound_at,
-         notification_preferences_json
+         notification_preferences_json,
+         push_tokens_json
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name),
          avatar_url = VALUES(avatar_url),
@@ -8478,6 +8850,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number = VALUES(phone_number),
          phone_number_bound_at = VALUES(phone_number_bound_at),
          notification_preferences_json = COALESCE(VALUES(notification_preferences_json), notification_preferences_json),
+         push_tokens_json = COALESCE(VALUES(push_tokens_json), push_tokens_json),
          last_seen_at = COALESCE(last_seen_at, VALUES(last_seen_at)),
          version = version + 1`,
       [
@@ -8510,7 +8883,8 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         existing.lastSeenAt ? new Date(existing.lastSeenAt) : null,
         nextAccount.phoneNumber ?? null,
         nextAccount.phoneNumberBoundAt ? new Date(nextAccount.phoneNumberBoundAt) : null,
-        JSON.stringify(nextAccount.notificationPreferences ?? null)
+        JSON.stringify(nextAccount.notificationPreferences ?? null),
+        JSON.stringify(nextAccount.pushTokens ?? null)
       ]
     );
 
@@ -8811,6 +9185,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          phone_number,
          phone_number_bound_at,
          notification_preferences_json,
+         push_tokens_json,
          created_at,
          updated_at
        FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
@@ -8944,6 +9319,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     try {
       await connection.beginTransaction();
+      await connection.query(`DELETE FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\` WHERE guild_id = ?`, [normalizedGuildId]);
       await connection.query(`DELETE FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` WHERE guild_id = ?`, [normalizedGuildId]);
       await connection.query(`DELETE FROM \`${MYSQL_GUILD_TABLE}\` WHERE guild_id = ?`, [normalizedGuildId]);
       await connection.commit();
@@ -8956,13 +9332,14 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   }
 
   async pruneExpired(referenceTime = new Date()): Promise<number> {
-    const [roomCount, profileCount, mailboxCount] = await Promise.all([
+    const [roomCount, profileCount, mailboxCount, guildMessageCount] = await Promise.all([
       this.pruneExpiredRoomSnapshots(referenceTime),
       this.pruneExpiredPlayerProfiles(referenceTime),
-      this.pruneExpiredPlayerMailboxEntries(referenceTime)
+      this.pruneExpiredPlayerMailboxEntries(referenceTime),
+      this.pruneExpiredGuildChatMessages(referenceTime)
     ]);
 
-    return roomCount + profileCount + mailboxCount;
+    return roomCount + profileCount + mailboxCount + guildMessageCount;
   }
 
   async pruneExpiredRoomSnapshots(referenceTime = new Date()): Promise<number> {
@@ -9021,6 +9398,16 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
 
     return removedCount;
+  }
+
+  async pruneExpiredGuildChatMessages(referenceTime = new Date()): Promise<number> {
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `DELETE FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\`
+       WHERE expires_at <= ?`,
+      [referenceTime]
+    );
+
+    return result.affectedRows;
   }
 
   async pruneExpiredBattleReplays(referenceTime = new Date()): Promise<number> {
@@ -9201,6 +9588,33 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
+  async listLeaderboardSeasonArchive(seasonId: string, limit = MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE): Promise<LeaderboardSeasonArchiveEntry[]> {
+    const normalizedId = seasonId.trim();
+    if (!normalizedId) {
+      throw new Error("seasonId must not be empty");
+    }
+
+    const normalizedLimit = Math.min(MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE, Math.max(1, Math.floor(limit)));
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT season_id, rank_position, player_id, display_name, final_rating, tier, archived_at
+       FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\`
+       WHERE season_id = ?
+       ORDER BY rank_position ASC
+       LIMIT ?`,
+      [normalizedId, normalizedLimit]
+    );
+
+    return rows.map((row) => ({
+      seasonId: String(row.season_id),
+      rank: Math.max(1, Math.floor(Number(row.rank_position) || 0)),
+      playerId: String(row.player_id),
+      displayName: String(row.display_name || row.player_id),
+      finalRating: normalizeEloRating(Number(row.final_rating)),
+      tier: String(row.tier),
+      archivedAt: formatTimestamp(row.archived_at as Date | string) ?? new Date(0).toISOString()
+    }));
+  }
+
   async closeSeason(seasonId: string): Promise<SeasonCloseSummary> {
     const normalizedId = seasonId.trim();
     if (!normalizedId) {
@@ -9242,44 +9656,57 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         };
       }
 
-      const [existingRankingRows] = await connection.query<RowDataPacket[]>(
-        `SELECT player_id, final_rating, rank_position
-         FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\`
+      const [existingArchiveRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, rank_position
+         FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\`
          WHERE season_id = ?
-         ORDER BY final_rating DESC, rank_position ASC, player_id ASC`,
+         ORDER BY rank_position ASC`,
         [normalizedId]
       );
 
-      let rankedPlayers = existingRankingRows.map((row) => ({
-        playerId: String(row.player_id),
-        finalRating: normalizeEloRating(Number(row.final_rating)),
-        rankPosition: Math.max(1, Math.floor(Number(row.rank_position) || 0))
-      }));
+      const [accountRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, display_name, elo_rating
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE elo_rating IS NOT NULL
+         ORDER BY elo_rating DESC, player_id ASC
+         FOR UPDATE`
+      );
+      const rankedPlayers = accountRows.map((row, index) => {
+        const playerId = String(row.player_id);
+        const finalRating = normalizeEloRating(Number(row.elo_rating));
+        return {
+          playerId,
+          displayName: String(row.display_name || row.player_id),
+          finalRating,
+          rankPosition: index + 1
+        };
+      });
 
-      if (rankedPlayers.length === 0) {
-        const [accountRows] = await connection.query<RowDataPacket[]>(
-          `SELECT player_id, elo_rating
-           FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-           WHERE elo_rating IS NOT NULL
-           ORDER BY elo_rating DESC, player_id ASC
-           FOR UPDATE`
-        );
-        const rankingValues: Array<[string, string, number, string, number, Date]> = [];
-        rankedPlayers = accountRows.map((row, index) => {
-          const playerId = String(row.player_id);
-          const finalRating = normalizeEloRating(Number(row.elo_rating));
-          rankingValues.push([normalizedId, playerId, finalRating, getTierForRating(finalRating), index + 1, now]);
-          return {
-            playerId,
-            finalRating,
-            rankPosition: index + 1
-          };
-        });
+      if (existingArchiveRows.length === 0) {
+        const archiveValues: Array<[string, number, string, string, number, string, Date]> = rankedPlayers
+          .slice(0, MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE)
+          .map((rankedPlayer) => [
+            normalizedId,
+            rankedPlayer.rankPosition,
+            rankedPlayer.playerId,
+            rankedPlayer.displayName,
+            rankedPlayer.finalRating,
+            getTierForRating(rankedPlayer.finalRating),
+            now
+          ]);
 
-        if (rankingValues.length > 0) {
+        if (archiveValues.length > 0) {
           await connection.query(
-            `INSERT INTO \`${MYSQL_SEASON_RANKINGS_TABLE}\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
-            [rankingValues]
+            `INSERT INTO \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\` (
+               season_id,
+               rank_position,
+               player_id,
+               display_name,
+               final_rating,
+               tier,
+               archived_at
+             ) VALUES ?`,
+            [archiveValues]
           );
         }
       }
@@ -9363,11 +9790,16 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         const seasonHistory = [
           {
             seasonId: normalizedId,
+            rankPosition: rankedPlayer.rankPosition,
+            totalPlayers: rankedPlayers.length,
+            finalRating: rankedPlayer.finalRating,
             peakDivision,
             finalDivision: currentDivision,
             rewardTier: getTierForRating(rankedPlayer.finalRating),
+            rankPercentile: rankedPlayers.length > 0 ? rankedPlayer.rankPosition / rankedPlayers.length : 1,
             rewardClaimed: rewardedPlayerIds.has(rankedPlayer.playerId),
-            archivedAt: now.toISOString()
+            archivedAt: now.toISOString(),
+            ...(rewardedPlayerIds.has(rankedPlayer.playerId) ? { rewardsGrantedAt: now.toISOString() } : {})
           },
           ...(currentAccount.seasonHistory ?? [])
         ].slice(0, 20);
