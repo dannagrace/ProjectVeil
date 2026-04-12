@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertSupportedRuntime } from "./runtime-preflight.mjs";
+import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
 const rootDir = new URL("../", import.meta.url);
 const rootDirPath = fileURLToPath(rootDir);
@@ -48,9 +49,9 @@ async function waitForServer() {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${QUICKSTART_SERVER_URL}/api/runtime/health`);
-      if (response.ok) {
-        return;
-      }
+      const payload = await response.json();
+      assertBaselineRuntimeHealthResponse(response.status, payload, "runtime health");
+      return;
     } catch {
       // Retry until timeout while the server is booting.
     }
@@ -63,6 +64,12 @@ async function waitForServer() {
 async function verifyEndpoints() {
   for (const path of QUICKSTART_HEALTH_CHECKS) {
     const response = await fetch(`${QUICKSTART_SERVER_URL}${path}`);
+    if (path === "/api/runtime/health") {
+      const payload = await response.json();
+      assertBaselineRuntimeHealthResponse(response.status, payload, "runtime health");
+      logStep(`verified ${path}`);
+      continue;
+    }
     if (!response.ok) {
       throw new Error(`GET ${path} returned HTTP ${response.status}`);
     }

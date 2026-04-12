@@ -93,6 +93,18 @@ npm run validate:quickstart
 - `npm run doctor`：先看本机 prerequisites / 可选服务 / env 提示是否齐全
 - `npm run validate:quickstart`：在依赖装好后，真正验证仓库的最小 build + boot 路径
 - `npm run smoke:client:boot-room`：启动本地 server + H5 调试壳，确认客户端能完成 Lobby boot 并成功进入一个房间；适合本地冒烟或 CI 快速 sanity check
+- `npm run smoke:ci`：顺序执行 `doctor`、`validate:quickstart`、`smoke:client:boot-room`，并把 stage 级结果、日志路径和失败 remediation 收口成一个 JSON + Markdown 摘要；适合仓库级 smoke workflow 或本地复现 CI
+
+### Repository Smoke CI
+
+仓库级 smoke workflow 的职责是用最低成本守住“贡献者最小可用路径”：
+
+- 安装依赖后固定执行 `npm run doctor`
+- 继续执行 `npm run validate:quickstart`
+- 最后执行 `npm run smoke:client:boot-room`
+- 失败时上传 stage log、Markdown/JSON summary，以及 npm 调试日志，便于区分是依赖、server boot 还是 client boot / room join 回归
+
+默认触发场景是推送到 `main`、指向 `main` 的 PR，以及手动 `workflow_dispatch`。如果要在本地复现同一条门禁，可直接运行 `npm run smoke:ci`。
 
 本地 Codex 会话如果把元数据写在仓库内，默认只允许落在仓库根目录的 `.codex`、`.codex-last-*.txt` 和 `.codex-runs/`。这些路径是本机临时产物，已被 `.gitignore` 排除，不应加入提交或作为发布证据目录使用。
 

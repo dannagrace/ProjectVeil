@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client, type Room } from "@colyseus/sdk";
 import type { ClientMessage, ServerMessage, SessionStatePayload } from "../packages/shared/src/index.ts";
+import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
 const FIXTURE_COMMAND = ["run", "validate:e2e:fixtures"] as const;
 const SERVER_URL = "http://127.0.0.1:2567";
@@ -118,6 +119,16 @@ async function fetchJson<T>(url: string): Promise<HttpJsonResponse<T>> {
   };
 }
 
+async function fetchRuntimeHealth(url: string, label: string): Promise<HttpJsonResponse<RuntimeStatusPayload>> {
+  const response = await fetch(url);
+  const body = (await response.json()) as RuntimeStatusPayload;
+  assertBaselineRuntimeHealthResponse(response.status, body, label);
+  return {
+    status: response.status,
+    body
+  };
+}
+
 async function waitFor(check: () => Promise<void>, description: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
@@ -153,10 +164,7 @@ async function verifyClientBoot(): Promise<void> {
     throw new Error("client entry module did not load expected bootstrap content");
   }
 
-  const runtimeHealth = await fetchJson<RuntimeStatusPayload>(`${CLIENT_URL}/api/runtime/health`);
-  if (runtimeHealth.body.status !== "ok") {
-    throw new Error(`client-proxied runtime health is ${JSON.stringify(runtimeHealth.body)}`);
-  }
+  await fetchRuntimeHealth(`${CLIENT_URL}/api/runtime/health`, "client-proxied runtime health");
 
   const authReadiness = await fetchJson<RuntimeStatusPayload>(`${CLIENT_URL}/api/runtime/auth-readiness`);
   if (authReadiness.body.status !== "ok") {
@@ -172,10 +180,7 @@ async function verifyClientBoot(): Promise<void> {
 async function waitForServerReadiness(): Promise<void> {
   await waitFor(
     async () => {
-      const health = await fetchJson<RuntimeStatusPayload>(`${SERVER_URL}/api/runtime/health`);
-      if (health.body.status !== "ok") {
-        throw new Error(`runtime health is ${JSON.stringify(health.body)}`);
-      }
+      await fetchRuntimeHealth(`${SERVER_URL}/api/runtime/health`, "server runtime health");
     },
     "server runtime health",
     STARTUP_TIMEOUT_MS
