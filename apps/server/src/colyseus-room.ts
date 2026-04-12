@@ -55,7 +55,7 @@ import {
   registerConfigUpdateListener
 } from "./config-center";
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
-import { resolveGuestAuthSession } from "./auth";
+import { validateGuestAuthToken, type GuestAuthSession } from "./auth";
 import { buildMinorProtectionBlockDetails, deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
 import {
   recordBattleActionMessage,
@@ -587,6 +587,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
+  private readonly authSessionByPlayerId = new Map<string, GuestAuthSession>();
   private readonly analyticsSessionStartedAtBySessionId = new Map<string, number>();
   private readonly analyticsSessionDisconnectReasonBySessionId = new Map<string, string>();
   private readonly disconnectedAtByPlayerId = new Map<string, string>();
@@ -661,8 +662,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
-      const authSession = message.authToken ? resolveGuestAuthSession(message.authToken) : null;
+      const authValidation = message.authToken
+        ? await validateGuestAuthToken(message.authToken, configuredRoomSnapshotStore)
+        : { session: null };
+      const authSession = authValidation.session;
       if (message.authToken && !authSession) {
+        this.rejectExpiredSession(client, message.requestId, authValidation.errorCode ?? "unauthorized");
         sendMessage(client, "error", { requestId: message.requestId, reason: "unauthorized" });
         return;
       }
@@ -674,6 +679,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
 
       this.playerIdBySessionId.set(client.sessionId, playerId);
+      this.updatePlayerAuthSession(playerId, authSession);
       this.disconnectedAtByPlayerId.delete(playerId);
       this.refreshEmptyRoomTracking();
       let ensuredAccount: PlayerAccountSnapshot | null = null;
@@ -735,6 +741,29 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       });
       this.analyticsSessionStartedAtBySessionId.set(client.sessionId, roomRuntimeDependencies.now());
       this.analyticsSessionDisconnectReasonBySessionId.delete(client.sessionId);
+    });
+
+    this.onMessage("TOKEN_REFRESH", async (client, message: Extract<ClientMessage, { type: "TOKEN_REFRESH" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+
+      const authValidation = await validateGuestAuthToken(message.authToken, configuredRoomSnapshotStore);
+      const authSession = authValidation.session;
+      if (!authSession || authSession.playerId !== playerId) {
+        this.rejectExpiredSession(client, message.requestId, authValidation.errorCode ?? "unauthorized");
+        sendMessage(client, "error", { requestId: message.requestId, reason: "unauthorized" });
+        return;
+      }
+
+      this.updatePlayerAuthSession(playerId, authSession);
+      sendMessage(client, "session.state", {
+        requestId: message.requestId,
+        delivery: "reply",
+        payload: this.buildStatePayload(playerId)
+      });
     });
 
     this.onMessage("world.preview", (client, message: Extract<ClientMessage, { type: "world.preview" }>) => {
@@ -1027,6 +1056,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
   disconnectPlayer(playerId: string, reason = "account_banned"): number {
     let disconnected = 0;
+    this.clearPlayerAuthSession(playerId);
     for (const client of this.clients) {
       if (this.playerIdBySessionId.get(client.sessionId) !== playerId) {
         continue;
@@ -1057,6 +1087,21 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       recordReconnectWindowOpened();
       reconnectWindowOpen = true;
       const reconnectedClient = await this.allowReconnection(client, RECONNECTION_WINDOW_SECONDS);
+      const authValidation = await this.validateReconnectSession(playerId);
+      if (authValidation.errorCode) {
+        if (reconnectWindowOpen) {
+          recordReconnectWindowResolved("failure", {
+            roomId: this.metadata.logicalRoomId,
+            playerId,
+            reason: "auth_invalid"
+          });
+          reconnectWindowOpen = false;
+        }
+        this.rejectExpiredSession(reconnectedClient, "push", authValidation.errorCode ?? "unauthorized");
+        this.clearPlayerAuthSession(playerId);
+        this.publishLobbyRoomSummary();
+        return;
+      }
       if (configuredRoomSnapshotStore?.loadPlayerBan) {
         const ban = await configuredRoomSnapshotStore.loadPlayerBan(playerId);
         if (isPlayerBanActive(ban)) {
@@ -1084,6 +1129,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         }
         this.publishLobbyRoomSummary();
         return;
+      }
+      if (authValidation.session) {
+        this.updatePlayerAuthSession(playerId, authValidation.session);
       }
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
       const previousSessionStartedAtMs = this.analyticsSessionStartedAtBySessionId.get(client.sessionId);
@@ -1128,6 +1176,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         });
       }
       this.playerIdBySessionId.delete(client.sessionId);
+      this.clearPlayerAuthSession(playerId);
       this.refreshEmptyRoomTracking();
       this.ensureTurnTimerState();
       this.publishLobbyRoomSummary();
@@ -1147,6 +1196,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         this.analyticsSessionDisconnectReasonBySessionId.get(client.sessionId) ?? "transport_closed"
       );
     }
+    if (playerId && !this.getConnectedPlayerIds().includes(playerId) && !this.disconnectedAtByPlayerId.has(playerId)) {
+      this.clearPlayerAuthSession(playerId);
+    }
     if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
       this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
     }
@@ -1159,6 +1211,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     for (const [sessionId, playerId] of this.playerIdBySessionId.entries()) {
       this.emitSessionEndForConnection(sessionId, playerId, "room_disposed");
     }
+    this.authSessionByPlayerId.clear();
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
     this.wsActionTimestampsByPlayerId.clear();
@@ -2509,6 +2562,41 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     return playerId;
+  }
+
+  private updatePlayerAuthSession(playerId: string, authSession: GuestAuthSession | null): void {
+    if (authSession) {
+      this.authSessionByPlayerId.set(playerId, authSession);
+      return;
+    }
+
+    this.authSessionByPlayerId.delete(playerId);
+  }
+
+  private clearPlayerAuthSession(playerId: string): void {
+    this.authSessionByPlayerId.delete(playerId);
+  }
+
+  private async validateReconnectSession(playerId: string): Promise<{ session: GuestAuthSession | null; errorCode?: string }> {
+    const authSession = this.authSessionByPlayerId.get(playerId);
+    if (!authSession?.token) {
+      return { session: null, errorCode: undefined };
+    }
+
+    return await validateGuestAuthToken(authSession.token, configuredRoomSnapshotStore);
+  }
+
+  private rejectExpiredSession(client: ColyseusClient, requestId: string, reason: string): void {
+    if (reason !== "token_expired") {
+      return;
+    }
+
+    sendMessage(client, "SESSION_EXPIRED", {
+      requestId,
+      delivery: "push",
+      reason
+    });
+    client.leave(CloseCode.WITH_ERROR, "session_expired");
   }
 
   private pushSessionStateToAll(extras?: {

@@ -79,6 +79,11 @@ export type ClientMessage =
       seed?: number;
     }
   | {
+      type: "TOKEN_REFRESH";
+      requestId: string;
+      authToken: string;
+    }
+  | {
       type: "world.action";
       requestId: string;
       action: WorldAction;
@@ -222,6 +227,12 @@ export type ServerMessage =
         nextAllowedLocalTime: string | null;
         nextAllowedCountdownSeconds: number | null;
       };
+    }
+  | {
+      type: "SESSION_EXPIRED";
+      requestId: string;
+      delivery: "push";
+      reason: string;
     }
   | {
       type: "report.player";
