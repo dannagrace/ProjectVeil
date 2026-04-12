@@ -579,6 +579,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.ciTrendSummaryPath) {
     lines.push(`- CI trend summary: \`${report.artifacts.ciTrendSummaryPath}\``);
   }
+  if (report.artifacts.ciTrendMarkdownPath) {
+    lines.push(`- CI trend summary markdown: \`${report.artifacts.ciTrendMarkdownPath}\``);
+  }
   if (report.artifacts.releaseReadinessSnapshotPath) {
     lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
   }

@@ -216,6 +216,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.releaseHealthSummaryPath ?? "", /release-health-summary-/);
   assert.match(report.artifacts.releaseHealthMarkdownPath ?? "", /release-health-summary-/);
   assert.match(report.artifacts.ciTrendSummaryPath ?? "", /ci-trend-summary-phase1-mainline-/);
+  assert.match(report.artifacts.ciTrendMarkdownPath ?? "", /ci-trend-summary-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierMarkdownPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitAuditPath ?? "", /phase1-exit-audit-phase1-mainline-/);
@@ -242,6 +243,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Release health summary:/);
   assert.match(markdown, /Release health summary markdown:/);
   assert.match(markdown, /CI trend summary:/);
+  assert.match(markdown, /CI trend summary markdown:/);
   assert.match(markdown, /Release readiness snapshot:/);
   assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
   assert.match(markdown, /H5 candidate smoke:/);
@@ -288,6 +290,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /releaseHealthSummaryPath:/);
   assert.match(markdown, /releaseHealthMarkdownPath:/);
   assert.match(markdown, /ciTrendSummaryPath:/);
+  assert.match(markdown, /ciTrendMarkdownPath:/);
   assert.match(markdown, /releaseReadinessSnapshotPath:/);
   assert.match(markdown, /stableH5SmokePath:/);
   assert.match(markdown, /stableReconnectSoakPath:/);
