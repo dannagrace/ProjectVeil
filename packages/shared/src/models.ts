@@ -248,11 +248,17 @@ export interface SeasonRewardConfig {
 
 export interface SeasonArchiveEntry {
   seasonId: string;
+  rankPosition?: number;
+  totalPlayers?: number;
+  finalRating?: number;
+  peakRating?: number;
   peakDivision: RankDivisionId;
   finalDivision: RankDivisionId;
   rewardTier: PlayerTier;
+  rankPercentile?: number;
   rewardClaimed: boolean;
   archivedAt: string;
+  rewardsGrantedAt?: string;
 }
 
 export interface WeeklyLeaderboardEntry {
