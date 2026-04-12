@@ -123,8 +123,18 @@ ${rows.join("\n")}
 }
 
 function runAudit(args: string[], cwd: string): { stdout: string; status: number } {
+  const nextArgs = [...args];
+  if (!nextArgs.includes("--wechat-artifacts-dir")) {
+    const outputIndex = nextArgs.findIndex((arg) => arg === "--output");
+    const outputPath = outputIndex >= 0 ? nextArgs[outputIndex + 1] : undefined;
+    if (outputPath) {
+      const wechatArtifactsDir = path.join(path.dirname(outputPath), "artifacts", "wechat-release");
+      fs.mkdirSync(wechatArtifactsDir, { recursive: true });
+      nextArgs.push("--wechat-artifacts-dir", wechatArtifactsDir);
+    }
+  }
   try {
-    const stdout = execFileSync("node", ["--import", "tsx", "./scripts/same-candidate-evidence-audit.ts", ...args], {
+    const stdout = execFileSync("node", ["--import", "tsx", "./scripts/same-candidate-evidence-audit.ts", ...nextArgs], {
       cwd,
       encoding: "utf8",
       stdio: "pipe"

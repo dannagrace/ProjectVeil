@@ -15,24 +15,36 @@ It does not redefine release gates. It sequences the existing commands and artif
 - [`docs/release-go-no-go-decision-packet.md`](./release-go-no-go-decision-packet.md)
 - [`docs/release-evidence/release-readiness-artifact-index.template.md`](./release-evidence/release-readiness-artifact-index.template.md)
 
-## First Stop: Current Evidence Index
+## First Stop: Candidate Evidence Manifest
 
-Before a reviewer or release owner opens individual packet artifacts, generate the checked-out revision index:
+Before a reviewer or release owner opens individual packet artifacts, start from the candidate-scoped manifest instead of manually browsing `artifacts/`:
 
 ```bash
-npm run release:evidence:index
+npm run release:runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>
+npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>
 ```
 
-This command scans the current `artifacts/release-readiness/` and `artifacts/wechat-release/` working set, then writes:
+Those commands automatically upsert:
+
+- `artifacts/release-readiness/candidate-evidence-manifest-<candidate>-<short-sha>.json`
+- `artifacts/release-readiness/candidate-evidence-manifest-<candidate>-<short-sha>.md`
+
+Use the manifest as the release-call front door:
+
+- confirm the pinned candidate/revision before reviewing deeper evidence
+- open reviewer-entrypoint rows first, then follow the linked artifact/source entries for runtime bundle, gate, and audit details
+- use the recorded source links to jump to the exact upstream artifact or runtime endpoint instead of browsing directories by hand
+
+## Checked-Out Revision Index
+
+`npm run release:evidence:index` is still useful, but it is now the secondary checked-out-revision inventory after the candidate manifest.
+
+It scans the current `artifacts/release-readiness/` and `artifacts/wechat-release/` working set, then writes:
 
 - `artifacts/release-readiness/current-release-evidence-index-<short-sha>.json`
 - `artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`
 
-Use the index as the release-call front door:
-
-- confirm the checked-out revision and inferred candidate before reviewing deeper evidence
-- verify that the required families for the current packet exist in one place
-- stop and refresh any artifact family flagged as missing, stale, or revision-mismatched before relying on downstream summaries
+Use it when you need to verify the working tree's overall artifact inventory or confirm the checked-out revision before comparing multiple candidate packets.
 
 ## Artifact Retention And Indexing
 

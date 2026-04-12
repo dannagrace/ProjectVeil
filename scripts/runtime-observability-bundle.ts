@@ -16,6 +16,7 @@ import {
   renderMarkdown as renderGateMarkdown,
   type RuntimeObservabilityGateReport
 } from "./runtime-observability-gate.ts";
+import { findNearestReleaseReadinessDir, updateReleaseCandidateManifest } from "./release-candidate-manifest.ts";
 
 type BundleStatus = "passed" | "failed";
 type RoomLifecycleStatus = "captured" | "warn" | "failed" | "skipped";
@@ -506,9 +507,113 @@ async function main(): Promise<void> {
   const report = await buildRuntimeObservabilityBundleReport(args);
   writeJsonFile(outputPaths.bundleJsonPath, report);
   writeFile(outputPaths.bundleMarkdownPath, renderMarkdown(report));
+  const manifestUpdate = updateReleaseCandidateManifest({
+    candidate: report.candidate.name,
+    candidateRevision: report.candidate.revision,
+    releaseReadinessDir: findNearestReleaseReadinessDir(outputPaths.bundleJsonPath),
+    entries: [
+      {
+        id: "runtime-observability-bundle",
+        label: "Runtime observability bundle",
+        category: "reviewer-entrypoint",
+        required: true,
+        producedAt: report.generatedAt,
+        summary: report.summary.headline,
+        producerScript: "./scripts/runtime-observability-bundle.ts",
+        artifacts: {
+          jsonPath: outputPaths.bundleJsonPath,
+          markdownPath: outputPaths.bundleMarkdownPath,
+          directoryPath: path.dirname(outputPaths.bundleJsonPath)
+        },
+        metadata: {
+          targetSurface: report.candidate.targetSurface,
+          targetEnvironment: report.targetEnvironment.label ?? report.targetEnvironment.serverUrl,
+          evidenceStatus: report.summary.evidenceStatus,
+          gateStatus: report.summary.gateStatus,
+          roomLifecycleStatus: report.summary.roomLifecycleStatus
+        },
+        sources: [
+          {
+            label: "Runtime observability evidence",
+            kind: "artifact",
+            path: outputPaths.evidenceJsonPath
+          },
+          {
+            label: "Runtime observability gate",
+            kind: "artifact",
+            path: outputPaths.gateJsonPath
+          },
+          ...report.evidence.endpoints.map((endpoint) => ({
+            label: endpoint.label,
+            kind: "endpoint" as const,
+            url: endpoint.url
+          })),
+          ...(report.roomLifecycle.requested
+            ? [
+                {
+                  label: "Room lifecycle endpoint",
+                  kind: "endpoint" as const,
+                  url: report.roomLifecycle.url
+                }
+              ]
+            : [])
+        ]
+      },
+      {
+        id: "runtime-observability-evidence",
+        label: "Runtime observability evidence",
+        category: "runtime-observability",
+        required: false,
+        producedAt: report.evidence.generatedAt,
+        summary: report.evidence.summary.headline,
+        producerScript: "./scripts/runtime-observability-bundle.ts",
+        artifacts: {
+          jsonPath: outputPaths.evidenceJsonPath,
+          markdownPath: outputPaths.evidenceMarkdownPath
+        },
+        metadata: {
+          targetSurface: report.evidence.candidate.targetSurface,
+          targetEnvironment: report.evidence.targetEnvironment.label ?? report.evidence.targetEnvironment.serverUrl,
+          status: report.evidence.summary.status
+        },
+        sources: report.evidence.endpoints.map((endpoint) => ({
+          label: endpoint.label,
+          kind: "endpoint" as const,
+          url: endpoint.url
+        }))
+      },
+      {
+        id: "runtime-observability-gate",
+        label: "Runtime observability gate",
+        category: "runtime-observability",
+        required: false,
+        producedAt: report.gate.generatedAt,
+        summary: report.gate.summary.headline,
+        producerScript: "./scripts/runtime-observability-bundle.ts",
+        artifacts: {
+          jsonPath: outputPaths.gateJsonPath,
+          markdownPath: outputPaths.gateMarkdownPath
+        },
+        metadata: {
+          status: report.gate.summary.status,
+          targetSurface: report.gate.candidate.targetSurface,
+          targetEnvironment: report.gate.targetEnvironment.label ?? report.gate.targetEnvironment.serverUrl
+        },
+        sources: [
+          {
+            label: "Runtime observability evidence",
+            kind: "artifact",
+            path: outputPaths.evidenceJsonPath
+          }
+        ]
+      }
+    ]
+  });
 
   console.log(`Wrote runtime observability bundle JSON: ${toRelativePath(outputPaths.bundleJsonPath)}`);
   console.log(`Wrote runtime observability bundle Markdown: ${toRelativePath(outputPaths.bundleMarkdownPath)}`);
+  console.log(`Updated candidate evidence manifest JSON: ${toRelativePath(manifestUpdate.manifestJsonPath)}`);
+  console.log(`Updated candidate evidence manifest Markdown: ${toRelativePath(manifestUpdate.manifestMarkdownPath)}`);
   console.log(`Candidate: ${report.candidate.name}`);
   console.log(`Revision: ${report.candidate.revision}`);
   console.log(`Overall status: ${report.summary.status}`);
