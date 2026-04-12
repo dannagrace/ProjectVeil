@@ -426,6 +426,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "No tracked artifact; exits non-zero on schema drift and reports findings on stdout/stderr.",
     ],
   },
+  "validate:season-reward-config": {
+    purpose:
+      "Validate `configs/season-rewards.json` against the checked-in schema and server semantics before startup, build, or a seasonal reset can proceed.",
+    requiredInputs: [
+      "`configs/season-rewards.json`, `configs/schemas/season-rewards.schema.json`, and the server-side reward resolver in the current repo checkout.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; exits non-zero when the season reward config has schema/type errors or overlapping reward thresholds.",
+    ],
+  },
   "validate:assets": {
     purpose: "Validate shipped art/content asset manifests, with an optional stricter Cocos release-ready mode.",
     requiredInputs: [

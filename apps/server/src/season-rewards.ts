@@ -1,4 +1,5 @@
 import seasonRewardsDocument from "../../../configs/season-rewards.json";
+import seasonRewardSchemaDocument from "../../../configs/schemas/season-rewards.schema.json";
 import { type SeasonRewardBracket, type SeasonRewardConfig } from "../../../packages/shared/src/index";
 
 export interface ResolvedSeasonRewardConfig extends SeasonRewardConfig {}
@@ -11,6 +12,73 @@ export interface SeasonRewardComputation {
   gems: number;
   badge: string;
   rankPosition: number;
+}
+
+interface JsonSchemaDocument {
+  $id?: string;
+}
+
+const SEASON_REWARD_CONFIG_SCHEMA = seasonRewardSchemaDocument as JsonSchemaDocument;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatSchemaPrefixedMessage(message: string): string {
+  const schemaId = SEASON_REWARD_CONFIG_SCHEMA.$id ? ` (${SEASON_REWARD_CONFIG_SCHEMA.$id})` : "";
+  return `Invalid season reward config${schemaId}: ${message}`;
+}
+
+function assertAllowedKeys(value: Record<string, unknown>, allowedKeys: string[], path: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) {
+      throw new Error(formatSchemaPrefixedMessage(`${path}.${key} is not allowed`));
+    }
+  }
+}
+
+function parseSeasonRewardBracketDocument(value: unknown, index: number): SeasonRewardBracket {
+  const path = `seasonRewards.brackets[${index}]`;
+  if (!isRecord(value)) {
+    throw new Error(formatSchemaPrefixedMessage(`${path} must be an object`));
+  }
+
+  assertAllowedKeys(value, ["topPercentile", "gems", "badge"], path);
+
+  if (typeof value.badge !== "string" || value.badge.trim().length === 0) {
+    throw new Error(formatSchemaPrefixedMessage(`${path}.badge must be a non-empty string`));
+  }
+
+  if (typeof value.topPercentile !== "number" || !Number.isFinite(value.topPercentile)) {
+    throw new Error(formatSchemaPrefixedMessage(`${path}.topPercentile must be a number`));
+  }
+
+  if (typeof value.gems !== "number" || !Number.isInteger(value.gems) || value.gems < 0) {
+    throw new Error(formatSchemaPrefixedMessage(`${path}.gems must be a non-negative integer`));
+  }
+
+  return {
+    topPercentile: value.topPercentile,
+    gems: value.gems,
+    badge: value.badge.trim()
+  };
+}
+
+export function parseSeasonRewardConfigDocument(rawConfig: unknown): ResolvedSeasonRewardConfig {
+  if (!isRecord(rawConfig)) {
+    throw new Error(formatSchemaPrefixedMessage("seasonRewards must be an object"));
+  }
+
+  assertAllowedKeys(rawConfig, ["brackets"], "seasonRewards");
+
+  const { brackets } = rawConfig;
+  if (!Array.isArray(brackets)) {
+    throw new Error(formatSchemaPrefixedMessage("seasonRewards.brackets must be an array"));
+  }
+
+  return normalizeSeasonRewardConfig({
+    brackets: brackets.map((bracket, index) => parseSeasonRewardBracketDocument(bracket, index))
+  });
 }
 
 function normalizeNonNegativeInteger(value: number, field: string): number {
@@ -67,8 +135,10 @@ export function normalizeSeasonRewardConfig(rawConfig?: Partial<SeasonRewardConf
   };
 }
 
+const resolvedSeasonRewardConfig = parseSeasonRewardConfigDocument(seasonRewardsDocument);
+
 export function resolveSeasonRewardConfig(): ResolvedSeasonRewardConfig {
-  return normalizeSeasonRewardConfig(seasonRewardsDocument as SeasonRewardConfig);
+  return resolvedSeasonRewardConfig;
 }
 
 export function resolveSeasonRewardBracket(
