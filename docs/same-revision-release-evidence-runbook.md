@@ -39,6 +39,8 @@ Use the manifest as the release-call front door:
 
 `npm run release:evidence:index` is still useful, but it is now the secondary checked-out-revision inventory after the candidate manifest.
 
+For lifecycle governance, run `npm run release:evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2` before pruning old packets. The report tells reviewers which live front-door artifacts are still current and which stale sets can be archived without polluting the active release directories.
+
 It scans the current `artifacts/release-readiness/` and `artifacts/wechat-release/` working set, then writes:
 
 - `artifacts/release-readiness/current-release-evidence-index-<short-sha>.json`

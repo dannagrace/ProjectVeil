@@ -100,6 +100,18 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`",
     ],
   },
+  "release:evidence:lifecycle": {
+    purpose:
+      "Plan or apply release evidence retention, archival, and archive cleanup without changing the live directories by default, while writing a reviewer-facing report of the currently valid front-door artifacts.",
+    requiredInputs: [
+      "Existing artifacts under `artifacts/release-readiness/`, `artifacts/release-readiness/phase1-candidate-rehearsal/`, and `artifacts/wechat-release/`; optional retention flags, archive root overrides, and `--apply` control whether the command only reports or also moves/removes artifacts.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.json`",
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.md`",
+      "When `--apply` archives anything, a matching manifest is also written under `artifacts/release-archive/runs/<timestamp>/` next to the moved artifact sets.",
+    ],
+  },
   "release:gate:summary": {
     purpose:
       "Aggregate readiness, H5, reconnect soak, Cocos reconnect replay, WeChat, and config-change evidence into one top-level release gate decision.",

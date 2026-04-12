@@ -24,6 +24,7 @@ Relevant scripts: 52
 | `release:cocos:primary-journey-evidence` | release | `artifacts/release-readiness/cocos-primary-journey-evidence-<candidate>-<short-sha>.json` |
 | `release:cocos:rc-reconnect-replay` | release | `artifacts/release-readiness/cocos-rc-reconnect-replay-<candidate>-<short-sha>.json` |
 | `release:evidence:index` | release | `artifacts/release-readiness/current-release-evidence-index-<short-sha>.json` |
+| `release:evidence:lifecycle` | release | `artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.json` |
 | `release:gate:summary` | release | `artifacts/release-readiness/release-gate-summary-<short-sha>.json` |
 | `release:go-no-go-packet` | release | `artifacts/release-readiness/go-no-go-decision-packet-<candidate>-<short-sha>.json` |
 | `release:health:summary` | release | `artifacts/release-readiness/release-health-summary-<short-sha>.json` |
@@ -176,6 +177,18 @@ Relevant scripts: 52
 - Produced artifacts:
   - `artifacts/release-readiness/current-release-evidence-index-<short-sha>.json`
   - `artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`
+
+## `release:evidence:lifecycle`
+
+- Family: `release`
+- Command: `node --import tsx ./scripts/release-evidence-lifecycle.ts`
+- Purpose: Plan or apply release evidence retention, archival, and archive cleanup without changing the live directories by default, while writing a reviewer-facing report of the currently valid front-door artifacts.
+- Required inputs:
+  - Existing artifacts under `artifacts/release-readiness/`, `artifacts/release-readiness/phase1-candidate-rehearsal/`, and `artifacts/wechat-release/`; optional retention flags, archive root overrides, and `--apply` control whether the command only reports or also moves/removes artifacts.
+- Produced artifacts:
+  - `artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.json`
+  - `artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.md`
+  - When `--apply` archives anything, a matching manifest is also written under `artifacts/release-archive/runs/<timestamp>/` next to the moved artifact sets.
 
 ## `release:gate:summary`
 
