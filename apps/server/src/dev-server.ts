@@ -41,6 +41,7 @@ import { registerShopRoutes } from "./shop";
 import { registerWechatPayRoutes } from "./wechat-pay";
 import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
 import { recordRuntimeErrorEvent } from "./observability";
+import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "./battle-replay-retention";
 
 loadEnv();
 
@@ -99,6 +100,7 @@ interface DevServerRoomSnapshotStore {
 
 interface DevServerMySqlSnapshotStore extends DevServerRoomSnapshotStore {
   pruneExpired(): Promise<number>;
+  pruneExpiredBattleReplays(): Promise<number>;
   getRetentionPolicy(): SnapshotRetentionPolicy;
 }
 
@@ -147,6 +149,7 @@ export interface DevServerBootstrapDependencies {
   createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
+  readBattleReplayRetentionPolicy(): BattleReplayRetentionPolicy;
   setInterval(handler: () => void, delayMs: number): CleanupTimerHandle;
   clearInterval(timer: CleanupTimerHandle): void;
   isMySqlSnapshotStore(store: DevServerRoomSnapshotStore): store is DevServerMySqlSnapshotStore;
@@ -233,6 +236,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
       }),
     logger: console,
     process,
+    readBattleReplayRetentionPolicy,
     setInterval: (handler, delayMs) => setInterval(handler, delayMs),
     clearInterval: (timer) => clearInterval(timer as NodeJS.Timeout),
     isMySqlSnapshotStore: (store): store is DevServerMySqlSnapshotStore => store instanceof MySqlRoomSnapshotStore
@@ -291,7 +295,7 @@ export async function startDevServer(
       );
     }
 
-    if (migrationStatus?.pending.length > 0) {
+    if ((migrationStatus?.pending.length ?? 0) > 0 && migrationStatus) {
       const warning = deps.formatSchemaMigrationWarning(migrationStatus);
       if (isProductionEnvironment) {
         await failStartup("Schema migrations are pending during production startup", new Error(warning));
@@ -420,36 +424,61 @@ export async function startDevServer(
     deps.logger.log("Error monitoring: SENTRY_DSN not configured; external delivery skipped");
   }
 
-  let cleanupTimer: CleanupTimerHandle | null = null;
+  let snapshotCleanupTimer: CleanupTimerHandle | null = null;
+  let battleReplayCleanupTimer: CleanupTimerHandle | null = null;
   if (deps.isMySqlSnapshotStore(effectiveSnapshotStore)) {
     const retention = effectiveSnapshotStore.getRetentionPolicy();
+    const battleReplayRetention = deps.readBattleReplayRetentionPolicy();
     deps.logger.log(
       `Snapshot retention: ttl=${retention.ttlHours == null ? "disabled" : `${retention.ttlHours}h`} / cleanup=${retention.cleanupIntervalMinutes == null ? "disabled" : `${retention.cleanupIntervalMinutes}m`}`
     );
+    deps.logger.log(
+      `Battle replay retention: ttl=${battleReplayRetention.ttlDays == null ? "disabled" : `${battleReplayRetention.ttlDays}d`} / max=${battleReplayRetention.maxBytes == null ? "disabled" : `${battleReplayRetention.maxBytes}B`} / cleanup=${battleReplayRetention.cleanupIntervalMinutes == null ? "disabled" : `${battleReplayRetention.cleanupIntervalMinutes}m`} / batch=${battleReplayRetention.cleanupBatchSize}`
+    );
 
-    const runCleanup = async (): Promise<void> => {
+    const runSnapshotCleanup = async (): Promise<void> => {
       const removed = await effectiveSnapshotStore.pruneExpired();
       if (removed > 0) {
         deps.logger.log(`Pruned ${removed} expired room snapshot(s)`);
       }
     };
 
-    await runCleanup();
+    const runBattleReplayCleanup = async (): Promise<void> => {
+      const removed = await effectiveSnapshotStore.pruneExpiredBattleReplays();
+      if (removed > 0) {
+        deps.logger.log(`Pruned ${removed} expired battle replay(s)`);
+      }
+    };
+
+    await Promise.all([runSnapshotCleanup(), runBattleReplayCleanup()]);
 
     if (retention.cleanupIntervalMinutes != null) {
-      cleanupTimer = deps.setInterval(() => {
-        void runCleanup().catch((error) => {
+      snapshotCleanupTimer = deps.setInterval(() => {
+        void runSnapshotCleanup().catch((error) => {
           deps.logger.error("Failed to prune expired room snapshots", error);
         });
       }, retention.cleanupIntervalMinutes * 60 * 1000);
-      cleanupTimer.unref?.();
+      snapshotCleanupTimer.unref?.();
+    }
+
+    if (battleReplayRetention.cleanupIntervalMinutes != null) {
+      battleReplayCleanupTimer = deps.setInterval(() => {
+        void runBattleReplayCleanup().catch((error) => {
+          deps.logger.error("Failed to prune expired battle replays", error);
+        });
+      }, battleReplayRetention.cleanupIntervalMinutes * 60 * 1000);
+      battleReplayCleanupTimer.unref?.();
     }
   }
 
   const closeStore = async (): Promise<void> => {
-    if (cleanupTimer) {
-      deps.clearInterval(cleanupTimer);
-      cleanupTimer = null;
+    if (snapshotCleanupTimer) {
+      deps.clearInterval(snapshotCleanupTimer);
+      snapshotCleanupTimer = null;
+    }
+    if (battleReplayCleanupTimer) {
+      deps.clearInterval(battleReplayCleanupTimer);
+      battleReplayCleanupTimer = null;
     }
 
     if (!snapshotStore) {

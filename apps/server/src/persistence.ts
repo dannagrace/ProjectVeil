@@ -80,6 +80,10 @@ import {
 import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "./competitive-season";
 import { readRuntimeSecret } from "./runtime-secrets";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "./season-rewards";
+import {
+  prunePlayerBattleReplaysForRetention,
+  readBattleReplayRetentionPolicy
+} from "./battle-replay-retention";
 
 export interface SeasonSnapshot {
   seasonId: string;
@@ -8879,6 +8883,42 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
              version = version + 1
          WHERE player_id = ?`,
         [JSON.stringify(pruned.mailbox), row.player_id]
+      );
+    }
+
+    return removedCount;
+  }
+
+  async pruneExpiredBattleReplays(referenceTime = new Date()): Promise<number> {
+    const replayRetention = readBattleReplayRetentionPolicy();
+    if (replayRetention.ttlDays == null) {
+      return 0;
+    }
+
+    const [rows] = await this.pool.query<Array<RowDataPacket & { player_id: string; recent_battle_replays_json: string | null }>>(
+      `SELECT player_id, recent_battle_replays_json
+       FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+       WHERE recent_battle_replays_json IS NOT NULL
+       LIMIT ?`,
+      [replayRetention.cleanupBatchSize]
+    );
+
+    let removedCount = 0;
+    for (const row of rows) {
+      const replayJson = row.recent_battle_replays_json;
+      const existingReplays = replayJson ? parseJsonColumn<PlayerBattleReplaySummary[]>(replayJson) : [];
+      const pruned = prunePlayerBattleReplaysForRetention(existingReplays, replayRetention, referenceTime);
+      if (pruned.removedCount === 0 && pruned.updatedCount === 0) {
+        continue;
+      }
+
+      removedCount += pruned.removedCount;
+      await this.pool.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET recent_battle_replays_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [JSON.stringify(pruned.replays), row.player_id]
       );
     }
 

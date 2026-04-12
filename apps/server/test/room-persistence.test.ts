@@ -268,6 +268,8 @@ test("player battle replay summaries preserve the global battle result for both 
   const attackerReplay = buildPlayerBattleReplaySummary(replay, "player-1", "hero-1", "attacker", "hero-2");
   const defenderReplay = buildPlayerBattleReplaySummary(replay, "player-2", "hero-2", "defender", "hero-1");
 
+  assert.ok(attackerReplay);
+  assert.ok(defenderReplay);
   assert.equal(attackerReplay.result, "attacker_victory");
   assert.equal(defenderReplay.result, "attacker_victory");
 });

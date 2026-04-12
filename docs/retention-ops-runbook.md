@@ -2,7 +2,7 @@
 
 Issue #1200 starts the retention surface with a narrow server-side slice: daily first-login rewards are now issued automatically on successful login, streak state is persisted on the player account, and every successful issuance emits a versioned `daily_login` analytics event.
 
-This runbook only covers the implemented slice. WeChat push, offline-reward summaries, and D1/D7 dashboard material are still out of scope for this change and need follow-up work before they should be promised as live.
+This runbook only covers the implemented slices. WeChat push, offline-reward summaries, and D1/D7 dashboard material are still out of scope for this change and need follow-up work before they should be promised as live.
 
 ## Current Scope
 
@@ -45,3 +45,36 @@ This runbook only covers the implemented slice. WeChat push, offline-reward summ
 - To reduce exposure immediately, point clients back to the existing manual claim flow operationally and avoid depending on the auth response field.
 - To change values without code rollout, update [`configs/daily-rewards.json`](/home/gpt/project/ProjectVeil/configs/daily-rewards.json).
 - If the reward logic itself is faulty, revert the server change rather than mutating player data manually without an audit trail.
+
+## Battle Replay Retention
+
+Issue `#1376` adds a second retention slice for battle replay payloads stored in `player_accounts.recent_battle_replays_json`.
+
+### Current Scope
+
+- New replay writes are rejected when the serialized replay JSON exceeds `VEIL_BATTLE_REPLAY_MAX_BYTES` (default `524288`, or `512 KB`).
+- New replay writes receive `expiresAt` based on `VEIL_BATTLE_REPLAY_TTL_DAYS` (default `90`).
+- MySQL-backed server startup runs replay cleanup immediately, then repeats on `VEIL_BATTLE_REPLAY_CLEANUP_INTERVAL_MINUTES` (default `1440`, or every 24 hours).
+- Each cleanup pass scans up to `VEIL_BATTLE_REPLAY_CLEANUP_BATCH_SIZE` account rows (default `100`) and removes expired replay entries from the embedded JSON array.
+- Cleanup activity is emitted to the server log as `Pruned N expired battle replay(s)`.
+
+### Operator Checks
+
+- Confirm startup logs include a line shaped like `Battle replay retention: ttl=90d / max=524288B / cleanup=1440m / batch=100`.
+- Confirm cleanup logs periodically emit `Pruned N expired battle replay(s)` when stale data exists.
+- When debugging an account-specific replay issue, inspect the stored `recent_battle_replays_json` payload and verify every retained replay has an `expiresAt` within the configured TTL window.
+
+### Table Sizing Guidance
+
+- Estimate replay footprint from the serialized JSON payload, not from replay count alone.
+- A safe starting alert threshold is `player_accounts.recent_battle_replays_json` averaging above `256 KB` per active player row or any single replay approaching the `512 KB` write cap, because that usually means battle steps are expanding faster than the retention window can offset.
+- If table growth remains high after cleanup is working, lower `VEIL_BATTLE_REPLAY_TTL_DAYS` first before raising the write cap.
+
+### Triage Notes
+
+- Replay missing immediately after battle:
+  Check whether the payload exceeded `VEIL_BATTLE_REPLAY_MAX_BYTES`; oversized replays are intentionally skipped instead of persisted.
+- Old replay still visible:
+  Confirm the replay has an `expiresAt` value, then check whether the server is running with MySQL persistence and whether the cleanup interval is enabled.
+- Cleanup logs missing:
+  Verify `VEIL_BATTLE_REPLAY_CLEANUP_INTERVAL_MINUTES` is positive and the process has completed at least one startup cycle since the config change.

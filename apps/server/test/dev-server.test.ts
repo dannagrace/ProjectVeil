@@ -91,16 +91,25 @@ function createMemoryStore() {
   };
 }
 
-function createMySqlStore(retention: SnapshotRetentionPolicy, pruneImpl: () => Promise<number>) {
+function createMySqlStore(
+  retention: SnapshotRetentionPolicy,
+  pruneImpl: () => Promise<number>,
+  pruneBattleReplaysImpl: () => Promise<number> = async () => 0
+) {
   return {
     closeCalls: 0,
     pruneCalls: 0,
+    pruneBattleReplayCalls: 0,
     async close() {
       this.closeCalls += 1;
     },
     async pruneExpired() {
       this.pruneCalls += 1;
       return pruneImpl();
+    },
+    async pruneExpiredBattleReplays() {
+      this.pruneBattleReplayCalls += 1;
+      return pruneBattleReplaysImpl();
     },
     getRetentionPolicy() {
       return retention;
@@ -953,6 +962,8 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   };
   let pruneAttempt = 0;
   const pruneFailure = new Error("cleanup failed");
+  let pruneBattleReplayAttempt = 0;
+  const pruneBattleReplayFailure = new Error("battle replay cleanup failed");
   const mysqlStore = createMySqlStore(retention, async () => {
     pruneAttempt += 1;
     if (pruneAttempt === 1) {
@@ -960,6 +971,13 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     }
 
     throw pruneFailure;
+  }, async () => {
+    pruneBattleReplayAttempt += 1;
+    if (pruneBattleReplayAttempt === 1) {
+      return 3;
+    }
+
+    throw pruneBattleReplayFailure;
   });
   const mysqlConfig: MySqlPersistenceConfig = {
     host: "127.0.0.1",
@@ -1028,6 +1046,12 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     },
     logger: base.logger,
     process: base.process,
+    readBattleReplayRetentionPolicy: () => ({
+      ttlDays: 90,
+      maxBytes: 512 * 1024,
+      cleanupIntervalMinutes: 60,
+      cleanupBatchSize: 25
+    }),
     setInterval: (callback, delayMs) => {
       const timer: TestTimer = {
         callback,
@@ -1049,6 +1073,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(memoryStoreCreated, false);
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(mysqlStore.pruneCalls, 1);
+  assert.equal(mysqlStore.pruneBattleReplayCalls, 1);
   assert.equal(base.logger.warnings.length, 0);
   assert.deepEqual(persistenceHealth, {
     status: "ok",
@@ -1065,20 +1090,30 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     /Local in-memory Colyseus presence\/driver enabled/,
     /Persistence mode: production\/mysql/,
     /Snapshot retention: ttl=48h \/ cleanup=15m/,
-    /Pruned 2 expired room snapshot\(s\)/
+    /Battle replay retention: ttl=90d \/ max=524288B \/ cleanup=60m \/ batch=25/,
+    /Pruned 2 expired room snapshot\(s\)/,
+    /Pruned 3 expired battle replay\(s\)/
   ]);
-  assert.equal(scheduledTimers.length, 1);
+  assert.equal(scheduledTimers.length, 2);
   assert.equal(scheduledTimers[0]?.delayMs, 15 * 60 * 1000);
   assert.equal(scheduledTimers[0]?.unrefCalls, 1);
+  assert.equal(scheduledTimers[1]?.delayMs, 60 * 60 * 1000);
+  assert.equal(scheduledTimers[1]?.unrefCalls, 1);
 
   scheduledTimers[0]?.callback();
+  scheduledTimers[1]?.callback();
   await flushAsyncWork();
 
   assert.equal(mysqlStore.pruneCalls, 2);
+  assert.equal(mysqlStore.pruneBattleReplayCalls, 2);
   assert.deepEqual(base.logger.errors, [
     {
       message: "Failed to prune expired room snapshots",
       error: pruneFailure
+    },
+    {
+      message: "Failed to prune expired battle replays",
+      error: pruneBattleReplayFailure
     }
   ]);
 
@@ -1087,7 +1122,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
 
   assert.equal(mysqlStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
-  assert.deepEqual(clearedTimers, [scheduledTimers[0]]);
+  assert.deepEqual(clearedTimers, [scheduledTimers[0], scheduledTimers[1]]);
   assert.deepEqual(base.process.exitCodes, [0]);
 });
 
