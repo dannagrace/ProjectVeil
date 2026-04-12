@@ -12,6 +12,7 @@ interface Args {
   snapshotPath?: string;
   h5SmokePath?: string;
   reconnectSoakPath?: string;
+  cocosRcReconnectReplayPath?: string;
   wechatRcValidationPath?: string;
   wechatCandidateSummaryPath?: string;
   wechatSmokeReportPath?: string;
@@ -152,6 +153,7 @@ interface GateSource {
     | "release-readiness-snapshot"
     | "h5-release-candidate-smoke"
     | "reconnect-soak"
+    | "cocos-rc-reconnect-replay"
     | "wechat-rc-validation"
     | "wechat-release-candidate-summary"
     | "wechat-smoke-report"
@@ -160,7 +162,13 @@ interface GateSource {
 }
 
 interface GateResult {
-  id: "release-readiness" | "h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release" | "phase1-evidence-consistency";
+  id:
+    | "release-readiness"
+    | "h5-release-candidate-smoke"
+    | "multiplayer-reconnect-soak"
+    | "cocos-primary-client-reconnect-replay"
+    | "wechat-release"
+    | "phase1-evidence-consistency";
   label: string;
   status: GateStatus;
   required: boolean;
@@ -170,7 +178,12 @@ interface GateResult {
 }
 
 interface Phase1EvidenceReference {
-  gateId: "release-readiness" | "h5-release-candidate-smoke" | "multiplayer-reconnect-soak" | "wechat-release";
+  gateId:
+    | "release-readiness"
+    | "h5-release-candidate-smoke"
+    | "multiplayer-reconnect-soak"
+    | "cocos-primary-client-reconnect-replay"
+    | "wechat-release";
   label: string;
   source: GateSource;
   commit?: string;
@@ -250,6 +263,27 @@ interface ReconnectSoakArtifact {
     status?: "passed" | "failed";
     summary?: string;
   };
+}
+
+interface CocosRcReconnectReplayArtifact {
+  generatedAt?: string;
+  candidate?: {
+    revision?: string;
+    shortRevision?: string;
+  };
+  execution?: {
+    overallStatus?: "passed" | "failed";
+  };
+  reviewSignals?: {
+    resumeSuccessVerified?: boolean;
+    freshJoinFallbackVerified?: boolean;
+    failureReasons?: string[];
+  };
+  scenarios?: Array<{
+    id?: string;
+    status?: "passed" | "failed";
+    observedResumeFailureReason?: string | null;
+  }>;
 }
 
 interface WechatCommercialVerificationReport {
@@ -371,6 +405,7 @@ interface ReleaseGateSummaryReport {
     snapshotPath?: string;
     h5SmokePath?: string;
     reconnectSoakPath?: string;
+    cocosRcReconnectReplayPath?: string;
     wechatRcValidationPath?: string;
     wechatCandidateSummaryPath?: string;
     wechatSmokeReportPath?: string;
@@ -492,6 +527,7 @@ function parseArgs(argv: string[]): Args {
   let snapshotPath: string | undefined;
   let h5SmokePath: string | undefined;
   let reconnectSoakPath: string | undefined;
+  let cocosRcReconnectReplayPath: string | undefined;
   let wechatRcValidationPath: string | undefined;
   let wechatCandidateSummaryPath: string | undefined;
   let wechatSmokeReportPath: string | undefined;
@@ -519,6 +555,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--reconnect-soak" && next) {
       reconnectSoakPath = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--cocos-rc-reconnect-replay" && next) {
+      cocosRcReconnectReplayPath = next;
       index += 1;
       continue;
     }
@@ -583,6 +624,7 @@ function parseArgs(argv: string[]): Args {
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(h5SmokePath ? { h5SmokePath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
+    ...(cocosRcReconnectReplayPath ? { cocosRcReconnectReplayPath } : {}),
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
@@ -660,6 +702,14 @@ export function resolveLatestReconnectSoakFile(dirPath: string): string | undefi
   );
 }
 
+export function resolveLatestCocosRcReconnectReplayFile(dirPath: string): string | undefined {
+  return resolveLatestFile(
+    dirPath,
+    (entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"),
+    3
+  );
+}
+
 function resolveSnapshotPath(args: Args): string | undefined {
   if (args.snapshotPath) {
     return path.resolve(args.snapshotPath);
@@ -683,6 +733,13 @@ function resolveReconnectSoakPath(args: Args): string | undefined {
     return path.resolve(args.reconnectSoakPath);
   }
   return resolveLatestReconnectSoakFile(getDefaultReleaseReadinessDir());
+}
+
+function resolveCocosRcReconnectReplayPath(args: Args): string | undefined {
+  if (args.cocosRcReconnectReplayPath) {
+    return path.resolve(args.cocosRcReconnectReplayPath);
+  }
+  return resolveLatestCocosRcReconnectReplayFile(getDefaultReleaseReadinessDir());
 }
 
 function directoryContainsWechatEvidence(dirPath: string): boolean {
@@ -863,10 +920,11 @@ function buildGateTriageArtifacts(
   const artifacts = [
     ...createTriageArtifactReference(gate.label, gate.source?.path),
     ...(gate.id === "phase1-evidence-consistency"
-      ? [
+        ? [
           ...createTriageArtifactReference("Release readiness snapshot", inputs.snapshotPath),
           ...createTriageArtifactReference("H5 packaged RC smoke", inputs.h5SmokePath),
           ...createTriageArtifactReference("Multiplayer reconnect soak", inputs.reconnectSoakPath),
+          ...createTriageArtifactReference("Cocos primary-client reconnect replay", inputs.cocosRcReconnectReplayPath),
           ...createTriageArtifactReference(
             "WeChat release evidence",
             inputs.wechatCandidateSummaryPath ?? inputs.wechatRcValidationPath ?? inputs.wechatSmokeReportPath
@@ -1089,6 +1147,106 @@ function summarizeReconnectSoakEvidence(
       : stale
         ? "Reconnect soak evidence is stale for this candidate."
         : "Reconnect soak evidence is present and passing for this candidate.",
+    freshness,
+    ...(report.generatedAt ? { observedAt: report.generatedAt } : {}),
+    ...(revision ? { revision } : {})
+  };
+}
+
+export function evaluateCocosRcReconnectReplayGate(
+  targetSurface: TargetSurface,
+  cocosRcReconnectReplayPath: string | undefined
+): GateResult {
+  const required = targetSurface === "wechat" && Boolean(cocosRcReconnectReplayPath && fs.existsSync(cocosRcReconnectReplayPath));
+  if (!cocosRcReconnectReplayPath || !fs.existsSync(cocosRcReconnectReplayPath)) {
+    if (!required) {
+      return {
+        id: "cocos-primary-client-reconnect-replay",
+        label: "Cocos primary-client reconnect replay",
+        required: false,
+        status: "passed",
+        summary: "Cocos primary-client reconnect replay artifact is not attached; advisory gate skipped.",
+        failures: []
+      };
+    }
+    return missingGate(
+      "cocos-primary-client-reconnect-replay",
+      "Cocos primary-client reconnect replay",
+      "Missing Cocos primary-client reconnect replay artifact.",
+      ["Cocos RC reconnect replay artifact was not found."],
+      required
+    );
+  }
+
+  const report = readJsonFile<CocosRcReconnectReplayArtifact>(cocosRcReconnectReplayPath);
+  const failures: string[] = [];
+  if (report.execution?.overallStatus !== "passed") {
+    failures.push(`Cocos RC reconnect replay status is ${JSON.stringify(report.execution?.overallStatus ?? "missing")}.`);
+  }
+  if (report.reviewSignals?.resumeSuccessVerified !== true) {
+    failures.push("Cocos RC reconnect replay did not verify the stored-token resume branch.");
+  }
+  if (report.reviewSignals?.freshJoinFallbackVerified !== true) {
+    failures.push("Cocos RC reconnect replay did not verify the fresh-join fallback branch.");
+  }
+  if (!report.scenarios?.some((scenario) => scenario.id === "resume-success" && scenario.status === "passed")) {
+    failures.push("Cocos RC reconnect replay is missing a passing resume-success scenario.");
+  }
+  if (!report.scenarios?.some((scenario) => scenario.id === "resume-fallback-fresh-join" && scenario.status === "passed")) {
+    failures.push("Cocos RC reconnect replay is missing a passing fresh-join fallback scenario.");
+  }
+
+  return {
+    id: "cocos-primary-client-reconnect-replay",
+    label: "Cocos primary-client reconnect replay",
+    required,
+    status: failures.length === 0 ? "passed" : "failed",
+    summary:
+      failures.length === 0
+        ? "Cocos primary-client reconnect replay verified stored-token resume and fresh-join fallback for this candidate."
+        : `Cocos primary-client reconnect replay gate failed: ${failures[0]}`,
+    failures,
+    source: {
+      kind: "cocos-rc-reconnect-replay",
+      path: cocosRcReconnectReplayPath
+    }
+  };
+}
+
+function summarizeCocosRcReconnectReplayEvidence(
+  cocosRcReconnectReplayPath: string | undefined,
+  candidateRevision: string
+): {
+  status: GateStatus;
+  summary: string;
+  freshness: EvidenceFreshness;
+  observedAt?: string;
+  revision?: string;
+} {
+  if (!cocosRcReconnectReplayPath || !fs.existsSync(cocosRcReconnectReplayPath)) {
+    return {
+      status: "failed",
+      summary: "Cocos primary-client reconnect replay evidence is missing.",
+      freshness: "unknown"
+    };
+  }
+
+  const report = readJsonFile<CocosRcReconnectReplayArtifact>(cocosRcReconnectReplayPath);
+  const revision = report.candidate?.revision ?? report.candidate?.shortRevision;
+  const freshness = evaluateFreshness(report.generatedAt, MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS);
+  const failing =
+    report.execution?.overallStatus !== "passed" ||
+    report.reviewSignals?.resumeSuccessVerified !== true ||
+    report.reviewSignals?.freshJoinFallbackVerified !== true;
+  const stale = freshness !== "fresh" || !commitsMatch(revision, candidateRevision);
+
+  return {
+    status: failing ? "failed" : "passed",
+    summary: failing
+      ? "Cocos primary-client reconnect replay evidence is failing for this candidate."
+      : stale
+        ? "Cocos primary-client reconnect replay evidence is stale for this candidate."
+        : "Cocos primary-client reconnect replay evidence is present and passing for this candidate.",
     freshness,
     ...(report.generatedAt ? { observedAt: report.generatedAt } : {}),
     ...(revision ? { revision } : {})
@@ -1470,6 +1628,7 @@ function buildReleaseSurfaceContract(
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
+  cocosRcReconnectReplayPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
   wechatCommercialVerificationPath: string | undefined,
   manualEvidenceLedgerPath: string | undefined
@@ -1520,6 +1679,16 @@ function buildReleaseSurfaceContract(
       required: true,
       ...summarizeReconnectSoakEvidence(reconnectSoakPath, candidateRevision),
       artifactPath: reconnectSoakPath
+    })
+  );
+
+  evidence.push(
+    createSurfaceEvidenceItem({
+      id: "cocos-primary-client-reconnect-replay",
+      label: "Cocos primary-client reconnect replay",
+      required: targetSurface === "wechat" && Boolean(cocosRcReconnectReplayPath && fs.existsSync(cocosRcReconnectReplayPath)),
+      ...summarizeCocosRcReconnectReplayEvidence(cocosRcReconnectReplayPath, candidateRevision),
+      artifactPath: cocosRcReconnectReplayPath
     })
   );
 
@@ -1756,6 +1925,7 @@ function collectPhase1EvidenceReferences(
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
+  cocosRcReconnectReplayPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
   wechatSmokeReportPath: string | undefined,
@@ -1808,6 +1978,22 @@ function collectPhase1EvidenceReferences(
       commit,
       generatedAt: report.generatedAt,
       candidateHint: deriveCandidateHint(reconnectSoakPath, commit)
+    });
+  }
+
+  if (cocosRcReconnectReplayPath && fs.existsSync(cocosRcReconnectReplayPath)) {
+    const report = readJsonFile<CocosRcReconnectReplayArtifact>(cocosRcReconnectReplayPath);
+    const commit = report.candidate?.revision ?? report.candidate?.shortRevision;
+    evidence.push({
+      gateId: "cocos-primary-client-reconnect-replay",
+      label: "Cocos primary-client reconnect replay",
+      source: {
+        kind: "cocos-rc-reconnect-replay",
+        path: cocosRcReconnectReplayPath
+      },
+      commit,
+      generatedAt: report.generatedAt,
+      candidateHint: deriveCandidateHint(cocosRcReconnectReplayPath, commit)
     });
   }
 
@@ -1879,6 +2065,7 @@ export function evaluatePhase1EvidenceConsistencyGate(
   snapshotPath: string | undefined,
   h5SmokePath: string | undefined,
   reconnectSoakPath: string | undefined,
+  cocosRcReconnectReplayPath: string | undefined,
   wechatRcValidationPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
   wechatSmokeReportPath: string | undefined,
@@ -1889,6 +2076,9 @@ export function evaluatePhase1EvidenceConsistencyGate(
     { gateId: "release-readiness", label: "Release readiness snapshot" },
     { gateId: "h5-release-candidate-smoke", label: "H5 packaged RC smoke" },
     { gateId: "multiplayer-reconnect-soak", label: "Multiplayer reconnect soak" },
+    ...(targetSurface === "wechat" && Boolean(cocosRcReconnectReplayPath && fs.existsSync(cocosRcReconnectReplayPath))
+      ? [{ gateId: "cocos-primary-client-reconnect-replay" as const, label: "Cocos primary-client reconnect replay" }]
+      : []),
     ...(targetSurface === "wechat" ? [{ gateId: "wechat-release" as const, label: "WeChat release validation" }] : [])
   ];
   const evidence = collectPhase1EvidenceReferences(
@@ -1896,6 +2086,7 @@ export function evaluatePhase1EvidenceConsistencyGate(
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,
+    cocosRcReconnectReplayPath,
     wechatRcValidationPath,
     wechatCandidateSummaryPath,
     wechatSmokeReportPath,
@@ -2132,6 +2323,9 @@ function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface
   if (gate.id === "multiplayer-reconnect-soak") {
     return `${sourceInstruction}, rerun \`npm run stress:rooms:reconnect-soak\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
   }
+  if (gate.id === "cocos-primary-client-reconnect-replay") {
+    return `${sourceInstruction}, rerun \`npm run release:cocos:rc-reconnect-replay -- --candidate <candidate>\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  }
   if (gate.id === "wechat-release") {
     const command =
       gate.source?.kind === "wechat-smoke-report"
@@ -2259,6 +2453,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
   const reconnectSoakPath = resolveReconnectSoakPath(args);
+  const cocosRcReconnectReplayPath = resolveCocosRcReconnectReplayPath(args);
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, wechatArtifactsDir);
@@ -2272,6 +2467,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     snapshotPath,
     h5SmokePath,
     reconnectSoakPath,
+    cocosRcReconnectReplayPath,
     wechatCandidateSummaryPath,
     wechatCommercialVerificationPath,
     manualEvidenceLedgerPath
@@ -2281,6 +2477,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     evaluateReleaseReadinessGate(snapshotPath),
     evaluateH5SmokeGate(h5SmokePath),
     evaluateReconnectSoakGate(reconnectSoakPath),
+    evaluateCocosRcReconnectReplayGate(args.targetSurface, cocosRcReconnectReplayPath),
     evaluateWechatGate(args.targetSurface, wechatRcValidationPath, wechatCandidateSummaryPath, wechatSmokeReportPath),
     evaluatePhase1EvidenceConsistencyGate(
       args.targetSurface,
@@ -2288,6 +2485,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       snapshotPath,
       h5SmokePath,
       reconnectSoakPath,
+      cocosRcReconnectReplayPath,
       wechatRcValidationPath,
       wechatCandidateSummaryPath,
       wechatSmokeReportPath,
@@ -2299,6 +2497,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     ...(snapshotPath ? { snapshotPath } : {}),
     ...(h5SmokePath ? { h5SmokePath } : {}),
     ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
+    ...(cocosRcReconnectReplayPath ? { cocosRcReconnectReplayPath } : {}),
     ...(wechatRcValidationPath ? { wechatRcValidationPath } : {}),
     ...(wechatCandidateSummaryPath ? { wechatCandidateSummaryPath } : {}),
     ...(wechatSmokeReportPath ? { wechatSmokeReportPath } : {}),
@@ -2348,6 +2547,9 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push(`- Snapshot: \`${report.inputs.snapshotPath ? relativeReportPath(report.inputs.snapshotPath) : "<missing>"}\``);
   lines.push(`- H5 smoke: \`${report.inputs.h5SmokePath ? relativeReportPath(report.inputs.h5SmokePath) : "<missing>"}\``);
   lines.push(`- Reconnect soak: \`${report.inputs.reconnectSoakPath ? relativeReportPath(report.inputs.reconnectSoakPath) : "<missing>"}\``);
+  lines.push(
+    `- Cocos reconnect replay: \`${report.inputs.cocosRcReconnectReplayPath ? relativeReportPath(report.inputs.cocosRcReconnectReplayPath) : "<missing>"}\``
+  );
   lines.push(`- WeChat validation: \`${report.inputs.wechatRcValidationPath ? relativeReportPath(report.inputs.wechatRcValidationPath) : "<missing>"}\``);
   lines.push(
     `- WeChat candidate summary: \`${report.inputs.wechatCandidateSummaryPath ? relativeReportPath(report.inputs.wechatCandidateSummaryPath) : "<missing>"}\``

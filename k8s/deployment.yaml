@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: project-veil-server
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: project-veil-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: project-veil-server
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: server
+          image: ghcr.io/dannagrace/projectveil-server:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: project-veil-server-config
+            - secretRef:
+                name: project-veil-server-secrets
+          ports:
+            - name: http
+              containerPort: 2567
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /api/runtime/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/runtime/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4

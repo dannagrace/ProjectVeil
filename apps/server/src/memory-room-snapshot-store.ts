@@ -52,6 +52,9 @@ import {
   type PlayerAccountListOptions,
   type PlayerAccountUnbanInput,
   type PlayerBanHistoryRecord,
+  type PlayerCompensationCreateInput,
+  type PlayerCompensationListOptions,
+  type PlayerCompensationRecord,
   type PlayerAccountWechatMiniGameIdentityInput,
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
@@ -198,6 +201,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly paymentReceiptsByOrderId = new Map<string, PaymentReceiptSnapshot>();
   private readonly paymentReceiptOrderIdByTransactionId = new Map<string, string>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
+  private readonly compensationHistoryByPlayerId = new Map<string, PlayerCompensationRecord[]>();
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -1394,6 +1398,37 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
     return structuredClone((this.banHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
+  }
+
+  async appendPlayerCompensationRecord(
+    playerId: string,
+    input: PlayerCompensationCreateInput
+  ): Promise<PlayerCompensationRecord> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const record: PlayerCompensationRecord = {
+      auditId: randomUUID(),
+      playerId: normalizedPlayerId,
+      type: input.type,
+      currency: input.currency,
+      amount: Math.max(1, Math.floor(input.amount)),
+      reason: input.reason.trim().slice(0, 512),
+      previousBalance: Math.max(0, Math.floor(input.previousBalance)),
+      balanceAfter: Math.max(0, Math.floor(input.balanceAfter)),
+      createdAt: new Date(input.createdAt ?? Date.now()).toISOString()
+    };
+    const history = this.compensationHistoryByPlayerId.get(normalizedPlayerId) ?? [];
+    history.unshift(record);
+    this.compensationHistoryByPlayerId.set(normalizedPlayerId, history);
+    return structuredClone(record);
+  }
+
+  async listPlayerCompensationHistory(
+    playerId: string,
+    options: PlayerCompensationListOptions = {}
+  ): Promise<PlayerCompensationRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
+    return structuredClone((this.compensationHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
   }
 
   async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {

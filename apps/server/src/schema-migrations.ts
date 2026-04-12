@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -65,8 +66,22 @@ export interface SchemaMigrationStatusOptions extends SchemaMigrationLoaderOptio
 }
 
 const SCHEMA_MIGRATIONS_TABLE = "schema_migrations";
-const MIGRATION_FILE_PATTERN = /^(\d{4})_(.+)\.ts$/;
-const MIGRATIONS_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/migrations");
+const MIGRATION_FILE_PATTERN = /^(\d{4})_(.+)\.(?:ts|js|mjs)$/;
+const MIGRATIONS_DIRECTORY = resolveDefaultMigrationsDirectory();
+
+function resolveDefaultMigrationsDirectory(): string {
+  const configured = process.env.VEIL_MIGRATIONS_PATH?.trim();
+  if (configured) {
+    return resolve(configured);
+  }
+
+  const compiledDirectory = resolve(process.cwd(), "dist/scripts/migrations");
+  if (existsSync(compiledDirectory)) {
+    return compiledDirectory;
+  }
+
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/migrations");
+}
 
 export function schemaMigrationTableName(): string {
   return SCHEMA_MIGRATIONS_TABLE;

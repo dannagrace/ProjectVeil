@@ -39,6 +39,10 @@
         .report-actions button[data-status="warned"] { background: #c77b22; }
         .report-actions button[data-status="banned"] { background: #a32020; }
         #reportList { display: grid; gap: 12px; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+        th { color: var(--muted); font-size: 13px; }
         .empty-state { color: var(--muted); }
     </style>
 </head>
@@ -78,6 +82,57 @@
         </div>
 
         <div class="card">
+            <h2>玩家补偿 / 退款</h2>
+            <div class="grid">
+                <div class="form-group">
+                    <label>类型</label>
+                    <select id="compensationType">
+                        <option value="add">发放</option>
+                        <option value="deduct">扣减</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>币种</label>
+                    <select id="compensationCurrency">
+                        <option value="gems">Gems</option>
+                        <option value="gold">Gold</option>
+                        <option value="wood">Wood</option>
+                        <option value="ore">Ore</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>数量</label>
+                    <input type="number" id="compensationAmount" value="100" min="1" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>原因</label>
+                <input type="text" id="compensationReason" value="Failed payment refund" />
+            </div>
+            <div class="report-actions">
+                <button onclick="submitCompensation()">提交补偿</button>
+                <button onclick="fetchCompensationHistory()">刷新历史</button>
+            </div>
+            <div class="table-wrap" style="margin-top: 16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>类型</th>
+                            <th>币种</th>
+                            <th>数量</th>
+                            <th>余额变化</th>
+                            <th>原因</th>
+                        </tr>
+                    </thead>
+                    <tbody id="compensationHistoryBody">
+                        <tr><td colspan="6" class="empty-state">尚未加载补偿历史。</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>举报审核队列</h2>
             <div class="grid">
                 <div class="form-group">
@@ -99,6 +154,7 @@
         const statusDiv = document.getElementById('status');
         const reportFilter = document.getElementById('reportStatusFilter');
         const reportList = document.getElementById('reportList');
+        const compensationHistoryBody = document.getElementById('compensationHistoryBody');
 
         function showStatus(msg, type) {
             statusDiv.textContent = msg;
@@ -143,6 +199,85 @@
                 } else {
                     showStatus(`修改失败！\n状态码: ${res.status}\n原因: ${JSON.stringify(data.error || data)}`, 'error');
                 }
+            } catch (e) {
+                showStatus(`网络错误: ${e.message}`, 'error');
+            }
+        }
+
+        function renderCompensationHistory(items) {
+            if (!items.length) {
+                compensationHistoryBody.innerHTML = '<tr><td colspan="6" class="empty-state">当前玩家还没有补偿记录。</td></tr>';
+                return;
+            }
+
+            compensationHistoryBody.innerHTML = items.map((item) => `
+                <tr>
+                    <td>${item.createdAt}</td>
+                    <td>${item.type === 'deduct' ? '扣减' : '发放'}</td>
+                    <td>${item.currency}</td>
+                    <td>${item.amount}</td>
+                    <td>${item.previousBalance} -> ${item.balanceAfter}</td>
+                    <td>${item.reason}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function fetchCompensationHistory() {
+            const pid = document.getElementById('targetPlayerId').value.trim();
+            if (!pid) {
+                compensationHistoryBody.innerHTML = '<tr><td colspan="6" class="empty-state">请先输入 Player ID。</td></tr>';
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/admin/players/${pid}/compensation/history?limit=20`, {
+                    headers: { 'x-veil-admin-secret': secretInput.value }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    return;
+                }
+                renderCompensationHistory(data.items || []);
+            } catch (e) {
+                compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">网络错误：${e.message}</td></tr>`;
+            }
+        }
+
+        async function submitCompensation() {
+            const pid = document.getElementById('targetPlayerId').value.trim();
+            if (!pid) {
+                showStatus('请先输入 Player ID。', 'error');
+                return;
+            }
+
+            showStatus('正在提交补偿请求...', 'success');
+
+            try {
+                const res = await fetch(`/api/admin/players/${pid}/compensation`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-veil-admin-secret': secretInput.value
+                    },
+                    body: JSON.stringify({
+                        type: document.getElementById('compensationType').value,
+                        currency: document.getElementById('compensationCurrency').value,
+                        amount: parseInt(document.getElementById('compensationAmount').value, 10),
+                        reason: document.getElementById('compensationReason').value
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    showStatus(`补偿失败！\n状态码: ${res.status}\n原因: ${JSON.stringify(data.error || data)}`, 'error');
+                    return;
+                }
+
+                showStatus(
+                    `补偿成功！\nGems: ${data.balances.gems}\nGold: ${data.balances.resources.gold}\nWood: ${data.balances.resources.wood}\nOre: ${data.balances.resources.ore}\n同步到房间: ${data.syncedToRoom ? '✅ 是' : '❌ 否 (无活跃房间)'}`,
+                    'success'
+                );
+                await fetchCompensationHistory();
             } catch (e) {
                 showStatus(`网络错误: ${e.message}`, 'error');
             }
@@ -222,6 +357,7 @@
         reportFilter.addEventListener('change', () => { void fetchReports(); });
         fetchOverview();
         fetchReports();
+        fetchCompensationHistory();
     </script>
 </body>
 </html>
