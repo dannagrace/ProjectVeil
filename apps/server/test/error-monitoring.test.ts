@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import {
+  captureClientError,
   captureServerError,
   configureErrorMonitoringRuntimeDependencies,
   isErrorMonitoringEnabled,
@@ -111,6 +112,74 @@ test("error monitoring posts a Sentry envelope with structured Project Veil cont
       battleId: "battle-1",
       heroId: "hero-2",
       clientVersion: null
+    }
+  });
+});
+
+test("client error monitoring posts a javascript Sentry envelope with client platform tags", async () => {
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureErrorMonitoringRuntimeDependencies({
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return { ok: true, status: 202 };
+    }
+  });
+
+  await captureClientError(
+    {
+      platform: "cocos",
+      version: "1.2.3",
+      errorMessage: "global crash",
+      stack: "TypeError: global crash\n at app.js:1:1",
+      authenticated: true,
+      context: {
+        playerId: "player-2",
+        requestId: "req-client-1",
+        clientVersion: "1.2.3",
+        detail: "{\"scene\":\"lobby\"}"
+      }
+    },
+    {
+      ...process.env,
+      NODE_ENV: "production",
+      VERCEL_GIT_COMMIT_SHA: "abc1234",
+      SENTRY_DSN: "https://public@example.ingest.sentry.io/42"
+    }
+  );
+
+  assert.equal(fetchCalls.length, 1);
+  const rawBody = String(fetchCalls[0]?.init?.body);
+  const [, , payload] = rawBody.split("\n");
+  const parsedPayload = JSON.parse(payload ?? "{}") as Record<string, unknown>;
+
+  assert.equal(parsedPayload.platform, "javascript");
+  assert.equal(parsedPayload.logger, "project-veil-client");
+  assert.deepEqual(parsedPayload.tags, {
+    error_code: "client_error_boundary_triggered",
+    feature_area: "runtime",
+    owner_area: "client",
+    surface: "client-error-report",
+    route: "/api/client-error",
+    client_platform: "cocos",
+    client_version: "1.2.3",
+    auth: "authenticated"
+  });
+  assert.deepEqual(parsedPayload.user, {
+    id: "player-2"
+  });
+  assert.deepEqual(parsedPayload.contexts, {
+    project_veil: {
+      candidateRevision: "abc1234",
+      roomId: null,
+      playerId: "player-2",
+      requestId: "req-client-1",
+      action: null,
+      route: "/api/client-error",
+      statusCode: null,
+      roomDay: null,
+      battleId: null,
+      heroId: null,
+      clientVersion: "1.2.3"
     }
   });
 });
