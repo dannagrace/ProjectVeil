@@ -3379,7 +3379,7 @@ test("delete route returns a 500 payload when cascade verification fails", async
   };
 
   assert.equal(deleteResponse.status, 500);
-  assert.equal(deletePayload.error.code, "Error");
+  assert.equal(deletePayload.error.code, "gdpr_delete_failed");
   assert.equal(deletePayload.error.message, "gdpr_delete_verification_failed:guild_memberships");
 });
 

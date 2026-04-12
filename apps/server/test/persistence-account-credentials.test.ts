@@ -667,6 +667,9 @@ test("deletePlayerAccount deletes dependent rows, verifies cascade cleanup, and 
   assert.equal(retainedReceiptUpdate?.params[0], retainedOrderUpdate?.params[0]);
   assert.deepEqual(retainedReceiptUpdate?.params.slice(1), ["player-1", "player-1", "settled", "dead_letter"]);
   assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 14);
+  assert.ok(
+    queries.some((entry) => /SELECT COUNT\(\*\) AS total FROM `leaderboard_season_archives`/.test(entry.sql))
+  );
   const updateQuery = queries.find((entry) => /UPDATE `player_accounts`/.test(entry.sql));
   assert.ok(updateQuery);
   assert.equal(updateQuery?.params[0], "deleted-player-1");

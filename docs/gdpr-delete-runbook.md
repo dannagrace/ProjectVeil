@@ -1,6 +1,6 @@
 # GDPR Delete Verification Runbook
 
-Use this query after `/api/players/me/delete` to confirm the server removed the player from the dependent tables that are not protected by foreign-key cascade.
+Use this query after `/api/players/me/delete` to confirm the server removed the player from the dependent tables that are not protected by foreign-key cascade and scrubbed the remaining `player_accounts` row.
 
 Replace `:player_id` with the deleted player id before running it in MySQL:
 
@@ -8,6 +8,20 @@ Replace `:player_id` with the deleted player id before running it in MySQL:
 SELECT 'player_account_sessions' AS table_name, COUNT(*) AS remaining
 FROM player_account_sessions
 WHERE player_id = :player_id
+UNION ALL
+SELECT 'player_accounts_scrubbed', COUNT(*)
+FROM player_accounts
+WHERE player_id = :player_id
+  AND (
+    mailbox_json IS NOT NULL
+    OR seasonal_event_states_json IS NOT NULL
+    OR daily_dungeon_state_json IS NOT NULL
+    OR JSON_LENGTH(COALESCE(recent_battle_replays_json, JSON_ARRAY())) > 0
+    OR JSON_LENGTH(COALESCE(recent_event_log_json, JSON_ARRAY())) > 0
+    OR elo_rating IS NOT NULL
+    OR rank_division IS NOT NULL
+    OR peak_rank_division IS NOT NULL
+  )
 UNION ALL
 SELECT 'player_hero_archives', COUNT(*)
 FROM player_hero_archives
