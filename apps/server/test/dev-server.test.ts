@@ -1150,3 +1150,76 @@ test("dev server warns loudly when backup storage is unreachable and exports the
   ]);
   assert.match(buildPrometheusMetricsDocument(), /^veil_db_backup_last_success_timestamp 1744001234$/m);
 });
+
+test("dev server emits a prominent production warning when SENTRY_DSN is absent", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalSentryDsn = process.env.SENTRY_DSN;
+  process.env.NODE_ENV = "production";
+  delete process.env.SENTRY_DSN;
+
+  try {
+    await startDevServer(3112, "127.0.0.1", {
+      readMySqlPersistenceConfig: () => null,
+      createFileSystemConfigCenterStore: () => configCenterStore,
+      createMemoryRoomSnapshotStore: () => memoryStore,
+      configureRoomSnapshotStore: () => undefined,
+      createTransport: () => base.transport,
+      readRedisUrl: () => null,
+      createRedisPresence: () => {
+        throw new Error("createRedisPresence should not be used without REDIS_URL");
+      },
+      createRedisDriver: () => {
+        throw new Error("createRedisDriver should not be used without REDIS_URL");
+      },
+      registerAuthRoutes: () => undefined,
+      registerConfigCenterRoutes: () => undefined,
+      registerConfigViewerRoutes: () => undefined,
+      registerGuildRoutes: () => undefined,
+      registerPlayerAccountRoutes: () => undefined,
+      registerShopRoutes: () => undefined,
+      registerWechatPayRoutes: () => undefined,
+      registerLobbyRoutes: () => undefined,
+      registerMatchmakingRoutes: () => undefined,
+      registerMinorProtectionRoutes: () => undefined,
+      registerPrometheusMetricsMiddleware: () => undefined,
+      registerHttpRateLimitMiddleware: () => undefined,
+      registerPrometheusMetricsRoute: () => undefined,
+      registerLeaderboardRoutes: () => undefined,
+      registerSeasonRoutes: () => undefined,
+      registerRuntimeObservabilityRoutes: () => undefined,
+      validateBackupStorage: async () => backupValidationSkipped(),
+      registerAdminRoutes: () => undefined,
+      createGameServer: (_transport, realtimeOptions) => {
+        base.gameServer.realtimeOptions.push(realtimeOptions);
+        return base.gameServer;
+      },
+      logger: base.logger,
+      process: base.process,
+      setInterval: () => {
+        throw new Error("setInterval should not be used for in-memory startup");
+      },
+      clearInterval: () => undefined,
+      isMySqlSnapshotStore: () => false
+    });
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+
+    if (originalSentryDsn === undefined) {
+      delete process.env.SENTRY_DSN;
+    } else {
+      process.env.SENTRY_DSN = originalSentryDsn;
+    }
+  }
+
+  assert.deepEqual(base.logger.warnings, [
+    "OBSERVABILITY WARNING: SENTRY_DSN is not configured for production startup; runtime errors will not be delivered to Sentry."
+  ]);
+});

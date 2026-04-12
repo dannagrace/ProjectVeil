@@ -28,25 +28,29 @@ Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](
 2. Copy `ops/env/production.env.example` to `ops/env/production.env` on the host and fill in the non-sensitive values plus the Secrets Manager bootstrap settings.
 3. Confirm the AWS IAM role or instance profile attached to the host can call `secretsmanager:GetSecretValue` on the configured secret.
 4. Confirm the AWS secret payload includes every key listed in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
-3. Run `npm run validate:production-env -- --env-file ops/env/production.env`.
-5. Confirm MySQL resolves from the deploy host:
+5. Confirm `SENTRY_DSN` is present in `ops/env/production.env`; production startup now warns loudly when external error delivery is disabled.
+6. If this deploy should emit analytics events externally, confirm `ANALYTICS_SINK=http` is set in the runtime secret bundle and `ANALYTICS_ENDPOINT` is present in `ops/env/production.env`.
+7. Run `npm run validate:production-env -- --env-file ops/env/production.env`.
+8. Confirm MySQL resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm migrate`
-6. Confirm Redis resolves from the deploy host:
+9. Confirm Redis resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm server node --input-type=module -e "const Redis=(await import('ioredis')).default; const url=process.env.REDIS_URL||'redis://redis:6379/0'; const client=new Redis(url); console.log(await client.ping(), url); await client.quit();"`
-7. Review disk headroom for the persistent volumes used by MySQL and Redis.
-8. Confirm you have the previous image tag and previous git SHA available for rollback.
-9. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
+10. Review disk headroom for the persistent volumes used by MySQL and Redis.
+11. Confirm you have the previous image tag and previous git SHA available for rollback.
+12. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
 
 ## 3. Production Env Contract
 
-The deploy validator expects these 28 variables in `ops/env/production.env`:
+The deploy validator expects these 30 variables in `ops/env/production.env`:
 
-`VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_MYSQL_USER`, `VEIL_MYSQL_DATABASE`, `VEIL_MYSQL_SNAPSHOT_TTL_HOURS`, `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES`, `VEIL_SECRET_PROVIDER`, `VEIL_AWS_SECRETS_MANAGER_SECRET_ID`, `VEIL_AWS_SECRETS_MANAGER_REGION`, `VEIL_BACKUP_S3_BUCKET`, `VEIL_BACKUP_S3_PREFIX`, `VEIL_BACKUP_S3_ENDPOINT`, `VEIL_BACKUP_S3_REGION`, `VEIL_BACKUP_AWS_PROFILE`, `VEIL_BACKUP_KEEP_DAILY_DAYS`, `VEIL_BACKUP_KEEP_WEEKLY_DAYS`, `VEIL_BACKUP_WEEKLY_DAY`, `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`, `VEIL_RATE_LIMIT_AUTH_MAX`, `VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS`, `VEIL_RATE_LIMIT_WS_ACTION_MAX`, `VEIL_AUTH_LOCKOUT_THRESHOLD`, `VEIL_AUTH_LOCKOUT_DURATION_MINUTES`, `VEIL_MAX_GUEST_SESSIONS`, `VEIL_AUTH_ACCESS_TTL_SECONDS`, `VEIL_AUTH_REFRESH_TTL_SECONDS`, `VEIL_AUTH_GUEST_TTL_SECONDS`, `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`
+`VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_MYSQL_USER`, `VEIL_MYSQL_DATABASE`, `VEIL_MYSQL_SNAPSHOT_TTL_HOURS`, `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES`, `VEIL_SECRET_PROVIDER`, `VEIL_AWS_SECRETS_MANAGER_SECRET_ID`, `VEIL_AWS_SECRETS_MANAGER_REGION`, `VEIL_BACKUP_S3_BUCKET`, `VEIL_BACKUP_S3_PREFIX`, `VEIL_BACKUP_S3_ENDPOINT`, `VEIL_BACKUP_S3_REGION`, `VEIL_BACKUP_AWS_PROFILE`, `VEIL_BACKUP_KEEP_DAILY_DAYS`, `VEIL_BACKUP_KEEP_WEEKLY_DAYS`, `VEIL_BACKUP_WEEKLY_DAY`, `VEIL_RATE_LIMIT_AUTH_WINDOW_MS`, `VEIL_RATE_LIMIT_AUTH_MAX`, `VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS`, `VEIL_RATE_LIMIT_WS_ACTION_MAX`, `VEIL_AUTH_LOCKOUT_THRESHOLD`, `VEIL_AUTH_LOCKOUT_DURATION_MINUTES`, `VEIL_MAX_GUEST_SESSIONS`, `VEIL_AUTH_ACCESS_TTL_SECONDS`, `VEIL_AUTH_REFRESH_TTL_SECONDS`, `VEIL_AUTH_GUEST_TTL_SECONDS`, `VEIL_MATCHMAKING_QUEUE_TTL_SECONDS`, `ANALYTICS_ENDPOINT`, `SENTRY_DSN`
 
 Notes:
 
 - `REDIS_URL` is optional in the env file because `docker-compose.prod.yml` defaults it to `redis://redis:6379/0`.
 - `VEIL_SECRET_PROVIDER` must be `aws-secrets-manager` in production. The server aborts startup if the AWS secret cannot be fetched or if the managed bundle is missing required keys.
+- `SENTRY_DSN` should always be set for production deploys. Startup does not hard-fail without it, but it now emits a prominent warning because runtime errors will stay local-only.
+- `ANALYTICS_ENDPOINT` is required by the validator even if the runtime secret currently leaves `ANALYTICS_SINK=stdout`; use the production ingest URL so switching delivery back on does not require an emergency env-file edit.
 - Keep credentials out of `ops/env/production.env`; place them in the AWS secret JSON documented in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
 - If you use managed MySQL or Redis, point `VEIL_MYSQL_HOST` and `REDIS_URL` at those services and leave the local `mysql` / `redis` services disabled by policy or removed in an override file.
 
@@ -119,17 +123,19 @@ Run these after every deploy or rollback:
    `curl -fsS http://127.0.0.1:2567/api/runtime/health`
 2. Auth readiness:
    `curl -fsS http://127.0.0.1:2567/api/runtime/auth-readiness`
-3. Lobby / matchmaking readiness:
+3. Inspect the server startup logs and confirm there is no `OBSERVABILITY WARNING` about a missing `SENTRY_DSN`.
+4. Lobby / matchmaking readiness:
    `curl -fsS http://127.0.0.1:2567/api/lobby/rooms`
-4. H5 client shell:
+5. H5 client shell:
    `curl -fsS http://127.0.0.1:8080/ > /dev/null`
-5. Browser/manual smoke:
+6. Browser/manual smoke:
    open `http://<server-host>:8080/`, perform guest login, enter the lobby, and confirm the matchmaking queue opens without client-side connection errors.
 
 Recommended pass criteria:
 
 - `status` is `ok` on `/api/runtime/health`
 - `/api/runtime/auth-readiness` returns HTTP 200 without new alerts
+- startup logs do not include the `OBSERVABILITY WARNING` missing-`SENTRY_DSN` banner
 - guest login succeeds
 - the player can reach the matchmaking queue and receive a room assignment
 
