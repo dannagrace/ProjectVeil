@@ -11,6 +11,7 @@ import {
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
 import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import type { LeaderboardAlertEvent } from "./leaderboard-anti-abuse";
 import {
   getAnalyticsPipelineSnapshot,
   renderAnalyticsPipelineSnapshotText,
@@ -19,6 +20,7 @@ import {
 import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -58,9 +60,35 @@ interface AuthObservabilityCounters {
 
 interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
+  queueDepth: number;
+}
+
+interface LeaderboardAbuseObservabilityCounters {
+  alertsTotal: number;
+}
+
+interface AntiCheatObservabilityCounters {
+  alertsTotal: number;
+}
+
+interface PaymentGrantObservabilityCounters {
+  retriesTotal: number;
+  deadLetterTotal: number;
 }
 
 type ActionValidationScope = "world" | "battle";
+
+export interface AntiCheatAlertEvent {
+  roomId: string;
+  playerId: string;
+  sessionId: string;
+  scope: ActionValidationScope;
+  actionType: string;
+  reason: string;
+  rejectionCount: number;
+  windowMs: number;
+  recordedAt: string;
+}
 
 interface HistogramMetricState {
   buckets: number[];
@@ -156,6 +184,7 @@ interface RuntimeObservabilityState {
   errorEvents: RuntimeDiagnosticsErrorEvent[];
   counters: RuntimeObservabilityCounters;
   prometheus: {
+    dbBackupLastSuccessTimestamp: number | null;
     battleDurationSeconds: HistogramMetricState;
     httpRequestDurationSeconds: HistogramMetricState;
     actionValidationFailuresTotal: Map<string, number>;
@@ -172,6 +201,21 @@ interface RuntimeObservabilityState {
   };
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
+  };
+  leaderboardAbuse: {
+    counters: LeaderboardAbuseObservabilityCounters;
+    recentAlerts: LeaderboardAlertEvent[];
+  };
+  antiCheat: {
+    counters: AntiCheatObservabilityCounters;
+    recentAlerts: AntiCheatAlertEvent[];
+  };
+  paymentGrant: {
+    queueCount: number;
+    deadLetterCount: number;
+    oldestQueuedLatencyMs: number | null;
+    nextAttemptDelayMs: number | null;
+    counters: PaymentGrantObservabilityCounters;
   };
 }
 
@@ -237,6 +281,14 @@ interface RuntimeHealthPayload {
     };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
+    };
+    leaderboardAbuse: {
+      counters: LeaderboardAbuseObservabilityCounters;
+      alertsTracked: number;
+    };
+    antiCheat: {
+      counters: AntiCheatObservabilityCounters;
+      alertsTracked: number;
     };
   };
 }
@@ -336,6 +388,7 @@ const runtimeObservability: RuntimeObservabilityState = {
     websocketActionKickTotal: 0
   },
   prometheus: {
+    dbBackupLastSuccessTimestamp: null,
     battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
     httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
     actionValidationFailuresTotal: new Map<string, number>(),
@@ -409,7 +462,30 @@ const runtimeObservability: RuntimeObservabilityState = {
   },
   matchmaking: {
     counters: {
-      rateLimitedTotal: 0
+      rateLimitedTotal: 0,
+      queueDepth: 0
+    }
+  },
+  leaderboardAbuse: {
+    counters: {
+      alertsTotal: 0
+    },
+    recentAlerts: []
+  },
+  antiCheat: {
+    counters: {
+      alertsTotal: 0
+    },
+    recentAlerts: []
+  },
+  paymentGrant: {
+    queueCount: 0,
+    deadLetterCount: 0,
+    oldestQueuedLatencyMs: null,
+    nextAttemptDelayMs: null,
+    counters: {
+      retriesTotal: 0,
+      deadLetterTotal: 0
     }
   }
 };
@@ -503,7 +579,12 @@ function buildHealthPayload(
   );
 
   return {
-    status: persistence.status === "degraded" ? "warn" : "ok",
+    status:
+      persistence.status === "degraded" ||
+      runtimeObservability.leaderboardAbuse.recentAlerts.length > 0 ||
+      runtimeObservability.antiCheat.recentAlerts.length > 0
+        ? "warn"
+        : "ok",
     service,
     checkedAt: new Date().toISOString(),
     startedAt: new Date(runtimeObservability.startedAt).toISOString(),
@@ -557,6 +638,14 @@ function buildHealthPayload(
       },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
+      },
+      leaderboardAbuse: {
+        counters: { ...runtimeObservability.leaderboardAbuse.counters },
+        alertsTracked: runtimeObservability.leaderboardAbuse.recentAlerts.length
+      },
+      antiCheat: {
+        counters: { ...runtimeObservability.antiCheat.counters },
+        alertsTracked: runtimeObservability.antiCheat.recentAlerts.length
       }
     }
   };
@@ -567,7 +656,8 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
   const alerts: string[] = [];
   const isTestEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedWechatMode = process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim());
+  const wechatAppSecret = readRuntimeSecret("WECHAT_APP_SECRET");
+  const hasWechatCredentials = Boolean(process.env.WECHAT_APP_ID?.trim() && wechatAppSecret);
   const wechatMode =
     normalizedWechatMode === "mock" && isTestEnvironment
       ? "mock"
@@ -582,7 +672,7 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
               : "disabled";
   const wechatCredentialsStatus =
     wechatMode === "production"
-      ? process.env.WECHAT_APP_ID?.trim() && process.env.WECHAT_APP_SECRET?.trim()
+      ? process.env.WECHAT_APP_ID?.trim() && wechatAppSecret
         ? "configured"
         : "missing"
       : "not_required";
@@ -859,6 +949,9 @@ export function buildPrometheusMetricsDocument(): string {
   }
 
   lines.push(
+    "# HELP veil_db_backup_last_success_timestamp Unix timestamp of the latest verified database backup success marker.",
+    "# TYPE veil_db_backup_last_success_timestamp gauge",
+    `veil_db_backup_last_success_timestamp ${runtimeObservability.prometheus.dbBackupLastSuccessTimestamp ?? 0}`,
     ...renderHistogramMetric(
       "veil_battle_duration_seconds",
       "Battle duration from start until resolution.",
@@ -1088,6 +1181,15 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
+    "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
+    "# TYPE veil_matchmaking_queue_depth gauge",
+    `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
+    "# HELP veil_leaderboard_abuse_alerts_total Total leaderboard anti-abuse alerts emitted by this process.",
+    "# TYPE veil_leaderboard_abuse_alerts_total counter",
+    `veil_leaderboard_abuse_alerts_total ${health.runtime.leaderboardAbuse.counters.alertsTotal}`,
+    "# HELP veil_anti_cheat_alerts_total Total anti-cheat alerts emitted by this process.",
+    "# TYPE veil_anti_cheat_alerts_total counter",
+    `veil_anti_cheat_alerts_total ${health.runtime.antiCheat.counters.alertsTotal}`,
     "# HELP veil_auth_invalid_credentials_total Total auth requests rejected for invalid credentials.",
     "# TYPE veil_auth_invalid_credentials_total counter",
     `veil_auth_invalid_credentials_total ${health.runtime.auth.counters.invalidCredentialsTotal}`,
@@ -1142,6 +1244,24 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_failures_webhook_5xx_total Total token delivery failures caused by retryable 5xx webhook responses.",
     "# TYPE veil_auth_token_delivery_failures_webhook_5xx_total counter",
     `veil_auth_token_delivery_failures_webhook_5xx_total ${health.runtime.auth.tokenDelivery.failureReasons.webhook_5xx}`,
+    "# HELP veil_payment_grant_queue_count Payment orders currently queued for grant retry.",
+    "# TYPE veil_payment_grant_queue_count gauge",
+    `veil_payment_grant_queue_count ${runtimeObservability.paymentGrant.queueCount}`,
+    "# HELP veil_payment_grant_dead_letter_count Payment orders currently parked in the dead-letter set.",
+    "# TYPE veil_payment_grant_dead_letter_count gauge",
+    `veil_payment_grant_dead_letter_count ${runtimeObservability.paymentGrant.deadLetterCount}`,
+    "# HELP veil_payment_grant_oldest_queued_latency_ms Oldest queued payment grant retry age in milliseconds.",
+    "# TYPE veil_payment_grant_oldest_queued_latency_ms gauge",
+    `veil_payment_grant_oldest_queued_latency_ms ${runtimeObservability.paymentGrant.oldestQueuedLatencyMs ?? 0}`,
+    "# HELP veil_payment_grant_next_attempt_delay_ms Delay until the next queued payment grant retry attempt in milliseconds.",
+    "# TYPE veil_payment_grant_next_attempt_delay_ms gauge",
+    `veil_payment_grant_next_attempt_delay_ms ${runtimeObservability.paymentGrant.nextAttemptDelayMs ?? 0}`,
+    "# HELP veil_payment_grant_retries_total Total payment grant retries attempted by this process.",
+    "# TYPE veil_payment_grant_retries_total counter",
+    `veil_payment_grant_retries_total ${runtimeObservability.paymentGrant.counters.retriesTotal}`,
+    "# HELP veil_payment_dead_letter_total Total payment orders moved to dead-letter by this process.",
+    "# TYPE veil_payment_dead_letter_total counter",
+    `veil_payment_dead_letter_total ${runtimeObservability.paymentGrant.counters.deadLetterTotal}`,
     "# HELP veil_auth_session_failures_unauthorized_total Total auth session failures caused by missing or invalid credentials.",
     "# TYPE veil_auth_session_failures_unauthorized_total counter",
     `veil_auth_session_failures_unauthorized_total ${health.runtime.auth.sessionFailureReasons.unauthorized}`,
@@ -1726,6 +1846,26 @@ export function recordMatchmakingRateLimited(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
 }
 
+export function setMatchmakingQueueDepth(count: number): void {
+  runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
+}
+
+export function recordLeaderboardAbuseAlert(alert: LeaderboardAlertEvent): void {
+  runtimeObservability.leaderboardAbuse.counters.alertsTotal += 1;
+  runtimeObservability.leaderboardAbuse.recentAlerts.unshift({ ...alert });
+  if (runtimeObservability.leaderboardAbuse.recentAlerts.length > 20) {
+    runtimeObservability.leaderboardAbuse.recentAlerts.length = 20;
+  }
+}
+
+export function recordAntiCheatAlert(alert: AntiCheatAlertEvent): void {
+  runtimeObservability.antiCheat.counters.alertsTotal += 1;
+  runtimeObservability.antiCheat.recentAlerts.unshift({ ...alert });
+  if (runtimeObservability.antiCheat.recentAlerts.length > 20) {
+    runtimeObservability.antiCheat.recentAlerts.length = 20;
+  }
+}
+
 export function recordAuthInvalidCredentials(): void {
   runtimeObservability.auth.counters.invalidCredentialsTotal += 1;
 }
@@ -1767,6 +1907,32 @@ export function recordAuthTokenDeliveryRetry(): void {
 
 export function recordAuthTokenDeliveryDeadLetter(): void {
   runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal += 1;
+}
+
+export function setPaymentGrantQueueCount(count: number): void {
+  runtimeObservability.paymentGrant.queueCount = Math.max(0, Math.floor(count));
+}
+
+export function setPaymentGrantDeadLetterCount(count: number): void {
+  runtimeObservability.paymentGrant.deadLetterCount = Math.max(0, Math.floor(count));
+}
+
+export function setPaymentGrantQueueLatency(metrics: {
+  oldestQueuedLatencyMs: number | null;
+  nextAttemptDelayMs: number | null;
+}): void {
+  runtimeObservability.paymentGrant.oldestQueuedLatencyMs =
+    metrics.oldestQueuedLatencyMs != null ? Math.max(0, Math.floor(metrics.oldestQueuedLatencyMs)) : null;
+  runtimeObservability.paymentGrant.nextAttemptDelayMs =
+    metrics.nextAttemptDelayMs != null ? Math.max(0, Math.floor(metrics.nextAttemptDelayMs)) : null;
+}
+
+export function recordPaymentGrantRetry(): void {
+  runtimeObservability.paymentGrant.counters.retriesTotal += 1;
+}
+
+export function recordPaymentDeadLetter(): void {
+  runtimeObservability.paymentGrant.counters.deadLetterTotal += 1;
 }
 
 export function recordAuthTokenDeliveryAttempt(entry: {
@@ -1822,6 +1988,11 @@ export function recordReconnectWindowResolved(
   }
 }
 
+export function setDbBackupLastSuccessTimestamp(timestampSeconds: number | null): void {
+  runtimeObservability.prometheus.dbBackupLastSuccessTimestamp =
+    timestampSeconds != null && Number.isFinite(timestampSeconds) ? Math.max(0, Math.floor(timestampSeconds)) : null;
+}
+
 export function resetRuntimeObservability(): void {
   resetTrackedMySqlPools();
   runtimeObservability.startedAt = Date.now();
@@ -1832,6 +2003,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.battleActionsTotal = 0;
   runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
   runtimeObservability.counters.websocketActionKickTotal = 0;
+  runtimeObservability.prometheus.dbBackupLastSuccessTimestamp = null;
   resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
   resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
   runtimeObservability.prometheus.actionValidationFailuresTotal.clear();
@@ -1886,6 +2058,17 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
+  runtimeObservability.matchmaking.counters.queueDepth = 0;
+  runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
+  runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
+  runtimeObservability.antiCheat.counters.alertsTotal = 0;
+  runtimeObservability.antiCheat.recentAlerts.length = 0;
+  runtimeObservability.paymentGrant.queueCount = 0;
+  runtimeObservability.paymentGrant.deadLetterCount = 0;
+  runtimeObservability.paymentGrant.oldestQueuedLatencyMs = null;
+  runtimeObservability.paymentGrant.nextAttemptDelayMs = null;
+  runtimeObservability.paymentGrant.counters.retriesTotal = 0;
+  runtimeObservability.paymentGrant.counters.deadLetterTotal = 0;
 }
 
 export function registerRuntimeObservabilityRoutes(

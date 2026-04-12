@@ -10,6 +10,7 @@ coverage
 .env
 .env.local
 .env.development
+ops/env/production.env
 artifacts/*
 !artifacts/release-readiness/
 artifacts/release-readiness/*
@@ -28,6 +29,14 @@ artifacts/release-readiness/*
 !artifacts/release-readiness/manual-release-evidence-owner-ledger-issue-1173-wechat-release-gate-d96e22a.md
 !artifacts/release-readiness/release-gate-summary-d96e22a.json
 !artifacts/release-readiness/release-gate-summary-d96e22a.md
+!artifacts/release-readiness/capacity-planning/
+artifacts/release-readiness/capacity-planning/*
+!artifacts/release-readiness/capacity-planning/stress-rooms-10.json
+!artifacts/release-readiness/capacity-planning/stress-rooms-50.json
+!artifacts/release-readiness/capacity-planning/stress-rooms-100.json
+!artifacts/release-readiness/capacity-planning/stress-rooms-200.json
+!artifacts/release-readiness/capacity-planning-summary.json
+!artifacts/release-readiness/capacity-planning-summary.md
 !artifacts/wechat-release/
 artifacts/wechat-release/*
 !artifacts/wechat-release/project-veil-wechatgame-release.package.json

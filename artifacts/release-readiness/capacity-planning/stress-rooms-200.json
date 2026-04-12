@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "artifactType": "stress-runtime-metrics",
+  "generatedAt": "2026-04-11T16:28:31.802Z",
+  "command": "node --import tsx ./scripts/stress-concurrent-rooms.ts --rooms=200 --scenarios=world_progression,reconnect --connect-concurrency=25 --action-concurrency=25 --sample-interval-ms=100 --reconnect-pause-ms=150 --max-battle-turns=24 --artifact-path=/home/gpt/project/ProjectVeil/artifacts/release-readiness/capacity-planning/stress-rooms-200.json",
+  "revision": {
+    "commit": "e5e752d852fea23e2ef909cdd5fe5e8b065ee841",
+    "shortCommit": "e5e752d",
+    "branch": "codex/issue-1304-load-test-capacity-thresholds-0412-0019",
+    "dirty": true
+  },
+  "status": "passed",
+  "options": {
+    "rooms": 200,
+    "port": 39331,
+    "host": "127.0.0.1",
+    "sampleIntervalMs": 100,
+    "connectConcurrency": 25,
+    "actionConcurrency": 25,
+    "reconnectPauseMs": 150,
+    "maxBattleTurns": 24,
+    "reconnectCycles": 6,
+    "artifactPath": "/home/gpt/project/ProjectVeil/artifacts/release-readiness/capacity-planning/stress-rooms-200.json",
+    "scenarios": [
+      "world_progression",
+      "reconnect"
+    ]
+  },
+  "summary": {
+    "totalScenarios": 2,
+    "failedScenarios": 0,
+    "scenarioNames": [
+      "world_progression",
+      "reconnect"
+    ]
+  },
+  "soakSummary": null,
+  "results": [
+    {
+      "scenario": "world_progression",
+      "rooms": 200,
+      "successfulRooms": 200,
+      "failedRooms": 0,
+      "completedActions": 600,
+      "durationMs": 6094.36,
+      "roomsPerSecond": 32.82,
+      "actionsPerSecond": 98.45,
+      "cpuUserMs": 6685.11,
+      "cpuSystemMs": 201.69,
+      "cpuTotalMs": 6886.8,
+      "cpuCoreUtilizationPct": 56.5,
+      "rssStartMb": 176.87,
+      "rssPeakMb": 314.77,
+      "rssEndMb": 314.77,
+      "heapStartMb": 70.32,
+      "heapPeakMb": 139.33,
+      "heapEndMb": 82.32,
+      "peakActiveHandles": 411,
+      "requestLatencyP50Ms": 78.72,
+      "requestLatencyP95Ms": 553.99,
+      "requestLatencyMaxMs": 555.21,
+      "runtimeHealthAfterConnect": {
+        "checkedAt": "2026-04-11T16:28:24.203Z",
+        "activeRoomCount": 200,
+        "connectionCount": 200,
+        "activeBattleCount": 0,
+        "heroCount": 400,
+        "connectMessagesTotal": 200,
+        "worldActionsTotal": 0,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 0
+      },
+      "runtimeHealthAfterScenario": {
+        "checkedAt": "2026-04-11T16:28:28.800Z",
+        "activeRoomCount": 200,
+        "connectionCount": 200,
+        "activeBattleCount": 0,
+        "heroCount": 400,
+        "connectMessagesTotal": 200,
+        "worldActionsTotal": 400,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 400
+      },
+      "runtimeHealthAfterCleanup": {
+        "checkedAt": "2026-04-11T16:28:28.880Z",
+        "activeRoomCount": 0,
+        "connectionCount": 0,
+        "activeBattleCount": 0,
+        "heroCount": 0,
+        "connectMessagesTotal": 200,
+        "worldActionsTotal": 400,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 400
+      }
+    },
+    {
+      "scenario": "reconnect",
+      "rooms": 200,
+      "successfulRooms": 200,
+      "failedRooms": 0,
+      "completedActions": 600,
+      "durationMs": 2849.83,
+      "roomsPerSecond": 70.18,
+      "actionsPerSecond": 210.54,
+      "cpuUserMs": 2930.82,
+      "cpuSystemMs": 161.43,
+      "cpuTotalMs": 3092.25,
+      "cpuCoreUtilizationPct": 54.25,
+      "rssStartMb": 315.55,
+      "rssPeakMb": 358.6,
+      "rssEndMb": 358.6,
+      "heapStartMb": 89.76,
+      "heapPeakMb": 156.46,
+      "heapEndMb": 111.91,
+      "peakActiveHandles": 414,
+      "requestLatencyP50Ms": 9.06,
+      "requestLatencyP95Ms": 53.82,
+      "requestLatencyMaxMs": 55.01,
+      "runtimeHealthAfterConnect": {
+        "checkedAt": "2026-04-11T16:28:29.912Z",
+        "activeRoomCount": 200,
+        "connectionCount": 200,
+        "activeBattleCount": 0,
+        "heroCount": 400,
+        "connectMessagesTotal": 400,
+        "worldActionsTotal": 400,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 400
+      },
+      "runtimeHealthAfterScenario": {
+        "checkedAt": "2026-04-11T16:28:31.734Z",
+        "activeRoomCount": 200,
+        "connectionCount": 200,
+        "activeBattleCount": 0,
+        "heroCount": 400,
+        "connectMessagesTotal": 600,
+        "worldActionsTotal": 600,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 600
+      },
+      "runtimeHealthAfterCleanup": {
+        "checkedAt": "2026-04-11T16:28:31.796Z",
+        "activeRoomCount": 0,
+        "connectionCount": 0,
+        "activeBattleCount": 0,
+        "heroCount": 0,
+        "connectMessagesTotal": 600,
+        "worldActionsTotal": 600,
+        "battleActionsTotal": 0,
+        "actionMessagesTotal": 600
+      }
+    }
+  ]
+}

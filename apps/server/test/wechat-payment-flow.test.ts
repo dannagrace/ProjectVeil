@@ -218,7 +218,7 @@ function createSignedCallbackRequest(
       "callback-nonce-01"
     )
   });
-  const timestamp = "1712197200";
+  const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = "signature-nonce-1";
   return {
     body,
@@ -320,7 +320,7 @@ test("wechat payment callback settles the order, emits purchase analytics, and d
   assert.ok(purchaseEvent);
   assert.equal(purchaseEvent?.payload.productId, "gem-pack-premium");
   assert.equal(purchaseEvent?.payload.totalPrice, 600);
-  assert.equal(storedOrder?.status, "paid");
+  assert.equal(storedOrder?.status, "settled");
   assert.equal(storedOrder?.wechatOrderId, "wechat-transaction-123");
   assert.equal(receipt?.transactionId, "wechat-transaction-123");
 });
@@ -375,7 +375,7 @@ test("wechat payment verify settles a created order and emits purchase analytics
   );
 
   assert.equal(verifyResponse.status, 200);
-  assert.equal(verifyPayload.status, "paid");
+  assert.equal(verifyPayload.status, "settled");
   assert.equal(verifyPayload.gemsBalance, 120);
   assert.equal(accountResponse.status, 200);
   assert.equal(accountPayload.account.gems, 120);
@@ -448,6 +448,6 @@ test("wechat payment verify returns amount mismatch without granting rewards and
   assert.equal(accountPayload.account.gems, 0);
   assert.ok(fraudEvent);
   assert.equal(purchaseEvent, undefined);
-  assert.equal(storedOrder?.status, "pending");
+  assert.equal(storedOrder?.status, "created");
   assert.equal(receipt, null);
 });

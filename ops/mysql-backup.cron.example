@@ -2,6 +2,11 @@ MAILTO=ops@example.com
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Daily backup at 03:00 server local time.
-# The script itself mirrors Sunday backups into weekly/ and prunes daily>30d, weekly>183d.
-0 3 * * * cd /srv/ProjectVeil && /usr/bin/env bash ./scripts/db-backup.sh >> /var/log/project-veil/db-backup.log 2>&1
+# Database backup every 6 hours server local time.
+# The script mirrors the configured weekly day into weekly/, prunes retention windows,
+# and uploads a latest-success marker consumed by startup validation and Prometheus.
+0 */6 * * * cd /srv/ProjectVeil && /usr/bin/env bash ./scripts/db-backup.sh >> /var/log/project-veil/db-backup.log 2>&1
+
+# Weekly restore verification every Sunday at 04:15 server local time.
+# Requires RESTORE_MYSQL_* credentials for an isolated test database on the host.
+15 4 * * 0 cd /srv/ProjectVeil && /usr/bin/env bash ./scripts/db-restore-test.sh >> /var/log/project-veil/db-restore-test.log 2>&1

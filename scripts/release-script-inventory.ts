@@ -149,12 +149,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
   },
   "release:phase1:candidate-rehearsal": {
     purpose:
-      "Run the full candidate rehearsal flow and stage reviewer front-door outputs, including Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the same-revision bundle's owner ledger/dashboard, the release gate summary, the release health summary, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier, the final go/no-go packet, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index, and the reviewer-facing release PR summary, into one release-readiness bundle directory.",
+      "Run the full candidate rehearsal flow and stage reviewer front-door outputs into one release-readiness bundle directory, with `SUMMARY.md` as the canonical packet-level reviewer entrypoint for Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the release gate summary, release health summary, the CI trend summary, the release readiness snapshot, runtime observability gate, H5 candidate smoke report, reconnect soak summary, WeChat candidate summary, the runtime observability bundle, the candidate-scoped Cocos RC bundle, the same-revision bundle's manifest, owner ledger, and dashboard, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier, the final go/no-go packet, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index, and the reviewer-facing release PR summary.",
     requiredInputs: [
       "Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.",
     ],
     producedArtifacts: [
-      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the restaged release-readiness dashboard, the release gate summary, the release health summary, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier, the final go/no-go packet, the manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index, the reviewer-facing release PR summary, and a top-level `SUMMARY.md`.",
+      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including Cocos primary journey evidence, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the release readiness snapshot, the staged runtime observability gate, the staged H5 candidate smoke report, the staged reconnect soak summary, the staged WeChat candidate summary, the runtime observability bundle, the candidate-scoped Cocos RC bundle, the restaged release-readiness dashboard, the same-revision evidence bundle manifest, the release gate summary, the release health summary, the staged CI trend summary, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier, the final go/no-go packet, the manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index, the reviewer-facing release PR summary, and a top-level `SUMMARY.md` that serves as the canonical packet-level reviewer entrypoint.",
     ],
   },
   "release:phase1:evidence-drift-gate": {
@@ -471,6 +471,15 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     producedArtifacts: [
       "`artifacts/release-readiness/contributor-quickstart-contract-<short-sha>.json`",
       "`artifacts/release-readiness/contributor-quickstart-contract-<short-sha>.md`",
+    ],
+  },
+  "validate:production-env": {
+    purpose: "Validate that the production environment file includes every required MySQL backup, auth, rate-limit, and matchmaking key before deployment.",
+    requiredInputs: [
+      "Default `ops/env/production.env` or an explicit `--env-file <path>` pointing at the production environment file to audit.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; exits non-zero and prints missing/blank variables when the production environment file is incomplete.",
     ],
   },
   "validate:redis-scaling": {

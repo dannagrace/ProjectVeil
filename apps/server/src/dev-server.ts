@@ -4,6 +4,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { registerAnalyticsRoutes } from "./analytics";
+import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
 import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
@@ -14,21 +15,24 @@ import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./
 import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerEventRoutes } from "./event-engine";
 import { registerGuildRoutes } from "./guilds";
+import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
-import { registerMinorProtectionPreviewRoutes } from "./minor-protection-preview";
+import { registerMinorProtectionRoutes } from "./minor-protection-routes";
 import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes,
+  setDbBackupLastSuccessTimestamp,
   type RuntimePersistenceHealth
 } from "./observability";
 import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotStore, readMySqlPersistenceConfig, type SnapshotRetentionPolicy } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
 import { registerRetentionSummaryRoute } from "./retention-summary";
+import { loadRuntimeSecrets } from "./runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
@@ -101,6 +105,7 @@ interface SchemaMigrationStatusSummary {
 }
 
 export interface DevServerBootstrapDependencies {
+  loadRuntimeSecrets(): Promise<void>;
   readMySqlPersistenceConfig(): MySqlPersistenceConfig | null;
   getSchemaMigrationStatus(config: MySqlPersistenceConfig): Promise<SchemaMigrationStatusSummary>;
   formatSchemaMigrationWarning(status: SchemaMigrationStatusSummary): string;
@@ -124,13 +129,14 @@ export interface DevServerBootstrapDependencies {
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
-  registerMinorProtectionPreviewRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(
     app: unknown,
     options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth }
   ): void;
+  validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
@@ -174,6 +180,7 @@ export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
 
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
   return {
+    loadRuntimeSecrets: () => loadRuntimeSecrets(),
     readMySqlPersistenceConfig,
     getSchemaMigrationStatus,
     formatSchemaMigrationWarning,
@@ -198,11 +205,12 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
-    registerMinorProtectionPreviewRoutes: (app, store) =>
-      registerMinorProtectionPreviewRoutes(app as never, store as RoomSnapshotStore | null),
+    registerMinorProtectionRoutes: (app, store) =>
+      registerMinorProtectionRoutes(app as never, store as RoomSnapshotStore | null),
     registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
+    validateBackupStorage: () => validateBackupStorageOnStartup(),
     registerRetentionSummaryRoute: (app, store) =>
       registerRetentionSummaryRoute(app as never, store as RoomSnapshotStore | null),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
@@ -234,7 +242,6 @@ export async function startDevServer(
   };
   const isProductionEnvironment = process.env.NODE_ENV?.trim().toLowerCase() === "production";
 
-  const mysqlConfig = deps.readMySqlPersistenceConfig();
   let snapshotStore: DevServerMySqlSnapshotStore | null = null;
   let configCenterStore = deps.createFileSystemConfigCenterStore();
   let persistenceHealth: RuntimePersistenceHealth = {
@@ -251,6 +258,14 @@ export async function startDevServer(
     deps.process.exit(1);
     throw error instanceof Error ? error : new Error(message);
   };
+
+  try {
+    await deps.loadRuntimeSecrets();
+  } catch (error) {
+    await failStartup("Runtime secret bootstrap failed", error);
+  }
+
+  const mysqlConfig = deps.readMySqlPersistenceConfig();
 
   if (mysqlConfig) {
     try {
@@ -297,12 +312,20 @@ export async function startDevServer(
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
   await configCenterStore.initializeRuntimeConfigs();
+  const backupStorage = await deps.validateBackupStorage();
+  setDbBackupLastSuccessTimestamp(backupStorage.lastSuccessTimestamp);
+  if (backupStorage.status === "warn") {
+    deps.logger.warn(`BACKUP WARNING: ${backupStorage.message}`);
+  } else {
+    deps.logger.log(backupStorage.message);
+  }
   const redisUrl = deps.readRedisUrl();
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
+  installHttpRequestObservability(expressApp as unknown as Parameters<typeof installHttpRequestObservability>[0], deps.logger);
   deps.registerPrometheusMetricsMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
@@ -318,7 +341,7 @@ export async function startDevServer(
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
-  deps.registerMinorProtectionPreviewRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, {

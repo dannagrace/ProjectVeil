@@ -198,14 +198,24 @@ test("db-backup uploads compressed dumps, writes hashes, and prunes expired back
   const dailyHash = `${dailyArchive}.sha256`;
   const weeklyArchive = path.join(bucketDir, "weekly", "project_veil-20260403T030000Z.sql.gz");
   const weeklyHash = `${weeklyArchive}.sha256`;
+  const statusMarker = path.join(bucketDir, "_status", "latest-success.json");
 
   assert.equal(fs.existsSync(dailyArchive), true);
   assert.equal(fs.existsSync(dailyHash), true);
   assert.equal(fs.existsSync(weeklyArchive), true);
   assert.equal(fs.existsSync(weeklyHash), true);
+  assert.equal(fs.existsSync(statusMarker), true);
 
   const uploadedHashLine = fs.readFileSync(dailyHash, "utf8").trim();
   assert.equal(uploadedHashLine.split(/\s+/)[0], sha256Of(dailyArchive));
+  const statusPayload = JSON.parse(fs.readFileSync(statusMarker, "utf8")) as {
+    backupTimestamp: string;
+    dailyKey: string;
+    weeklyUploaded: boolean;
+  };
+  assert.equal(statusPayload.backupTimestamp, "20260403T030000Z");
+  assert.equal(statusPayload.dailyKey, "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz");
+  assert.equal(statusPayload.weeklyUploaded, true);
 
   assert.equal(fs.existsSync(staleDaily), false);
   assert.equal(fs.existsSync(`${staleDaily}.sha256`), false);

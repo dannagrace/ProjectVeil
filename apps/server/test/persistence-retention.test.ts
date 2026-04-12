@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES,
   DEFAULT_SNAPSHOT_TTL_HOURS,
+  isPlayerBanActive,
   readMySqlPersistenceConfig,
   snapshotHasExpired
 } from "../src/persistence";
@@ -73,4 +74,68 @@ test("snapshotHasExpired respects ttl windows", () => {
   assert.equal(snapshotHasExpired(recent, 3, now), false);
   assert.equal(snapshotHasExpired(stale, 3, now), true);
   assert.equal(snapshotHasExpired(stale, null, now), false);
+});
+
+test("snapshotHasExpired expires exactly at the ttl boundary for date and ISO string inputs", () => {
+  const now = new Date("2026-03-20T12:00:00.000Z");
+  const boundary = "2026-03-20T09:00:00.000Z";
+  const justInsideWindow = "2026-03-20T09:00:00.001Z";
+
+  assert.equal(snapshotHasExpired(boundary, 3, now), true);
+  assert.equal(snapshotHasExpired(justInsideWindow, 3, now), false);
+});
+
+test("isPlayerBanActive handles none, permanent, and temporary ban states deterministically", () => {
+  const referenceTime = new Date("2026-03-20T12:00:00.000Z");
+  const originalDateNow = Date.now;
+  Date.now = () => referenceTime.getTime();
+
+  try {
+    assert.equal(isPlayerBanActive(undefined), false);
+    assert.equal(isPlayerBanActive(null), false);
+    assert.equal(isPlayerBanActive({ banStatus: "none" }), false);
+    assert.equal(isPlayerBanActive({ banStatus: "permanent" }), true);
+    assert.equal(
+      isPlayerBanActive({
+        banStatus: "temporary",
+        banExpiry: "2026-03-20T12:30:00.000Z"
+      }),
+      true
+    );
+  } finally {
+    Date.now = originalDateNow;
+  }
+});
+
+test("isPlayerBanActive rejects expired, boundary, missing, and invalid temporary expiries", () => {
+  const referenceTime = new Date("2026-03-20T12:00:00.000Z");
+  const originalDateNow = Date.now;
+  Date.now = () => referenceTime.getTime();
+
+  try {
+    assert.equal(
+      isPlayerBanActive({
+        banStatus: "temporary",
+        banExpiry: "2026-03-20T11:59:59.999Z"
+      }),
+      false
+    );
+    assert.equal(
+      isPlayerBanActive({
+        banStatus: "temporary",
+        banExpiry: "2026-03-20T12:00:00.000Z"
+      }),
+      false
+    );
+    assert.equal(isPlayerBanActive({ banStatus: "temporary" }), false);
+    assert.equal(
+      isPlayerBanActive({
+        banStatus: "temporary",
+        banExpiry: "not-a-timestamp"
+      }),
+      false
+    );
+  } finally {
+    Date.now = originalDateNow;
+  }
 });

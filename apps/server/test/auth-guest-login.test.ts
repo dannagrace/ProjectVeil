@@ -14,6 +14,7 @@ import {
   resetAnalyticsRuntimeDependencies
 } from "../src/analytics";
 import {
+  createWechatMiniGamePlayerId,
   hashAccountPassword,
   issueAccountAuthSession,
   registerAuthRoutes,
@@ -33,9 +34,12 @@ import type {
   PlayerAccountDeviceSessionSnapshot,
   PlayerAccountCredentialInput,
   PlayerAccountEnsureInput,
+  GuestAccountMigrationInput,
+  GuestAccountMigrationResult,
   PlayerEventHistoryQuery,
   PlayerEventHistorySnapshot,
   PlayerAccountListOptions,
+  PlayerQuestState,
   PlayerAccountUnbanInput,
   PlayerBanHistoryRecord,
   PlayerAccountProfilePatch,
@@ -52,6 +56,8 @@ class MemoryAuthStore implements RoomSnapshotStore {
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
+  private readonly heroArchives = new Map<string, PlayerHeroArchiveSnapshot>();
+  private readonly questStates = new Map<string, PlayerQuestState>();
 
   async load(_roomId: string): Promise<RoomPersistenceSnapshot | null> {
     return null;
@@ -160,8 +166,29 @@ class MemoryAuthStore implements RoomSnapshotStore {
     return this.authSessionsByPlayerId.get(playerId.trim())?.delete(sessionId.trim()) ?? false;
   }
 
-  async loadPlayerHeroArchives(_playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
-    return [];
+  async loadPlayerHeroArchives(playerIds: string[]): Promise<PlayerHeroArchiveSnapshot[]> {
+    const playerIdSet = new Set(playerIds.map((playerId) => playerId.trim()));
+    return Array.from(this.heroArchives.values()).filter((archive) => playerIdSet.has(archive.playerId));
+  }
+
+  async loadPlayerQuestState(playerId: string): Promise<PlayerQuestState | null> {
+    return this.questStates.get(playerId.trim()) ?? null;
+  }
+
+  async savePlayerQuestState(playerId: string, state: PlayerQuestState): Promise<PlayerQuestState> {
+    const nextState: PlayerQuestState = {
+      playerId: playerId.trim(),
+      ...(state.currentDateKey ? { currentDateKey: state.currentDateKey } : {}),
+      activeQuestIds: [...state.activeQuestIds],
+      rotations: structuredClone(state.rotations),
+      updatedAt: state.updatedAt
+    };
+    this.questStates.set(nextState.playerId, nextState);
+    return nextState;
+  }
+
+  seedHeroArchive(archive: PlayerHeroArchiveSnapshot): void {
+    this.heroArchives.set(`${archive.playerId}:${archive.heroId}`, structuredClone(archive));
   }
 
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
@@ -190,6 +217,7 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
+      ...(existing?.guestMigratedToPlayerId ? { guestMigratedToPlayerId: existing.guestMigratedToPlayerId } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
       ...(existing?.phoneNumber ? { phoneNumber: existing.phoneNumber } : {}),
@@ -385,11 +413,119 @@ class MemoryAuthStore implements RoomSnapshotStore {
       ...(input.ageVerified !== undefined ? { ageVerified: input.ageVerified } : existing.ageVerified ? { ageVerified: existing.ageVerified } : {}),
       ...(input.isMinor !== undefined ? { isMinor: input.isMinor } : existing.isMinor ? { isMinor: existing.isMinor } : {}),
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      guestMigratedToPlayerId: undefined,
       updatedAt: new Date().toISOString()
     };
     this.accounts.set(existing.playerId, account);
     this.playerIdByWechatOpenId.set(normalizedOpenId, existing.playerId);
     return account;
+  }
+
+  async migrateGuestToRegistered(input: GuestAccountMigrationInput): Promise<GuestAccountMigrationResult> {
+    const guestPlayerId = input.guestPlayerId.trim();
+    const targetPlayerId = input.targetPlayerId.trim();
+    const guestAccount = await this.ensurePlayerAccount({ playerId: guestPlayerId });
+    const targetAccount = await this.ensurePlayerAccount({ playerId: targetPlayerId });
+    const progressSource = input.progressSource === "target" ? targetAccount : guestAccount;
+    const nextTarget: PlayerAccountSnapshot = {
+      ...targetAccount,
+      ...structuredClone(progressSource),
+      playerId: targetPlayerId,
+      displayName: input.wechatIdentity.displayName?.trim() || progressSource.displayName,
+      ...(input.wechatIdentity.avatarUrl?.trim()
+        ? { avatarUrl: input.wechatIdentity.avatarUrl.trim() }
+        : progressSource.avatarUrl
+          ? { avatarUrl: progressSource.avatarUrl }
+          : targetAccount.avatarUrl
+            ? { avatarUrl: targetAccount.avatarUrl }
+            : {}),
+      ...(targetAccount.loginId ? { loginId: targetAccount.loginId } : {}),
+      ...(targetAccount.credentialBoundAt ? { credentialBoundAt: targetAccount.credentialBoundAt } : {}),
+      ...(targetAccount.phoneNumber ? { phoneNumber: targetAccount.phoneNumber } : {}),
+      ...(targetAccount.phoneNumberBoundAt ? { phoneNumberBoundAt: targetAccount.phoneNumberBoundAt } : {}),
+      ...(targetAccount.accountSessionVersion !== undefined ? { accountSessionVersion: targetAccount.accountSessionVersion } : {}),
+      wechatMiniGameOpenId: input.wechatIdentity.openId.trim(),
+      ...(input.wechatIdentity.unionId?.trim()
+        ? { wechatMiniGameUnionId: input.wechatIdentity.unionId.trim() }
+        : targetAccount.wechatMiniGameUnionId
+          ? { wechatMiniGameUnionId: targetAccount.wechatMiniGameUnionId }
+          : {}),
+      ...(input.wechatIdentity.ageVerified !== undefined
+        ? { ageVerified: input.wechatIdentity.ageVerified }
+        : progressSource.ageVerified !== undefined
+          ? { ageVerified: progressSource.ageVerified }
+          : {}),
+      ...(input.wechatIdentity.isMinor !== undefined
+        ? { isMinor: input.wechatIdentity.isMinor }
+        : progressSource.isMinor !== undefined
+          ? { isMinor: progressSource.isMinor }
+          : {}),
+      wechatMiniGameBoundAt: targetAccount.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    delete nextTarget.guestMigratedToPlayerId;
+    this.accounts.set(targetPlayerId, nextTarget);
+    this.playerIdByWechatOpenId.set(nextTarget.wechatMiniGameOpenId!, targetPlayerId);
+
+    if (input.progressSource === "guest") {
+      const guestArchives = await this.loadPlayerHeroArchives([guestPlayerId]);
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${targetPlayerId}:`) || key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      for (const archive of guestArchives) {
+        this.heroArchives.set(`${targetPlayerId}:${archive.heroId}`, {
+          ...structuredClone(archive),
+          playerId: targetPlayerId,
+          hero: {
+            ...structuredClone(archive.hero),
+            playerId: targetPlayerId
+          }
+        });
+      }
+      const guestQuestState = await this.loadPlayerQuestState(guestPlayerId);
+      this.questStates.delete(targetPlayerId);
+      this.questStates.delete(guestPlayerId);
+      if (guestQuestState) {
+        this.questStates.set(targetPlayerId, {
+          ...structuredClone(guestQuestState),
+          playerId: targetPlayerId
+        });
+      }
+    } else {
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      this.questStates.delete(guestPlayerId);
+    }
+
+    const migratedGuest: PlayerAccountSnapshot = {
+      ...guestAccount,
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentBattleReplays: [],
+      gems: 0,
+      seasonXp: 0,
+      loginStreak: 0,
+      guestMigratedToPlayerId: targetPlayerId,
+      updatedAt: new Date().toISOString()
+    };
+    delete migratedGuest.wechatMiniGameOpenId;
+    delete migratedGuest.wechatMiniGameUnionId;
+    delete migratedGuest.wechatMiniGameBoundAt;
+    delete migratedGuest.loginId;
+    delete migratedGuest.credentialBoundAt;
+    delete migratedGuest.phoneNumber;
+    delete migratedGuest.phoneNumberBoundAt;
+    this.accounts.set(guestPlayerId, migratedGuest);
+
+    return {
+      account: nextTarget,
+      guestAccount: migratedGuest
+    };
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
@@ -3281,6 +3417,326 @@ test("wechat mini game production exchange binds code2Session identity onto an a
   assert.equal(storedAccount?.loginId, "veil-ranger");
 });
 
+test("wechat mini game login migrates guest progression to a new WeChat account and revokes the guest session", { concurrency: false }, async (t) => {
+  const port = 44965 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+  const guestPlayerId = "guest-upgrade-player";
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-upgrade",
+        unionid: "wx-union-upgrade",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const guestLoginResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: guestPlayerId,
+      displayName: "游客旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(guestLoginResponse.status, 200);
+
+  await store.savePlayerAccountProgress(guestPlayerId, {
+    gems: 88,
+    globalResources: { gold: 520, wood: 140, ore: 65 },
+    achievements: [
+      {
+        achievementId: "guest-achievement",
+        progress: 1,
+        completedAt: "2026-04-10T00:00:00.000Z"
+      }
+    ],
+    loginStreak: 3
+  });
+  await store.savePlayerQuestState(guestPlayerId, {
+    playerId: guestPlayerId,
+    currentDateKey: "2026-04-11",
+    activeQuestIds: ["quest-upgrade"],
+    rotations: [],
+    updatedAt: "2026-04-11T00:00:00.000Z"
+  });
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      displayName: "微信旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    session: GuestAuthSession;
+    accountMigration: {
+      notice: string;
+      previousGuestPlayerId: string;
+      migratedToPlayerId: string;
+      strategy: string;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.accountMigration.notice, "您的游客进度将合并到新账号");
+  assert.equal(payload.accountMigration.previousGuestPlayerId, guestPlayerId);
+  assert.equal(payload.accountMigration.strategy, "keep_guest");
+  assert.equal(payload.session.playerId, createWechatMiniGamePlayerId("wx-openid-upgrade"));
+
+  const migratedAccount = await store.loadPlayerAccount(payload.session.playerId);
+  assert.equal(migratedAccount?.gems, 88);
+  assert.deepEqual(migratedAccount?.globalResources, { gold: 520, wood: 140, ore: 65 });
+  assert.equal(migratedAccount?.wechatMiniGameOpenId, "wx-openid-upgrade");
+  assert.equal((await store.loadPlayerQuestState(payload.session.playerId))?.activeQuestIds[0], "quest-upgrade");
+
+  const guestAccount = await store.loadPlayerAccount(guestPlayerId);
+  assert.equal(guestAccount?.guestMigratedToPlayerId, payload.session.playerId);
+
+  const guestSessionCheck = await originalFetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    }
+  });
+  const guestSessionPayload = (await guestSessionCheck.json()) as { error: { code: string } };
+  assert.equal(guestSessionCheck.status, 401);
+  assert.equal(guestSessionPayload.error.code, "session_revoked");
+
+  const reusedGuestResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: guestPlayerId,
+      displayName: "游客旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const reusedGuestPayload = (await reusedGuestResponse.json()) as { error: { code: string } };
+  assert.equal(reusedGuestResponse.status, 409);
+  assert.equal(reusedGuestPayload.error.code, "guest_account_migrated");
+});
+
+test("wechat guest upgrade returns a conflict when the bound account already has progression", { concurrency: false }, async (t) => {
+  const port = 44970 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-conflict",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  await store.ensurePlayerAccount({
+    playerId: createWechatMiniGamePlayerId("wx-openid-conflict"),
+    displayName: "已绑定旅人"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity(createWechatMiniGamePlayerId("wx-openid-conflict"), {
+    openId: "wx-openid-conflict",
+    displayName: "已绑定旅人"
+  });
+  await store.savePlayerAccountProgress(createWechatMiniGamePlayerId("wx-openid-conflict"), {
+    gems: 50,
+    globalResources: { gold: 200, wood: 50, ore: 20 }
+  });
+
+  const guestLoginResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-conflict-upgrade",
+      displayName: "冲突游客",
+      privacyConsentAccepted: true
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+  await store.savePlayerAccountProgress("guest-conflict-upgrade", {
+    gems: 10,
+    globalResources: { gold: 10, wood: 0, ore: 0 }
+  });
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    error: { code: string };
+    migrationConflict: {
+      notice: string;
+      guest: { playerId: string };
+      registered: { playerId: string };
+      choices: string[];
+    };
+  };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "wechat_guest_upgrade_conflict");
+  assert.equal(payload.migrationConflict.notice, "您的游客进度将合并到新账号");
+  assert.equal(payload.migrationConflict.guest.playerId, "guest-conflict-upgrade");
+  assert.equal(payload.migrationConflict.registered.playerId, createWechatMiniGamePlayerId("wx-openid-conflict"));
+  assert.deepEqual(payload.migrationConflict.choices, ["keep_registered", "keep_guest"]);
+});
+
+test("wechat guest upgrade can keep the registered progression when explicitly chosen", { concurrency: false }, async (t) => {
+  const port = 44975 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+  const registeredPlayerId = createWechatMiniGamePlayerId("wx-openid-keep-registered");
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-keep-registered",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  await store.ensurePlayerAccount({
+    playerId: registeredPlayerId,
+    displayName: "老账号"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity(registeredPlayerId, {
+    openId: "wx-openid-keep-registered",
+    displayName: "老账号"
+  });
+  await store.savePlayerAccountProgress(registeredPlayerId, {
+    gems: 120,
+    globalResources: { gold: 900, wood: 300, ore: 140 }
+  });
+
+  const guestLoginResponse = await originalFetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "guest-keep-registered",
+      displayName: "游客候选",
+      privacyConsentAccepted: true
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+  await store.savePlayerAccountProgress("guest-keep-registered", {
+    gems: 5,
+    globalResources: { gold: 5, wood: 1, ore: 0 }
+  });
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      migrationChoice: "keep_registered",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    session: GuestAuthSession;
+    accountMigration: {
+      strategy: string;
+      migratedToPlayerId: string;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.session.playerId, registeredPlayerId);
+  assert.equal(payload.accountMigration.strategy, "keep_registered");
+
+  const registeredAccount = await store.loadPlayerAccount(registeredPlayerId);
+  assert.equal(registeredAccount?.gems, 125);
+  assert.deepEqual(registeredAccount?.globalResources, { gold: 950, wood: 300, ore: 140 });
+  assert.equal((await store.loadPlayerAccount("guest-keep-registered"))?.guestMigratedToPlayerId, registeredPlayerId);
+});
+
 test("wechat mini game login stores verified minor status when age data is provided", { concurrency: false }, async (t) => {
   const port = 44980 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
@@ -3331,6 +3787,60 @@ test("wechat mini game login stores verified minor status when age data is provi
 
   assert.equal(response.status, 200);
   const storedAccount = await store.loadPlayerAccount("wechat-minor");
+  assert.equal(storedAccount?.ageVerified, true);
+  assert.equal(storedAccount?.isMinor, true);
+});
+
+test("wechat mini game login derives minor status from self-declared birthdate", { concurrency: false }, async (t) => {
+  const port = 45010 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-birthdate-minor",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "wechat-birthdate-minor",
+      displayName: "晨训学员",
+      birthdate: "2012-01-01",
+      privacyConsentAccepted: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  const storedAccount = await store.loadPlayerAccount("wechat-birthdate-minor");
   assert.equal(storedAccount?.ageVerified, true);
   assert.equal(storedAccount?.isMinor, true);
 });

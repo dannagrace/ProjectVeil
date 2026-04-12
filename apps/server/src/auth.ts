@@ -41,6 +41,7 @@ import {
 } from "./persistence";
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
+import { readRuntimeSecret } from "./runtime-secrets";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
 
 export type AuthMode = "guest" | "account";
@@ -157,7 +158,6 @@ interface AccountRegistrationState {
   expiresAt: string;
 }
 
-const AUTH_SECRET = process.env.VEIL_AUTH_SECRET?.trim() || "project-veil-dev-secret";
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
 const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
@@ -180,6 +180,10 @@ const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
+
+function readAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
+  return readRuntimeSecret("VEIL_AUTH_SECRET", env) || "project-veil-dev-secret";
+}
 
 function countActiveAccountLockouts(): number {
   const currentTime = nowMs();
@@ -318,15 +322,15 @@ function isExpiredTimestamp(value: string): boolean {
 }
 
 function hashRefreshToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`refresh:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`refresh:${token}`).digest("hex");
 }
 
 function hashPasswordRecoveryToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`password-recovery:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`password-recovery:${token}`).digest("hex");
 }
 
 function hashAccountRegistrationToken(token: string): string {
-  return createHmac("sha256", AUTH_SECRET).update(`account-registration:${token}`).digest("hex");
+  return createHmac("sha256", readAuthSecret()).update(`account-registration:${token}`).digest("hex");
 }
 
 function cacheAccountAuthState(input: {
@@ -357,7 +361,8 @@ export function cachePlayerAccountAuthState(input: {
 function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): WechatMiniGameLoginConfig {
   const isTestEnvironment = env.NODE_ENV?.trim().toLowerCase() === "test";
   const normalizedMode = env.VEIL_WECHAT_MINIGAME_LOGIN_MODE?.trim().toLowerCase();
-  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && env.WECHAT_APP_SECRET?.trim());
+  const wechatAppSecret = readRuntimeSecret("WECHAT_APP_SECRET", env);
+  const hasWechatCredentials = Boolean(env.WECHAT_APP_ID?.trim() && wechatAppSecret);
   const defaultMode = isTestEnvironment ? "mock" : hasWechatCredentials ? "production" : "disabled";
   const mode =
     normalizedMode === "mock" && isTestEnvironment
@@ -372,7 +377,7 @@ function readWechatMiniGameLoginConfig(env: NodeJS.ProcessEnv = process.env): We
     mockCode: env.VEIL_WECHAT_MINIGAME_LOGIN_MOCK_CODE?.trim() || "wechat-dev-code",
     code2SessionUrl: env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL?.trim() || "https://api.weixin.qq.com/sns/jscode2session",
     ...(env.WECHAT_APP_ID?.trim() ? { appId: env.WECHAT_APP_ID.trim() } : {}),
-    ...(env.WECHAT_APP_SECRET?.trim() ? { appSecret: env.WECHAT_APP_SECRET.trim() } : {})
+    ...(wechatAppSecret ? { appSecret: wechatAppSecret } : {})
   };
 }
 
@@ -722,7 +727,55 @@ export function createWechatMiniGamePlayerId(openId: string): string {
     throw new Error("wechat_openid_required");
   }
 
-  return `wechat-${createHmac("sha256", AUTH_SECRET).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
+  return `wechat-${createHmac("sha256", readAuthSecret()).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
+}
+
+const WECHAT_GUEST_UPGRADE_NOTICE = "您的游客进度将合并到新账号";
+
+function hasPlayerAccountProgress(account: PlayerAccountSnapshot | null | undefined): boolean {
+  if (!account) {
+    return false;
+  }
+
+  return (
+    (account.gems ?? 0) > 0 ||
+    (account.seasonXp ?? 0) > 0 ||
+    (account.loginStreak ?? 0) > 0 ||
+    (account.dailyPlayMinutes ?? 0) > 0 ||
+    (account.globalResources.gold ?? 0) > 0 ||
+    (account.globalResources.wood ?? 0) > 0 ||
+    (account.globalResources.ore ?? 0) > 0 ||
+    account.achievements.length > 0 ||
+    (account.recentBattleReplays?.length ?? 0) > 0 ||
+    (account.seasonBadges?.length ?? 0) > 0 ||
+    (account.seasonPassClaimedTiers?.length ?? 0) > 0 ||
+    (account.mailbox?.length ?? 0) > 0 ||
+    (account.cosmeticInventory?.ownedIds.length ?? 0) > 0 ||
+    account.campaignProgress !== undefined ||
+    account.dailyDungeonState !== undefined ||
+    account.seasonalEventStates !== undefined ||
+    (account.tutorialStep ?? 0) > 0
+  );
+}
+
+async function summarizeMigrationProgress(store: RoomSnapshotStore, account: PlayerAccountSnapshot): Promise<{
+  hasProgress: boolean;
+  heroCount: number;
+  hasQuestState: boolean;
+}> {
+  const [heroArchives, questState] = await Promise.all([
+    store.loadPlayerHeroArchives([account.playerId]),
+    store.loadPlayerQuestState?.(account.playerId)
+  ]);
+  return {
+    hasProgress:
+      hasPlayerAccountProgress(account) ||
+      heroArchives.length > 0 ||
+      (questState?.activeQuestIds.length ?? 0) > 0 ||
+      (questState?.rotations.length ?? 0) > 0,
+    heroCount: heroArchives.length,
+    hasQuestState: Boolean(questState && (questState.activeQuestIds.length > 0 || questState.rotations.length > 0))
+  };
 }
 
 async function exchangeWechatMiniGameCode(
@@ -784,7 +837,7 @@ async function exchangeWechatMiniGameCode(
 
 function issueSignedToken(payload: GuestAuthTokenPayload): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const signature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const signature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   return `${encodedPayload}.${signature}`;
 }
 
@@ -960,7 +1013,9 @@ async function handleWechatLogin(
     playerId?: string | null;
     displayName?: string | null;
     avatarUrl?: string | null;
+    migrationChoice?: string | null;
     privacyConsentAccepted?: boolean | null;
+    birthdate?: string | null;
     ageVerified?: boolean | null;
     isAdult?: boolean | null;
     ageRange?: string | null;
@@ -1006,6 +1061,16 @@ async function handleWechatLogin(
     return;
   }
 
+  if (body.migrationChoice !== undefined && body.migrationChoice !== null && typeof body.migrationChoice !== "string") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional string field: migrationChoice"
+      }
+    });
+    return;
+  }
+
   if (body.privacyConsentAccepted !== undefined && body.privacyConsentAccepted !== null && typeof body.privacyConsentAccepted !== "boolean") {
     sendJson(response, 400, {
       error: {
@@ -1021,6 +1086,16 @@ async function handleWechatLogin(
       error: {
         code: "invalid_payload",
         message: "Expected optional boolean field: ageVerified"
+      }
+    });
+    return;
+  }
+
+  if (body.birthdate !== undefined && body.birthdate !== null && typeof body.birthdate !== "string") {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "Expected optional string field: birthdate"
       }
     });
     return;
@@ -1048,11 +1123,39 @@ async function handleWechatLogin(
 
   const code = normalizeWechatMiniGameCode(body.code);
   const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
-  const minorProtection = deriveWechatMinorProtection({
-    ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
-    ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
-    ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
-  });
+  const migrationChoice = body.migrationChoice?.trim();
+  if (
+    migrationChoice !== undefined &&
+    migrationChoice !== "" &&
+    migrationChoice !== "keep_guest" &&
+    migrationChoice !== "keep_registered"
+  ) {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: "migrationChoice must be keep_guest or keep_registered"
+      }
+    });
+    return;
+  }
+  const now = new Date();
+  let minorProtection: ReturnType<typeof deriveWechatMinorProtection>;
+  try {
+    minorProtection = deriveWechatMinorProtection({
+      ...(body.birthdate !== undefined ? { birthdate: body.birthdate } : {}),
+      ...(body.ageVerified !== undefined ? { ageVerified: body.ageVerified } : {}),
+      ...(body.isAdult !== undefined ? { isAdult: body.isAdult } : {}),
+      ...(body.ageRange !== undefined ? { ageRange: body.ageRange } : {})
+    }, now);
+  } catch (error) {
+    sendJson(response, 400, {
+      error: {
+        code: "invalid_payload",
+        message: error instanceof Error ? error.message : String(error)
+      }
+    });
+    return;
+  }
   const wechatConfig = readWechatMiniGameLoginConfig();
 
   let identity: WechatMiniGameIdentity;
@@ -1094,10 +1197,105 @@ async function handleWechatLogin(
   let displayName = normalizeDisplayName(playerId, body.displayName ?? authSession?.displayName);
   let loginId = authSession?.loginId;
   let rewardAccount: PlayerAccountSnapshot | null = null;
+  let accountMigration:
+    | {
+        notice: string;
+        previousGuestPlayerId: string;
+        migratedToPlayerId: string;
+        strategy: "keep_guest" | "keep_registered";
+      }
+    | undefined;
 
   if (store) {
     const boundAccount = await store.loadPlayerAccountByWechatMiniGameOpenId(identity.openId);
-    if (boundAccount && authSession && boundAccount.playerId !== authSession.playerId) {
+    const wechatIdentity = {
+      openId: identity.openId,
+      ...(identity.unionId ? { unionId: identity.unionId } : {}),
+      ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
+      ...(avatarUrl ? { avatarUrl } : {}),
+      ...minorProtection
+    };
+    if (authSession?.authMode === "guest") {
+      const guestAccount =
+        (await store.loadPlayerAccount(authSession.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession.playerId,
+          displayName: authSession.displayName
+        }));
+      if (guestAccount.guestMigratedToPlayerId) {
+        if (authSession.sessionId) {
+          revokeGuestAuthSession(authSession.sessionId);
+        }
+        sendJson(response, 409, {
+          error: {
+            code: "guest_account_migrated",
+            message: `Guest account has already been migrated to ${guestAccount.guestMigratedToPlayerId}`
+          }
+        });
+        return;
+      }
+
+      const targetPlayerId = boundAccount?.playerId ?? createWechatMiniGamePlayerId(identity.openId);
+      if (boundAccount && boundAccount.playerId !== guestAccount.playerId) {
+        const [guestSummary, registeredSummary] = await Promise.all([
+          summarizeMigrationProgress(store, guestAccount),
+          summarizeMigrationProgress(store, boundAccount)
+        ]);
+        if (registeredSummary.hasProgress && migrationChoice !== "keep_guest" && migrationChoice !== "keep_registered") {
+          sendJson(response, 409, {
+            error: {
+              code: "wechat_guest_upgrade_conflict",
+              message: "Registered WeChat account already has progression. Choose which progression to keep."
+            },
+            migrationConflict: {
+              notice: WECHAT_GUEST_UPGRADE_NOTICE,
+              guest: {
+                playerId: guestAccount.playerId,
+                hasProgress: guestSummary.hasProgress,
+                heroCount: guestSummary.heroCount,
+                hasQuestState: guestSummary.hasQuestState
+              },
+              registered: {
+                playerId: boundAccount.playerId,
+                hasProgress: registeredSummary.hasProgress,
+                heroCount: registeredSummary.heroCount,
+                hasQuestState: registeredSummary.hasQuestState
+              },
+              choices: ["keep_registered", "keep_guest"]
+            }
+          });
+          return;
+        }
+      }
+
+      const strategy = migrationChoice === "keep_registered" ? "keep_registered" : "keep_guest";
+      let migratedAccount = (
+        await store.migrateGuestToRegistered({
+          guestPlayerId: guestAccount.playerId,
+          targetPlayerId,
+          progressSource: strategy === "keep_registered" ? "target" : "guest",
+          wechatIdentity
+        })
+      ).account;
+      const consentedAccount = await ensurePlayerPrivacyConsent(response, store, migratedAccount, body.privacyConsentAccepted);
+      if (!consentedAccount) {
+        return;
+      }
+      migratedAccount = consentedAccount;
+      if (authSession.sessionId) {
+        revokeGuestAuthSession(authSession.sessionId);
+      }
+      playerId = migratedAccount.playerId;
+      displayName = migratedAccount.displayName;
+      loginId = migratedAccount.loginId;
+      rewardAccount = migratedAccount;
+      accountMigration = {
+        notice: WECHAT_GUEST_UPGRADE_NOTICE,
+        previousGuestPlayerId: guestAccount.playerId,
+        migratedToPlayerId: migratedAccount.playerId,
+        strategy
+      };
+    } else if (boundAccount && authSession && boundAccount.playerId !== authSession.playerId) {
       sendJson(response, 409, {
         error: {
           code: "wechat_identity_already_bound",
@@ -1115,13 +1313,11 @@ async function handleWechatLogin(
       }
     }
 
-    if (boundAccount) {
+    if (rewardAccount) {
+      // Guest upgrade already migrated/bound through the atomic store path above.
+    } else if (boundAccount) {
       let syncedAccount = await store.bindPlayerAccountWechatMiniGameIdentity(boundAccount.playerId, {
-        openId: identity.openId,
-        ...(identity.unionId ? { unionId: identity.unionId } : {}),
-        ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {}),
-        ...minorProtection
+        ...wechatIdentity
       });
       const consentedAccount = await ensurePlayerPrivacyConsent(response, store, syncedAccount, body.privacyConsentAccepted);
       if (!consentedAccount) {
@@ -1135,11 +1331,7 @@ async function handleWechatLogin(
     } else {
       const targetPlayerId = authSession?.playerId ?? playerId;
       let boundAccountResult = await store.bindPlayerAccountWechatMiniGameIdentity(targetPlayerId, {
-        openId: identity.openId,
-        ...(identity.unionId ? { unionId: identity.unionId } : {}),
-        ...(body.displayName?.trim() ? { displayName: body.displayName } : {}),
-        ...(avatarUrl ? { avatarUrl } : {}),
-        ...minorProtection
+        ...wechatIdentity
       });
       const consentedAccount = await ensurePlayerPrivacyConsent(response, store, boundAccountResult, body.privacyConsentAccepted);
       if (!consentedAccount) {
@@ -1188,7 +1380,8 @@ async function handleWechatLogin(
             reward: dailyLoginReward.reward
           }
         }
-      : {})
+      : {}),
+    ...(accountMigration ? { accountMigration } : {})
   });
   if (store && loginId) {
     recordAuthAccountLogin();
@@ -1243,7 +1436,7 @@ function resolveAuthSession(token: string): GuestAuthSession | null {
     return null;
   }
 
-  const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) {
     return null;
   }
@@ -1341,7 +1534,7 @@ async function validateAuthToken(
     return { session: null, errorCode: "unauthorized" };
   }
 
-  const expectedSignature = createHmac("sha256", AUTH_SECRET).update(encodedPayload).digest("base64url");
+  const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) {
     recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
@@ -1392,6 +1585,14 @@ async function validateAuthToken(
       if (activeBan) {
         recordAuthSessionFailure("account_banned");
         return { session: null, errorCode: "account_banned", ban: activeBan };
+      }
+      const account = store ? await store.loadPlayerAccount(session.playerId) : null;
+      if (account?.guestMigratedToPlayerId) {
+        if (session.sessionId) {
+          revokeGuestAuthSession(session.sessionId);
+        }
+        recordAuthSessionFailure("session_revoked");
+        return { session: null, errorCode: "session_revoked" };
       }
       if (session.sessionId) {
         const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
@@ -2096,6 +2297,16 @@ export function registerAuthRoutes(
       await assertDisplayNameAvailableOrThrow(store, displayName, playerId);
 
       if (store) {
+        const existingAccount = await store.loadPlayerAccount(playerId);
+        if (existingAccount?.guestMigratedToPlayerId) {
+          sendJson(response, 409, {
+            error: {
+              code: "guest_account_migrated",
+              message: `Guest account has already been migrated to ${existingAccount.guestMigratedToPlayerId}`
+            }
+          });
+          return;
+        }
         let account = await store.ensurePlayerAccount({
           playerId,
           displayName

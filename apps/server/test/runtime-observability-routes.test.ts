@@ -11,6 +11,7 @@ import {
   recordRuntimeErrorEvent,
   recordMatchmakingRateLimited,
   registerRuntimeObservabilityRoutes,
+  setMatchmakingQueueDepth,
   type RuntimePersistenceHealth,
   resetRuntimeObservability
 } from "../src/observability";
@@ -252,6 +253,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   await wait(350);
   recordMatchmakingRateLimited();
   recordMatchmakingRateLimited();
+  setMatchmakingQueueDepth(7);
   recordRuntimeErrorEvent({
     id: "server-payment-1",
     recordedAt: "2026-04-03T08:35:00.000Z",
@@ -300,6 +302,12 @@ test("runtime observability routes expose live room counts and gameplay traffic"
           rateLimitedTotal: number;
         };
       };
+      antiCheat: {
+        counters: {
+          alertsTotal: number;
+        };
+        alertsTracked: number;
+      };
     };
   };
 
@@ -316,6 +324,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 0);
   assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 0);
   assert.equal(healthPayload.runtime.matchmaking.counters.rateLimitedTotal, 2);
+  assert.equal(healthPayload.runtime.antiCheat.counters.alertsTotal, 0);
+  assert.equal(healthPayload.runtime.antiCheat.alertsTracked, 0);
 
   const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
   const readinessPayload = (await readinessResponse.json()) as {
@@ -434,6 +444,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
   assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
   assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
+  assert.match(metricsText, /^veil_matchmaking_queue_depth 7$/m);
+  assert.match(metricsText, /^veil_anti_cheat_alerts_total 0$/m);
   assert.match(metricsText, /^veil_feature_flag_config_stale 0$/m);
   assert.match(metricsText, /^veil_feature_flag_rollout_ratio\{flag="battle_pass_enabled",owner="ops-oncall"\} 0\.1$/m);
   assert.match(

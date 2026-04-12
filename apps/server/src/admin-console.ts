@@ -5,6 +5,8 @@ import type { ResourceLedger, ServerMessage, WorldState } from "../../../package
 import { GuildService } from "./guilds";
 import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
+import { recordLeaderboardAbuseAlert } from "./observability";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 class InvalidAdminJsonError extends Error {
   constructor() {
@@ -35,17 +37,17 @@ type BanApproval = {
 };
 
 function readAdminSecret(): string | null {
-  const secret = process.env.ADMIN_SECRET?.trim();
+  const secret = readRuntimeSecret("ADMIN_SECRET");
   return secret ? secret : null;
 }
 
 function readSupportModeratorSecret(): string | null {
-  const secret = process.env.SUPPORT_MODERATOR_SECRET?.trim();
+  const secret = readRuntimeSecret("SUPPORT_MODERATOR_SECRET");
   return secret ? secret : null;
 }
 
 function readSupportSupervisorSecret(): string | null {
-  const secret = process.env.SUPPORT_SUPERVISOR_SECRET?.trim();
+  const secret = readRuntimeSecret("SUPPORT_SUPERVISOR_SECRET");
   return secret ? secret : null;
 }
 
@@ -162,6 +164,18 @@ function hasGuildModerationStore(
       store.appendGuildAuditLog &&
       store.listGuildAuditLogs
   );
+}
+
+function hasPlayerAccountStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "loadPlayerAccount" | "savePlayerAccountProgress">> {
+  return Boolean(store?.loadPlayerAccount && store.savePlayerAccountProgress);
+}
+
+function hasBattleSnapshotHistoryStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listBattleSnapshotsForPlayer">> {
+  return Boolean(store?.listBattleSnapshotsForPlayer);
 }
 
 function sendInvalidJson(response: ServerResponse): void {
@@ -720,6 +734,9 @@ export function registerAdminRoutes(
       const banHistory = hasBanModerationStore(store)
         ? await store.listPlayerBanHistory(playerId, { limit: readLimit(request, 100) })
         : [];
+      const battleHistory = hasBattleSnapshotHistoryStore(store)
+        ? await store.listBattleSnapshotsForPlayer(playerId, { limit: readLimit(request, 50) })
+        : [];
 
       sendJson(response, 200, {
         playerId,
@@ -728,9 +745,80 @@ export function registerAdminRoutes(
         moderation: {
           currentBan,
           banHistory
-        }
+        },
+        battleHistory
       });
     } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/leaderboard/freeze", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasPlayerAccountStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      const account = (await store.loadPlayerAccount(playerId)) ?? (await store.ensurePlayerAccount({ playerId }));
+      const leaderboardModerationState = {
+        ...(account.leaderboardModerationState ?? {}),
+        frozenAt: new Date().toISOString(),
+        frozenByPlayerId: `${role}:admin-console`,
+        ...(input.reason ? { freezeReason: input.reason } : {})
+      };
+      const updatedAccount = await store.savePlayerAccountProgress(playerId, {
+        leaderboardModerationState
+      });
+      recordLeaderboardAbuseAlert({
+        type: "leaderboard_frozen_player_match",
+        playerId,
+        at: leaderboardModerationState.frozenAt,
+        detail: `Leaderboard frozen by ${role}:admin-console${input.reason ? ` (${input.reason})` : ""}.`
+      });
+      sendJson(response, 200, { ok: true, account: updatedAccount });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/leaderboard/remove", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasPlayerAccountStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      const account = (await store.loadPlayerAccount(playerId)) ?? (await store.ensurePlayerAccount({ playerId }));
+      const leaderboardModerationState = {
+        ...(account.leaderboardModerationState ?? {}),
+        hiddenAt: new Date().toISOString(),
+        hiddenByPlayerId: `${role}:admin-console`,
+        ...(input.reason ? { hiddenReason: input.reason } : {})
+      };
+      const updatedAccount = await store.savePlayerAccountProgress(playerId, {
+        leaderboardModerationState
+      });
+      sendJson(response, 200, { ok: true, account: updatedAccount });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
         return;

@@ -69,6 +69,33 @@ export interface PlayerMailboxSummary {
   expiredCount: number;
 }
 
+export interface LeaderboardOpponentStat {
+  opponentPlayerId: string;
+  matchCount: number;
+  eloGain: number;
+  eloLoss: number;
+  lastPlayedAt: string;
+}
+
+export interface LeaderboardAbuseState {
+  currentDay?: string;
+  dailyEloGain?: number;
+  dailyEloLoss?: number;
+  opponentStats?: LeaderboardOpponentStat[];
+  status?: "clear" | "watch" | "flagged";
+  lastAlertAt?: string;
+  lastAlertReasons?: string[];
+}
+
+export interface LeaderboardModerationState {
+  frozenAt?: string;
+  frozenByPlayerId?: string;
+  freezeReason?: string;
+  hiddenAt?: string;
+  hiddenByPlayerId?: string;
+  hiddenReason?: string;
+}
+
 export interface PlayerAccountReadModel {
   playerId: string;
   displayName: string;
@@ -115,6 +142,8 @@ export interface PlayerAccountReadModel {
   banStatus?: PlayerBanStatus;
   banExpiry?: string;
   banReason?: string;
+  leaderboardAbuseState?: LeaderboardAbuseState;
+  leaderboardModerationState?: LeaderboardModerationState;
   lastRoomId?: string;
   lastSeenAt?: string;
   experiments?: ExperimentAssignment[];
@@ -166,9 +195,103 @@ export interface PlayerAccountReadModelInput {
   banStatus?: PlayerBanStatus | undefined;
   banExpiry?: string | undefined;
   banReason?: string | undefined;
+  leaderboardAbuseState?: LeaderboardAbuseState | null | undefined;
+  leaderboardModerationState?: LeaderboardModerationState | null | undefined;
   lastRoomId?: string | undefined;
   lastSeenAt?: string | undefined;
   experiments?: Partial<ExperimentAssignment>[] | null | undefined;
+}
+
+function normalizeLeaderboardOpponentStats(
+  opponentStats?: LeaderboardOpponentStat[] | null
+): LeaderboardOpponentStat[] | undefined {
+  if (!Array.isArray(opponentStats)) {
+    return undefined;
+  }
+
+  const normalized = opponentStats
+    .map((entry) => {
+      const opponentPlayerId = entry?.opponentPlayerId?.trim();
+      const lastPlayedAt = entry?.lastPlayedAt?.trim();
+      if (!opponentPlayerId || !lastPlayedAt) {
+        return null;
+      }
+
+      return {
+        opponentPlayerId,
+        matchCount: Math.max(0, Math.floor(entry.matchCount ?? 0)),
+        eloGain: Math.max(0, Math.floor(entry.eloGain ?? 0)),
+        eloLoss: Math.max(0, Math.floor(entry.eloLoss ?? 0)),
+        lastPlayedAt
+      };
+    })
+    .filter((entry): entry is LeaderboardOpponentStat => Boolean(entry))
+    .sort((left, right) => right.lastPlayedAt.localeCompare(left.lastPlayedAt))
+    .slice(0, 12);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeLeaderboardAbuseState(
+  state?: LeaderboardAbuseState | null
+): LeaderboardAbuseState | undefined {
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+
+  const currentDay = /^\d{4}-\d{2}-\d{2}$/.test(state.currentDay?.trim() ?? "") ? state.currentDay?.trim() : undefined;
+  const opponentStats = normalizeLeaderboardOpponentStats(state.opponentStats);
+  const lastAlertAt = state.lastAlertAt?.trim();
+  const lastAlertReasons = Array.from(
+    new Set(
+      (state.lastAlertReasons ?? [])
+        .map((reason) => reason?.trim())
+        .filter((reason): reason is string => Boolean(reason))
+    )
+  ).slice(0, 8);
+  const status = state.status === "watch" || state.status === "flagged" ? state.status : "clear";
+
+  if (!currentDay && !opponentStats && !lastAlertAt && lastAlertReasons.length === 0 && status === "clear") {
+    return undefined;
+  }
+
+  return {
+    ...(currentDay ? { currentDay } : {}),
+    ...(currentDay ? { dailyEloGain: Math.max(0, Math.floor(state.dailyEloGain ?? 0)) } : {}),
+    ...(currentDay ? { dailyEloLoss: Math.max(0, Math.floor(state.dailyEloLoss ?? 0)) } : {}),
+    ...(opponentStats ? { opponentStats } : {}),
+    ...(status !== "clear" ? { status } : {}),
+    ...(lastAlertAt ? { lastAlertAt } : {}),
+    ...(lastAlertReasons.length > 0 ? { lastAlertReasons } : {})
+  };
+}
+
+function normalizeLeaderboardModerationState(
+  state?: LeaderboardModerationState | null
+): LeaderboardModerationState | undefined {
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+
+  const frozenAt = state.frozenAt?.trim();
+  const frozenByPlayerId = state.frozenByPlayerId?.trim();
+  const freezeReason = state.freezeReason?.trim();
+  const hiddenAt = state.hiddenAt?.trim();
+  const hiddenByPlayerId = state.hiddenByPlayerId?.trim();
+  const hiddenReason = state.hiddenReason?.trim();
+
+  if (!frozenAt && !hiddenAt) {
+    return undefined;
+  }
+
+  return {
+    ...(frozenAt ? { frozenAt } : {}),
+    ...(frozenByPlayerId ? { frozenByPlayerId } : {}),
+    ...(freezeReason ? { freezeReason } : {}),
+    ...(hiddenAt ? { hiddenAt } : {}),
+    ...(hiddenByPlayerId ? { hiddenByPlayerId } : {}),
+    ...(hiddenReason ? { hiddenReason } : {})
+  };
 }
 
 export function normalizePlayerAccountReadModel(
@@ -212,6 +335,8 @@ export function normalizePlayerAccountReadModel(
   const banStatus = account?.banStatus === "temporary" || account?.banStatus === "permanent" ? account.banStatus : "none";
   const banExpiry = account?.banExpiry?.trim();
   const banReason = account?.banReason?.trim();
+  const leaderboardAbuseState = normalizeLeaderboardAbuseState(account?.leaderboardAbuseState);
+  const leaderboardModerationState = normalizeLeaderboardModerationState(account?.leaderboardModerationState);
   const lastRoomId = account?.lastRoomId?.trim();
   const lastSeenAt = account?.lastSeenAt?.trim();
   const experiments = normalizeExperimentAssignments(account?.experiments);
@@ -331,6 +456,8 @@ export function normalizePlayerAccountReadModel(
     ...(banStatus !== "none" ? { banStatus } : {}),
     ...(banExpiry ? { banExpiry } : {}),
     ...(banReason ? { banReason } : {}),
+    ...(leaderboardAbuseState ? { leaderboardAbuseState } : {}),
+    ...(leaderboardModerationState ? { leaderboardModerationState } : {}),
     ...(lastRoomId ? { lastRoomId } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
     ...(experiments.length > 0 ? { experiments } : {})

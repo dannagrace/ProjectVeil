@@ -89,6 +89,11 @@ if (logFile) {
   fs.appendFileSync(logFile, JSON.stringify({ args, stdin }) + "\\n", "utf8");
 }
 
+if (args.includes("--batch") && args.includes("--skip-column-names")) {
+  process.stdout.write(process.env.VEIL_TEST_SCHEMA_MIGRATION_COUNT || "24");
+  process.exit(0);
+}
+
 if (args.includes("--table")) {
   process.stdout.write("+----------------------+-----------+\\n");
   process.stdout.write("| table_name           | row_count |\\n");
@@ -170,6 +175,7 @@ function runRestore(tempDir: string, extraEnv: NodeJS.ProcessEnv = {}) {
       RESTORE_MYSQL_USER: "restore_user",
       RESTORE_MYSQL_PASSWORD: "secret",
       RESTORE_MYSQL_DATABASE: "project_veil_restore",
+      VEIL_TEST_SCHEMA_MIGRATION_COUNT: "24",
       ...extraEnv
     }
   });
@@ -189,10 +195,11 @@ test("db-restore-rehearsal restores a verified backup and runs the persistence r
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as { args: string[]; stdin: string });
-  assert.equal(mysqlCalls.length, 3);
+  assert.equal(mysqlCalls.length, 4);
   assert.match(mysqlCalls[0]?.args.join(" "), /CREATE DATABASE IF NOT EXISTS `project_veil_restore`/);
   assert.match(mysqlCalls[1]?.stdin ?? "", /CREATE TABLE room_snapshots/);
   assert.match(mysqlCalls[2]?.stdin ?? "", /SELECT 'room_snapshots' AS table_name/);
+  assert.match(mysqlCalls[3]?.stdin ?? "", /SELECT COUNT\(\*\) FROM schema_migrations/);
 
   const npmInvocation = JSON.parse(fs.readFileSync(path.join(tempDir, "npm.json"), "utf8")) as {
     args: string[];
@@ -221,5 +228,19 @@ test("db-restore-rehearsal stops before mysql restore when checksum verification
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /FAILED|failed|no properly formatted/i);
   assert.equal(fs.existsSync(path.join(tempDir, "mysql.log")), false);
+  assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
+});
+
+test("db-restore-rehearsal fails when schema migration coverage does not match the repository", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-db-restore-schema-mismatch-"));
+  const bucketDir = path.join(tempDir, "bucket-root", "veil-ops");
+  createRestoreFixture(bucketDir, "backups/mysql/daily/project_veil-20260403T030000Z.sql.gz");
+
+  const result = runRestore(tempDir, {
+    VEIL_TEST_SCHEMA_MIGRATION_COUNT: "23"
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Schema validation failed: expected 24 applied migrations, found 23\./);
   assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
 });

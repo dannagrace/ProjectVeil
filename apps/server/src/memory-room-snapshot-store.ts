@@ -26,10 +26,18 @@ import {
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   type PaymentOrderCompleteInput,
   type PaymentOrderCreateInput,
+  type PaymentOrderGrantRetryInput,
+  type PaymentOrderListOptions,
   type PaymentReceiptSnapshot,
   type PaymentOrderSettlement,
   type PaymentOrderSnapshot,
   type RoomSnapshotStore,
+  type BattleSnapshotCompensation,
+  type BattleSnapshotInterruptedSettlementInput,
+  type BattleSnapshotListOptions,
+  type BattleSnapshotRecord,
+  type BattleSnapshotResolutionInput,
+  type BattleSnapshotStartInput,
   type PlayerAccountBanHistoryListOptions,
   type PlayerAccountBanInput,
   type PlayerAccountBanSnapshot,
@@ -39,6 +47,8 @@ import {
   type PlayerAccountDeviceSessionSnapshot,
   type PlayerAccountCredentialInput,
   type PlayerAccountEnsureInput,
+  type GuestAccountMigrationInput,
+  type GuestAccountMigrationResult,
   type PlayerAccountListOptions,
   type PlayerAccountUnbanInput,
   type PlayerBanHistoryRecord,
@@ -88,6 +98,23 @@ function cloneAccount(account: PlayerAccountSnapshot): PlayerAccountSnapshot {
 
 function cloneArchive(archive: PlayerHeroArchiveSnapshot): PlayerHeroArchiveSnapshot {
   return structuredClone(archive);
+}
+
+function normalizePaymentRetryPolicy(input?: PaymentOrderCompleteInput["retryPolicy"] | PaymentOrderGrantRetryInput["retryPolicy"]) {
+  return {
+    maxAttempts: Math.max(1, Math.floor(input?.maxAttempts ?? 5)),
+    baseDelayMs: Math.max(1_000, Math.floor(input?.baseDelayMs ?? 60_000))
+  };
+}
+
+function computePaymentRetryDelayMs(attemptCount: number, baseDelayMs: number): number {
+  const exponent = Math.max(0, Math.min(6, Math.floor(attemptCount) - 1));
+  return Math.max(1_000, baseDelayMs * 2 ** exponent);
+}
+
+function normalizePaymentGrantError(value: unknown): string {
+  const normalized = (value instanceof Error ? value.message : String(value)).trim();
+  return (normalized || "grant_failed").slice(0, 512);
 }
 
 function normalizePlayerId(playerId: string): string {
@@ -146,6 +173,7 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
 
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
+  private readonly battleSnapshots = new Map<string, BattleSnapshotRecord>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
@@ -277,6 +305,26 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const order = this.paymentOrders.get(normalizedOrderId);
     return order ? structuredClone(order) : null;
+  }
+
+  async listPaymentOrders(options: PaymentOrderListOptions = {}): Promise<PaymentOrderSnapshot[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+    const statusSet = options.statuses?.length ? new Set(options.statuses) : null;
+    const dueBeforeMs =
+      options.dueBefore && !Number.isNaN(new Date(options.dueBefore).getTime()) ? new Date(options.dueBefore).getTime() : null;
+
+    return Array.from(this.paymentOrders.values())
+      .filter((order) => (statusSet ? statusSet.has(order.status) : true))
+      .filter((order) =>
+        dueBeforeMs == null ? true : order.nextGrantRetryAt != null && new Date(order.nextGrantRetryAt).getTime() <= dueBeforeMs
+      )
+      .sort((left, right) => {
+        const leftRetryAt = left.nextGrantRetryAt ? new Date(left.nextGrantRetryAt).getTime() : Number.POSITIVE_INFINITY;
+        const rightRetryAt = right.nextGrantRetryAt ? new Date(right.nextGrantRetryAt).getTime() : Number.POSITIVE_INFINITY;
+        return leftRetryAt - rightRetryAt || right.updatedAt.localeCompare(left.updatedAt) || left.orderId.localeCompare(right.orderId);
+      })
+      .slice(0, safeLimit)
+      .map((order) => structuredClone(order));
   }
 
   async loadPaymentReceiptByOrderId(orderId: string): Promise<PaymentReceiptSnapshot | null> {
@@ -435,6 +483,126 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return structuredClone(this.playerQuestStates.get(normalizePlayerId(playerId)) ?? null);
   }
 
+  async saveBattleSnapshotStart(input: BattleSnapshotStartInput): Promise<BattleSnapshotRecord> {
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    if (Number.isNaN(startedAt.getTime())) {
+      throw new Error("startedAt must be a valid ISO timestamp");
+    }
+
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    const next: BattleSnapshotRecord = {
+      roomId: input.roomId,
+      battleId: input.battleId,
+      heroId: input.heroId,
+      attackerPlayerId: normalizePlayerId(input.attackerPlayerId),
+      ...(input.defenderPlayerId ? { defenderPlayerId: normalizePlayerId(input.defenderPlayerId) } : {}),
+      ...(input.defenderHeroId ? { defenderHeroId: input.defenderHeroId } : {}),
+      ...(input.neutralArmyId ? { neutralArmyId: input.neutralArmyId } : {}),
+      encounterKind: input.encounterKind,
+      ...(input.initiator ? { initiator: input.initiator } : {}),
+      path: structuredClone(input.path),
+      moveCost: Math.max(0, Math.floor(input.moveCost)),
+      playerIds: Array.from(new Set(input.playerIds.map((playerId) => normalizePlayerId(playerId)))),
+      initialState: structuredClone(input.initialState),
+      ...(input.estimatedCompensationGrant
+        ? { estimatedCompensationGrant: structuredClone(input.estimatedCompensationGrant) }
+        : {}),
+      status: "active",
+      startedAt: startedAt.toISOString(),
+      createdAt: existing?.createdAt ?? startedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async saveBattleSnapshotResolution(input: BattleSnapshotResolutionInput): Promise<BattleSnapshotRecord | null> {
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    if (!existing) {
+      return null;
+    }
+
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    const next: BattleSnapshotRecord = {
+      ...existing,
+      status: "resolved",
+      result: input.result,
+      resolutionReason: input.resolutionReason ?? "battle_resolved",
+      resolvedAt: resolvedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    delete next.compensation;
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async settleInterruptedBattleSnapshot(
+    input: BattleSnapshotInterruptedSettlementInput
+  ): Promise<BattleSnapshotRecord | null> {
+    const key = `${input.roomId}:${input.battleId}`;
+    const existing = this.battleSnapshots.get(key);
+    if (!existing) {
+      return null;
+    }
+
+    if (existing.status !== "active") {
+      return structuredClone(existing);
+    }
+
+    const resolvedAt = input.resolvedAt ? new Date(input.resolvedAt) : new Date();
+    if (Number.isNaN(resolvedAt.getTime())) {
+      throw new Error("resolvedAt must be a valid ISO timestamp");
+    }
+
+    if (input.compensation) {
+      await this.deliverPlayerMailbox({
+        playerIds: input.compensation.playerIds,
+        message: normalizePlayerMailboxMessage(
+          {
+            id: input.compensation.mailboxMessageId,
+            kind: input.compensation.kind,
+            title: input.compensation.title,
+            body: input.compensation.body,
+            ...(input.compensation.grant ? { grant: input.compensation.grant } : {})
+          },
+          resolvedAt
+        )
+      });
+    }
+
+    const next: BattleSnapshotRecord = {
+      ...existing,
+      status: input.status,
+      resolutionReason: input.resolutionReason,
+      ...(input.compensation ? { compensation: structuredClone(input.compensation) } : {}),
+      resolvedAt: resolvedAt.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.battleSnapshots.set(key, next);
+    return structuredClone(next);
+  }
+
+  async listBattleSnapshotsForPlayer(
+    playerId: string,
+    options: BattleSnapshotListOptions = {}
+  ): Promise<BattleSnapshotRecord[]> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const statuses = options.statuses ? new Set(options.statuses) : null;
+    const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+
+    return Array.from(this.battleSnapshots.values())
+      .filter((record) => record.playerIds.includes(normalizedPlayerId) && (!statuses || statuses.has(record.status)))
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.battleId.localeCompare(right.battleId))
+      .slice(0, limit)
+      .map((record) => structuredClone(record));
+  }
+
   async loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]> {
     return playerIds
       .map((playerId) => this.accounts.get(normalizePlayerId(playerId)))
@@ -512,6 +680,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       recentEventLog: existing?.recentEventLog ?? [],
       recentBattleReplays: existing?.recentBattleReplays ?? [],
       ...(existing?.dailyDungeonState ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) } : {}),
+      ...(existing?.leaderboardAbuseState ? { leaderboardAbuseState: structuredClone(existing.leaderboardAbuseState) } : {}),
+      ...(existing?.leaderboardModerationState
+        ? { leaderboardModerationState: structuredClone(existing.leaderboardModerationState) }
+        : {}),
       ...(existing?.tutorialStep !== undefined ? { tutorialStep: existing.tutorialStep } : { tutorialStep: DEFAULT_TUTORIAL_STEP }),
       ...(input.lastRoomId?.trim()
         ? { lastRoomId: input.lastRoomId.trim() }
@@ -533,6 +705,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: existing.wechatMiniGameOpenId } : {}),
       ...(existing?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: existing.wechatMiniGameUnionId } : {}),
       ...(existing?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt } : {}),
+      ...(existing?.guestMigratedToPlayerId ? { guestMigratedToPlayerId: existing.guestMigratedToPlayerId } : {}),
       ...(existing?.credentialBoundAt ? { credentialBoundAt: existing.credentialBoundAt } : {}),
       ...(existing?.privacyConsentAt ? { privacyConsentAt: existing.privacyConsentAt } : {}),
       ...(existing?.notificationPreferences
@@ -744,6 +917,95 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return result;
   }
 
+  private applyVerifiedPaymentGrant(
+    account: PlayerAccountSnapshot,
+    order: PaymentOrderSnapshot,
+    input: {
+      productName: string;
+      grant: PaymentOrderCompleteInput["grant"];
+      processedAt: string;
+    }
+  ): PlayerAccountSnapshot {
+    const normalizedGrant = {
+      gems: Math.max(0, Math.floor(input.grant.gems ?? order.gemAmount ?? 0)),
+      resources: {
+        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)),
+        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)),
+        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0))
+      },
+      seasonPassPremium: input.grant.seasonPassPremium === true,
+      cosmeticIds: (input.grant.cosmeticIds ?? []).map((cosmeticId) => {
+        const normalizedCosmeticId = cosmeticId.trim();
+        if (!normalizedCosmeticId || !resolveCosmeticCatalog().some((entry) => entry.id === normalizedCosmeticId)) {
+          throw new Error(`unknown cosmetic grant: ${cosmeticId}`);
+        }
+        return normalizedCosmeticId;
+      }),
+      equipmentIds: (input.grant.equipmentIds ?? []).map((equipmentId) => {
+        const normalizedEquipmentId = equipmentId.trim();
+        if (!normalizedEquipmentId || !getEquipmentDefinition(normalizedEquipmentId)) {
+          throw new Error(`unknown equipment grant: ${equipmentId}`);
+        }
+        return normalizedEquipmentId;
+      })
+    };
+
+    if (normalizedGrant.equipmentIds.length > 0) {
+      const currentArchive = Array.from(this.heroArchives.values())
+        .filter((archive) => archive.playerId === order.playerId)
+        .sort((left, right) => left.heroId.localeCompare(right.heroId))[0];
+      if (!currentArchive) {
+        throw new Error("player hero archive not found");
+      }
+
+      let nextInventory = [...currentArchive.hero.loadout.inventory];
+      for (const equipmentId of normalizedGrant.equipmentIds) {
+        const inventoryUpdate = tryAddEquipmentToInventory(nextInventory, equipmentId);
+        if (!inventoryUpdate.stored) {
+          throw new Error("equipment inventory full");
+        }
+        nextInventory = inventoryUpdate.inventory;
+      }
+
+      this.heroArchives.set(`${currentArchive.playerId}:${currentArchive.heroId}`, {
+        ...cloneArchive(currentArchive),
+        hero: {
+          ...cloneArchive(currentArchive).hero,
+          loadout: {
+            ...cloneArchive(currentArchive).hero.loadout,
+            inventory: nextInventory
+          }
+        }
+      });
+    }
+
+    return {
+      ...account,
+      gems: (account.gems ?? 0) + normalizedGrant.gems,
+      seasonPassPremium: account.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
+      cosmeticInventory: normalizeCosmeticInventory({
+        ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
+      }),
+      globalResources: normalizeResourceLedger({
+        gold: (account.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
+        wood: (account.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
+        ore: (account.globalResources.ore ?? 0) + normalizedGrant.resources.ore
+      }),
+      recentEventLog: appendEventLogEntries(account.recentEventLog, [
+        {
+          id: `${order.playerId}:${input.processedAt}:shop:${order.productId}:1`,
+          timestamp: input.processedAt,
+          roomId: "shop",
+          playerId: order.playerId,
+          category: "account",
+          description: `Purchased ${input.productName} x1.`,
+          rewards: []
+        }
+      ]),
+      updatedAt: input.processedAt
+    };
+  }
+
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
     const orderId = input.orderId.trim();
     const playerId = normalizePlayerId(input.playerId);
@@ -769,11 +1031,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       orderId,
       playerId,
       productId,
-      status: "pending",
+      status: "created",
       amount,
       gemAmount,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      grantAttemptCount: 0
     };
     this.paymentOrders.set(orderId, structuredClone(order));
     return structuredClone(order);
@@ -800,7 +1063,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
     const existingReceipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
-    if (existingOrder.status === "paid" || existingReceipt) {
+    if (existingOrder.status !== "created" || existingReceipt) {
       return {
         order: structuredClone(existingOrder),
         account,
@@ -822,49 +1085,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
     const paidAt = new Date(input.paidAt ?? Date.now()).toISOString();
     const verifiedAt = new Date(input.verifiedAt ?? paidAt).toISOString();
-    const normalizedGrant = {
-      gems: Math.max(0, Math.floor(input.grant.gems ?? existingOrder.gemAmount ?? 0)),
-      resources: {
-        gold: Math.max(0, Math.floor(input.grant.resources?.gold ?? 0)),
-        wood: Math.max(0, Math.floor(input.grant.resources?.wood ?? 0)),
-        ore: Math.max(0, Math.floor(input.grant.resources?.ore ?? 0))
-      },
-      seasonPassPremium: input.grant.seasonPassPremium === true,
-      cosmeticIds: (input.grant.cosmeticIds ?? []).map((cosmeticId) => cosmeticId.trim()).filter(Boolean),
-      equipmentIds: (input.grant.equipmentIds ?? []).map((equipmentId) => equipmentId.trim()).filter(Boolean)
-    };
-    const nextOrder: PaymentOrderSnapshot = {
-      ...structuredClone(existingOrder),
-      status: "paid",
-      wechatOrderId: normalizedWechatOrderId,
-      paidAt,
-      updatedAt: paidAt
-    };
-    const nextAccount: PlayerAccountSnapshot = {
-      ...account,
-      gems: (account.gems ?? 0) + normalizedGrant.gems,
-      seasonPassPremium: account.seasonPassPremium === true || normalizedGrant.seasonPassPremium,
-      cosmeticInventory: normalizeCosmeticInventory({
-        ownedIds: [...(account.cosmeticInventory?.ownedIds ?? []), ...normalizedGrant.cosmeticIds]
-      }),
-      globalResources: normalizeResourceLedger({
-        gold: (account.globalResources.gold ?? 0) + normalizedGrant.resources.gold,
-        wood: (account.globalResources.wood ?? 0) + normalizedGrant.resources.wood,
-        ore: (account.globalResources.ore ?? 0) + normalizedGrant.resources.ore
-      }),
-      recentEventLog: appendEventLogEntries(account.recentEventLog, [
-        {
-          id: `${existingOrder.playerId}:${paidAt}:shop:${existingOrder.productId}:1`,
-          timestamp: paidAt,
-          roomId: "shop",
-          playerId: existingOrder.playerId,
-          category: "account",
-          description: `Purchased ${normalizedProductName} x1.`,
-          rewards: []
-        }
-      ]),
-      updatedAt: paidAt
-    };
+    const retryPolicy = normalizePaymentRetryPolicy(input.retryPolicy);
     const receipt: PaymentReceiptSnapshot = {
       transactionId: normalizedWechatOrderId,
       orderId: normalizedOrderId,
@@ -873,17 +1094,157 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       amount: existingOrder.amount,
       verifiedAt
     };
-    this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
     this.paymentReceiptsByOrderId.set(normalizedOrderId, structuredClone(receipt));
     this.paymentReceiptOrderIdByTransactionId.set(normalizedWechatOrderId, normalizedOrderId);
-    this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
-
-    return {
-      order: structuredClone(nextOrder),
-      account: cloneAccount(nextAccount),
-      credited: true,
-      receipt: structuredClone(receipt)
+    const processingOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      status: "paid",
+      wechatOrderId: normalizedWechatOrderId,
+      paidAt,
+      lastGrantAttemptAt: paidAt,
+      grantAttemptCount: 1,
+      updatedAt: paidAt
     };
+    this.paymentOrders.set(normalizedOrderId, structuredClone(processingOrder));
+
+    try {
+      const nextAccount = this.applyVerifiedPaymentGrant(account, processingOrder, {
+        productName: normalizedProductName,
+        grant: input.grant,
+        processedAt: paidAt
+      });
+      const settledOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: "settled",
+        settledAt: paidAt,
+        updatedAt: paidAt
+      };
+      this.paymentOrders.set(normalizedOrderId, structuredClone(settledOrder));
+      this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+      return {
+        order: structuredClone(settledOrder),
+        account: cloneAccount(nextAccount),
+        credited: true,
+        receipt: structuredClone(receipt)
+      };
+    } catch (error) {
+      const grantError = normalizePaymentGrantError(error);
+      const deadLetter = 1 >= retryPolicy.maxAttempts;
+      const nextRetryAt = new Date(new Date(paidAt).getTime() + computePaymentRetryDelayMs(1, retryPolicy.baseDelayMs)).toISOString();
+      const nextOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: deadLetter ? "dead_letter" : "grant_pending",
+        lastGrantError: grantError,
+        ...(deadLetter ? { deadLetteredAt: paidAt } : { nextGrantRetryAt: nextRetryAt }),
+        updatedAt: paidAt
+      };
+      this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+
+      return {
+        order: structuredClone(nextOrder),
+        account,
+        credited: false,
+        receipt: structuredClone(receipt)
+      };
+    }
+  }
+
+  async retryPaymentOrderGrant(orderId: string, input: PaymentOrderGrantRetryInput): Promise<PaymentOrderSettlement> {
+    const normalizedOrderId = orderId.trim();
+    const normalizedProductName = input.productName.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+    if (!normalizedProductName) {
+      throw new Error("productName must not be empty");
+    }
+
+    const existingOrder = this.paymentOrders.get(normalizedOrderId);
+    if (!existingOrder) {
+      throw new Error("payment_order_not_found");
+    }
+    if (existingOrder.status === "settled") {
+      return {
+        order: structuredClone(existingOrder),
+        account: await this.ensurePlayerAccount({ playerId: existingOrder.playerId }),
+        credited: false,
+        ...(this.paymentReceiptsByOrderId.get(normalizedOrderId)
+          ? { receipt: structuredClone(this.paymentReceiptsByOrderId.get(normalizedOrderId)!) }
+          : {})
+      };
+    }
+    if (existingOrder.status !== "grant_pending" && existingOrder.status !== "dead_letter" && existingOrder.status !== "paid") {
+      throw new Error("payment_order_not_retryable");
+    }
+    if (existingOrder.status === "dead_letter" && input.allowDeadLetter !== true) {
+      throw new Error("payment_order_retry_requires_override");
+    }
+
+    const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
+    const receipt = this.paymentReceiptsByOrderId.get(normalizedOrderId);
+    if (!receipt) {
+      throw new Error("payment_receipt_not_found");
+    }
+
+    const retriedAt = new Date(input.retriedAt ?? Date.now()).toISOString();
+    const retryPolicy = normalizePaymentRetryPolicy(input.retryPolicy);
+    const attemptCount = existingOrder.grantAttemptCount + 1;
+    const processingOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      lastGrantAttemptAt: retriedAt,
+      grantAttemptCount: attemptCount,
+      updatedAt: retriedAt
+    };
+
+    try {
+      const nextAccount = this.applyVerifiedPaymentGrant(account, processingOrder, {
+        productName: normalizedProductName,
+        grant: input.grant,
+        processedAt: retriedAt
+      });
+      const settledOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: "settled",
+        settledAt: retriedAt,
+        updatedAt: retriedAt
+      };
+      delete settledOrder.nextGrantRetryAt;
+      delete settledOrder.lastGrantError;
+      delete settledOrder.deadLetteredAt;
+      this.paymentOrders.set(normalizedOrderId, structuredClone(settledOrder));
+      this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+      return {
+        order: structuredClone(settledOrder),
+        account: cloneAccount(nextAccount),
+        credited: true,
+        receipt: structuredClone(receipt)
+      };
+    } catch (error) {
+      const grantError = normalizePaymentGrantError(error);
+      const deadLetter = attemptCount >= retryPolicy.maxAttempts;
+      const nextRetryAt = new Date(new Date(retriedAt).getTime() + computePaymentRetryDelayMs(attemptCount, retryPolicy.baseDelayMs))
+        .toISOString();
+      const nextOrder: PaymentOrderSnapshot = {
+        ...processingOrder,
+        status: deadLetter ? "dead_letter" : "grant_pending",
+        lastGrantError: grantError,
+        ...(deadLetter ? { deadLetteredAt: retriedAt } : { nextGrantRetryAt: nextRetryAt }),
+        updatedAt: retriedAt
+      };
+      if (deadLetter) {
+        delete nextOrder.nextGrantRetryAt;
+      }
+      this.paymentOrders.set(normalizedOrderId, structuredClone(nextOrder));
+
+      return {
+        order: structuredClone(nextOrder),
+        account,
+        credited: false,
+        receipt: structuredClone(receipt)
+      };
+    }
   }
 
   async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {
@@ -1316,6 +1677,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       wechatMiniGameBoundAt: existing.wechatMiniGameBoundAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+    delete nextAccount.guestMigratedToPlayerId;
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     if (nextDisplayName !== existing.displayName) {
       this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
@@ -1331,6 +1693,113 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       }
     }
     return cloneAccount(nextAccount);
+  }
+
+  async migrateGuestToRegistered(input: GuestAccountMigrationInput): Promise<GuestAccountMigrationResult> {
+    const guestPlayerId = normalizePlayerId(input.guestPlayerId);
+    const targetPlayerId = normalizePlayerId(input.targetPlayerId);
+    const guestAccount = await this.ensurePlayerAccount({ playerId: guestPlayerId });
+    const targetAccount = await this.ensurePlayerAccount({ playerId: targetPlayerId });
+    const progressSource = input.progressSource === "target" ? targetAccount : guestAccount;
+    const nextTarget: PlayerAccountSnapshot = {
+      ...cloneAccount(targetAccount),
+      ...cloneAccount(progressSource),
+      playerId: targetPlayerId,
+      displayName: input.wechatIdentity.displayName?.trim() || progressSource.displayName,
+      ...(input.wechatIdentity.avatarUrl?.trim()
+        ? { avatarUrl: input.wechatIdentity.avatarUrl.trim() }
+        : progressSource.avatarUrl
+          ? { avatarUrl: progressSource.avatarUrl }
+          : targetAccount.avatarUrl
+            ? { avatarUrl: targetAccount.avatarUrl }
+            : {}),
+      ...(targetAccount.loginId ? { loginId: targetAccount.loginId } : {}),
+      ...(targetAccount.credentialBoundAt ? { credentialBoundAt: targetAccount.credentialBoundAt } : {}),
+      ...(targetAccount.phoneNumber ? { phoneNumber: targetAccount.phoneNumber } : {}),
+      ...(targetAccount.phoneNumberBoundAt ? { phoneNumberBoundAt: targetAccount.phoneNumberBoundAt } : {}),
+      ...(targetAccount.accountSessionVersion !== undefined ? { accountSessionVersion: targetAccount.accountSessionVersion } : {}),
+      wechatMiniGameOpenId: input.wechatIdentity.openId.trim(),
+      ...(input.wechatIdentity.unionId?.trim()
+        ? { wechatMiniGameUnionId: input.wechatIdentity.unionId.trim() }
+        : targetAccount.wechatMiniGameUnionId
+          ? { wechatMiniGameUnionId: targetAccount.wechatMiniGameUnionId }
+          : {}),
+      ...(input.wechatIdentity.ageVerified !== undefined
+        ? { ageVerified: input.wechatIdentity.ageVerified }
+        : progressSource.ageVerified !== undefined
+          ? { ageVerified: progressSource.ageVerified }
+          : {}),
+      ...(input.wechatIdentity.isMinor !== undefined
+        ? { isMinor: input.wechatIdentity.isMinor }
+        : progressSource.isMinor !== undefined
+          ? { isMinor: progressSource.isMinor }
+          : {}),
+      wechatMiniGameBoundAt: targetAccount.wechatMiniGameBoundAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    delete nextTarget.guestMigratedToPlayerId;
+    this.accounts.set(targetPlayerId, cloneAccount(nextTarget));
+    this.playerIdByWechatOpenId.set(nextTarget.wechatMiniGameOpenId!, targetPlayerId);
+
+    if (input.progressSource === "guest") {
+      const guestArchives = await this.loadPlayerHeroArchives([guestPlayerId]);
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${targetPlayerId}:`) || key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      for (const archive of guestArchives) {
+        this.heroArchives.set(`${targetPlayerId}:${archive.heroId}`, {
+          ...cloneArchive(archive),
+          playerId: targetPlayerId,
+          hero: {
+            ...structuredClone(archive.hero),
+            playerId: targetPlayerId
+          }
+        });
+      }
+      const guestQuestState = await this.loadPlayerQuestState(guestPlayerId);
+      this.playerQuestStates.delete(targetPlayerId);
+      this.playerQuestStates.delete(guestPlayerId);
+      if (guestQuestState) {
+        this.playerQuestStates.set(targetPlayerId, {
+          ...structuredClone(guestQuestState),
+          playerId: targetPlayerId
+        });
+      }
+    } else {
+      for (const key of Array.from(this.heroArchives.keys())) {
+        if (key.startsWith(`${guestPlayerId}:`)) {
+          this.heroArchives.delete(key);
+        }
+      }
+      this.playerQuestStates.delete(guestPlayerId);
+    }
+
+    const migratedGuest: PlayerAccountSnapshot = {
+      ...cloneAccount(guestAccount),
+      globalResources: { gold: 0, wood: 0, ore: 0 },
+      achievements: [],
+      recentBattleReplays: [],
+      gems: 0,
+      seasonXp: 0,
+      loginStreak: 0,
+      guestMigratedToPlayerId: targetPlayerId,
+      updatedAt: new Date().toISOString()
+    };
+    delete migratedGuest.wechatMiniGameOpenId;
+    delete migratedGuest.wechatMiniGameUnionId;
+    delete migratedGuest.wechatMiniGameBoundAt;
+    delete migratedGuest.loginId;
+    delete migratedGuest.credentialBoundAt;
+    delete migratedGuest.phoneNumber;
+    delete migratedGuest.phoneNumberBoundAt;
+    this.accounts.set(guestPlayerId, cloneAccount(migratedGuest));
+
+    return {
+      account: cloneAccount(nextTarget),
+      guestAccount: cloneAccount(migratedGuest)
+    };
   }
 
   async deletePlayerAccount(
@@ -1538,6 +2007,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.dailyDungeonState
           ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
           : {}),
+      ...(patch.leaderboardAbuseState !== undefined
+        ? patch.leaderboardAbuseState
+          ? { leaderboardAbuseState: structuredClone(patch.leaderboardAbuseState) }
+          : {}
+        : existing.leaderboardAbuseState
+          ? { leaderboardAbuseState: structuredClone(existing.leaderboardAbuseState) }
+          : {}),
+      ...(patch.leaderboardModerationState !== undefined
+        ? patch.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(patch.leaderboardModerationState) }
+          : {}
+        : existing.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(existing.leaderboardModerationState) }
+          : {}),
       ...(patch.tutorialStep !== undefined
         ? { tutorialStep: patch.tutorialStep }
         : existing.tutorialStep !== undefined
@@ -1677,6 +2160,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         achievements: structuredClone(previous?.achievements ?? account.achievements),
         recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
         recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
+        ...(previous?.leaderboardAbuseState ? { leaderboardAbuseState: structuredClone(previous.leaderboardAbuseState) } : {}),
+        ...(previous?.leaderboardModerationState
+          ? { leaderboardModerationState: structuredClone(previous.leaderboardModerationState) }
+          : {}),
         ...(previous?.ageVerified ? { ageVerified: previous.ageVerified } : {}),
         ...(previous?.isMinor ? { isMinor: previous.isMinor } : {}),
         ...(previous?.dailyPlayMinutes ? { dailyPlayMinutes: previous.dailyPlayMinutes } : {}),

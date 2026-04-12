@@ -79,11 +79,21 @@ interface ScenarioResult {
   heapPeakMb: number;
   heapEndMb: number;
   peakActiveHandles: number;
+  requestLatencyP50Ms: number;
+  requestLatencyP95Ms: number;
+  requestLatencyMaxMs: number;
   runtimeHealthAfterConnect?: RuntimeHealthSummary;
   runtimeHealthAfterScenario?: RuntimeHealthSummary;
   runtimeHealthAfterCleanup?: RuntimeHealthSummary;
   soakSummary?: ReconnectSoakSummary;
   errorMessage?: string;
+}
+
+interface RequestLatencySummary {
+  sampleCount: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
 }
 
 interface ReconnectSoakSummary {
@@ -157,7 +167,6 @@ interface StressArtifact {
   results: ScenarioResult[];
 }
 
-const DEFAULT_BATTLE_DESTINATION: Vec2 = { x: 5, y: 4 };
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ROOM_PLAYER_ID = "player-1";
 const STRESS_ROOM_VARIANTS = ["phase1", "frontier_basin", "contested_basin"] as const;
@@ -166,6 +175,7 @@ const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-
 const DEFAULT_STRESS_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "stress-rooms-runtime-metrics.json");
 
 let requestCounter = 0;
+let activeLatencyCollector: RequestLatencyCollector | null = null;
 
 function nextRequestId(prefix: string): string {
   requestCounter += 1;
@@ -174,6 +184,33 @@ function nextRequestId(prefix: string): string {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function percentile(values: number[], percentileValue: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((percentileValue / 100) * sorted.length) - 1));
+  return Number(sorted[index]!.toFixed(2));
+}
+
+class RequestLatencyCollector {
+  private readonly samples: number[] = [];
+
+  record(durationMs: number): void {
+    this.samples.push(Number(durationMs.toFixed(2)));
+  }
+
+  summarize(): RequestLatencySummary {
+    return {
+      sampleCount: this.samples.length,
+      p50Ms: percentile(this.samples, 50),
+      p95Ms: percentile(this.samples, 95),
+      maxMs: this.samples.length === 0 ? 0 : Number(Math.max(...this.samples).toFixed(2))
+    };
+  }
 }
 
 function activeHandleCount(): number {
@@ -495,6 +532,7 @@ async function sendRequest<T extends ServerMessage["type"]>(
   timeoutMs = 8_000
 ): Promise<Extract<ServerMessage, { type: T }>> {
   return new Promise((resolve, reject) => {
+    const startedAt = performance.now();
     const timeout = setTimeout(() => {
       unsubscribe();
       reject(new Error(`Timed out waiting for ${expectedType}`));
@@ -512,6 +550,9 @@ async function sendRequest<T extends ServerMessage["type"]>(
 
       clearTimeout(timeout);
       unsubscribe();
+      if (message.type === "world.action" || message.type === "battle.action") {
+        activeLatencyCollector?.record(performance.now() - startedAt);
+      }
 
       if (incoming.type === "error") {
         reject(new Error(incoming.reason));
@@ -621,6 +662,46 @@ function pickWorldProgressionDestination(payload: SessionStatePayload): Vec2 | n
       const leftDistance = Math.abs(left.x - hero.position.x) + Math.abs(left.y - hero.position.y);
       const rightDistance = Math.abs(right.x - hero.position.x) + Math.abs(right.y - hero.position.y);
       return rightDistance - leftDistance || left.y - right.y || left.x - right.x;
+    })[0]!;
+}
+
+function pickBattleDestination(payload: SessionStatePayload): Vec2 | null {
+  const world = decodePlayerWorldView(payload.world);
+  const reachableKeys = new Set(payload.reachableTiles.map((tile) => `${tile.x},${tile.y}`));
+
+  return (
+    world.map.tiles
+      .filter((tile) => tile.occupant?.kind === "neutral" && reachableKeys.has(`${tile.position.x},${tile.position.y}`))
+      .map((tile) => tile.position)
+      .sort((left, right) => left.y - right.y || left.x - right.x)[0] ?? null
+  );
+}
+
+function pickBattleApproachDestination(payload: SessionStatePayload): Vec2 | null {
+  const world = decodePlayerWorldView(payload.world);
+  const hero = world.ownHeroes[0];
+  if (!hero) {
+    return null;
+  }
+
+  const neutralPositions = world.map.tiles
+    .filter((tile) => tile.occupant?.kind === "neutral")
+    .map((tile) => tile.position);
+  if (neutralPositions.length === 0) {
+    return null;
+  }
+
+  const candidates = payload.reachableTiles.filter((tile) => tile.x !== hero.position.x || tile.y !== hero.position.y);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates
+    .slice()
+    .sort((left, right) => {
+      const leftDistance = Math.min(...neutralPositions.map((tile) => Math.abs(tile.x - left.x) + Math.abs(tile.y - left.y)));
+      const rightDistance = Math.min(...neutralPositions.map((tile) => Math.abs(tile.x - right.x) + Math.abs(tile.y - right.y)));
+      return leftDistance - rightDistance || left.y - right.y || left.x - right.x;
     })[0]!;
 }
 
@@ -846,6 +927,26 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
     }
   }
 
+  const battleDestination = pickBattleDestination(context.payload) ?? pickBattleApproachDestination(context.payload);
+  if (!battleDestination) {
+    const advancedDay = await sendRequest(
+      context.room,
+      {
+        type: "world.action",
+        requestId: nextRequestId("soak-end-day"),
+        action: {
+          type: "turn.endDay"
+        }
+      },
+      "session.state"
+    );
+    context.payload = advancedDay.payload;
+    return {
+      actions: 1,
+      phase: "world"
+    };
+  }
+
   const movedToBattle = await sendRequest(
     context.room,
     {
@@ -854,7 +955,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
       action: {
         type: "hero.move",
         heroId: hero.id,
-        destination: DEFAULT_BATTLE_DESTINATION
+        destination: battleDestination
       }
     },
     "session.state"
@@ -925,24 +1026,47 @@ async function runBattleSettlementScenario(contexts: RoomContext[], options: Str
     }
 
     let actions = 0;
-    const enteredBattle = await sendRequest(
-      context.room,
-      {
-        type: "world.action",
-        requestId: nextRequestId("battle-move"),
-        action: {
-          type: "hero.move",
-          heroId,
-          destination: DEFAULT_BATTLE_DESTINATION
-        }
-      },
-      "session.state"
-    );
-    context.payload = enteredBattle.payload;
-    actions += 1;
+    for (let attempt = 0; attempt < 8 && !context.payload.battle; attempt += 1) {
+      const destination = pickBattleDestination(context.payload) ?? pickBattleApproachDestination(context.payload);
+      if (destination) {
+        const moved = await sendRequest(
+          context.room,
+          {
+            type: "world.action",
+            requestId: nextRequestId("battle-move"),
+            action: {
+              type: "hero.move",
+              heroId,
+              destination
+            }
+          },
+          "session.state"
+        );
+        context.payload = moved.payload;
+        actions += 1;
+      }
+
+      if (context.payload.battle) {
+        break;
+      }
+
+      const advancedDay = await sendRequest(
+        context.room,
+        {
+          type: "world.action",
+          requestId: nextRequestId("battle-search-end-day"),
+          action: {
+            type: "turn.endDay"
+          }
+        },
+        "session.state"
+      );
+      context.payload = advancedDay.payload;
+      actions += 1;
+    }
 
     if (!context.payload.battle) {
-      throw new Error(`Room ${context.roomId} did not enter a battle at ${DEFAULT_BATTLE_DESTINATION.x},${DEFAULT_BATTLE_DESTINATION.y}`);
+      throw new Error(`Room ${context.roomId} did not enter a battle within 8 movement/day cycles`);
     }
 
     for (let turn = 0; turn < options.maxBattleTurns && context.payload.battle; turn += 1) {
@@ -1115,12 +1239,14 @@ async function waitForCleanupHealth(host: string, port: number, timeoutMs = 5_00
 
 async function runScenario(scenario: ScenarioName, options: StressOptions, store: RoomSnapshotStore | null): Promise<ScenarioResult> {
   const monitor = new ResourceMonitor(options.sampleIntervalMs);
+  const latencyCollector = new RequestLatencyCollector();
   let contexts: RoomContext[] = [];
   let runtimeHealthAfterConnect: RuntimeHealthSummary | undefined;
   let runtimeHealthAfterScenario: RuntimeHealthSummary | undefined;
   let result: ScenarioResult | undefined;
 
   try {
+    activeLatencyCollector = latencyCollector;
     const connected = await connectRooms(options, scenario);
     contexts = connected.contexts;
     runtimeHealthAfterConnect = await fetchRuntimeHealthSummary(options.host, options.port);
@@ -1157,6 +1283,9 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
         heapPeakMb: resources.heapPeakMb,
         heapEndMb: resources.heapEndMb,
         peakActiveHandles: resources.peakActiveHandles,
+        requestLatencyP50Ms: latencyCollector.summarize().p50Ms,
+        requestLatencyP95Ms: latencyCollector.summarize().p95Ms,
+        requestLatencyMaxMs: latencyCollector.summarize().maxMs,
         soakSummary: soak.soakSummary,
         ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
         ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
@@ -1186,6 +1315,9 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
       heapPeakMb: resources.heapPeakMb,
       heapEndMb: resources.heapEndMb,
       peakActiveHandles: resources.peakActiveHandles,
+      requestLatencyP50Ms: latencyCollector.summarize().p50Ms,
+      requestLatencyP95Ms: latencyCollector.summarize().p95Ms,
+      requestLatencyMaxMs: latencyCollector.summarize().maxMs,
       ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
       ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {})
     };
@@ -1213,12 +1345,16 @@ async function runScenario(scenario: ScenarioName, options: StressOptions, store
       heapPeakMb: resources.heapPeakMb,
       heapEndMb: resources.heapEndMb,
       peakActiveHandles: resources.peakActiveHandles,
+      requestLatencyP50Ms: latencyCollector.summarize().p50Ms,
+      requestLatencyP95Ms: latencyCollector.summarize().p95Ms,
+      requestLatencyMaxMs: latencyCollector.summarize().maxMs,
       ...(runtimeHealthAfterConnect ? { runtimeHealthAfterConnect } : {}),
       ...(runtimeHealthAfterScenario ? { runtimeHealthAfterScenario } : {}),
       errorMessage: error instanceof Error ? error.message : String(error)
     };
     return result;
   } finally {
+    activeLatencyCollector = null;
     await cleanupRooms(contexts);
     const runtimeHealthAfterCleanup = await waitForCleanupHealth(options.host, options.port);
     if (result && runtimeHealthAfterCleanup) {
@@ -1251,6 +1387,8 @@ function printSummary(results: ScenarioResult[], options: StressOptions): void {
       cpuCorePct: result.cpuCoreUtilizationPct,
       rssPeakMb: result.rssPeakMb,
       heapPeakMb: result.heapPeakMb,
+      latencyP95Ms: result.requestLatencyP95Ms,
+      latencyMaxMs: result.requestLatencyMaxMs,
       peakHandles: result.peakActiveHandles,
       reconnectCycles: result.soakSummary?.reconnectCycles ?? "",
       invariantChecks: result.soakSummary?.invariantChecks ?? "",

@@ -553,7 +553,12 @@ function renderMarkdown(report: RehearsalReport): string {
     lines.push("");
   }
 
-  lines.push("## Reviewer Front Door", "");
+  lines.push(
+    "## Reviewer Front Door",
+    "",
+    "Open this section first. It is the canonical packet-level reviewer entrypoint from `SUMMARY.md`.",
+    ""
+  );
   if (report.artifacts.releaseEvidenceIndexPath) {
     lines.push(`- Current release evidence index: \`${report.artifacts.releaseEvidenceIndexPath}\``);
   }
@@ -562,6 +567,27 @@ function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.releaseHealthSummaryPath) {
     lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
+  }
+  if (report.artifacts.ciTrendSummaryPath) {
+    lines.push(`- CI trend summary: \`${report.artifacts.ciTrendSummaryPath}\``);
+  }
+  if (report.artifacts.releaseReadinessSnapshotPath) {
+    lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
+  }
+  if (report.artifacts.runtimeObservabilityGatePath) {
+    lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
+  }
+  if (report.artifacts.stableH5SmokePath) {
+    lines.push(`- H5 candidate smoke: \`${report.artifacts.stableH5SmokePath}\``);
+  }
+  if (report.artifacts.stableReconnectSoakPath) {
+    lines.push(`- Reconnect soak summary: \`${report.artifacts.stableReconnectSoakPath}\``);
+  }
+  if (report.artifacts.wechatCandidateSummaryPath) {
+    lines.push(`- WeChat candidate summary: \`${report.artifacts.wechatCandidateSummaryPath}\``);
+  }
+  if (report.artifacts.runtimeObservabilityBundlePath) {
+    lines.push(`- Runtime observability bundle: \`${report.artifacts.runtimeObservabilityBundlePath}\``);
   }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
@@ -577,6 +603,9 @@ function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.releaseReadinessDashboardPath) {
     lines.push(`- Release readiness dashboard: \`${report.artifacts.releaseReadinessDashboardPath}\``);
+  }
+  if (report.artifacts.sameRevisionEvidenceBundleManifestPath) {
+    lines.push(`- Same-revision evidence bundle manifest: \`${report.artifacts.sameRevisionEvidenceBundleManifestPath}\``);
   }
   if (report.artifacts.phase1ReleaseEvidenceDriftGatePath) {
     lines.push(`- Phase 1 release evidence drift gate: \`${report.artifacts.phase1ReleaseEvidenceDriftGatePath}\``);
@@ -604,6 +633,9 @@ function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.candidateRevisionTriageDigestPath) {
     lines.push(`- Candidate revision triage digest: \`${report.artifacts.candidateRevisionTriageDigestPath}\``);
+  }
+  if (report.artifacts.cocosBundlePath) {
+    lines.push(`- Cocos RC bundle: \`${report.artifacts.cocosBundlePath}\``);
   }
   if (report.artifacts.goNoGoPacketPath) {
     lines.push(`- Go/no-go packet: \`${report.artifacts.goNoGoPacketPath}\``);

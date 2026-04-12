@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { evaluateMinorProtectionState, getMinorProtectionDateKey, readMinorProtectionConfig } from "./minor-protection";
+import { buildMinorProtectionBlockDetails, getMinorProtectionDateKey, readMinorProtectionConfig } from "./minor-protection";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
+import { readRuntimeSecret } from "./runtime-secrets";
 
-interface PreviewApp {
+interface MinorProtectionApp {
   use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;
   get(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
 }
@@ -14,7 +15,7 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 }
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
-  const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim();
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
 }
 
@@ -52,7 +53,7 @@ function readOptionalIntegerQueryParam(request: IncomingMessage, key: string): n
   return Math.max(0, Math.floor(parsed));
 }
 
-export function registerMinorProtectionPreviewRoutes(app: PreviewApp, store: RoomSnapshotStore | null): void {
+export function registerMinorProtectionRoutes(app: MinorProtectionApp, store: RoomSnapshotStore | null): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -67,7 +68,7 @@ export function registerMinorProtectionPreviewRoutes(app: PreviewApp, store: Roo
     next();
   });
 
-  app.get("/api/admin/minor-protection/preview", async (request, response) => {
+  const handleMinorProtectionRequest = async (request: IncomingMessage, response: ServerResponse) => {
     try {
       if (!isAdminAuthorized(request)) {
         sendJson(response, 401, {
@@ -109,9 +110,7 @@ export function registerMinorProtectionPreviewRoutes(app: PreviewApp, store: Roo
         evaluationInput.lastPlayDate = effectiveLastPlayDate;
       }
 
-      const evaluation = evaluateMinorProtectionState(evaluationInput, at, config);
-
-      sendJson(response, 200, evaluation);
+      sendJson(response, 200, buildMinorProtectionBlockDetails(evaluationInput, at, config));
     } catch (error) {
       sendJson(response, 400, {
         error: {
@@ -120,5 +119,8 @@ export function registerMinorProtectionPreviewRoutes(app: PreviewApp, store: Roo
         }
       });
     }
-  });
+  };
+
+  app.get("/api/admin/minor-protection", handleMinorProtectionRequest);
+  app.get("/api/admin/minor-protection/preview", handleMinorProtectionRequest);
 }

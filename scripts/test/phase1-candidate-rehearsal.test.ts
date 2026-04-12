@@ -25,6 +25,10 @@ function readGit(command: string[]): string {
   return result.stdout.trim();
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehearsal outputs", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-rehearsal-"));
   const buildDir = path.join(workspace, "build");
@@ -194,6 +198,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.candidateRevisionTriageInputPath ?? "", /candidate-revision-triage-input-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestMarkdownPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
+  assert.match(report.artifacts.cocosBundlePath ?? "", /cocos-rc-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.phase1ReleaseEvidenceDriftGatePath ?? "", /phase1-release-evidence-drift-gate-phase1-mainline-/);
@@ -208,27 +213,42 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.releaseEvidenceIndexPath ?? "", /current-release-evidence-index-phase1-mainline-/);
   assert.match(report.artifacts.releaseGateSummaryPath ?? "", /release-gate-summary-/);
   assert.match(report.artifacts.releaseHealthSummaryPath ?? "", /release-health-summary-/);
+  assert.match(report.artifacts.ciTrendSummaryPath ?? "", /ci-trend-summary-phase1-mainline-/);
   assert.match(report.artifacts.phase1CandidateDossierPath ?? "", /phase1-candidate-dossier-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitAuditPath ?? "", /phase1-exit-audit-phase1-mainline-/);
   assert.match(report.artifacts.phase1ExitDossierFreshnessGatePath ?? "", /phase1-exit-dossier-freshness-gate-phase1-mainline-/);
   assert.match(report.artifacts.goNoGoPacketPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
   assert.match(report.artifacts.goNoGoPacketMarkdownPath ?? "", /go-no-go-decision-packet-phase1-mainline-/);
   assert.match(report.artifacts.releasePrCommentPath ?? "", /release-pr-comment-phase1-mainline-/);
+  assert.match(report.artifacts.stableH5SmokePath ?? "", /client-release-candidate-smoke-phase1-mainline-/);
+  assert.match(report.artifacts.stableReconnectSoakPath ?? "", /colyseus-reconnect-soak-summary-phase1-mainline-/);
   assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
+  assert.match(report.artifacts.wechatCandidateSummaryPath ?? "", /codex\.wechat\.release-candidate-summary\.json/);
+  assert.match(report.artifacts.wechatCandidateMarkdownPath ?? "", /codex\.wechat\.release-candidate-summary\.md/);
 
   const markdown = fs.readFileSync(markdownPath, "utf8");
   assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
   assert.match(markdown, /Release gate summary: `passed`/);
   assert.match(markdown, /Phase 1 dossier summary: `passed`/);
   assert.match(markdown, /## Reviewer Front Door/);
+  assert.match(markdown, /canonical packet-level reviewer entrypoint from `SUMMARY\.md`/);
   assert.match(markdown, /Current release evidence index:/);
   assert.match(markdown, /Release gate summary:/);
   assert.match(markdown, /Release health summary:/);
+  assert.match(markdown, /CI trend summary:/);
+  assert.match(markdown, /Release readiness snapshot:/);
+  assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
+  assert.match(markdown, /H5 candidate smoke:/);
+  assert.match(markdown, /Reconnect soak summary:/);
+  assert.match(markdown, /WeChat candidate summary:/);
+  assert.match(markdown, /Runtime observability bundle:/);
+  assert.match(markdown, /Runtime observability gate:/);
   assert.match(markdown, /Candidate evidence audit:/);
   assert.match(markdown, /Candidate freshness guard:/);
   assert.match(markdown, /Candidate owner reminder:/);
   assert.match(markdown, /Candidate freshness history:/);
   assert.match(markdown, /Release readiness dashboard:/);
+  assert.match(markdown, /Same-revision evidence bundle manifest:/);
   assert.match(markdown, /Phase 1 release evidence drift gate:/);
   assert.match(markdown, /Phase 1 exit audit:/);
   assert.match(markdown, /Phase 1 exit dossier freshness gate:/);
@@ -238,6 +258,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Cocos main-journey replay gate:/);
   assert.match(markdown, /Cocos primary diagnostics:/);
   assert.match(markdown, /Candidate revision triage digest:/);
+  assert.match(markdown, /Cocos RC bundle:/);
   assert.match(markdown, /Go\/no-go packet:/);
   assert.match(markdown, /Release PR summary:/);
   assert.match(markdown, /cocosPrimaryJourneyEvidencePath:/);
@@ -248,6 +269,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateRevisionTriageInputPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestMarkdownPath:/);
+  assert.match(markdown, /cocosBundlePath:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessGuardPath:/);
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
@@ -255,6 +277,15 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /releaseEvidenceIndexPath:/);
   assert.match(markdown, /releaseGateSummaryPath:/);
   assert.match(markdown, /releaseHealthSummaryPath:/);
+  assert.match(markdown, /ciTrendSummaryPath:/);
+  assert.match(markdown, /releaseReadinessSnapshotPath:/);
+  assert.match(markdown, /stableH5SmokePath:/);
+  assert.match(markdown, /stableReconnectSoakPath:/);
+  assert.match(markdown, /wechatCandidateSummaryPath:/);
+  assert.match(markdown, /wechatCandidateMarkdownPath:/);
+  assert.match(markdown, /runtimeObservabilityBundlePath:/);
+  assert.match(markdown, /runtimeObservabilityGatePath:/);
+  assert.match(markdown, /sameRevisionEvidenceBundleManifestPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);
   assert.match(markdown, /phase1ExitDossierFreshnessGatePath:/);

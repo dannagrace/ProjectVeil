@@ -28,7 +28,7 @@ import {
 } from "../src/colyseus-room";
 import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
+import { buildPrometheusMetricsDocument, buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
 import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 
 interface FakeClient extends Client {
@@ -1408,6 +1408,7 @@ test("disposing a room with an active battle records a battle abort", async (t) 
 });
 
 test("invalid world actions return a structured rejection only to the originating client", async (t) => {
+  resetRuntimeObservability();
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
   const room = await createTestRoom(`lifecycle-world-rejection-${Date.now()}`);
@@ -1468,7 +1469,143 @@ test("invalid world actions return a structured rejection only to the originatin
   assert.equal(observerPushCountAfter, observerPushCountBefore);
 });
 
+test("duplicate mine-claim requests replay the original success reply without granting resources twice", async (t) => {
+  resetRuntimeObservability();
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-claim-idempotency-${Date.now()}`);
+  const client = createFakeClient("session-claim-idempotency");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        resources: Record<string, { gold: number; wood: number; ore: number }>;
+      };
+    };
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-claim-idempotency");
+
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "move-to-mine",
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 1 }
+    }
+  });
+
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "claim-mine",
+    action: {
+      type: "hero.claimMine",
+      heroId: "hero-1",
+      buildingId: "mine-wood-1"
+    }
+  });
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: "claim-mine",
+    action: {
+      type: "hero.claimMine",
+      heroId: "hero-1",
+      buildingId: "mine-wood-1"
+    }
+  });
+
+  const claimReplies = client.sent.filter(
+    (message): message is Extract<ServerMessage, { type: "session.state" }> =>
+      message.type === "session.state" && message.delivery === "reply" && message.requestId === "claim-mine"
+  );
+  assert.equal(claimReplies.length, 2);
+  assert.deepEqual(claimReplies.map((reply) => reply.payload.reason), [undefined, undefined]);
+  assert.deepEqual(
+    claimReplies.map((reply) => reply.payload.events),
+    [
+      [
+        {
+          type: "hero.claimedMine",
+          heroId: "hero-1",
+          buildingId: "mine-wood-1",
+          buildingKind: "resource_mine",
+          resourceKind: "wood",
+          income: 5,
+          ownerPlayerId: "player-1"
+        }
+      ],
+      [
+        {
+          type: "hero.claimedMine",
+          heroId: "hero-1",
+          buildingId: "mine-wood-1",
+          buildingKind: "resource_mine",
+          resourceKind: "wood",
+          income: 5,
+          ownerPlayerId: "player-1"
+        }
+      ]
+    ]
+  );
+
+  const replyWorlds = claimReplies.map((reply) => decodePlayerWorldView(reply.payload.world));
+  assert.deepEqual(replyWorlds.map((world) => world.resources.wood), [5, 5]);
+  assert.equal(internalRoom.worldRoom.getInternalState().resources["player-1"]?.wood, 5);
+});
+
+test("repeated rejected movement actions emit an anti-cheat alert metric", async (t) => {
+  resetRuntimeObservability();
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-anti-cheat-${Date.now()}`);
+  const client = createFakeClient("session-anti-cheat-source");
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        heroes: Array<{
+          id: string;
+          playerId: string;
+          move: { total: number; remaining: number };
+        }>;
+      };
+    };
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-anti-cheat-source");
+
+  const sourceHero = internalRoom.worldRoom.getInternalState().heroes.find((hero) => hero.playerId === "player-1");
+  assert.ok(sourceHero);
+  sourceHero.move.remaining = 0;
+
+  for (let index = 0; index < 5; index += 1) {
+    await emitRoomMessage(room, "world.action", client, {
+      type: "world.action",
+      requestId: `anti-cheat-${index}`,
+      action: {
+        type: "hero.move",
+        heroId: sourceHero.id,
+        destination: { x: 2, y: 1 }
+      }
+    });
+  }
+
+  assert.match(buildPrometheusMetricsDocument(), /^veil_anti_cheat_alerts_total 1$/m);
+});
+
 test("invalid battle actions return a structured rejection only to the originating client", async (t) => {
+  resetRuntimeObservability();
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
   const room = await createTestRoom(`lifecycle-battle-rejection-${Date.now()}`);
@@ -1744,6 +1881,73 @@ test("battle replay survives a reconnect mid-battle and persists once from the r
   assert.equal(replaySaves.length, 1);
   assert.equal(replaySaves[0]?.patch.recentBattleReplays?.[0]?.id, replay?.id);
   assert.deepEqual(internalRoom.worldRoom.consumeCompletedBattleReplays(), []);
+});
+
+test("reconnect into a replacement room compensates unresolved neutral battles from a retired room", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const retiredRoomId = `lifecycle-battle-comp-retired-${Date.now()}`;
+  const seededRoom = createRoom(retiredRoomId, 1001);
+  const seededState = seededRoom.getInternalState();
+  const hero = seededState.heroes.find((candidate) => candidate.id === "hero-1");
+  const neutralArmy = seededState.neutralArmies["neutral-1"];
+
+  t.after(() => {
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  assert.ok(hero);
+  assert.ok(neutralArmy);
+  const interruptedBattle = createNeutralBattleState(hero, neutralArmy, 1001, seededState);
+  await store.saveBattleSnapshotStart({
+    roomId: retiredRoomId,
+    battleId: interruptedBattle.id,
+    heroId: "hero-1",
+    attackerPlayerId: "player-1",
+    encounterKind: "neutral",
+    neutralArmyId: neutralArmy.id,
+    initiator: "hero",
+    path: [hero.position, neutralArmy.position],
+    moveCost: 1,
+    playerIds: ["player-1"],
+    initialState: interruptedBattle,
+    estimatedCompensationGrant: {
+      resources: {
+        gold: neutralArmy.reward?.kind === "gold" ? neutralArmy.reward.amount : 0,
+        wood: neutralArmy.reward?.kind === "wood" ? neutralArmy.reward.amount : 0,
+        ore: neutralArmy.reward?.kind === "ore" ? neutralArmy.reward.amount : 0
+      }
+    }
+  });
+
+  const replacementRoom = await createTestRoom(`lifecycle-battle-comp-replacement-${Date.now()}`);
+  const reconnectingClient = createFakeClient("session-battle-comp-replacement");
+
+  try {
+    await connectPlayer(replacementRoom, reconnectingClient, "player-1", "connect-battle-comp-replacement");
+    const account = await store.loadPlayerAccount("player-1");
+    const mailboxMessage = account?.mailbox?.find((entry) => entry.id === `${interruptedBattle.id}:disconnect-recovery`);
+    const history = await store.listBattleSnapshotsForPlayer?.("player-1", { limit: 10 });
+
+    assert.ok(
+      mailboxMessage,
+      `expected compensation mailbox message; mailbox=${JSON.stringify(account?.mailbox ?? [])} history=${JSON.stringify(history ?? [])}`
+    );
+    assert.ok(history?.[0], `expected interrupted battle history; mailbox=${JSON.stringify(account?.mailbox ?? [])}`);
+    assert.equal(mailboxMessage?.kind, "compensation");
+    assert.ok(
+      (mailboxMessage?.grant?.resources?.gold ?? 0) > 0 ||
+        (mailboxMessage?.grant?.resources?.wood ?? 0) > 0 ||
+        (mailboxMessage?.grant?.resources?.ore ?? 0) > 0
+    );
+    assert.equal(history?.[0]?.battleId, interruptedBattle.id);
+    assert.equal(history?.[0]?.status, "compensated");
+    assert.equal(history?.[0]?.resolutionReason, "room_missing_after_disconnect");
+  } finally {
+    cleanupRoom(replacementRoom);
+  }
 });
 
 test("pvp replay persistence captures both attacker and defender accounts from room settlement", async (t) => {
@@ -2126,6 +2330,45 @@ test("surrender settles the room with the surrendering player as loser and persi
   assert.equal(loserAccount?.eloRating, expectedRatings.loserRating);
   assert.equal(winnerAccount?.eloRating, expectedRatings.winnerRating);
   assert.equal(await store.load(room.roomId), null);
+});
+
+test("surrender does not change ELO when a leaderboard-frozen player is involved", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new InstrumentedRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  await store.savePlayerAccountProgress("player-2", {
+    leaderboardModerationState: {
+      frozenAt: "2026-04-11T08:00:00.000Z",
+      frozenByPlayerId: "support-moderator:admin-console"
+    }
+  });
+  const room = await createTestRoom(`lifecycle-surrender-frozen-${Date.now()}`);
+  const surrenderingClient = createFakeClient("session-surrender-frozen-loser");
+  const opponentClient = createFakeClient("session-surrender-frozen-winner");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, surrenderingClient, "player-1", "connect-surrender-frozen-loser");
+  await connectPlayer(room, opponentClient, "player-2", "connect-surrender-frozen-winner");
+
+  await emitRoomMessage(room, "world.action", surrenderingClient, {
+    type: "world.action",
+    requestId: "surrender-room-frozen",
+    action: {
+      type: "world.surrender",
+      heroId: "hero-1"
+    }
+  });
+
+  const loserAccount = await store.loadPlayerAccount("player-1");
+  const winnerAccount = await store.loadPlayerAccount("player-2");
+
+  assert.equal(loserAccount?.eloRating, 1000);
+  assert.equal(winnerAccount?.eloRating, 1000);
 });
 
 test("pvp settlement cleanup retires the room and clears connected player session state", async (t) => {

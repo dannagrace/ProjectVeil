@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { listLobbyRooms } from "../src/colyseus-room";
 import { startDevServer, type DevServerBootstrapDependencies } from "../src/dev-server";
-import type { RuntimePersistenceHealth } from "../src/observability";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "../src/observability";
 import type { MySqlPersistenceConfig, SnapshotRetentionPolicy } from "../src/persistence";
 
 interface TestLogger {
@@ -173,7 +173,16 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+function backupValidationSkipped() {
+  return {
+    status: "skipped" as const,
+    message: "Backup storage validation skipped because VEIL_BACKUP_S3_BUCKET is not configured.",
+    lastSuccessTimestamp: null
+  };
+}
+
 test("dev server startup wires the in-memory bootstrap path and closes stores on SIGINT", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
@@ -245,10 +254,10 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       matchmakingStore = dependencies.store;
       base.routeCalls.push("matchmaking");
     },
-    registerMinorProtectionPreviewRoutes: (app, store) => {
+    registerMinorProtectionRoutes: (app, store) => {
       assert.equal(app, base.expressApp);
       assert.equal(store, memoryStore);
-      base.routeCalls.push("minor-protection-preview");
+      base.routeCalls.push("minor-protection");
     },
     registerPrometheusMetricsMiddleware: (app) => {
       assert.equal(app, base.expressApp);
@@ -271,6 +280,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       persistenceHealth = options?.persistence;
       base.routeCalls.push("runtime-observability");
     },
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: (app, store, gameServer) => {
       assert.equal(app, base.expressApp);
       assert.equal(store, memoryStore);
@@ -310,7 +320,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "wechat-pay",
     "lobby",
     "matchmaking",
-    "minor-protection-preview",
+    "minor-protection",
     "leaderboard",
     "seasons",
     "runtime-observability",
@@ -337,6 +347,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     /Runtime diagnostic snapshot available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/diagnostic-snapshot/,
     /Prometheus metrics available at http:\/\/0\.0\.0\.0:3101\/metrics/,
     /Runtime metrics available at http:\/\/0\.0\.0\.0:3101\/api\/runtime\/metrics/,
+    /Backup storage validation skipped because VEIL_BACKUP_S3_BUCKET is not configured\./,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
     /Persistence mode: degraded\/in-memory/,
@@ -355,7 +366,68 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.deepEqual(base.process.exitCodes, [0]);
 });
 
+test("dev server loads runtime secrets before reading persistence config", async () => {
+  const order: string[] = [];
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+
+  await startDevServer(3102, "127.0.0.1", {
+    loadRuntimeSecrets: async () => {
+      order.push("loadRuntimeSecrets");
+    },
+    readMySqlPersistenceConfig: () => {
+      order.push("readMySqlPersistenceConfig");
+      return null;
+    },
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
+    registerAuthRoutes: () => undefined,
+    registerAnalyticsRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerEventRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
+    registerLeaderboardRoutes: () => undefined,
+    registerSeasonRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
+    registerAdminRoutes: () => undefined,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  assert.deepEqual(order.slice(0, 2), ["loadRuntimeSecrets", "readMySqlPersistenceConfig"]);
+});
+
 test("dev server logs process-level failures, closes stores, and exits non-zero", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
@@ -383,12 +455,13 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -420,6 +493,7 @@ test("dev server logs process-level failures, closes stores, and exits non-zero"
 });
 
 test("dev server logs uncaught exceptions, closes stores, and exits non-zero", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
@@ -447,12 +521,13 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -484,6 +559,7 @@ test("dev server logs uncaught exceptions, closes stores, and exits non-zero", a
 });
 
 test("dev server falls back to in-memory persistence and warns when schema migrations are pending", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
@@ -541,7 +617,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -549,6 +625,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     registerRuntimeObservabilityRoutes: (_app, options) => {
       persistenceHealth = options?.persistence;
     },
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -579,6 +656,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     /Runtime diagnostic snapshot available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/diagnostic-snapshot/,
     /Prometheus metrics available at http:\/\/127\.0\.0\.1:3202\/metrics/,
     /Runtime metrics available at http:\/\/127\.0\.0\.1:3202\/api\/runtime\/metrics/,
+    /Backup storage validation skipped because VEIL_BACKUP_S3_BUCKET is not configured\./,
     /Config center storage: filesystem/,
     /Local in-memory Colyseus presence\/driver enabled/,
     /Persistence mode: degraded\/in-memory/,
@@ -587,6 +665,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
 });
 
 test("dev server exits non-zero in production when MySQL bootstrap fails instead of falling back to memory", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const mysqlConfig: MySqlPersistenceConfig = {
@@ -642,12 +721,13 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
         registerWechatPayRoutes: () => undefined,
         registerLobbyRoutes: () => undefined,
         registerMatchmakingRoutes: () => undefined,
-        registerMinorProtectionPreviewRoutes: () => undefined,
+        registerMinorProtectionRoutes: () => undefined,
         registerPrometheusMetricsMiddleware: () => undefined,
         registerPrometheusMetricsRoute: () => undefined,
         registerLeaderboardRoutes: () => undefined,
         registerSeasonRoutes: () => undefined,
         registerRuntimeObservabilityRoutes: () => undefined,
+        validateBackupStorage: async () => backupValidationSkipped(),
         registerAdminRoutes: () => undefined,
         createGameServer: () => base.gameServer,
         logger: base.logger,
@@ -679,6 +759,7 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
 });
 
 test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL is set", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
@@ -713,12 +794,13 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
     registerSeasonRoutes: () => undefined,
     registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -746,6 +828,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
 });
 
 test("dev server starts MySQL persistence, runs retention cleanup, schedules pruning, and clears the timer on SIGTERM", async () => {
+  resetRuntimeObservability();
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("mysql");
   const retention: SnapshotRetentionPolicy = {
@@ -812,7 +895,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerWechatPayRoutes: () => undefined,
     registerLobbyRoutes: () => undefined,
     registerMatchmakingRoutes: () => undefined,
-    registerMinorProtectionPreviewRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
     registerPrometheusMetricsMiddleware: () => undefined,
     registerPrometheusMetricsRoute: () => undefined,
     registerLeaderboardRoutes: () => undefined,
@@ -820,6 +903,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     registerRuntimeObservabilityRoutes: (_app, options) => {
       persistenceHealth = options?.persistence;
     },
+    validateBackupStorage: async () => backupValidationSkipped(),
     registerAdminRoutes: () => undefined,
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
@@ -888,4 +972,63 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(configCenterStore.closeCalls, 1);
   assert.deepEqual(clearedTimers, [scheduledTimers[0]]);
   assert.deepEqual(base.process.exitCodes, [0]);
+});
+
+test("dev server warns loudly when backup storage is unreachable and exports the last success timestamp metric", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+
+  await startDevServer(3111, "127.0.0.1", {
+    readMySqlPersistenceConfig: () => null,
+    createFileSystemConfigCenterStore: () => configCenterStore,
+    createMemoryRoomSnapshotStore: () => memoryStore,
+    configureRoomSnapshotStore: () => undefined,
+    createTransport: () => base.transport,
+    readRedisUrl: () => null,
+    createRedisPresence: () => {
+      throw new Error("createRedisPresence should not be used without REDIS_URL");
+    },
+    createRedisDriver: () => {
+      throw new Error("createRedisDriver should not be used without REDIS_URL");
+    },
+    registerAuthRoutes: () => undefined,
+    registerConfigCenterRoutes: () => undefined,
+    registerConfigViewerRoutes: () => undefined,
+    registerGuildRoutes: () => undefined,
+    registerPlayerAccountRoutes: () => undefined,
+    registerShopRoutes: () => undefined,
+    registerWechatPayRoutes: () => undefined,
+    registerLobbyRoutes: () => undefined,
+    registerMatchmakingRoutes: () => undefined,
+    registerMinorProtectionRoutes: () => undefined,
+    registerPrometheusMetricsMiddleware: () => undefined,
+    registerPrometheusMetricsRoute: () => undefined,
+    registerLeaderboardRoutes: () => undefined,
+    registerSeasonRoutes: () => undefined,
+    registerRuntimeObservabilityRoutes: () => undefined,
+    validateBackupStorage: async () => ({
+      status: "warn",
+      message: "Backup storage validation failed for s3://veil-ops/backups/mysql/: access denied",
+      lastSuccessTimestamp: 1_744_001_234
+    }),
+    registerAdminRoutes: () => undefined,
+    createGameServer: (_transport, realtimeOptions) => {
+      base.gameServer.realtimeOptions.push(realtimeOptions);
+      return base.gameServer;
+    },
+    logger: base.logger,
+    process: base.process,
+    setInterval: () => {
+      throw new Error("setInterval should not be used for in-memory startup");
+    },
+    clearInterval: () => undefined,
+    isMySqlSnapshotStore: () => false
+  });
+
+  assert.deepEqual(base.logger.warnings, [
+    "BACKUP WARNING: Backup storage validation failed for s3://veil-ops/backups/mysql/: access denied"
+  ]);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_db_backup_last_success_timestamp 1744001234$/m);
 });

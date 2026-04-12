@@ -1,5 +1,17 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Issue #1323 - Phase 1 rehearsal CI trend front door - 2026-04-12
+
+- Frontloaded the staged `CI trend summary` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can jump from `SUMMARY.md` straight to the CI trajectory snapshot instead of digging through generated outputs.
+- Locked the new reviewer entry with artifact-path and markdown assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the rehearsal docs and release script inventory so the reviewer packet description explicitly includes the staged CI trend summary.
+
+## Issue #1313 - Phase 1 rehearsal Cocos bundle front door - 2026-04-11
+
+- Frontloaded the candidate-scoped `Cocos RC bundle` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can jump straight from `SUMMARY.md` into the staged RC packet without digging through generated outputs first.
+- Locked the new reviewer entry with markdown and artifact-path assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the Phase 1 rehearsal docs and release script inventory so the reviewer packet description explicitly includes the staged Cocos RC bundle.
+
 ## Discovery notes
 
 - 仓库是全栈 TypeScript monorepo，当前主运行时是 `apps/cocos-client`，`apps/client` 主要承担 H5 调试壳、配置联调和回归测试。
@@ -1946,3 +1958,108 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 reviewer front door 对 `releaseHealthSummaryPath` 的展示
+
+## Issue #1278 - Phase 1 rehearsal same-revision manifest front door - 2026-04-11
+
+- 本轮把 `same-revision evidence bundle manifest` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `sameRevisionEvidenceBundleManifestPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 same-revision evidence bundle manifest 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 same-revision evidence bundle manifest front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `sameRevisionEvidenceBundleManifestPath` 的展示
+
+## Issue #1280 - Phase 1 rehearsal snapshot front door - 2026-04-11
+
+- 本轮把 `release readiness snapshot` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `releaseReadinessSnapshotPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 release readiness snapshot 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 release readiness snapshot front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `releaseReadinessSnapshotPath` 的展示
+
+## Issue #1285 - Phase 1 rehearsal WeChat summary front door - 2026-04-11
+
+- 本轮把 `WeChat candidate summary` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `wechatCandidateSummaryPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 WeChat candidate summary 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 WeChat candidate summary front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `wechatCandidateSummaryPath` 的展示
+
+## Issue #1287 - Phase 1 rehearsal runtime gate front door - 2026-04-11
+
+- 本轮把 `runtime observability gate` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `runtimeObservabilityGatePath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 runtime observability gate 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 runtime observability gate front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `runtimeObservabilityGatePath` 的展示
+
+## Issue #1294 - Phase 1 rehearsal H5 smoke front door - 2026-04-11
+
+- 本轮把 `H5 candidate smoke` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `stableH5SmokePath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 H5 candidate smoke 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 H5 candidate smoke front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `stableH5SmokePath` 的展示
+
+## Issue #1297 - Phase 1 rehearsal reconnect front door - 2026-04-11
+
+- 本轮把 `reconnect soak summary` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `stableReconnectSoakPath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 reconnect soak summary 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 reconnect soak summary front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `stableReconnectSoakPath` 的展示
+
+## Issue #1307 - Phase 1 rehearsal runtime bundle front door - 2026-04-11
+
+- 本轮把 `runtime observability bundle` 提升成了 `release:phase1:candidate-rehearsal` 的显式 reviewer front door 入口：
+  - `scripts/phase1-candidate-rehearsal.ts`
+    - `SUMMARY.md` 的 reviewer front door 现在会直接列出：
+      - `runtimeObservabilityBundlePath`
+- 文档与 inventory 已同步：
+  - `docs/phase1-candidate-rehearsal.md`
+    - 明确 rehearsal packet 会把 runtime observability bundle 作为 packet-level reviewer checkpoint 前置展示
+  - `scripts/release-script-inventory.ts` / `docs/release-script-inventory.md`
+    - 同步更新 `release:phase1:candidate-rehearsal` 的职责与产物说明，包含 runtime observability bundle front door
+- 测试收口：
+  - `scripts/test/phase1-candidate-rehearsal.test.ts`
+    - 锁住 reviewer front door 对 `runtimeObservabilityBundlePath` 的展示

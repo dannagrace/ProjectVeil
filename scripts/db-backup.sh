@@ -33,6 +33,7 @@ Optional environment:
   VEIL_BACKUP_WEEKLY_DAY=7
   VEIL_BACKUP_TMP_DIR=<mktemp dir>
   VEIL_BACKUP_NOTIFY_COMMAND=<shell command run on failure>
+  VEIL_BACKUP_STATUS_KEY=<override marker object key; default <prefix>/_status/latest-success.json>
   VEIL_BACKUP_TIMESTAMP=<override UTC timestamp like 20260403T030000Z>
   VEIL_BACKUP_DAY_OF_WEEK=<1-7 override; 7 is Sunday>
 EOF
@@ -108,6 +109,7 @@ VEIL_BACKUP_S3_REGION="${VEIL_BACKUP_S3_REGION:-us-east-1}"
 VEIL_BACKUP_KEEP_DAILY_DAYS="${VEIL_BACKUP_KEEP_DAILY_DAYS:-30}"
 VEIL_BACKUP_KEEP_WEEKLY_DAYS="${VEIL_BACKUP_KEEP_WEEKLY_DAYS:-183}"
 VEIL_BACKUP_WEEKLY_DAY="${VEIL_BACKUP_WEEKLY_DAY:-7}"
+VEIL_BACKUP_STATUS_KEY="${VEIL_BACKUP_STATUS_KEY:-${VEIL_BACKUP_S3_PREFIX}/_status/latest-success.json}"
 
 BACKUP_TIMESTAMP="${VEIL_BACKUP_TIMESTAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 BACKUP_DAY_OF_WEEK="${VEIL_BACKUP_DAY_OF_WEEK:-$(date -u +%u)}"
@@ -143,6 +145,7 @@ fi
 backup_base_name="${VEIL_MYSQL_DATABASE}-${BACKUP_TIMESTAMP}.sql.gz"
 archive_path="${TMP_DIR}/${backup_base_name}"
 hash_path="${archive_path}.sha256"
+status_path="${TMP_DIR}/latest-success.json"
 
 daily_key="${VEIL_BACKUP_S3_PREFIX}/daily/${backup_base_name}"
 daily_hash_key="${daily_key}.sha256"
@@ -207,13 +210,31 @@ log "Uploading daily backup to $(s3_uri "$daily_key")"
 upload_file "$archive_path" "$daily_key"
 upload_file "$hash_path" "$daily_hash_key"
 
+weekly_uploaded=0
+weekly_uploaded_json=false
 if [[ "$BACKUP_DAY_OF_WEEK" == "$VEIL_BACKUP_WEEKLY_DAY" ]]; then
   log "Uploading weekly backup to $(s3_uri "$weekly_key")"
   upload_file "$archive_path" "$weekly_key"
   upload_file "$hash_path" "$weekly_hash_key"
+  weekly_uploaded=1
+  weekly_uploaded_json=true
 fi
 
 prune_prefix "daily" "$VEIL_BACKUP_KEEP_DAILY_DAYS"
 prune_prefix "weekly" "$VEIL_BACKUP_KEEP_WEEKLY_DAYS"
+
+cat >"$status_path" <<EOF
+{
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "backupTimestamp": "$BACKUP_TIMESTAMP",
+  "database": "$VEIL_MYSQL_DATABASE",
+  "bucket": "$VEIL_BACKUP_S3_BUCKET",
+  "dailyKey": "$daily_key",
+  "weeklyUploaded": $weekly_uploaded_json
+}
+EOF
+
+log "Uploading backup status marker to $(s3_uri "$VEIL_BACKUP_STATUS_KEY")"
+upload_file "$status_path" "$VEIL_BACKUP_STATUS_KEY"
 
 log "Backup complete: ${backup_base_name}"

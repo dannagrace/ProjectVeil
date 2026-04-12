@@ -149,6 +149,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     resolvedAt?: string;
   }>();
   const guilds = new Map<string, GuildState>();
+  const battleHistoryByPlayerId = new Map<string, Array<{
+    roomId: string;
+    battleId: string;
+    status: "active" | "resolved" | "compensated" | "aborted";
+    encounterKind: "neutral" | "hero";
+    startedAt: string;
+  }>>();
   const guildAuditLogs: Array<{
     auditId: string;
     guildId: string;
@@ -270,7 +277,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         .filter((entry) => !options.guildId || entry.guildId === options.guildId)
         .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     },
-    async savePlayerAccountProgress(playerId: string, patch: { globalResources?: { gold: number; wood: number; ore: number } }) {
+    async savePlayerAccountProgress(
+      playerId: string,
+      patch: {
+        globalResources?: { gold: number; wood: number; ore: number };
+        leaderboardModerationState?: Record<string, unknown>;
+      }
+    ) {
       const account =
         (await this.loadPlayerAccount(playerId)) ??
         (await this.ensurePlayerAccount({
@@ -278,6 +291,12 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
           displayName: playerId
         }));
       account.globalResources = { ...account.globalResources, ...patch.globalResources };
+      if (patch.leaderboardModerationState) {
+        account.leaderboardModerationState = {
+          ...(account.leaderboardModerationState ?? {}),
+          ...patch.leaderboardModerationState
+        };
+      }
       saveCalls.push({ playerId, globalResources: { ...account.globalResources } });
       return account;
     },
@@ -329,6 +348,21 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     async listPlayerBanHistory(playerId: string, options: { limit?: number } = {}) {
       return (banHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 20)));
     },
+    async listBattleSnapshotsForPlayer(playerId: string, options: { limit?: number } = {}) {
+      return (battleHistoryByPlayerId.get(playerId) ?? []).slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
+    },
+    seedBattleHistory(
+      playerId: string,
+      items: Array<{
+        roomId: string;
+        battleId: string;
+        status: "active" | "resolved" | "compensated" | "aborted";
+        encounterKind: "neutral" | "hero";
+        startedAt: string;
+      }>
+    ) {
+      battleHistoryByPlayerId.set(playerId, items);
+    },
     async listPlayerReports(options: {
       status?: "pending" | "dismissed" | "warned" | "banned";
       limit?: number;
@@ -370,10 +404,21 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "savePlayerBan"
     | "clearPlayerBan"
     | "listPlayerBanHistory"
+    | "listBattleSnapshotsForPlayer"
     | "listPlayerReports"
     | "resolvePlayerReport"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
+    seedBattleHistory(
+      playerId: string,
+      items: Array<{
+        roomId: string;
+        battleId: string;
+        status: "active" | "resolved" | "compensated" | "aborted";
+        encounterKind: "neutral" | "hero";
+        startedAt: string;
+      }>
+    ): void;
   };
 }
 
@@ -1305,6 +1350,15 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
     banReason: "Spam",
     banExpiry: "2026-05-10T00:00:00.000Z"
   });
+  store.seedBattleHistory("player-export", [
+    {
+      roomId: "room-reconnect",
+      battleId: "battle-neutral-1",
+      status: "compensated",
+      encounterKind: "neutral",
+      startedAt: "2026-04-11T10:00:00.000Z"
+    }
+  ]);
   const { gets } = registerRoutes(store as RoomSnapshotStore);
   const handler = gets.get("/api/admin/players/:id/export");
   assert.ok(handler);
@@ -1326,6 +1380,7 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
     exportedAt: string;
     account: { playerId: string; globalResources: { gold: number; wood: number; ore: number } };
     moderation: { currentBan: { banStatus: string }; banHistory: Array<{ action: string }> };
+    battleHistory: Array<{ battleId: string; status: string }>;
   };
   assert.equal(payload.playerId, "player-export");
   assert.ok(Number.isFinite(Date.parse(payload.exportedAt)));
@@ -1333,6 +1388,72 @@ test("GET /api/admin/players/:id/export returns account data for support workflo
   assert.deepEqual(payload.account.globalResources, { gold: 9, wood: 4, ore: 2 });
   assert.equal(payload.moderation.currentBan.banStatus, "temporary");
   assert.equal(payload.moderation.banHistory[0]?.action, "ban");
+  assert.equal(payload.battleHistory[0]?.battleId, "battle-neutral-1");
+  assert.equal(payload.battleHistory[0]?.status, "compensated");
+});
+
+test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movement for a player", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/leaderboard/freeze");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-freeze" },
+      body: JSON.stringify({ reason: "Suspicious ELO spike" }),
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    account: { leaderboardModerationState?: { frozenByPlayerId?: string; freezeReason?: string; frozenAt?: string } };
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account.leaderboardModerationState?.frozenByPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.account.leaderboardModerationState?.freezeReason, "Suspicious ELO spike");
+  assert.ok(payload.account.leaderboardModerationState?.frozenAt);
+});
+
+test("POST /api/admin/players/:id/leaderboard/remove hides a player from leaderboard output", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/players/:id/leaderboard/remove");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-hidden" },
+      body: JSON.stringify({ reason: "Leaderboard manipulation investigation" }),
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    account: { leaderboardModerationState?: { hiddenByPlayerId?: string; hiddenReason?: string; hiddenAt?: string } };
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.account.leaderboardModerationState?.hiddenByPlayerId, "support-moderator:admin-console");
+  assert.equal(payload.account.leaderboardModerationState?.hiddenReason, "Leaderboard manipulation investigation");
+  assert.ok(payload.account.leaderboardModerationState?.hiddenAt);
 });
 
 test("support moderators can hide and inspect guild moderation audit", async (t) => {

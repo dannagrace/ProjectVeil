@@ -1,0 +1,89 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    env_file:
+      - ops/env/production.env
+    environment:
+      MYSQL_DATABASE: ${VEIL_MYSQL_DATABASE:-project_veil}
+      MYSQL_USER: ${VEIL_MYSQL_USER}
+      MYSQL_PASSWORD: ${VEIL_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_me_root_password}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: "no"
+    profiles: ["ops"]
+    env_file:
+      - ops/env/production.env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["npm", "run", "db:migrate"]
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    env_file:
+      - ops/env/production.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 2567
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "2567:2567"
+    volumes:
+      - ./configs:/app/configs:ro
+
+  client:
+    build:
+      context: .
+      dockerfile: apps/client/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8080:8080"
+
+volumes:
+  mysql-data:
+  redis-data:

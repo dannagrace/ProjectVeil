@@ -43,6 +43,12 @@ export VEIL_RESTORE_BACKUP_KEY="$VEIL_BACKUP_S3_PREFIX/daily/project_veil-202604
 npm run db:restore:rehearsal
 ```
 
+For recurring verification, prefer the latest-backup wrapper:
+
+```bash
+npm run db:restore:test
+```
+
 The remainder of this runbook explains the exact manual steps that wrapper executes so reviewers can audit or adapt the flow.
 
 ## 1. Pick The Backup To Restore
@@ -124,6 +130,8 @@ mysql \
   "$RESTORE_MYSQL_DATABASE" <<'SQL'
 SELECT 'room_snapshots' AS table_name, COUNT(*) AS row_count FROM room_snapshots
 UNION ALL
+SELECT 'battle_snapshots', COUNT(*) FROM battle_snapshots
+UNION ALL
 SELECT 'player_room_profiles', COUNT(*) FROM player_room_profiles
 UNION ALL
 SELECT 'player_accounts', COUNT(*) FROM player_accounts
@@ -151,6 +159,28 @@ Validation is complete when:
 - The restore loaded without MySQL errors.
 - Expected core tables are present with plausible row counts.
 - `npm run test:phase1-release-persistence -- --storage mysql` passes on the restored instance.
+
+For incident work involving mid-battle disconnect loss, also verify that unresolved combat ledgers survived restore:
+
+```bash
+mysql \
+  --host="$RESTORE_MYSQL_HOST" \
+  --port="$RESTORE_MYSQL_PORT" \
+  --user="$RESTORE_MYSQL_USER" \
+  --password="$RESTORE_MYSQL_PASSWORD" \
+  --table \
+  "$RESTORE_MYSQL_DATABASE" <<'SQL'
+SELECT room_id, battle_id, status, result, resolution_reason, started_at, resolved_at
+FROM battle_snapshots
+ORDER BY started_at DESC
+LIMIT 20;
+SQL
+```
+
+If the target player reconnected into a replacement room after the original room vanished, expect either:
+
+- `status='compensated'` with a non-null `compensation_json`
+- `status='aborted'` with a human-readable `resolution_reason`
 
 ## 5. Promote Or Hand Off
 

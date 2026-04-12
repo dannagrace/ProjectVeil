@@ -61,6 +61,43 @@ Recommended index:
 
 - `idx_room_snapshots_updated_at` on `updated_at`
 
+### Table: `battle_snapshots`
+
+| Column | Type | Nullable | Default | Description |
+| --- | --- | --- | --- | --- |
+| `room_id` | `VARCHAR(191)` | No | - | Logical room id |
+| `battle_id` | `VARCHAR(191)` | No | - | Battle id inside the room |
+| `hero_id` | `VARCHAR(191)` | No | - | Attacking hero id |
+| `attacker_player_id` | `VARCHAR(191)` | No | - | Attacker player id |
+| `defender_player_id` | `VARCHAR(191)` | Yes | `NULL` | Defender player id for PvP battles |
+| `defender_hero_id` | `VARCHAR(191)` | Yes | `NULL` | Defender hero id for PvP battles |
+| `neutral_army_id` | `VARCHAR(191)` | Yes | `NULL` | Neutral army id for PvE battles |
+| `encounter_kind` | `VARCHAR(16)` | No | - | `neutral` or `hero` |
+| `initiator` | `VARCHAR(16)` | Yes | `NULL` | Who initiated the encounter |
+| `path_json` | `LONGTEXT` | No | - | Serialized battle-start path used to enter the encounter |
+| `move_cost` | `INT` | No | - | Movement cost consumed when battle started |
+| `player_ids_json` | `LONGTEXT` | No | - | Serialized participant player id list |
+| `initial_state_json` | `LONGTEXT` | No | - | Serialized starting `BattleState` snapshot |
+| `estimated_compensation_grant_json` | `LONGTEXT` | Yes | `NULL` | Serialized conservative compensation estimate used when a neutral battle cannot be restored |
+| `status` | `VARCHAR(16)` | No | `active` | `active`, `resolved`, `compensated`, or `aborted` |
+| `result` | `VARCHAR(32)` | Yes | `NULL` | Final result when the battle settled normally |
+| `resolution_reason` | `VARCHAR(64)` | Yes | `NULL` | Why the record left `active` |
+| `compensation_json` | `LONGTEXT` | Yes | `NULL` | Serialized compensation/notice payload delivered to affected players |
+| `started_at` | `DATETIME` | No | - | Logical battle start time |
+| `resolved_at` | `DATETIME` | Yes | `NULL` | Logical settlement or compensation time |
+| `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Row insertion time |
+| `updated_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Last mutation time |
+
+Primary key:
+
+- `(room_id, battle_id)`
+
+Recommended index:
+
+- `idx_battle_snapshots_status_updated` on `(status, updated_at DESC)`
+
+This table is an ops/support ledger separate from `room_snapshots`. It is written on `battle.started`, updated on `battle.resolved`, and later marked `compensated` or `aborted` if a player reconnects after the original room vanished. Support export flows can query this history to inspect both normal settlements and interrupted battles.
+
 ### Table: `player_room_profiles`
 
 | Column | Type | Nullable | Default | Description |
@@ -151,6 +188,17 @@ Recommended indexes:
 - `idx_player_name_history_normalized_changed` on `(normalized_name, changed_at DESC)`
 
 This append-only table records the initial display name and every subsequent rename accepted by the server. Admin/support tooling can query by `player_id` to inspect a single account timeline or by `normalized_name` to trace who previously used a suspicious name.
+
+## Guest Upgrade Transaction
+
+微信游客升级现在通过单个服务端事务完成，事务边界覆盖：
+
+- `player_accounts` 目标账号写入与旧 `guest-*` 账号 tombstone 标记（`guest_migrated_to_player_id`）
+- `player_hero_archives` 从游客档迁移到目标账号，或在保留正式档时直接清理旧游客档
+- `player_quest_states` 跟随同一策略迁移或保留
+- `player_account_sessions` 清理旧游客关联的持久化会话痕迹
+
+因此迁移失败时不会留下“账号已绑定但英雄/任务没迁完”的半完成状态。
 
 ### Table: `player_name_reservations`
 
@@ -314,6 +362,7 @@ The script performs:
 - upload to a daily object prefix
 - weekly mirror upload on the configured weekday
 - retention pruning for daily backups older than 30 days and weekly backups older than 183 days
+- upload of a `latest-success.json` status marker used by server startup validation and Prometheus
 - optional failure notification through `VEIL_BACKUP_NOTIFY_COMMAND`
 
 ### Required Environment
@@ -330,6 +379,7 @@ The backup script reuses the existing `VEIL_MYSQL_*` connection settings and exp
 | `VEIL_BACKUP_KEEP_DAILY_DAYS` | No | `30` | Daily retention window in days |
 | `VEIL_BACKUP_KEEP_WEEKLY_DAYS` | No | `183` | Weekly retention window in days |
 | `VEIL_BACKUP_WEEKLY_DAY` | No | `7` | Day of week used for weekly copies; `7` means Sunday |
+| `VEIL_BACKUP_STATUS_KEY` | No | `<prefix>/_status/latest-success.json` | Object key updated after a fully successful backup run |
 | `VEIL_BACKUP_NOTIFY_COMMAND` | No | - | Shell command executed on failure with `VEIL_BACKUP_FAILURE_MESSAGE` exported |
 
 The script requires `mysqldump`, `gzip`, `aws`, and `sha256sum` (or `shasum`) on the runner host.
@@ -354,18 +404,25 @@ The uploaded object layout is:
 - `s3://<bucket>/<prefix>/daily/<database>-<timestamp>.sql.gz.sha256`
 - `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz` on the configured weekly day
 - `s3://<bucket>/<prefix>/weekly/<database>-<timestamp>.sql.gz.sha256` on the configured weekly day
+- `s3://<bucket>/<prefix>/_status/latest-success.json` after a successful backup run
 
 ### Cron Schedule
 
-Install the example cron from [`ops/mysql-backup.cron.example`](../ops/mysql-backup.cron.example) to run at `03:00` server local time every day.
+Install the example cron from [`ops/mysql-backup.cron.example`](../ops/mysql-backup.cron.example) to run backups every `6` hours and a restore verification weekly.
 
 Recommended rollout:
 
 1. Copy `.env.example` to the deployment host and fill in `VEIL_MYSQL_*` plus `VEIL_BACKUP_*`.
 2. Confirm `aws s3 ls` can reach the bucket with the selected profile or credentials.
 3. Run `./scripts/db-backup.sh` manually once.
-4. Install the cron entry.
+4. Install the cron entries for both backup and restore verification.
 5. Wire `VEIL_BACKUP_NOTIFY_COMMAND` to your pager, webhook, or mail wrapper so failures are visible without waiting for cron mail.
+
+### Startup Validation And Metrics
+
+When `VEIL_BACKUP_S3_BUCKET` is configured, the server now validates bucket reachability during startup. If the bucket or prefix is unreachable, startup continues but emits a loud `BACKUP WARNING` log entry so the deployment is visibly degraded instead of silently assuming backups are healthy.
+
+The server also exposes `veil_db_backup_last_success_timestamp` on `/metrics` and `/api/runtime/metrics`. The metric is populated from the uploaded `latest-success.json` marker and falls back to the most recent visible backup object timestamp when the marker is missing. A value of `0` means startup could not determine a successful backup time.
 
 ### Restore
 
@@ -381,6 +438,17 @@ RESTORE_MYSQL_USER=root \
 RESTORE_MYSQL_PASSWORD=change_me \
 RESTORE_MYSQL_DATABASE=project_veil_restore \
 npm run db:restore:rehearsal
+```
+
+For the automated weekly drill that always selects the latest available backup, run:
+
+```bash
+RESTORE_MYSQL_HOST=127.0.0.1 \
+RESTORE_MYSQL_PORT=3306 \
+RESTORE_MYSQL_USER=root \
+RESTORE_MYSQL_PASSWORD=change_me \
+RESTORE_MYSQL_DATABASE=project_veil_restore_test \
+npm run db:restore:test
 ```
 
 That flow downloads the archive and `.sha256`, verifies integrity before touching MySQL, restores into the target schema, runs the table-count sanity query, and then executes `npm run test:phase1-release-persistence -- --storage mysql` against the recovered instance unless `VEIL_RESTORE_SKIP_REGRESSION=1`.
