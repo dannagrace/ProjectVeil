@@ -936,16 +936,16 @@ async function main(): Promise<void> {
           "--markdown-output",
           releaseGateMarkdownPath
         ];
+        const cocosReconnectReplayPath =
+          findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".json") ?? path.join(outputDir, "missing-cocos-rc-reconnect-replay.json");
+        if (fs.existsSync(cocosReconnectReplayPath)) {
+          command.push("--cocos-rc-reconnect-replay", cocosReconnectReplayPath);
+        }
         if (artifacts.stableH5SmokePath) {
           command.push("--h5-smoke", stableH5SmokePath);
         }
         if (artifacts.stableReconnectSoakPath) {
           command.push("--reconnect-soak", stableReconnectSoakPath);
-        }
-        const cocosReconnectReplayPath =
-          findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".json") ?? path.join(outputDir, "missing-cocos-rc-reconnect-replay.json");
-        if (fs.existsSync(cocosReconnectReplayPath)) {
-          command.push("--cocos-rc-reconnect-replay", cocosReconnectReplayPath);
         }
         if (artifacts.stableWechatArtifactsDir) {
           command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
@@ -1347,14 +1347,19 @@ async function main(): Promise<void> {
           artifacts.stableReconnectSoakPath ? stableReconnectSoakPath : path.join(outputDir, "missing-reconnect-soak.json"),
           "--ci-trend-summary",
           ciTrendSummaryPath,
-          "--output",
-          phase1CandidateDossierPath,
-          "--markdown-output",
-          phase1CandidateDossierMarkdownPath
-        ];
-        if (artifacts.stableH5SmokePath) {
-          command.push("--h5-smoke", stableH5SmokePath);
-        }
+        "--output",
+        phase1CandidateDossierPath,
+        "--markdown-output",
+        phase1CandidateDossierMarkdownPath
+      ];
+      const cocosReconnectReplayPath =
+        findFirstMatching(outputDir, "cocos-rc-reconnect-replay-", ".json") ?? path.join(outputDir, "missing-cocos-rc-reconnect-replay.json");
+      if (fs.existsSync(cocosReconnectReplayPath)) {
+        command.push("--cocos-rc-reconnect-replay", cocosReconnectReplayPath);
+      }
+      if (artifacts.stableH5SmokePath) {
+        command.push("--h5-smoke", stableH5SmokePath);
+      }
         if (artifacts.stableWechatArtifactsDir) {
           command.push("--wechat-artifacts-dir", stableWechatArtifactsDir);
         }

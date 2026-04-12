@@ -205,6 +205,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.manualEvidenceLedgerPath ?? "", /manual-release-evidence-owner-ledger-phase1-mainline-/);
   assert.match(report.artifacts.releaseReadinessDashboardPath ?? "", /release-readiness-dashboard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceAuditPath ?? "", /candidate-evidence-audit-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceAuditMarkdownPath ?? "", /candidate-evidence-audit-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceManifestPath ?? "", /candidate-evidence-manifest-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceManifestMarkdownPath ?? "", /candidate-evidence-manifest-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceFreshnessGuardPath ?? "", /candidate-evidence-freshness-guard-phase1-mainline-/);
@@ -244,6 +245,12 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
     markdown,
     new RegExp(
       `- Release candidate manifest markdown: \`${escapeRegex(report.artifacts.candidateEvidenceManifestMarkdownPath ?? "")}\``
+    )
+  );
+  assert.match(
+    markdown,
+    new RegExp(
+      `- Same-candidate evidence audit markdown: \`${escapeRegex(report.artifacts.candidateEvidenceAuditMarkdownPath ?? "")}\``
     )
   );
   assert.match(
@@ -295,6 +302,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateRevisionTriageDigestMarkdownPath:/);
   assert.match(markdown, /cocosBundlePath:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
+  assert.match(markdown, /candidateEvidenceAuditMarkdownPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessGuardPath:/);
   assert.match(markdown, /candidateEvidenceOwnerReminderPath:/);
   assert.match(markdown, /candidateEvidenceFreshnessHistoryPath:/);
