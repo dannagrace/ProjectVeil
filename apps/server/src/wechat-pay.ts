@@ -93,6 +93,46 @@ const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
 const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;
 const SUCCESS_CALLBACK_BODY = { code: "SUCCESS", message: "success" };
 
+function emitPurchaseCompletedEvent(input: {
+  playerId: string;
+  purchaseId: string;
+  productId: string;
+  paymentMethod: "gems" | "wechat_pay";
+  quantity: number;
+  totalPrice: number;
+}): void {
+  emitAnalyticsEvent("purchase_completed", {
+    playerId: input.playerId,
+    payload: {
+      purchaseId: input.purchaseId,
+      productId: input.productId,
+      paymentMethod: input.paymentMethod,
+      quantity: input.quantity,
+      totalPrice: input.totalPrice
+    }
+  });
+}
+
+function emitPurchaseFailedEvent(input: {
+  playerId: string;
+  purchaseId: string;
+  productId: string;
+  paymentMethod: "gems" | "wechat_pay";
+  failureReason: string;
+  orderStatus: PaymentOrderSnapshot["status"] | "failed";
+}): void {
+  emitAnalyticsEvent("purchase_failed", {
+    playerId: input.playerId,
+    payload: {
+      purchaseId: input.purchaseId,
+      productId: input.productId,
+      paymentMethod: input.paymentMethod,
+      failureReason: input.failureReason,
+      orderStatus: input.orderStatus
+    }
+  });
+}
+
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -881,6 +921,16 @@ export function registerWechatPayRoutes(
       if (isPaymentOpsStoreReady(store)) {
         await refreshPaymentGrantObservability(store, now());
       }
+      if (!settlement.credited) {
+        emitPurchaseFailedEvent({
+          playerId: order.playerId,
+          purchaseId: order.orderId,
+          productId: order.productId,
+          paymentMethod: "wechat_pay",
+          failureReason: settlement.order.lastGrantError ?? "grant_failed",
+          orderStatus: settlement.order.status
+        });
+      }
       if (!settlement.credited && isFinalizedPaymentOrderStatus(settlement.order.status)) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
@@ -905,6 +955,16 @@ export function registerWechatPayRoutes(
           totalPrice: order.amount
         }
       });
+      if (settlement.credited) {
+        emitPurchaseCompletedEvent({
+          playerId: order.playerId,
+          purchaseId: order.orderId,
+          productId: order.productId,
+          paymentMethod: "wechat_pay",
+          quantity: 1,
+          totalPrice: order.amount
+        });
+      }
 
       const recentVerifiedCount = await store.countVerifiedPaymentReceiptsSince(
         order.playerId,
@@ -1098,6 +1158,23 @@ export function registerWechatPayRoutes(
             totalPrice: order.amount
           }
         });
+        emitPurchaseCompletedEvent({
+          playerId: order.playerId,
+          purchaseId: order.orderId,
+          productId: order.productId,
+          paymentMethod: "wechat_pay",
+          quantity: 1,
+          totalPrice: order.amount
+        });
+      } else {
+        emitPurchaseFailedEvent({
+          playerId: order.playerId,
+          purchaseId: order.orderId,
+          productId: order.productId,
+          paymentMethod: "wechat_pay",
+          failureReason: settlement.order.lastGrantError ?? "grant_failed",
+          orderStatus: settlement.order.status
+        });
       }
       sendCallbackResponse(response, 200);
     } catch (error) {
@@ -1245,6 +1322,23 @@ export function registerWechatPayRoutes(
               totalPrice: settlement.order.amount
             }
           });
+          emitPurchaseCompletedEvent({
+            playerId: settlement.order.playerId,
+            purchaseId: settlement.order.orderId,
+            productId: settlement.order.productId,
+            paymentMethod: "wechat_pay",
+            quantity: 1,
+            totalPrice: settlement.order.amount
+          });
+        } else {
+          emitPurchaseFailedEvent({
+            playerId: settlement.order.playerId,
+            purchaseId: settlement.order.orderId,
+            productId: settlement.order.productId,
+            paymentMethod: "wechat_pay",
+            failureReason: settlement.order.lastGrantError ?? "grant_failed",
+            orderStatus: settlement.order.status
+          });
         }
         await refreshPaymentGrantObservability(store, processedAt);
         sendJson(response, 200, {
@@ -1290,6 +1384,23 @@ export function registerWechatPayRoutes(
                 quantity: 1,
                 totalPrice: settlement.order.amount
               }
+            });
+            emitPurchaseCompletedEvent({
+              playerId: settlement.order.playerId,
+              purchaseId: settlement.order.orderId,
+              productId: settlement.order.productId,
+              paymentMethod: "wechat_pay",
+              quantity: 1,
+              totalPrice: settlement.order.amount
+            });
+          } else {
+            emitPurchaseFailedEvent({
+              playerId: settlement.order.playerId,
+              purchaseId: settlement.order.orderId,
+              productId: settlement.order.productId,
+              paymentMethod: "wechat_pay",
+              failureReason: settlement.order.lastGrantError ?? "grant_failed",
+              orderStatus: settlement.order.status
             });
           }
           results.push({

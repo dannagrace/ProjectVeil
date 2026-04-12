@@ -154,6 +154,7 @@ async function startWechatPaymentServer(input: {
   store: MemoryRoomSnapshotStore;
   runtimeConfig: WechatPayRuntimeConfig;
   fetchImpl: typeof fetch;
+  products?: Partial<ShopProduct>[];
 }): Promise<Server> {
   resetGuestAuthSessions();
   resetAnalyticsRuntimeDependencies();
@@ -165,7 +166,7 @@ async function startWechatPaymentServer(input: {
   registerPlayerAccountRoutes(app, input.store);
   registerRuntimeObservabilityRoutes(app, { store: input.store });
   registerWechatPayRoutes(app, input.store, {
-    products: TEST_PRODUCTS,
+    products: input.products ?? TEST_PRODUCTS,
     runtimeConfig: input.runtimeConfig,
     fetchImpl: input.fetchImpl
   });
@@ -308,6 +309,9 @@ test("wechat payment callback settles the order, emits purchase analytics, and d
   const purchaseEvent = analyticsEvents.find(
     (event) => event.name === "purchase" && event.payload.purchaseId === order.orderId
   );
+  const purchaseCompletedEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_completed" && event.payload.purchaseId === order.orderId
+  );
   const storedOrder = await store.loadPaymentOrder(order.orderId);
   const receipt = await store.loadPaymentReceiptByOrderId(order.orderId);
 
@@ -320,6 +324,8 @@ test("wechat payment callback settles the order, emits purchase analytics, and d
   assert.ok(purchaseEvent);
   assert.equal(purchaseEvent?.payload.productId, "gem-pack-premium");
   assert.equal(purchaseEvent?.payload.totalPrice, 600);
+  assert.equal(purchaseCompletedEvent?.payload.paymentMethod, "wechat_pay");
+  assert.equal(purchaseCompletedEvent?.payload.totalPrice, 600);
   assert.equal(storedOrder?.status, "settled");
   assert.equal(storedOrder?.wechatOrderId, "wechat-transaction-123");
   assert.equal(receipt?.transactionId, "wechat-transaction-123");
@@ -373,6 +379,9 @@ test("wechat payment verify settles a created order and emits purchase analytics
   const purchaseEvent = analyticsEvents.find(
     (event) => event.name === "purchase" && event.payload.purchaseId === order.orderId
   );
+  const purchaseCompletedEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_completed" && event.payload.purchaseId === order.orderId
+  );
 
   assert.equal(verifyResponse.status, 200);
   assert.equal(verifyPayload.status, "settled");
@@ -381,6 +390,7 @@ test("wechat payment verify settles a created order and emits purchase analytics
   assert.equal(accountPayload.account.gems, 120);
   assert.ok(purchaseEvent);
   assert.equal(purchaseEvent?.payload.productId, "gem-pack-premium");
+  assert.equal(purchaseCompletedEvent?.payload.paymentMethod, "wechat_pay");
 });
 
 test("wechat payment verify returns amount mismatch without granting rewards and records the fraud signal", async (t) => {
@@ -450,4 +460,68 @@ test("wechat payment verify returns amount mismatch without granting rewards and
   assert.equal(purchaseEvent, undefined);
   assert.equal(storedOrder?.status, "created");
   assert.equal(receipt, null);
+});
+
+test("wechat payment verify emits purchase_failed when settlement cannot grant rewards", async (t) => {
+  const port = 43080 + Math.floor(Math.random() * 1000);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const runtimeConfig = createWechatPayConfig();
+  const store = await createVerifiedTestStore();
+  const restoreEnv = withEnvOverrides({
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/analytics/events`
+  });
+  const originalCompletePaymentOrder = store.completePaymentOrder.bind(store);
+  store.completePaymentOrder = async (orderId, input) => {
+    const settlement = await originalCompletePaymentOrder(orderId, input);
+    return {
+      ...settlement,
+      credited: false,
+      order: {
+        ...settlement.order,
+        status: "dead_letter",
+        lastGrantError: "grant_failed_for_test",
+        deadLetteredAt: settlement.order.paidAt ?? settlement.order.updatedAt
+      }
+    };
+  };
+  const server = await startWechatPaymentServer({
+    port,
+    store,
+    runtimeConfig,
+    fetchImpl: buildVerifyFetch({})
+  });
+  const session = issueWechatSession();
+
+  t.after(async () => {
+    restoreEnv();
+    resetAnalyticsRuntimeDependencies();
+    resetGuestAuthSessions();
+    resetRuntimeObservability();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const order = await createOrder(baseUrl, session.token);
+  const verifyResponse = await fetch(`${baseUrl}/api/payments/wechat/verify`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      orderId: order.orderId
+    })
+  });
+  const verifyPayload = (await verifyResponse.json()) as { error: { code: string } };
+  await flushAnalyticsEventsForTest();
+
+  const analyticsEvents = await fetchCapturedAnalytics(baseUrl);
+  const purchaseFailedEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_failed" && event.payload.purchaseId === order.orderId
+  );
+
+  assert.equal(verifyResponse.status, 409);
+  assert.equal(verifyPayload.error.code, "payment_already_verified");
+  assert.equal(purchaseFailedEvent?.payload.paymentMethod, "wechat_pay");
+  assert.equal(purchaseFailedEvent?.payload.failureReason, "grant_failed_for_test");
+  assert.equal(purchaseFailedEvent?.payload.orderStatus, "dead_letter");
 });

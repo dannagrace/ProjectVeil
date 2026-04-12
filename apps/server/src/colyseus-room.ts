@@ -587,6 +587,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly minorProtectionConfig = readMinorProtectionConfig();
   private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
   private readonly playerIdBySessionId = new Map<string, string>();
+  private readonly analyticsSessionStartedAtBySessionId = new Map<string, number>();
+  private readonly analyticsSessionDisconnectReasonBySessionId = new Map<string, string>();
   private readonly disconnectedAtByPlayerId = new Map<string, string>();
   private readonly reconnectedAtByPlayerId = new Map<string, string>();
   private readonly wsActionTimestampsByPlayerId = new Map<string, number[]>();
@@ -731,6 +733,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           platform: "colyseus"
         }
       });
+      this.analyticsSessionStartedAtBySessionId.set(client.sessionId, roomRuntimeDependencies.now());
+      this.analyticsSessionDisconnectReasonBySessionId.delete(client.sessionId);
     });
 
     this.onMessage("world.preview", (client, message: Extract<ClientMessage, { type: "world.preview" }>) => {
@@ -1028,6 +1032,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         continue;
       }
 
+      this.analyticsSessionDisconnectReasonBySessionId.set(client.sessionId, reason);
       sendMessage(client, "error", { requestId: "push", reason });
       client.leave(CloseCode.WITH_ERROR, reason);
       disconnected += 1;
@@ -1081,6 +1086,12 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
       this.playerIdBySessionId.set(reconnectedClient.sessionId, playerId);
+      const previousSessionStartedAtMs = this.analyticsSessionStartedAtBySessionId.get(client.sessionId);
+      if (previousSessionStartedAtMs != null) {
+        this.analyticsSessionStartedAtBySessionId.set(reconnectedClient.sessionId, previousSessionStartedAtMs);
+      }
+      this.analyticsSessionStartedAtBySessionId.delete(client.sessionId);
+      this.analyticsSessionDisconnectReasonBySessionId.delete(client.sessionId);
       this.disconnectedAtByPlayerId.delete(playerId);
       this.reconnectedAtByPlayerId.set(playerId, new Date().toISOString());
       this.ensureTurnTimerState();
@@ -1098,6 +1109,14 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         reconnectWindowOpen = false;
       }
     } catch (error) {
+      this.emitSessionEndForConnection(
+        client.sessionId,
+        playerId,
+        classifyReconnectFailure({
+          error,
+          fallbackReason: "reconnect_window_expired"
+        })
+      );
       if (reconnectWindowOpen) {
         recordReconnectWindowResolved("failure", {
           roomId: this.metadata.logicalRoomId,
@@ -1121,6 +1140,13 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     this.suspiciousActionTrackerBySessionId.delete(client.sessionId);
     this.completedActionRepliesBySessionId.delete(client.sessionId);
     this.pendingActionRepliesBySessionId.delete(client.sessionId);
+    if (playerId) {
+      this.emitSessionEndForConnection(
+        client.sessionId,
+        playerId,
+        this.analyticsSessionDisconnectReasonBySessionId.get(client.sessionId) ?? "transport_closed"
+      );
+    }
     if (playerId && !this.getConnectedPlayerIds().includes(playerId)) {
       this.disconnectedAtByPlayerId.set(playerId, new Date(roomRuntimeDependencies.now()).toISOString());
     }
@@ -1130,6 +1156,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onDispose(): void {
+    for (const [sessionId, playerId] of this.playerIdBySessionId.entries()) {
+      this.emitSessionEndForConnection(sessionId, playerId, "room_disposed");
+    }
     this.unsubscribeConfigUpdate?.();
     this.unsubscribeConfigUpdate = null;
     this.wsActionTimestampsByPlayerId.clear();
@@ -1140,6 +1169,26 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     this.retireRoom("dispose");
+  }
+
+  private emitSessionEndForConnection(sessionId: string, playerId: string, disconnectReason: string): void {
+    const startedAtMs = this.analyticsSessionStartedAtBySessionId.get(sessionId);
+    this.analyticsSessionStartedAtBySessionId.delete(sessionId);
+    this.analyticsSessionDisconnectReasonBySessionId.delete(sessionId);
+    if (startedAtMs == null) {
+      return;
+    }
+
+    emitAnalyticsEvent("session_end", {
+      playerId,
+      roomId: this.metadata.logicalRoomId,
+      sessionId,
+      payload: {
+        roomId: this.metadata.logicalRoomId,
+        disconnectReason,
+        sessionDurationMs: Math.max(0, roomRuntimeDependencies.now() - startedAtMs)
+      }
+    });
   }
 
   private restoreWorldRoom(snapshot: RoomPersistenceSnapshot): void {

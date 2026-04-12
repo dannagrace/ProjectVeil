@@ -27,6 +27,11 @@ export const ANALYTICS_EVENT_CATALOG = {
     authMode: "guest",
     platform: "wechat"
   }),
+  session_end: defineAnalyticsEvent("session_end", 1, "Player session ended and recorded disconnect reason plus session duration.", {
+    roomId: "room-contract",
+    disconnectReason: "transport_closed",
+    sessionDurationMs: 12345
+  }),
   battle_start: defineAnalyticsEvent("battle_start", 1, "Player entered a battle encounter.", {
     roomId: "room-contract",
     battleId: "battle-demo",
@@ -77,6 +82,30 @@ export const ANALYTICS_EVENT_CATALOG = {
     currency: "wechat_fen",
     price: 600
   }),
+  purchase_completed: defineAnalyticsEvent(
+    "purchase_completed",
+    1,
+    "Shop purchase completed successfully after rewards were granted.",
+    {
+      purchaseId: "purchase-1",
+      productId: "gem_pack_small",
+      paymentMethod: "gems",
+      quantity: 1,
+      totalPrice: 600
+    }
+  ),
+  purchase_failed: defineAnalyticsEvent(
+    "purchase_failed",
+    1,
+    "Shop purchase failed before rewards were granted or could not finish reward settlement.",
+    {
+      purchaseId: "purchase-1",
+      productId: "gem_pack_small",
+      paymentMethod: "wechat_pay",
+      failureReason: "grant_failed",
+      orderStatus: "grant_pending"
+    }
+  ),
   purchase: defineAnalyticsEvent("purchase", 1, "Shop purchase completed successfully.", {
     purchaseId: "purchase-1",
     productId: "gem_pack_small",
