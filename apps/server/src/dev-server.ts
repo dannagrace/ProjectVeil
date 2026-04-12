@@ -60,6 +60,7 @@ interface DevServerDefinitionChain {
 interface DevServerGameServer {
   define(name: string, room: typeof VeilColyseusRoom): DevServerDefinitionChain;
   listen(port: number, host: string): Promise<void>;
+  gracefullyShutdown?(exitProcess?: boolean): Promise<void>;
 }
 
 interface DevServerRealtimeOptions {
@@ -149,6 +150,10 @@ export interface DevServerBootstrapDependencies {
   isMySqlSnapshotStore(store: DevServerRoomSnapshotStore): store is DevServerMySqlSnapshotStore;
 }
 
+export interface DevServerRuntimeHandle {
+  gracefullyShutdown(exitProcess?: boolean): Promise<void>;
+}
+
 export function registerPrometheusMetricsMiddleware(app: DevServerHttpApp): void {
   app.use((request, response, next) => {
     const startedAt = process.hrtime.bigint();
@@ -235,7 +240,7 @@ export async function startDevServer(
   port = Number(process.env.PORT ?? 2567),
   host = process.env.HOST ?? "0.0.0.0",
   dependencies: Partial<DevServerBootstrapDependencies> = {}
-): Promise<void> {
+): Promise<DevServerRuntimeHandle> {
   const deps = {
     ...createDefaultDevServerBootstrapDependencies(),
     ...dependencies
@@ -442,38 +447,55 @@ export async function startDevServer(
     ]);
   };
 
-  let shutdownStarted = false;
-  const shutdown = (exitCode: number, message?: string, error?: unknown): void => {
-    if (shutdownStarted) {
-      return;
+  let shutdownPromise: Promise<void> | null = null;
+  let exitScheduled = false;
+  const closeRuntime = async (): Promise<void> => {
+    await gameServer.gracefullyShutdown?.(false);
+    await closeStore();
+  };
+  const beginShutdown = (
+    options: {
+      exitCode?: number;
+      message?: string;
+      error?: unknown;
+    } = {}
+  ): Promise<void> => {
+    if (!shutdownPromise) {
+      if (options.message) {
+        deps.logger.error(options.message, options.error);
+      }
+
+      const capturePromise =
+        options.message && options.error
+          ? captureServerError({
+              errorCode: options.message.startsWith("Unhandled promise rejection")
+                ? "unhandled_rejection"
+                : "uncaught_exception",
+              message: options.message,
+              error: options.error,
+              severity: "fatal",
+              featureArea: "runtime",
+              ownerArea: "ops",
+              surface: "dev-server"
+            })
+          : Promise.resolve();
+
+      shutdownPromise = Promise.allSettled([capturePromise, closeRuntime()]).then(() => undefined);
     }
-    shutdownStarted = true;
 
-    if (message) {
-      deps.logger.error(message, error);
+    if (options.exitCode != null && !exitScheduled) {
+      exitScheduled = true;
+      void shutdownPromise.finally(() => deps.process.exit(options.exitCode!));
     }
 
-    const capturePromise =
-      message && error
-        ? captureServerError({
-            errorCode: message.startsWith("Unhandled promise rejection") ? "unhandled_rejection" : "uncaught_exception",
-            message,
-            error,
-            severity: "fatal",
-            featureArea: "runtime",
-            ownerArea: "ops",
-            surface: "dev-server"
-          })
-        : Promise.resolve();
-
-    void Promise.allSettled([capturePromise, closeStore()]).finally(() => deps.process.exit(exitCode));
+    return shutdownPromise;
   };
 
   deps.process.once("SIGINT", () => {
-    shutdown(0);
+    void beginShutdown({ exitCode: 0 });
   });
   deps.process.once("SIGTERM", () => {
-    shutdown(0);
+    void beginShutdown({ exitCode: 0 });
   });
   deps.process.on("unhandledRejection", (reason) => {
     recordRuntimeErrorEvent({
@@ -498,7 +520,11 @@ export async function startDevServer(
         detail: reason instanceof Error ? reason.message : String(reason)
       }
     });
-    shutdown(1, "Unhandled promise rejection in dev server", reason);
+    void beginShutdown({
+      exitCode: 1,
+      message: "Unhandled promise rejection in dev server",
+      error: reason
+    });
   });
   deps.process.on("uncaughtException", (error) => {
     recordRuntimeErrorEvent({
@@ -523,8 +549,18 @@ export async function startDevServer(
         detail: error.message
       }
     });
-    shutdown(1, "Uncaught exception in dev server", error);
+    void beginShutdown({
+      exitCode: 1,
+      message: "Uncaught exception in dev server",
+      error
+    });
   });
+
+  return {
+    gracefullyShutdown: async (exitProcess = false): Promise<void> => {
+      await beginShutdown(exitProcess ? { exitCode: 0 } : {});
+    }
+  };
 }
 
 if (import.meta.main) {

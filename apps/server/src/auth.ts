@@ -1926,7 +1926,7 @@ function recordAccountLoginFailure(loginId: string, config = readAuthRuntimeConf
   const currentTime = nowMs();
   const nextState = pruneAccountLockoutState(loginId, config);
   nextState.failedAttempts.push(currentTime);
-  if (nextState.failedAttempts.length >= config.lockoutThreshold) {
+  if (nextState.failedAttempts.length > config.lockoutThreshold) {
     nextState.lockedUntil = currentTime + config.lockoutDurationMs;
   }
   accountLockoutStateByLoginId.set(loginId, nextState);
@@ -1973,7 +1973,7 @@ function recordCredentialStuffingFailure(ip: string, loginId: string, config = r
     loginId
   });
   const distinctLoginIdCount = new Set(nextState.failedAttempts.map((attempt) => attempt.loginId)).size;
-  if (distinctLoginIdCount >= config.credentialStuffingDistinctLoginIdThreshold) {
+  if (distinctLoginIdCount > config.credentialStuffingDistinctLoginIdThreshold) {
     nextState.blockedUntil = Math.max(
       nextState.blockedUntil ?? 0,
       currentTime + config.credentialStuffingBlockDurationMs
