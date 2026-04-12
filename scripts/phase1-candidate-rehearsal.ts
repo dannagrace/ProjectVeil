@@ -553,7 +553,12 @@ function renderMarkdown(report: RehearsalReport): string {
     lines.push("");
   }
 
-  lines.push("## Reviewer Front Door", "");
+  lines.push(
+    "## Reviewer Front Door",
+    "",
+    "Open this section first. It is the canonical packet-level reviewer entrypoint from `SUMMARY.md`.",
+    ""
+  );
   if (report.artifacts.releaseEvidenceIndexPath) {
     lines.push(`- Current release evidence index: \`${report.artifacts.releaseEvidenceIndexPath}\``);
   }
@@ -569,6 +574,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseReadinessSnapshotPath) {
     lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
   }
+  if (report.artifacts.runtimeObservabilityGatePath) {
+    lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
+  }
   if (report.artifacts.stableH5SmokePath) {
     lines.push(`- H5 candidate smoke: \`${report.artifacts.stableH5SmokePath}\``);
   }
@@ -583,9 +591,6 @@ function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.runtimeObservabilityEvidencePath) {
     lines.push(`- Runtime observability evidence: \`${report.artifacts.runtimeObservabilityEvidencePath}\``);
-  }
-  if (report.artifacts.runtimeObservabilityGatePath) {
-    lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
   }
   if (report.artifacts.candidateEvidenceAuditPath) {
     lines.push(`- Candidate evidence audit: \`${report.artifacts.candidateEvidenceAuditPath}\``);
