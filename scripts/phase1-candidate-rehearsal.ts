@@ -573,6 +573,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseHealthSummaryPath) {
     lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
   }
+  if (report.artifacts.releaseHealthMarkdownPath) {
+    lines.push(`- Release health summary markdown: \`${report.artifacts.releaseHealthMarkdownPath}\``);
+  }
   if (report.artifacts.ciTrendSummaryPath) {
     lines.push(`- CI trend summary: \`${report.artifacts.ciTrendSummaryPath}\``);
   }
