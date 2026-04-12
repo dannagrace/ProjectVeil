@@ -1,5 +1,11 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Issue #1353 - Release gate markdown front door - 2026-04-12
+
+- Frontloaded the staged `releaseGateMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable release gate companion directly from `SUMMARY.md`.
+- Locked the new reviewer entry with markdown and artifact-path assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the rehearsal docs and release script inventory so the reviewer packet description explicitly includes the release gate summary Markdown companion.
+
 ## Issue #1342 - Phase 1 dossier markdown front door - 2026-04-12
 
 - Frontloaded the staged `phase1CandidateDossierMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable dossier directly from `SUMMARY.md`.

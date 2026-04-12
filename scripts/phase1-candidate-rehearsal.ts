@@ -565,6 +565,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseGateSummaryPath) {
     lines.push(`- Release gate summary: \`${report.artifacts.releaseGateSummaryPath}\``);
   }
+  if (report.artifacts.releaseGateMarkdownPath) {
+    lines.push(`- Release gate summary markdown: \`${report.artifacts.releaseGateMarkdownPath}\``);
+  }
   if (report.artifacts.releaseHealthSummaryPath) {
     lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
   }
