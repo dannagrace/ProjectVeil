@@ -16,6 +16,7 @@ import {
   planPlayerViewMovement,
   validateWorldAction,
   resolveCosmeticCatalog,
+  normalizeCosmeticInventory,
   type ActionValidationFailure,
   type PlayerWorldView,
   type PlayerBattleReplaySummary,
@@ -45,6 +46,7 @@ import { didPlayerWinBattle, resolveBattlePassConfig } from "./battle-pass";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
+  equipOwnedCosmetic,
   isPlayerBanActive,
   type RoomSnapshotStore,
   type PlayerAccountSnapshot,
@@ -1150,6 +1152,107 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         action: "emote",
         ...(account.equippedCosmetics ? { equippedCosmetics: account.equippedCosmetics } : {})
       });
+    });
+
+    this.onMessage("BUY_COSMETIC", async (client, message: Extract<ClientMessage, { type: "BUY_COSMETIC" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore?.purchaseShopProduct) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetics_unavailable" });
+        return;
+      }
+
+      const cosmeticId = message.cosmeticId.trim();
+      const definition = resolveCosmeticCatalog().find((entry) => entry.id === cosmeticId);
+      if (!definition) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetic_not_found" });
+        return;
+      }
+
+      try {
+        await configuredRoomSnapshotStore.purchaseShopProduct(playerId, {
+          purchaseId: `ws:${this.metadata.logicalRoomId}:${message.requestId}`,
+          productId: `cosmetic:${cosmeticId}`,
+          productName: definition.name,
+          quantity: 1,
+          unitPrice: definition.price,
+          grant: {
+            cosmeticIds: [cosmeticId]
+          }
+        });
+
+        sendMessage(client, "COSMETIC_APPLIED", {
+          requestId: message.requestId,
+          delivery: "reply",
+          playerId,
+          cosmeticId,
+          action: "purchased"
+        });
+        this.broadcastCosmeticApplied(client, {
+          playerId,
+          cosmeticId,
+          action: "purchased"
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error
+            ? error.message === "insufficient gems"
+              ? "insufficient_gems"
+              : "cosmetics_unavailable"
+            : "cosmetics_unavailable";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
+
+    this.onMessage("EQUIP_COSMETIC", async (client, message: Extract<ClientMessage, { type: "EQUIP_COSMETIC" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore?.loadPlayerAccount || !configuredRoomSnapshotStore.savePlayerAccountProgress) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "cosmetics_unavailable" });
+        return;
+      }
+
+      try {
+        const account = await configuredRoomSnapshotStore.loadPlayerAccount(playerId);
+        if (!account) {
+          sendMessage(client, "error", { requestId: message.requestId, reason: "player_account_not_found" });
+          return;
+        }
+
+        const cosmeticId = message.cosmeticId.trim();
+        const equippedCosmetics = equipOwnedCosmetic(account, cosmeticId);
+        const nextAccount = await configuredRoomSnapshotStore.savePlayerAccountProgress(playerId, {
+          cosmeticInventory: normalizeCosmeticInventory(account.cosmeticInventory),
+          equippedCosmetics
+        });
+
+        sendMessage(client, "COSMETIC_APPLIED", {
+          requestId: message.requestId,
+          delivery: "reply",
+          playerId,
+          cosmeticId,
+          action: "equipped",
+          ...(nextAccount.equippedCosmetics ? { equippedCosmetics: nextAccount.equippedCosmetics } : {})
+        });
+        this.broadcastCosmeticApplied(client, {
+          playerId,
+          cosmeticId,
+          action: "equipped",
+          ...(nextAccount.equippedCosmetics ? { equippedCosmetics: nextAccount.equippedCosmetics } : {})
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error && (error.message === "cosmetic_not_found" || error.message === "cosmetic_not_owned")
+            ? error.message
+            : "cosmetics_unavailable";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
     });
   }
 
