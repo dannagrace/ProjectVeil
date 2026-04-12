@@ -205,6 +205,8 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.manualEvidenceLedgerPath ?? "", /manual-release-evidence-owner-ledger-phase1-mainline-/);
   assert.match(report.artifacts.releaseReadinessDashboardPath ?? "", /release-readiness-dashboard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceAuditPath ?? "", /candidate-evidence-audit-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceManifestPath ?? "", /candidate-evidence-manifest-phase1-mainline-/);
+  assert.match(report.artifacts.candidateEvidenceManifestMarkdownPath ?? "", /candidate-evidence-manifest-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceFreshnessGuardPath ?? "", /candidate-evidence-freshness-guard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceFreshnessGuardMarkdownPath ?? "", /candidate-evidence-freshness-guard-phase1-mainline-/);
   assert.match(report.artifacts.candidateEvidenceOwnerReminderPath ?? "", /candidate-evidence-owner-reminder-report-phase1-mainline-/);
@@ -238,6 +240,16 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Phase 1 dossier summary: `passed`/);
   assert.match(markdown, /## Reviewer Front Door/);
   assert.match(markdown, /canonical packet-level reviewer entrypoint from `SUMMARY\.md`/);
+  assert.match(
+    markdown,
+    new RegExp(
+      `- Release candidate manifest markdown: \`${escapeRegex(report.artifacts.candidateEvidenceManifestMarkdownPath ?? "")}\``
+    )
+  );
+  assert.match(
+    markdown,
+    new RegExp(`- Release candidate manifest JSON: \`${escapeRegex(report.artifacts.candidateEvidenceManifestPath ?? "")}\``)
+  );
   assert.match(markdown, /Current release evidence index:/);
   assert.match(markdown, /Current release evidence index markdown:/);
   assert.match(markdown, /Release gate summary:/);

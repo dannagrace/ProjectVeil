@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
+import {
+  configureAnalyticsRuntimeDependencies,
+  flushAnalyticsEventsForTest,
+  resetAnalyticsRuntimeDependencies
+} from "../src/analytics";
 import { issueAccountAuthSession } from "../src/auth";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
@@ -154,6 +159,12 @@ test("weekly shop rotation is deterministic within an ISO week and advances on t
 test("shop purchase debits gems and grants resource bundles", async (t) => {
   const port = 42420 + Math.floor(Math.random() * 1000);
   const store = new MemoryRoomSnapshotStore();
+  const analyticsLogs: string[] = [];
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
   await store.save("shop-room", createShopWorldSnapshot());
   await store.creditGems("shop-player", 100, "purchase", "seed-gems");
   const server = await startShopRouteServer(port, store, TEST_PRODUCTS);
@@ -164,6 +175,7 @@ test("shop purchase debits gems and grants resource bundles", async (t) => {
   });
 
   t.after(async () => {
+    resetAnalyticsRuntimeDependencies();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
@@ -188,6 +200,14 @@ test("shop purchase debits gems and grants resource bundles", async (t) => {
   };
 
   const account = await store.loadPlayerAccount("shop-player");
+  await flushAnalyticsEventsForTest({ ANALYTICS_SINK: "stdout" });
+  const analyticsEvents = analyticsLogs
+    .filter((entry) => entry.startsWith("[Analytics] {"))
+    .map((entry) => JSON.parse(entry.slice("[Analytics] ".length)) as { events: Array<{ name: string; payload: Record<string, unknown> }> })
+    .flatMap((entry) => entry.events);
+  const purchaseCompletedEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_completed" && event.payload.purchaseId === "purchase-resource-1"
+  );
 
   assert.equal(response.status, 200);
   assert.equal(payload.totalPrice, 60);
@@ -195,6 +215,8 @@ test("shop purchase debits gems and grants resource bundles", async (t) => {
   assert.deepEqual(payload.granted.resources, { gold: 240, wood: 20, ore: 10 });
   assert.deepEqual(account?.globalResources, { gold: 240, wood: 20, ore: 10 });
   assert.equal(account?.gems, 40);
+  assert.equal(purchaseCompletedEvent?.payload.paymentMethod, "gems");
+  assert.equal(purchaseCompletedEvent?.payload.totalPrice, 60);
 });
 
 test("shop purchase grants cosmetics and equip route applies an owned cosmetic", async (t) => {
@@ -321,6 +343,12 @@ test("shop purchase grants equipment and replays the original result for the sam
 test("shop purchase rejects insufficient gems without debiting or granting", async (t) => {
   const port = 42460 + Math.floor(Math.random() * 1000);
   const store = new MemoryRoomSnapshotStore();
+  const analyticsLogs: string[] = [];
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      analyticsLogs.push(message);
+    }
+  });
   await store.save("shop-room", createShopWorldSnapshot());
   await store.creditGems("shop-player", 10, "purchase", "seed-gems");
   const server = await startShopRouteServer(port, store, TEST_PRODUCTS);
@@ -331,6 +359,7 @@ test("shop purchase rejects insufficient gems without debiting or granting", asy
   });
 
   t.after(async () => {
+    resetAnalyticsRuntimeDependencies();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
@@ -354,10 +383,20 @@ test("shop purchase rejects insufficient gems without debiting or granting", asy
 
   const account = await store.loadPlayerAccount("shop-player");
   const archives = await store.loadPlayerHeroArchives(["shop-player"]);
+  await flushAnalyticsEventsForTest({ ANALYTICS_SINK: "stdout" });
+  const analyticsEvents = analyticsLogs
+    .filter((entry) => entry.startsWith("[Analytics] {"))
+    .map((entry) => JSON.parse(entry.slice("[Analytics] ".length)) as { events: Array<{ name: string; payload: Record<string, unknown> }> })
+    .flatMap((entry) => entry.events);
+  const purchaseFailedEvent = analyticsEvents.find(
+    (event) => event.name === "purchase_failed" && event.payload.purchaseId === "purchase-fail-1"
+  );
 
   assert.equal(response.status, 409);
   assert.equal(payload.error.code, "insufficient_gems");
   assert.equal(account?.gems, 10);
   assert.deepEqual(account?.globalResources, { gold: 0, wood: 0, ore: 0 });
   assert.deepEqual(archives[0]?.hero.loadout.inventory, []);
+  assert.equal(purchaseFailedEvent?.payload.paymentMethod, "gems");
+  assert.equal(purchaseFailedEvent?.payload.failureReason, "insufficient_gems");
 });

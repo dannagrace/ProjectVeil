@@ -501,13 +501,14 @@ interface ConfigRollbackMonitorState {
   previousBundle: RuntimeConfigBundle;
   appliedAtMs: number;
   appliedAt: string;
+  windowMs: number;
   handle: ConfigCenterTimerHandle;
 }
 
 const CONFIG_CENTER_LIBRARY_FILE = ".config-center-library.json";
 const MAX_STAGE_DOCUMENTS = 5;
 const MAX_PUBLISH_HISTORY_ENTRIES = 20;
-const CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS = 30_000;
+const DEFAULT_CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS = 120_000;
 const CONFIG_HOT_RELOAD_ERROR_THRESHOLD = 3;
 const BUILTIN_DIFFICULTY_PRESET_IDS = ["easy", "normal", "hard"] as const;
 const BUILTIN_WORLD_LAYOUT_PRESETS = [
@@ -2296,6 +2297,15 @@ function runtimeRoomsWithActiveBattles(): ConfigHotReloadRoomState[] {
   return snapshot.rooms.filter((room) => room.activeBattles > 0);
 }
 
+function readConfigRollbackWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number(env.CONFIG_ROLLBACK_WINDOW_MS?.trim());
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS;
+  }
+
+  return Math.floor(parsed);
+}
+
 function clearConfigRollbackMonitor(): void {
   if (!configRollbackMonitorState) {
     return;
@@ -2336,7 +2346,7 @@ function rollbackRuntimeBundleIfNeeded(): void {
   notifyConfigUpdateListeners(monitor.previousBundle);
   lastConfigRuntimeApplyResult = {
     status: "applied",
-    message: `热更新后 30 秒内捕获 ${recentErrorCount} 个房间错误，已自动回滚到上一版本。`
+    message: `热更新后 ${monitor.windowMs} ms 内捕获 ${recentErrorCount} 个房间错误，已自动回滚到上一版本。`
   };
   console.error("[config-center] Rolled back config hot reload after runtime error spike", {
     appliedAt: monitor.appliedAt,
@@ -2388,15 +2398,17 @@ function startConfigRollbackMonitor(previousBundle: RuntimeConfigBundle | null):
   }
 
   const appliedAtMs = configCenterRuntimeDependencies.now();
+  const windowMs = readConfigRollbackWindowMs();
   const handle = configCenterRuntimeDependencies.setTimeout(
     () => rollbackRuntimeBundleIfNeeded(),
-    CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS
+    windowMs
   );
   handle.unref?.();
   configRollbackMonitorState = {
     previousBundle,
     appliedAtMs,
     appliedAt: new Date(appliedAtMs).toISOString(),
+    windowMs,
     handle
   };
 }

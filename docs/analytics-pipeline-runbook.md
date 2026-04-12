@@ -78,6 +78,15 @@ Notes:
 - Prefer `source='server'` for KPI queries that should not double-count matching client events.
 - Keep the raw object archive for replay/audit, but drive dashboards and alerts from the curated table.
 
+## Event Payload Reference
+
+| Event | Payload fields | Notes |
+| --- | --- | --- |
+| `session_end` | `roomId`, `disconnectReason`, `sessionDurationMs` | Emitted when a room transport closes or the room disposes. |
+| `purchase_completed` | `purchaseId`, `productId`, `paymentMethod`, `quantity`, `totalPrice` | Emitted only after rewards are granted successfully. |
+| `purchase_failed` | `purchaseId`, `productId`, `paymentMethod`, `failureReason`, `orderStatus` | Emitted when a purchase cannot grant rewards or fails before completion. |
+| `tutorial_step` | `stepId`, `status` | Tutorial completion remains `tutorial_step` with `stepId = tutorial_completed`; no standalone `tutorial_completed` event is introduced in this change. |
+
 ## Core KPI Queries
 
 ### DAU
@@ -134,7 +143,7 @@ WITH
   purchasers AS (
     SELECT uniqExact(player_id) AS players
     FROM analytics_prod.veil_analytics_events
-    WHERE name = 'purchase'
+    WHERE name = 'purchase_completed'
       AND source = 'server'
       AND event_at >= toStartOfDay(now())
   )
@@ -143,6 +152,36 @@ SELECT
   purchasers.players AS purchasers,
   round(purchasers.players / greatest(dau.players, 1), 4) AS purchase_conversion_rate
 FROM dau, purchasers;
+```
+
+### Session Duration
+
+```sql
+SELECT
+  toDate(event_at) AS day,
+  round(avg(JSONExtractFloat(payload_json, 'sessionDurationMs')) / 1000, 2) AS avg_session_duration_seconds,
+  count() AS sessions_ended
+FROM analytics_prod.veil_analytics_events
+WHERE name = 'session_end'
+  AND source = 'server'
+  AND event_at >= today() - 7
+GROUP BY day
+ORDER BY day DESC;
+```
+
+### Purchase Failures
+
+```sql
+SELECT
+  toDate(event_at) AS day,
+  JSONExtractString(payload_json, 'failureReason') AS failure_reason,
+  count() AS failures
+FROM analytics_prod.veil_analytics_events
+WHERE name = 'purchase_failed'
+  AND source = 'server'
+  AND event_at >= today() - 7
+GROUP BY day, failure_reason
+ORDER BY day DESC, failures DESC;
 ```
 
 ## Payment Fraud And Session Drop Monitoring

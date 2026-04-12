@@ -140,6 +140,23 @@ test("createAnalyticsEvent: sessionId is absent when not provided", () => {
   assert.ok(!("sessionId" in event), "sessionId should not be present");
 });
 
+test("createAnalyticsEvent: session_end event carries duration and reason payload", () => {
+  const event = createAnalyticsEvent("session_end", {
+    playerId: "player-1",
+    sessionId: "session-xyz",
+    payload: {
+      roomId: "room-1",
+      disconnectReason: "transport_closed",
+      sessionDurationMs: 12345
+    }
+  });
+
+  assert.equal(event.payload.roomId, "room-1");
+  assert.equal(event.payload.disconnectReason, "transport_closed");
+  assert.equal(event.payload.sessionDurationMs, 12345);
+  assert.equal(event.sessionId, "session-xyz");
+});
+
 test("createAnalyticsEvent: platform is included when provided", () => {
   const event = createAnalyticsEvent("session_start", {
     playerId: "player-1",
@@ -182,6 +199,42 @@ test("createAnalyticsEvent: payload is passed through unchanged", () => {
   const payload = { purchaseId: "p-42", productId: "gem_pack_large", quantity: 2, totalPrice: 598 };
   const event = createAnalyticsEvent("purchase", { playerId: "player-1", payload });
   assert.deepEqual(event.payload, payload);
+});
+
+test("createAnalyticsEvent: purchase_completed event carries monetization funnel fields", () => {
+  const event = createAnalyticsEvent("purchase_completed", {
+    playerId: "player-1",
+    payload: {
+      purchaseId: "purchase-42",
+      productId: "gem_pack_small",
+      paymentMethod: "wechat",
+      quantity: 1,
+      totalPrice: 600
+    }
+  });
+
+  assert.equal(event.payload.purchaseId, "purchase-42");
+  assert.equal(event.payload.paymentMethod, "wechat");
+  assert.equal(event.payload.quantity, 1);
+  assert.equal(event.payload.totalPrice, 600);
+});
+
+test("createAnalyticsEvent: purchase_failed event carries failure reason and status", () => {
+  const event = createAnalyticsEvent("purchase_failed", {
+    playerId: "player-1",
+    payload: {
+      purchaseId: "purchase-42",
+      productId: "gem_pack_small",
+      paymentMethod: "wechat_pay",
+      failureReason: "grant_failed",
+      orderStatus: "dead_letter"
+    }
+  });
+
+  assert.equal(event.payload.purchaseId, "purchase-42");
+  assert.equal(event.payload.paymentMethod, "wechat_pay");
+  assert.equal(event.payload.failureReason, "grant_failed");
+  assert.equal(event.payload.orderStatus, "dead_letter");
 });
 
 test("createAnalyticsEvent: quest_complete event carries correct payload structure", () => {
