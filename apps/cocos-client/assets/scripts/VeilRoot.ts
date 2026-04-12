@@ -219,6 +219,7 @@ import {
 import {
   describeAccountAuthFailure,
   normalizeTutorialStep,
+  type StructuredErrorCode,
   type TutorialProgressAction,
   type PrimaryClientTelemetryEvent,
   type RuntimeDiagnosticsConnectionStatus,
@@ -259,6 +260,12 @@ interface BattleSettlementSnapshot {
   badge: string;
   tone: CocosBattleFeedbackView["tone"];
   summaryLines: string[];
+}
+
+interface GlobalErrorBoundaryEvent {
+  message?: string;
+  error?: unknown;
+  reason?: unknown;
 }
 
 interface VeilRootRuntime {
@@ -521,10 +528,12 @@ export class VeilRoot extends Component {
   private launchReferrerId: string | null = null;
   private lastReferralClaimKey: string | null = null;
   private lastAssetFailureNoticeKey: string | null = null;
+  private stopGlobalErrorBoundary: (() => void) | null = null;
 
   onLoad(): void {
     this.audioRuntime.dispose();
     this.stopAssetLoadFailureSubscription?.();
+    this.stopGlobalErrorBoundary?.();
     setAssetLoadFailureReporter((event) => {
       this.trackAssetLoadFailureAnalytics(event);
     });
@@ -543,6 +552,7 @@ export class VeilRoot extends Component {
     this.hydrateLaunchIdentity();
     this.hydrateSettings();
     this.syncWechatShareBridge();
+    this.stopGlobalErrorBoundary = this.bindGlobalErrorBoundary();
     this.ensureUiCameraVisibility();
     this.ensureViewNodes();
     this.ensureHudActionBinding();
@@ -577,6 +587,8 @@ export class VeilRoot extends Component {
     setAssetLoadFailureReporter(null);
     this.stopRuntimeMemoryWarnings?.();
     this.stopRuntimeMemoryWarnings = null;
+    this.stopGlobalErrorBoundary?.();
+    this.stopGlobalErrorBoundary = null;
     if (this.hudActionBinding) {
       input.off(Input.EventType.TOUCH_END, this.handleHudActionInput, this);
       input.off(Input.EventType.MOUSE_UP, this.handleHudActionInput, this);
@@ -639,6 +651,7 @@ export class VeilRoot extends Component {
         void this.refreshGameplayAccountProfile();
       }
     } catch (error) {
+      this.maybeReportSessionRuntimeError(error, "connect");
       if (!this.isActiveSessionEpoch(sessionEpoch)) {
         if (nextSession) {
           await nextSession.dispose().catch(() => undefined);
@@ -674,6 +687,7 @@ export class VeilRoot extends Component {
       this.pushLog("房间快照已刷新。");
       this.renderView();
     } catch (error) {
+      this.maybeReportSessionRuntimeError(error, "refresh_snapshot");
       const failureMessage = this.describeSessionError(error, "Snapshot refresh failed.");
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
@@ -706,6 +720,7 @@ export class VeilRoot extends Component {
       await this.applySessionUpdate(await this.session.endDay());
       this.pushLog("已推进到下一天。");
     } catch (error) {
+      this.maybeReportSessionRuntimeError(error, "end_day");
       const failureMessage = this.describeSessionError(error, "推进天数失败。");
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
@@ -3514,6 +3529,7 @@ export class VeilRoot extends Component {
     | "purchase_initiated"
     | "asset_load_failed"
     | "client_perf_degraded"
+    | "client_runtime_error"
   >(
     name: Name,
     payload: Record<string, unknown>,
@@ -3552,6 +3568,99 @@ export class VeilRoot extends Component {
     };
     this.pushLog(`资源加载失败：${event.assetPath}（已重试 ${event.retryCount} 次）`);
     this.renderView();
+  }
+
+  private reportClientRuntimeError(input: {
+    errorCode: StructuredErrorCode | "session_disconnect" | "client_error_boundary_triggered";
+    severity: "error" | "fatal";
+    stage: string;
+    recoverable: boolean;
+    message: string;
+    detail?: string;
+    roomId?: string | null;
+  }): void {
+    this.trackClientAnalyticsEvent(
+      "client_runtime_error",
+      {
+        errorCode: input.errorCode,
+        severity: input.severity,
+        stage: input.stage,
+        recoverable: input.recoverable,
+        message: input.message,
+        ...(input.detail ? { detail: input.detail } : {})
+      },
+      input.roomId ?? this.roomId
+    );
+  }
+
+  private maybeReportSessionRuntimeError(error: unknown, stage: string): void {
+    if (!(error instanceof Error)) {
+      return;
+    }
+
+    if (error.message === "persistence_save_failed") {
+      this.reportClientRuntimeError({
+        errorCode: "persistence_save_failed",
+        severity: "error",
+        stage,
+        recoverable: false,
+        message: "Server persistence failed while applying a session action."
+      });
+      return;
+    }
+
+    if (
+      error.message === "room_left" ||
+      error.message === "session_unavailable" ||
+      error.message === "connect_failed" ||
+      error.message === "connect_timeout"
+    ) {
+      this.reportClientRuntimeError({
+        errorCode: "session_disconnect",
+        severity: "error",
+        stage,
+        recoverable: true,
+        message: error.message
+      });
+    }
+  }
+
+  private bindGlobalErrorBoundary(): (() => void) | null {
+    const runtime = globalThis as typeof globalThis & {
+      addEventListener?: ((type: string, listener: (event: GlobalErrorBoundaryEvent) => void) => void) | undefined;
+      removeEventListener?: ((type: string, listener: (event: GlobalErrorBoundaryEvent) => void) => void) | undefined;
+    };
+    if (typeof runtime.addEventListener !== "function" || typeof runtime.removeEventListener !== "function") {
+      return null;
+    }
+
+    const handleGlobalFailure = (event: GlobalErrorBoundaryEvent): void => {
+      const reason = event.error ?? event.reason;
+      const message =
+        typeof event.message === "string" && event.message.trim().length > 0
+          ? event.message
+          : reason instanceof Error
+            ? reason.message
+            : String(reason ?? "unknown_client_error");
+      this.reportClientRuntimeError({
+        errorCode: "client_error_boundary_triggered",
+        severity: "fatal",
+        stage: "global",
+        recoverable: false,
+        message,
+        ...(reason instanceof Error && reason.stack ? { detail: reason.stack } : {})
+      });
+      this.pushLog(`客户端异常：${message}`);
+      this.renderView();
+    };
+
+    runtime.addEventListener("error", handleGlobalFailure);
+    runtime.addEventListener("unhandledrejection", handleGlobalFailure);
+
+    return () => {
+      runtime.removeEventListener?.("error", handleGlobalFailure);
+      runtime.removeEventListener?.("unhandledrejection", handleGlobalFailure);
+    };
   }
 
   private createTelemetryContext(heroId?: string | null): { roomId: string; playerId: string; heroId?: string } {
@@ -6027,6 +6136,15 @@ export class VeilRoot extends Component {
   private handleConnectionEvent(event: ConnectionEvent): void {
     this.diagnosticsConnectionStatus =
       event === "reconnecting" ? "reconnecting" : event === "reconnected" ? "connected" : "reconnect_failed";
+    if (event === "reconnect_failed") {
+      this.reportClientRuntimeError({
+        errorCode: "session_disconnect",
+        severity: "error",
+        stage: "reconnect",
+        recoverable: true,
+        message: "Client reconnect failed; falling back to room snapshot recovery."
+      });
+    }
     const activePvpBattle = Boolean(this.lastUpdate?.battle?.defenderHeroId);
     const label =
       event === "reconnecting"

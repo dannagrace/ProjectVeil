@@ -53,7 +53,8 @@ import {
   readMySqlPersistenceConfig
 } from "./persistence";
 import { createTrackedMySqlPool } from "./mysql-pool";
-import { countRuntimeErrorEventsSince } from "./observability";
+import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "./observability";
+import { captureServerError } from "./error-monitoring";
 
 export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 
@@ -2340,6 +2341,43 @@ function rollbackRuntimeBundleIfNeeded(): void {
   console.error("[config-center] Rolled back config hot reload after runtime error spike", {
     appliedAt: monitor.appliedAt,
     recentErrorCount
+  });
+  recordRuntimeErrorEvent({
+    id: `config-hotload-${monitor.appliedAt}`,
+    recordedAt: new Date().toISOString(),
+    source: "server",
+    surface: "config-center",
+    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+    featureArea: "runtime",
+    ownerArea: "config",
+    severity: "error",
+    errorCode: "config_hotload_failed",
+    message: "Runtime config hot reload was rolled back after a room error spike.",
+    tags: ["config-center", "hot-reload"],
+    context: {
+      roomId: null,
+      playerId: null,
+      requestId: null,
+      route: "/api/config-center/configs",
+      action: "config.hot_reload",
+      statusCode: null,
+      crash: false,
+      detail: `appliedAt=${monitor.appliedAt} recentErrorCount=${recentErrorCount}`
+    }
+  });
+  void captureServerError({
+    errorCode: "config_hotload_failed",
+    message: "Runtime config hot reload was rolled back after a room error spike.",
+    severity: "error",
+    featureArea: "runtime",
+    ownerArea: "config",
+    surface: "config-center",
+    tags: ["config-center", "hot-reload"],
+    context: {
+      route: "/api/config-center/configs",
+      action: "config.hot_reload",
+      detail: `appliedAt=${monitor.appliedAt} recentErrorCount=${recentErrorCount}`
+    }
   });
 }
 

@@ -29,7 +29,12 @@ import {
   type BattleAction
 } from "../../../packages/shared/src/index";
 import { emitAnalyticsEvent } from "./analytics";
-import { createRoom, type AuthoritativeWorldRoom, type RoomPersistenceSnapshot } from "./index";
+import {
+  buildAuthoritativeRoomErrorContext,
+  createRoom,
+  type AuthoritativeWorldRoom,
+  type RoomPersistenceSnapshot
+} from "./index";
 import {
   appendCompletedBattleReplaysToAccount,
   buildPlayerBattleReplaySummariesForPlayer,
@@ -71,6 +76,7 @@ import {
 } from "./observability";
 import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
+import { captureServerError } from "./error-monitoring";
 import { settleLeaderboardMatch } from "./leaderboard-anti-abuse";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
@@ -108,6 +114,62 @@ const lobbyRoomOwnerTokens = new Map<string, number>();
 const activeRoomInstances = new Map<string, VeilColyseusRoom>();
 let nextLobbyRoomOwnerToken = 1;
 let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
+
+function reportPersistenceSaveFailure(
+  room: AuthoritativeWorldRoom,
+  playerId: string,
+  requestId: string,
+  action: string,
+  error: unknown
+): void {
+  const roomContext = buildAuthoritativeRoomErrorContext(room, playerId);
+  const detail = error instanceof Error ? error.message : String(error);
+
+  recordRuntimeErrorEvent({
+    id: `${roomContext.roomId}:${playerId}:${requestId}:persistence_save_failed`,
+    recordedAt: new Date().toISOString(),
+    source: "server",
+    surface: "colyseus-room",
+    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+    featureArea: "runtime",
+    ownerArea: "multiplayer",
+    severity: "error",
+    errorCode: "persistence_save_failed",
+    message: "Room state persistence failed and the action was rolled back.",
+    tags: ["room-persistence", action],
+    context: {
+      roomId: roomContext.roomId,
+      playerId: roomContext.playerId,
+      requestId,
+      route: null,
+      action,
+      statusCode: null,
+      crash: false,
+      detail: `battleId=${roomContext.battleId ?? "none"} heroId=${roomContext.heroId ?? "none"} day=${roomContext.day} error=${detail}`
+    }
+  });
+
+  void captureServerError({
+    errorCode: "persistence_save_failed",
+    message: "Room state persistence failed and the action was rolled back.",
+    error,
+    severity: "error",
+    featureArea: "runtime",
+    ownerArea: "multiplayer",
+    surface: "colyseus-room",
+    tags: ["room-persistence", action],
+    context: {
+      roomId: roomContext.roomId,
+      playerId: roomContext.playerId,
+      requestId,
+      action,
+      roomDay: roomContext.day,
+      battleId: roomContext.battleId,
+      heroId: roomContext.heroId,
+      detail
+    }
+  });
+}
 
 configureConfigRuntimeStatusProvider(() => {
   const rooms = Array.from(activeRoomInstances.values())
@@ -653,7 +715,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         this.afterSuccessfulWorldAction(playerId, message.action);
         try {
           await this.persistRoomState();
-        } catch {
+        } catch (error) {
+          reportPersistenceSaveFailure(this.worldRoom, playerId, message.requestId, message.action.type, error);
           this.restoreWorldRoom(previousSnapshot);
           this.ensureTurnTimerState();
           this.publishLobbyRoomSummary();
@@ -728,7 +791,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         this.afterSuccessfulBattleAction(playerId);
         try {
           await this.persistRoomState();
-        } catch {
+        } catch (error) {
+          reportPersistenceSaveFailure(this.worldRoom, playerId, message.requestId, message.action.type, error);
           this.restoreWorldRoom(previousSnapshot);
           this.ensureTurnTimerState();
           this.publishLobbyRoomSummary();

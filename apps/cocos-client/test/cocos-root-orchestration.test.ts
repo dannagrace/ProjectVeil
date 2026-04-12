@@ -1745,6 +1745,95 @@ test("VeilRoot forwards session connection events into runtime diagnostics and l
   assert.equal(root.logLines[0], "重连失败，正在尝试恢复房间快照...");
 });
 
+test("VeilRoot emits client runtime error analytics when reconnect recovery fails", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-alpha";
+  root.playerId = "player-1";
+  root.remoteUrl = "http://127.0.0.1:2567";
+
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  let capturedOptions:
+    | {
+        onConnectionEvent?: ((event: "reconnecting" | "reconnected" | "reconnect_failed") => void) | undefined;
+      }
+    | undefined;
+
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return { ok: true, status: 202 };
+    }
+  });
+
+  installVeilRootRuntime({
+    createSession: async (_roomId, _playerId, _seed, options) => {
+      capturedOptions = options;
+      return {
+        async snapshot() {
+          return createSessionUpdate(3, "room-alpha", "player-1");
+        },
+        async dispose() {}
+      } as never;
+    }
+  });
+
+  await root.connect();
+  capturedOptions?.onConnectionEvent?.("reconnect_failed");
+  await flushClientAnalyticsEventsForTest();
+
+  const events = parseCapturedAnalyticsEvents(fetchCalls);
+  const runtimeError = assertCapturedAnalyticsEvent(events, "client_runtime_error");
+  assert.equal(runtimeError.payload.errorCode, "session_disconnect");
+  assert.equal(runtimeError.payload.stage, "reconnect");
+});
+
+test("VeilRoot global error boundary reports client runtime errors through analytics", async () => {
+  const root = createVeilRootHarness();
+  root.roomId = "room-boundary";
+  root.playerId = "player-9";
+  root.remoteUrl = "http://127.0.0.1:2567";
+
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  const listeners = new Map<string, (event: { message?: string; error?: unknown; reason?: unknown }) => void>();
+  const originalAddEventListener = globalThis.addEventListener;
+  const originalRemoveEventListener = globalThis.removeEventListener;
+
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return { ok: true, status: 202 };
+    }
+  });
+
+  globalThis.addEventListener = ((type: string, listener: (event: { message?: string; error?: unknown; reason?: unknown }) => void) => {
+    listeners.set(type, listener);
+  }) as typeof globalThis.addEventListener;
+  globalThis.removeEventListener = ((type: string) => {
+    listeners.delete(type);
+  }) as typeof globalThis.removeEventListener;
+
+  try {
+    root.onLoad();
+    listeners.get("error")?.({
+      message: "render exploded",
+      error: new Error("render exploded")
+    });
+    await flushClientAnalyticsEventsForTest();
+  } finally {
+    root.onDestroy();
+    globalThis.addEventListener = originalAddEventListener;
+    globalThis.removeEventListener = originalRemoveEventListener;
+  }
+
+  const events = parseCapturedAnalyticsEvents(fetchCalls);
+  const runtimeError = assertCapturedAnalyticsEvent(events, "client_runtime_error");
+  assert.equal(runtimeError.payload.errorCode, "client_error_boundary_triggered");
+  assert.equal(runtimeError.payload.severity, "fatal");
+  assert.equal(runtimeError.payload.stage, "global");
+});
+
 test("VeilRoot runtime harness carries the first battle back to world state", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-alpha";
