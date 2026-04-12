@@ -30,6 +30,8 @@ export interface ShopProduct {
   type: ShopProductType;
   price: number;
   wechatPriceFen?: number;
+  appleProductId?: string;
+  applePriceCents?: number;
   enabled: boolean;
   grant: ShopProductGrant;
 }
@@ -273,6 +275,10 @@ function normalizeShopProducts(rawProducts?: Partial<ShopProduct>[] | null): Sho
       price: normalizePositiveInteger(rawProduct.price ?? Number.NaN, `shop product ${productId} price`, true),
       ...(rawProduct.wechatPriceFen != null
         ? { wechatPriceFen: normalizePositiveInteger(rawProduct.wechatPriceFen, `shop product ${productId} wechatPriceFen`) }
+        : {}),
+      ...(rawProduct.appleProductId?.trim() ? { appleProductId: rawProduct.appleProductId.trim() } : {}),
+      ...(rawProduct.applePriceCents != null
+        ? { applePriceCents: normalizePositiveInteger(rawProduct.applePriceCents, `shop product ${productId} applePriceCents`) }
         : {}),
       enabled: rawProduct.enabled !== false,
       grant
