@@ -27,6 +27,7 @@ import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes,
+  setConfigCenterStoreType,
   setDbBackupLastSuccessTimestamp,
   type RuntimePersistenceHealth
 } from "./observability";
@@ -287,6 +288,12 @@ export async function startDevServer(
   }
 
   const mysqlConfig = deps.readMySqlPersistenceConfig();
+  const logNonProductionMySqlFallback = (error: unknown): void => {
+    deps.logger.error(
+      "MySQL bootstrap failed; falling back to in-memory room persistence and filesystem config center in non-production mode",
+      error
+    );
+  };
 
   if (mysqlConfig) {
     let migrationStatus;
@@ -297,11 +304,7 @@ export async function startDevServer(
       if (isProductionEnvironment) {
         await failStartup("MySQL migration/bootstrap failed during production startup", error);
       }
-      deps.logger.warn(
-        `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+      logNonProductionMySqlFallback(error);
     }
 
     if ((migrationStatus?.pending.length ?? 0) > 0 && migrationStatus) {
@@ -332,17 +335,14 @@ export async function startDevServer(
         if (isProductionEnvironment) {
           await failStartup("MySQL migration/bootstrap failed during production startup", error);
         }
-        deps.logger.warn(
-          `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        logNonProductionMySqlFallback(error);
       }
     }
   }
 
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
+  setConfigCenterStoreType(configCenterStore.mode);
   await configCenterStore.initializeRuntimeConfigs();
   const backupStorage = await deps.validateBackupStorage();
   setDbBackupLastSuccessTimestamp(backupStorage.lastSuccessTimestamp);
