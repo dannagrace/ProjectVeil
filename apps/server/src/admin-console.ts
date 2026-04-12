@@ -6,6 +6,7 @@ import { GuildService } from "./guilds";
 import type {
   PlayerCompensationCreateInput,
   PlayerCompensationRecord,
+  PlayerPurchaseHistorySnapshot,
   PlayerReportResolveInput,
   PlayerReportStatus,
   RoomSnapshotStore
@@ -211,6 +212,12 @@ function hasPlayerCompensationStore(
   );
 }
 
+function hasPlayerPurchaseHistoryStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPlayerPurchaseHistory">> {
+  return Boolean(store?.listPlayerPurchaseHistory);
+}
+
 function hasBattleSnapshotHistoryStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listBattleSnapshotsForPlayer">> {
@@ -376,6 +383,12 @@ function readPage(request: IncomingMessage, fallback = 1): number {
     return fallback;
   }
   return Math.max(1, Math.floor(parsed));
+}
+
+function readOptionalQueryString(request: IncomingMessage, key: string): string | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const value = url.searchParams.get(key)?.trim();
+  return value ? value : undefined;
 }
 
 type LeaderboardQueueFlagType =
@@ -945,6 +958,45 @@ export function registerAdminRoutes(
       const playerId = readRequiredParam(request as AdminRequest, "id");
       const items = await store.listPlayerCompensationHistory(playerId, { limit: readLimit(request) });
       sendJson(response, 200, { items });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/purchase-history", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerPurchaseHistoryStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request as AdminRequest, "id");
+      const limit = readLimit(request, 20);
+      const page = readPage(request, 1);
+      const offset = (page - 1) * limit;
+      const from = readOptionalQueryString(request, "from");
+      const to = readOptionalQueryString(request, "to");
+      const itemId = readOptionalQueryString(request, "itemId");
+      const history: PlayerPurchaseHistorySnapshot = await store.listPlayerPurchaseHistory(playerId, {
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {}),
+        ...(itemId ? { itemId } : {}),
+        limit,
+        offset
+      });
+      sendJson(response, 200, {
+        items: history.items,
+        page,
+        limit: history.limit,
+        total: history.total,
+        totalPages: Math.max(1, Math.ceil(history.total / history.limit)),
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {}),
+        ...(itemId ? { itemId } : {})
+      });
     } catch (error) {
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
