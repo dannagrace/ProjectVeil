@@ -12,6 +12,8 @@ import type {
 import { validateAuthSessionFromRequest } from "./auth";
 import type { DailyQuestConfigDefinition } from "./daily-quest-config";
 import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQuestState, RoomSnapshotStore } from "./persistence";
+import { normalizePlayerMailboxMessage } from "./player-mailbox";
+import { readRuntimeSecret } from "./runtime-secrets";
 
 interface SeasonalEventSummaryDocument {
   id?: string | null;
@@ -44,6 +46,33 @@ interface SeasonalEventDefinitionDocument {
     size?: number | null;
     rewardTiers?: Partial<SeasonalEventLeaderboardRewardTier>[] | null;
   } | null;
+}
+
+interface RuntimeSeasonalEventDefinition extends SeasonalEventDefinition {
+  isActive?: boolean;
+  rewardDistributionAt?: string;
+}
+
+interface SeasonalEventRuntimeOverride {
+  startsAt?: string;
+  endsAt?: string;
+  isActive?: boolean;
+  rewards?: SeasonalEventReward[];
+  leaderboard?: {
+    size?: number;
+    rewardTiers?: SeasonalEventLeaderboardRewardTier[];
+  };
+  rewardDistributionAt?: string;
+}
+
+export interface SeasonalEventOpsAuditEntry {
+  id: string;
+  action: "patched" | "force_ended" | "player_progress_reset";
+  actor: string;
+  eventId: string;
+  occurredAt: string;
+  detail: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RegisterEventRoutesOptions {
@@ -79,6 +108,8 @@ const DAILY_QUEST_TIER_WEIGHTS: Record<DailyQuestConfigDefinition["tier"], numbe
   rare: 0.3,
   epic: 0.1
 };
+const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverride>();
+const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
 
 function isValidDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`));
@@ -105,6 +136,343 @@ function createSeededRandom(seed: string): () => number {
 
 function normalizeQuestIds(questIds: string[] | undefined): string[] {
   return Array.from(new Set((questIds ?? []).map((questId) => questId?.trim()).filter((questId): questId is string => Boolean(questId))));
+}
+
+function readHeaderValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0]?.trim() || null;
+  }
+  return value?.trim() || null;
+}
+
+function readAdminTokenFromRequest(request: Pick<IncomingMessage, "headers">): string | null {
+  const authorization = readHeaderValue(request.headers.authorization);
+  if (authorization?.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    return token.length > 0 ? token : null;
+  }
+  return readHeaderValue(request.headers["x-veil-admin-token"]);
+}
+
+function isAdminAuthorized(request: Pick<IncomingMessage, "headers">): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  return Boolean(adminToken) && readAdminTokenFromRequest(request) === adminToken;
+}
+
+function sendAdminUnauthorized(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "forbidden",
+      message: "Invalid admin token"
+    }
+  });
+}
+
+function sendAdminTokenNotConfigured(response: ServerResponse): void {
+  sendJson(response, 503, {
+    error: {
+      code: "admin_token_not_configured",
+      message: "VEIL_ADMIN_TOKEN is not configured"
+    }
+  });
+}
+
+function sendStoreUnavailable(
+  response: ServerResponse,
+  code: string,
+  message: string
+): void {
+  sendJson(response, 503, {
+    error: {
+      code,
+      message
+    }
+  });
+}
+
+function appendSeasonalEventOpsAuditEntry(entry: Omit<SeasonalEventOpsAuditEntry, "id">): SeasonalEventOpsAuditEntry {
+  const auditEntry: SeasonalEventOpsAuditEntry = {
+    ...entry,
+    id: `seasonal-event-ops:${entry.action}:${entry.eventId}:${entry.occurredAt}`
+  };
+  seasonalEventOpsAuditTrail.unshift(auditEntry);
+  return auditEntry;
+}
+
+export function listSeasonalEventOpsAuditTrail(): SeasonalEventOpsAuditEntry[] {
+  return seasonalEventOpsAuditTrail.map((entry) => ({
+    ...entry,
+    ...(entry.metadata ? { metadata: structuredClone(entry.metadata) } : {})
+  }));
+}
+
+export function resetSeasonalEventRuntimeState(): void {
+  seasonalEventRuntimeOverrides.clear();
+  seasonalEventOpsAuditTrail.length = 0;
+}
+
+function applySeasonalEventRuntimeOverride(event: SeasonalEventDefinition): RuntimeSeasonalEventDefinition {
+  const override = seasonalEventRuntimeOverrides.get(event.id);
+  if (!override) {
+    return event;
+  }
+
+  return {
+    ...event,
+    ...(override.startsAt ? { startsAt: override.startsAt } : {}),
+    ...(override.endsAt ? { endsAt: override.endsAt } : {}),
+    ...(override.isActive !== undefined ? { isActive: override.isActive } : {}),
+    ...(override.rewards ? { rewards: override.rewards.map((reward) => ({ ...reward })) } : {}),
+    ...(override.leaderboard
+      ? {
+          leaderboard: {
+            size: override.leaderboard.size ?? event.leaderboard.size,
+            rewardTiers: (override.leaderboard.rewardTiers ?? event.leaderboard.rewardTiers).map((tier) => ({ ...tier }))
+          }
+        }
+      : {}),
+    ...(override.rewardDistributionAt ? { rewardDistributionAt: override.rewardDistributionAt } : {})
+  };
+}
+
+function resolveSeasonalEventStatus(
+  event: SeasonalEventDefinition,
+  now = new Date()
+): "scheduled" | "active" | "ended" {
+  const runtimeEvent = event as RuntimeSeasonalEventDefinition;
+  if (runtimeEvent.isActive === false) {
+    return "ended";
+  }
+  if (runtimeEvent.isActive === true) {
+    return "active";
+  }
+  if (new Date(event.endsAt).getTime() <= now.getTime()) {
+    return "ended";
+  }
+  if (new Date(event.startsAt).getTime() <= now.getTime()) {
+    return "active";
+  }
+  return "scheduled";
+}
+
+function readEventState(account: PlayerAccountSnapshot, eventId: string): SeasonalEventState | undefined {
+  return account.seasonalEventStates?.find((state) => state.eventId === eventId);
+}
+
+function buildSeasonalEventParticipationStats(
+  event: SeasonalEventDefinition,
+  accounts: PlayerAccountSnapshot[]
+): {
+  participants: number;
+  leaderboardEntries: number;
+  totalPoints: number;
+  claimedRewardCount: number;
+} {
+  let participants = 0;
+  let totalPoints = 0;
+  let claimedRewardCount = 0;
+
+  for (const account of accounts) {
+    const state = readEventState(account, event.id);
+    if (!state) {
+      continue;
+    }
+    if (state.points > 0 || state.claimedRewardIds.length > 0 || state.appliedActionIds.length > 0) {
+      participants += 1;
+    }
+    totalPoints += state.points;
+    claimedRewardCount += state.claimedRewardIds.length;
+  }
+
+  return {
+    participants,
+    leaderboardEntries: buildEventLeaderboard(event, accounts, event.leaderboard.size).length,
+    totalPoints,
+    claimedRewardCount
+  };
+}
+
+function normalizeAdminRewardPatch(
+  rewards: unknown,
+  leaderboard: unknown,
+  eventId: string,
+  current: SeasonalEventDefinition
+): Pick<SeasonalEventRuntimeOverride, "rewards" | "leaderboard"> {
+  const patch: Pick<SeasonalEventRuntimeOverride, "rewards" | "leaderboard"> = {};
+
+  if (rewards !== undefined) {
+    if (!Array.isArray(rewards)) {
+      throw new Error('"rewards" must be an array');
+    }
+    patch.rewards = rewards.map((reward, index) =>
+      normalizeEventReward((reward ?? {}) as Partial<SeasonalEventReward>, `seasonal event ${eventId} reward patch[${index}]`)
+    );
+  }
+
+  if (leaderboard !== undefined) {
+    if (typeof leaderboard !== "object" || leaderboard === null || Array.isArray(leaderboard)) {
+      throw new Error('"leaderboard" must be an object');
+    }
+    const leaderboardPatch = leaderboard as {
+      size?: unknown;
+      rewardTiers?: unknown;
+    };
+    const nextLeaderboard: SeasonalEventRuntimeOverride["leaderboard"] = {};
+    if (leaderboardPatch.size !== undefined) {
+      if (typeof leaderboardPatch.size !== "number" || !Number.isFinite(leaderboardPatch.size) || leaderboardPatch.size < 1) {
+        throw new Error('"leaderboard.size" must be a positive number');
+      }
+      nextLeaderboard.size = Math.floor(leaderboardPatch.size);
+    }
+    if (leaderboardPatch.rewardTiers !== undefined) {
+      if (!Array.isArray(leaderboardPatch.rewardTiers)) {
+        throw new Error('"leaderboard.rewardTiers" must be an array');
+      }
+      nextLeaderboard.rewardTiers = leaderboardPatch.rewardTiers.map((tier, index) =>
+        normalizeLeaderboardRewardTier(
+          (tier ?? {}) as Partial<SeasonalEventLeaderboardRewardTier>,
+          `seasonal event ${eventId} leaderboard.rewardTiers patch[${index}]`
+        )
+      );
+    }
+    patch.leaderboard = {
+      size: nextLeaderboard.size ?? current.leaderboard.size,
+      rewardTiers: nextLeaderboard.rewardTiers ?? current.leaderboard.rewardTiers
+    };
+  }
+
+  return patch;
+}
+
+function normalizeAdminEventPatch(
+  eventId: string,
+  body: Record<string, unknown>,
+  current: SeasonalEventDefinition
+): SeasonalEventRuntimeOverride {
+  const patch: SeasonalEventRuntimeOverride = {
+    ...normalizeAdminRewardPatch(body.rewards, body.leaderboard, eventId, current)
+  };
+  if (body.startsAt !== undefined) {
+    if (typeof body.startsAt !== "string") {
+      throw new Error('"startsAt" must be a valid ISO timestamp');
+    }
+    patch.startsAt = normalizeTimestamp(body.startsAt, `${eventId}.startsAt`);
+  }
+  if (body.endsAt !== undefined) {
+    if (typeof body.endsAt !== "string") {
+      throw new Error('"endsAt" must be a valid ISO timestamp');
+    }
+    patch.endsAt = normalizeTimestamp(body.endsAt, `${eventId}.endsAt`);
+  }
+  if (body.isActive !== undefined) {
+    if (typeof body.isActive !== "boolean") {
+      throw new Error('"isActive" must be a boolean');
+    }
+    patch.isActive = body.isActive;
+  }
+
+  const nextStartsAt = patch.startsAt ?? current.startsAt;
+  const nextEndsAt = patch.endsAt ?? current.endsAt;
+  if (new Date(nextEndsAt).getTime() <= new Date(nextStartsAt).getTime()) {
+    throw new Error('"endsAt" must be later than "startsAt"');
+  }
+
+  return patch;
+}
+
+function applySeasonalEventAdminPatch(eventId: string, patch: SeasonalEventRuntimeOverride): void {
+  const current = seasonalEventRuntimeOverrides.get(eventId) ?? {};
+  seasonalEventRuntimeOverrides.set(eventId, {
+    ...current,
+    ...patch
+  });
+}
+
+function resetSeasonalEventProgressState(
+  account: PlayerAccountSnapshot,
+  eventId: string
+): SeasonalEventState[] | null {
+  const remainingStates = (account.seasonalEventStates ?? []).filter((state) => state.eventId !== eventId);
+  return remainingStates.length > 0 ? remainingStates : null;
+}
+
+function resolveEventRewardGrant(reward: SeasonalEventReward): NonNullable<ReturnType<typeof normalizePlayerMailboxMessage>["grant"]> {
+  return {
+    ...(reward.gems ? { gems: reward.gems } : {}),
+    ...(reward.resources ? { resources: reward.resources } : {}),
+    ...(reward.badge ? { seasonBadges: [reward.badge] } : {})
+  };
+}
+
+async function distributeSeasonalEventRewards(
+  store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPlayerAccounts" | "deliverPlayerMailbox">>,
+  event: SeasonalEventDefinition,
+  distributedAt: Date
+): Promise<{ deliveredThresholdRewards: number; deliveredLeaderboardRewards: number }> {
+  const accounts = await store.listPlayerAccounts({ limit: 10_000, offset: 0 });
+  let deliveredThresholdRewards = 0;
+  let deliveredLeaderboardRewards = 0;
+  const sentAt = distributedAt.toISOString();
+  const expiresAt = new Date(distributedAt.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString();
+
+  for (const account of accounts) {
+    const state = readEventState(account, event.id);
+    if (!state) {
+      continue;
+    }
+
+    for (const reward of event.rewards) {
+      if (state.points < reward.pointsRequired || state.claimedRewardIds.includes(reward.id)) {
+        continue;
+      }
+      const delivery = await store.deliverPlayerMailbox({
+        playerIds: [account.playerId],
+        message: normalizePlayerMailboxMessage({
+          id: `seasonal-event:${event.id}:reward:${reward.id}`,
+          kind: "system",
+          title: `${event.name} 奖励补发`,
+          body: `运营已结束 ${event.name}，你已达成 ${reward.name} 的条件，奖励已发送至邮箱附件。`,
+          sentAt,
+          expiresAt,
+          grant: resolveEventRewardGrant(reward)
+        })
+      });
+      if (delivery.deliveredPlayerIds.includes(account.playerId)) {
+        deliveredThresholdRewards += 1;
+      }
+    }
+  }
+
+  const leaderboard = buildEventLeaderboard(event, accounts, event.leaderboard.size);
+  for (const entry of leaderboard) {
+    const rewardTier = event.leaderboard.rewardTiers.find((tier) => tier.rankStart <= entry.rank && entry.rank <= tier.rankEnd);
+    if (!rewardTier) {
+      continue;
+    }
+    const delivery = await store.deliverPlayerMailbox({
+      playerIds: [entry.playerId],
+      message: normalizePlayerMailboxMessage({
+        id: `seasonal-event:${event.id}:leaderboard`,
+        kind: "system",
+        title: `${event.name} 结算奖励`,
+        body: `你在 ${event.name} 中获得 ${rewardTier.title}（排名 #${entry.rank}），奖励已发放到邮箱附件。`,
+        sentAt,
+        expiresAt,
+        grant: {
+          ...(rewardTier.badge ? { seasonBadges: [rewardTier.badge] } : {}),
+          ...(rewardTier.cosmeticId ? { cosmeticIds: [rewardTier.cosmeticId] } : {})
+        }
+      })
+    });
+    if (delivery.deliveredPlayerIds.includes(entry.playerId)) {
+      deliveredLeaderboardRewards += 1;
+    }
+  }
+
+  return {
+    deliveredThresholdRewards,
+    deliveredLeaderboardRewards
+  };
 }
 
 function normalizeQuestRotationEntry(entry: PlayerQuestRotationHistoryEntry): PlayerQuestRotationHistoryEntry {
@@ -414,7 +782,7 @@ export function resolveSeasonalEvents(
       normalizeLeaderboardRewardTier(tier, `seasonal event ${id} leaderboard.rewardTiers[${tierIndex}]`)
     );
 
-    return {
+    return applySeasonalEventRuntimeOverride({
       id,
       name: detail.name?.trim() || summary.name?.trim() || id,
       description: detail.description?.trim() || summary.description?.trim() || "",
@@ -440,17 +808,12 @@ export function resolveSeasonalEvents(
         ),
         rewardTiers
       }
-    };
+    });
   });
 }
 
 export function getActiveSeasonalEvents(events: SeasonalEventDefinition[], now = new Date()): SeasonalEventDefinition[] {
-  const currentTime = now.getTime();
-  return events.filter((event) => {
-    const startsAt = new Date(event.startsAt).getTime();
-    const endsAt = new Date(event.endsAt).getTime();
-    return startsAt <= currentTime && currentTime < endsAt;
-  });
+  return events.filter((event) => resolveSeasonalEventStatus(event, now) === "active");
 }
 
 export function findSeasonalEventState(
@@ -618,17 +981,18 @@ export function registerEventRoutes(
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
     post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
+    patch?: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
+    delete?: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   },
   store: RoomSnapshotStore | null,
   options: RegisterEventRoutesOptions = {}
 ): void {
   const nowFactory = options.now ?? (() => new Date());
-  const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth, X-Veil-Admin-Token");
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
@@ -647,6 +1011,7 @@ export function registerEventRoutes(
 
     try {
       const now = nowFactory();
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
       const activeEvents = getActiveSeasonalEvents(events, now);
       const account = store
         ? ((await store.loadPlayerAccount(authSession.playerId)) ??
@@ -690,6 +1055,7 @@ export function registerEventRoutes(
     }
 
     try {
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
       const body = (await readJsonBody(request)) as { eventId?: string | null; rewardId?: string | null };
       const eventId = body.eventId?.trim();
       const rewardId = body.rewardId?.trim();
@@ -803,6 +1169,7 @@ export function registerEventRoutes(
     }
 
     try {
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
       const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
       const eventId = routeRequest.params?.eventId?.trim();
       if (!eventId) {
@@ -892,6 +1259,234 @@ export function registerEventRoutes(
         });
         return;
       }
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/admin/seasonal-events", async (request, response) => {
+    if (!readRuntimeSecret("VEIL_ADMIN_TOKEN")) {
+      sendAdminTokenNotConfigured(response);
+      return;
+    }
+    if (!isAdminAuthorized(request)) {
+      sendAdminUnauthorized(response);
+      return;
+    }
+
+    try {
+      const now = nowFactory();
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const accounts = store?.listPlayerAccounts ? await store.listPlayerAccounts({ limit: 10_000, offset: 0 }) : [];
+      sendJson(response, 200, {
+        checkedAt: now.toISOString(),
+        events: events.map((event) => ({
+          ...event,
+          status: resolveSeasonalEventStatus(event, now),
+          ...(event as RuntimeSeasonalEventDefinition).isActive !== undefined
+            ? { isActive: (event as RuntimeSeasonalEventDefinition).isActive }
+            : {},
+          ...(event as RuntimeSeasonalEventDefinition).rewardDistributionAt
+            ? { rewardDistributionAt: (event as RuntimeSeasonalEventDefinition).rewardDistributionAt }
+            : {},
+          participation: buildSeasonalEventParticipationStats(event, accounts)
+        })),
+        audit: listSeasonalEventOpsAuditTrail()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.patch?.("/api/admin/seasonal-events/:id", async (request, response) => {
+    if (!readRuntimeSecret("VEIL_ADMIN_TOKEN")) {
+      sendAdminTokenNotConfigured(response);
+      return;
+    }
+    if (!isAdminAuthorized(request)) {
+      sendAdminUnauthorized(response);
+      return;
+    }
+
+    try {
+      const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
+      const eventId = routeRequest.params?.id?.trim();
+      if (!eventId) {
+        sendJson(response, 400, { error: { code: "seasonal_event_invalid", message: "event id is required" } });
+        return;
+      }
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const event = events.find((entry) => entry.id === eventId);
+      if (!event) {
+        sendJson(response, 404, { error: { code: "seasonal_event_not_found", message: "Seasonal event was not found" } });
+        return;
+      }
+      const body = await readJsonBody(request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        sendJson(response, 400, { error: { code: "invalid_request", message: "Request body must be an object" } });
+        return;
+      }
+      const occurredAt = nowFactory().toISOString();
+      const patch = normalizeAdminEventPatch(eventId, body as Record<string, unknown>, event);
+      applySeasonalEventAdminPatch(eventId, patch);
+      const nextEvent = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments).find((entry) => entry.id === eventId)!;
+      const audit = appendSeasonalEventOpsAuditEntry({
+        action: "patched",
+        actor: "admin-runtime",
+        eventId,
+        occurredAt,
+        detail: "Patched seasonal event runtime settings",
+        metadata: patch as unknown as Record<string, unknown>
+      });
+      sendJson(response, 200, { event: nextEvent, audit });
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, { error: { code: "invalid_json", message: "Request body must be valid JSON" } });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/admin/seasonal-events/:id/end", async (request, response) => {
+    if (!readRuntimeSecret("VEIL_ADMIN_TOKEN")) {
+      sendAdminTokenNotConfigured(response);
+      return;
+    }
+    if (!isAdminAuthorized(request)) {
+      sendAdminUnauthorized(response);
+      return;
+    }
+    if (!store?.listPlayerAccounts || !store.deliverPlayerMailbox) {
+      sendStoreUnavailable(
+        response,
+        "seasonal_event_persistence_unavailable",
+        "Seasonal event force-end requires configured room persistence storage"
+      );
+      return;
+    }
+
+    try {
+      const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
+      const eventId = routeRequest.params?.id?.trim();
+      if (!eventId) {
+        sendJson(response, 400, { error: { code: "seasonal_event_invalid", message: "event id is required" } });
+        return;
+      }
+
+      const now = nowFactory();
+      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const event = events.find((entry) => entry.id === eventId);
+      if (!event) {
+        sendJson(response, 404, { error: { code: "seasonal_event_not_found", message: "Seasonal event was not found" } });
+        return;
+      }
+      if (resolveSeasonalEventStatus(event, now) !== "active") {
+        sendJson(response, 409, {
+          error: {
+            code: "seasonal_event_not_active",
+            message: "Seasonal event is not currently active"
+          }
+        });
+        return;
+      }
+
+      applySeasonalEventAdminPatch(eventId, {
+        endsAt: now.toISOString(),
+        isActive: false,
+        rewardDistributionAt: now.toISOString()
+      });
+      const endedEvent = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments).find((entry) => entry.id === eventId)!;
+      const distribution = await distributeSeasonalEventRewards(
+        store as RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPlayerAccounts" | "deliverPlayerMailbox">>,
+        endedEvent,
+        now
+      );
+      const audit = appendSeasonalEventOpsAuditEntry({
+        action: "force_ended",
+        actor: "admin-runtime",
+        eventId,
+        occurredAt: now.toISOString(),
+        detail: "Force-ended seasonal event and distributed rewards",
+        metadata: distribution as unknown as Record<string, unknown>
+      });
+      sendJson(response, 200, {
+        event: endedEvent,
+        distribution,
+        audit
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.delete?.("/api/admin/seasonal-events/:eventId/players/:playerId", async (request, response) => {
+    if (!readRuntimeSecret("VEIL_ADMIN_TOKEN")) {
+      sendAdminTokenNotConfigured(response);
+      return;
+    }
+    if (!isAdminAuthorized(request)) {
+      sendAdminUnauthorized(response);
+      return;
+    }
+    if (!store?.loadPlayerAccount || !store.savePlayerAccountProgress) {
+      sendStoreUnavailable(
+        response,
+        "seasonal_event_persistence_unavailable",
+        "Seasonal event progress resets require configured room persistence storage"
+      );
+      return;
+    }
+
+    try {
+      const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
+      const eventId = routeRequest.params?.eventId?.trim();
+      const playerId = routeRequest.params?.playerId?.trim();
+      if (!eventId || !playerId) {
+        sendJson(response, 400, {
+          error: {
+            code: "seasonal_event_invalid",
+            message: "eventId and playerId are required"
+          }
+        });
+        return;
+      }
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, { error: { code: "player_not_found", message: "Player account was not found" } });
+        return;
+      }
+      const existingState = readEventState(account, eventId);
+      if (!existingState) {
+        sendJson(response, 404, {
+          error: {
+            code: "seasonal_event_progress_not_found",
+            message: "Player has no seasonal event progress for the requested event"
+          }
+        });
+        return;
+      }
+      const nextAccount = await store.savePlayerAccountProgress(playerId, {
+        seasonalEventStates: resetSeasonalEventProgressState(account, eventId)
+      });
+      const audit = appendSeasonalEventOpsAuditEntry({
+        action: "player_progress_reset",
+        actor: "admin-runtime",
+        eventId,
+        occurredAt: nowFactory().toISOString(),
+        detail: "Reset seasonal event progress for a single player",
+        metadata: {
+          playerId,
+          previousPoints: existingState.points
+        }
+      });
+      sendJson(response, 200, {
+        reset: true,
+        playerId,
+        eventId,
+        account: nextAccount,
+        audit
+      });
+    } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
