@@ -581,6 +581,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.runtimeObservabilityBundlePath) {
     lines.push(`- Runtime observability bundle: \`${report.artifacts.runtimeObservabilityBundlePath}\``);
   }
+  if (report.artifacts.runtimeObservabilityEvidencePath) {
+    lines.push(`- Runtime observability evidence: \`${report.artifacts.runtimeObservabilityEvidencePath}\``);
+  }
   if (report.artifacts.runtimeObservabilityGatePath) {
     lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
   }

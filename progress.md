@@ -1,5 +1,11 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Issue #1325 - Phase 1 rehearsal runtime evidence front door - 2026-04-12
+
+- Frontloaded the staged `runtimeObservabilityEvidencePath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can jump from `SUMMARY.md` straight to the raw runtime evidence instead of only seeing the bundle/gate pair.
+- Locked the new reviewer entry with markdown and artifact-path assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the rehearsal docs and release script inventory so the reviewer packet description explicitly includes raw runtime observability evidence alongside the bundle and gate.
+
 ## Issue #1323 - Phase 1 rehearsal CI trend front door - 2026-04-12
 
 - Frontloaded the staged `CI trend summary` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can jump from `SUMMARY.md` straight to the CI trajectory snapshot instead of digging through generated outputs.

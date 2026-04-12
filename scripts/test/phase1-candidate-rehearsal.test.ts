@@ -221,6 +221,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.stableWechatArtifactsDir ?? "", /wechat-release-phase1-mainline-/);
   assert.match(report.artifacts.wechatCandidateSummaryPath ?? "", /codex\.wechat\.release-candidate-summary\.json/);
   assert.match(report.artifacts.wechatCandidateMarkdownPath ?? "", /codex\.wechat\.release-candidate-summary\.md/);
+  assert.match(report.artifacts.runtimeObservabilityEvidencePath ?? "", /runtime-observability-evidence-phase1-mainline-/);
 
   const markdown = fs.readFileSync(markdownPath, "utf8");
   assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
@@ -236,6 +237,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Reconnect soak summary:/);
   assert.match(markdown, /WeChat candidate summary:/);
   assert.match(markdown, /Runtime observability bundle:/);
+  assert.match(markdown, /Runtime observability evidence:/);
   assert.match(markdown, /Runtime observability gate:/);
   assert.match(markdown, /Candidate evidence audit:/);
   assert.match(markdown, /Candidate freshness guard:/);
@@ -278,6 +280,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /wechatCandidateSummaryPath:/);
   assert.match(markdown, /wechatCandidateMarkdownPath:/);
   assert.match(markdown, /runtimeObservabilityBundlePath:/);
+  assert.match(markdown, /runtimeObservabilityEvidencePath:/);
   assert.match(markdown, /runtimeObservabilityGatePath:/);
   assert.match(markdown, /sameRevisionEvidenceBundleManifestPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
