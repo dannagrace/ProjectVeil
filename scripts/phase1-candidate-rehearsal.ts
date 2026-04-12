@@ -563,6 +563,9 @@ function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.releaseHealthSummaryPath) {
     lines.push(`- Release health summary: \`${report.artifacts.releaseHealthSummaryPath}\``);
   }
+  if (report.artifacts.ciTrendSummaryPath) {
+    lines.push(`- CI trend summary: \`${report.artifacts.ciTrendSummaryPath}\``);
+  }
   if (report.artifacts.releaseReadinessSnapshotPath) {
     lines.push(`- Release readiness snapshot: \`${report.artifacts.releaseReadinessSnapshotPath}\``);
   }
