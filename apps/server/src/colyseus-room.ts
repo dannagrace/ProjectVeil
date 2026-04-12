@@ -3,6 +3,7 @@ import { Room, type Client as ColyseusClient } from "colyseus";
 import {
   classifyReconnectFailure,
   DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
+  DEFAULT_TUTORIAL_STEP,
   isClientVersionSupported,
   createInitialWorldState,
   createPlayerWorldView,
@@ -57,6 +58,7 @@ import {
 import { applyPlayerEventLogAndAchievements } from "./player-achievements";
 import { validateGuestAuthToken, type GuestAuthSession } from "./auth";
 import { buildMinorProtectionBlockDetails, deriveMinorProtectionState, readMinorProtectionConfig } from "./minor-protection";
+import { acknowledgeCampaignDialogueLine, resolveCampaignConfig } from "./pve-content";
 import {
   recordBattleActionMessage,
   recordAntiCheatAlert,
@@ -78,6 +80,7 @@ import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./w
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import { captureServerError } from "./error-monitoring";
 import { settleLeaderboardMatch } from "./leaderboard-anti-abuse";
+import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 
@@ -999,6 +1002,108 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
           error instanceof Error && error.message === "duplicate_player_report"
             ? "duplicate_player_report"
             : "report_submit_failed";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
+
+    this.onMessage("tutorial.progress", async (client, message: Extract<ClientMessage, { type: "tutorial.progress" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "tutorial_persistence_unavailable" });
+        return;
+      }
+
+      try {
+        const account =
+          (await configuredRoomSnapshotStore.loadPlayerAccount(playerId)) ??
+          (await configuredRoomSnapshotStore.ensurePlayerAccount({
+            playerId,
+            displayName: playerId,
+            lastRoomId: logicalRoomId
+          }));
+        const action = normalizeTutorialProgressAction(
+          message.action,
+          account.tutorialStep ?? DEFAULT_TUTORIAL_STEP
+        );
+        await configuredRoomSnapshotStore.savePlayerAccountProgress(playerId, {
+          tutorialStep: action.step
+        });
+        emitAnalyticsEvent("tutorial_step", {
+          playerId,
+          roomId: logicalRoomId,
+          payload: toTutorialAnalyticsPayload(action)
+        });
+        sendMessage(client, "session.state", {
+          requestId: message.requestId,
+          delivery: "reply",
+          payload: this.buildStatePayload(playerId, {
+            events: [],
+            movementPlan: null
+          })
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error
+            ? error.message === "tutorial_skip_locked"
+              ? "tutorial_skip_locked"
+              : error.message === "tutorial_progress_invalid_step"
+                ? "tutorial_progress_invalid_step"
+                : error.message === "tutorial_progress_out_of_order"
+                  ? "tutorial_progress_out_of_order"
+                  : "tutorial_progress_failed"
+            : "tutorial_progress_failed";
+        sendMessage(client, "error", { requestId: message.requestId, reason });
+      }
+    });
+
+    this.onMessage("campaign.dialogue.ack", async (client, message: Extract<ClientMessage, { type: "campaign.dialogue.ack" }>) => {
+      const playerId = this.getPlayerId(client);
+      if (!playerId) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
+        return;
+      }
+      if (!configuredRoomSnapshotStore) {
+        sendMessage(client, "error", { requestId: message.requestId, reason: "campaign_persistence_unavailable" });
+        return;
+      }
+
+      try {
+        const account =
+          (await configuredRoomSnapshotStore.loadPlayerAccount(playerId)) ??
+          (await configuredRoomSnapshotStore.ensurePlayerAccount({
+            playerId,
+            displayName: playerId,
+            lastRoomId: logicalRoomId
+          }));
+        const campaignProgress = acknowledgeCampaignDialogueLine(
+          resolveCampaignConfig(),
+          account.campaignProgress,
+          message.action
+        );
+        await configuredRoomSnapshotStore.savePlayerAccountProgress(playerId, {
+          campaignProgress
+        });
+        sendMessage(client, "session.state", {
+          requestId: message.requestId,
+          delivery: "reply",
+          payload: this.buildStatePayload(playerId, {
+            events: [],
+            movementPlan: null
+          })
+        });
+      } catch (error) {
+        const reason =
+          error instanceof Error
+            ? error.message === "campaign_mission_not_found"
+              ? "campaign_mission_not_found"
+              : error.message === "campaign_dialogue_line_not_found"
+                ? "campaign_dialogue_line_not_found"
+                : "campaign_dialogue_ack_failed"
+            : "campaign_dialogue_ack_failed";
         sendMessage(client, "error", { requestId: message.requestId, reason });
       }
     });
@@ -2580,7 +2685,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private async validateReconnectSession(playerId: string): Promise<{ session: GuestAuthSession | null; errorCode?: string }> {
     const authSession = this.authSessionByPlayerId.get(playerId);
     if (!authSession?.token) {
-      return { session: null, errorCode: undefined };
+      return { session: null };
     }
 
     return await validateGuestAuthToken(authSession.token, configuredRoomSnapshotStore);
