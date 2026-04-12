@@ -88,6 +88,18 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`",
     ],
   },
+  "release:evidence:lifecycle": {
+    purpose:
+      "Plan or apply release evidence retention, archival, and archive cleanup without changing the live directories by default, while writing a reviewer-facing report of the currently valid front-door artifacts.",
+    requiredInputs: [
+      "Existing artifacts under `artifacts/release-readiness/`, `artifacts/release-readiness/phase1-candidate-rehearsal/`, and `artifacts/wechat-release/`; optional retention flags, archive root overrides, and `--apply` control whether the command only reports or also moves/removes artifacts.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.json`",
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.md`",
+      "When `--apply` archives anything, a matching manifest is also written under `artifacts/release-archive/runs/<timestamp>/` next to the moved artifact sets.",
+    ],
+  },
   "release:gate:summary": {
     purpose: "Aggregate readiness, H5, reconnect, WeChat, and config-change evidence into one top-level release gate decision.",
     requiredInputs: [
@@ -247,6 +259,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
     producedArtifacts: [
       "`artifacts/release-readiness/client-boot-room-smoke-<short-sha>.json` when an explicit output path is used, or console smoke verdict output by default.",
+    ],
+  },
+  "smoke:ci": {
+    purpose:
+      "Run the repo's lightweight CI smoke entrypoint so maintainers can quickly confirm the smoke pipeline wiring still executes before spending time on heavier release validation.",
+    requiredInputs: [
+      "Current repo checkout and whatever local environment the CI smoke script expects; this command is primarily an exit-code gate and does not require release artifact inputs.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; this is a workflow smoke that reports pass/fail on stdout/stderr and exit status.",
     ],
   },
   "release:pr-summary": {
