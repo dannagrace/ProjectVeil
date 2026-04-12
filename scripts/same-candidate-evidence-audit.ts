@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { findNearestReleaseReadinessDir, updateReleaseCandidateManifest } from "./release-candidate-manifest.ts";
+
 type FindingCode =
   | "missing"
   | "stale"
@@ -2212,12 +2214,102 @@ export function runSameCandidateEvidenceAuditCli(
   writeJsonFile(ownerReminderOutputPath, ownerReminderReport);
   writeFile(ownerReminderMarkdownOutputPath, renderOwnerReminderMarkdown(ownerReminderReport));
   appendFreshnessHistory(freshnessHistoryOutputPath, report);
+  const manifestUpdate = updateReleaseCandidateManifest({
+    candidate: report.candidate.name,
+    candidateRevision: report.candidate.revision,
+    releaseReadinessDir: findNearestReleaseReadinessDir(outputPath, report.inputs.snapshotPath, report.inputs.releaseGateSummaryPath),
+    entries: [
+      {
+        id: "candidate-evidence-audit",
+        label: "Candidate evidence audit",
+        category: "reviewer-entrypoint",
+        required: true,
+        producedAt: report.generatedAt,
+        summary: report.summary.summary,
+        producerScript: "./scripts/same-candidate-evidence-audit.ts",
+        artifacts: {
+          jsonPath: outputPath,
+          markdownPath: markdownOutputPath
+        },
+        metadata: {
+          status: report.summary.status,
+          blockerCount: report.summary.blockerCount,
+          warningCount: report.summary.warningCount,
+          targetSurface: report.candidate.targetSurface
+        },
+        sources: [
+          ...Object.entries(report.inputs)
+            .filter(([key, value]) => key !== "targetSurface" && typeof value === "string" && value.trim().length > 0)
+            .map(([key, value]) => ({
+              label: `Input ${key}`,
+              kind: "artifact" as const,
+              path: value as string
+            })),
+          ...report.artifactFamilies
+            .filter((family) => family.artifactPath)
+            .map((family) => ({
+              label: family.label,
+              kind: "artifact" as const,
+              path: family.artifactPath as string
+            }))
+        ]
+      },
+      {
+        id: "candidate-evidence-owner-reminder",
+        label: "Candidate evidence owner reminder",
+        category: "release-evidence",
+        required: false,
+        producedAt: ownerReminderReport.generatedAt,
+        summary: ownerReminderReport.summary.summary,
+        producerScript: "./scripts/same-candidate-evidence-audit.ts",
+        artifacts: {
+          jsonPath: ownerReminderOutputPath,
+          markdownPath: ownerReminderMarkdownOutputPath
+        },
+        metadata: {
+          status: ownerReminderReport.summary.status,
+          itemCount: ownerReminderReport.summary.itemCount
+        },
+        sources: [
+          {
+            label: "Candidate evidence audit",
+            kind: "artifact",
+            path: outputPath
+          }
+        ]
+      },
+      {
+        id: "candidate-evidence-freshness-history",
+        label: "Candidate evidence freshness history",
+        category: "release-evidence",
+        required: false,
+        producedAt: report.generatedAt,
+        summary: "Append-only audit freshness history for the candidate.",
+        producerScript: "./scripts/same-candidate-evidence-audit.ts",
+        artifacts: {
+          jsonPath: freshnessHistoryOutputPath
+        },
+        metadata: {
+          status: report.summary.status
+        },
+        sources: [
+          {
+            label: "Candidate evidence audit",
+            kind: "artifact",
+            path: outputPath
+          }
+        ]
+      }
+    ]
+  });
 
   console.log(`Wrote ${logLabel} JSON: ${toRelativePath(outputPath)}`);
   console.log(`Wrote ${logLabel} Markdown: ${toRelativePath(markdownOutputPath)}`);
   console.log(`Wrote owner reminder JSON: ${toRelativePath(ownerReminderOutputPath)}`);
   console.log(`Wrote owner reminder Markdown: ${toRelativePath(ownerReminderMarkdownOutputPath)}`);
   console.log(`Wrote freshness history JSON: ${toRelativePath(freshnessHistoryOutputPath)}`);
+  console.log(`Updated candidate evidence manifest JSON: ${toRelativePath(manifestUpdate.manifestJsonPath)}`);
+  console.log(`Updated candidate evidence manifest Markdown: ${toRelativePath(manifestUpdate.manifestMarkdownPath)}`);
 
   if (report.summary.status === "failed") {
     process.exitCode = 1;
