@@ -15,7 +15,13 @@ import {
 } from "../../../packages/shared/src/index";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
-import { MatchmakingService, registerMatchmakingRoutes, resetMatchmakingService } from "../src/matchmaking";
+import {
+  MatchmakingService,
+  configureMatchmakingRuntimeDependencies,
+  registerMatchmakingRoutes,
+  resetMatchmakingRuntimeDependencies,
+  resetMatchmakingService
+} from "../src/matchmaking";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { resetRuntimeObservability } from "../src/observability";
 import type { RoomSnapshotStore } from "../src/persistence";
@@ -202,6 +208,16 @@ async function connectRoom(room: ColyseusRoom, roomId: string, playerId: string,
   );
 }
 
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const startTime = Date.now();
+  while (!condition()) {
+    if (Date.now() - startTime > timeoutMs) {
+      throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 test("matchmaking routes enqueue, match, report status, and dequeue cleanly", async (t) => {
   const store = createMemoryRoomSnapshotStore();
   await store.save(
@@ -294,6 +310,170 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   });
   const dequeueOnePayload = (await dequeueOne.json()) as { status: string };
   assert.equal(dequeueOnePayload.status, "idle");
+});
+
+test("matchmaking routes send WeChat subscribe notifications when a match is created", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.save(
+    "room-frontier_basin",
+    createSnapshot("room-frontier_basin", [createHero("player-1", "hero-1"), createHero("player-2", "hero-2")])
+  );
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-frontier_basin" });
+  await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Two", lastRoomId: "room-frontier_basin" });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-1", {
+    openId: "wx-open-id-player-1",
+    displayName: "One"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-2", {
+    openId: "wx-open-id-player-2",
+    displayName: "Two"
+  });
+
+  const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  configureMatchmakingRuntimeDependencies({
+    sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
+      subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    }
+  });
+
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetMatchmakingRuntimeDependencies();
+    resetMatchmakingService();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionTwo.token}`
+    }
+  });
+
+  await waitFor(() => subscribeCalls.length === 2);
+  assert.deepEqual(
+    subscribeCalls.sort((left, right) => left.playerId.localeCompare(right.playerId)),
+    [
+      {
+        playerId: "player-1",
+        templateKey: "match_found",
+        data: {
+          mapName: "Phase1",
+          opponentName: "Two"
+        }
+      },
+      {
+        playerId: "player-2",
+        templateKey: "match_found",
+        data: {
+          mapName: "Phase1",
+          opponentName: "One"
+        }
+      }
+    ]
+  );
+});
+
+test("matchmaking routes log WeChat subscribe failures without breaking match creation", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.save(
+    "room-frontier_basin",
+    createSnapshot("room-frontier_basin", [createHero("player-1", "hero-1"), createHero("player-2", "hero-2")])
+  );
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-frontier_basin" });
+  await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Two", lastRoomId: "room-frontier_basin" });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-1", {
+    openId: "wx-open-id-player-1",
+    displayName: "One"
+  });
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-2", {
+    openId: "wx-open-id-player-2",
+    displayName: "Two"
+  });
+
+  const notificationFailure = new Error("match-found send exploded");
+  const errorCalls: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+
+  configureMatchmakingRuntimeDependencies({
+    sendWechatSubscribeMessage: async (playerId) => {
+      if (playerId === "player-2") {
+        throw notificationFailure;
+      }
+      return true;
+    }
+  });
+
+  const port = 43000 + Math.floor(Math.random() * 1000);
+  const server = await startMatchmakingServer(store, port);
+  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
+  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+
+  t.after(async () => {
+    console.error = originalConsoleError;
+    resetGuestAuthSessions();
+    resetMatchmakingRuntimeDependencies();
+    resetMatchmakingService();
+    await store.close();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionTwo.token}`
+    }
+  });
+
+  await waitFor(() => errorCalls.length === 1);
+  assert.equal(errorCalls[0]?.[0], "[matchmaking] Failed to send WeChat match-found notification");
+  const loggedDetails = errorCalls[0]?.[1] as {
+    roomId?: string;
+    playerId?: string;
+    opponentId?: string;
+    error?: unknown;
+  };
+  assert.match(loggedDetails.roomId ?? "", /^pvp-match-/);
+  assert.equal(loggedDetails.playerId, "player-2");
+  assert.equal(loggedDetails.opponentId, "player-1");
+  assert.equal(loggedDetails.error, notificationFailure);
+
+  const statusOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+    headers: {
+      Authorization: `Bearer ${sessionOne.token}`
+    }
+  });
+  const statusTwo = await fetch(`http://127.0.0.1:${port}/api/matchmaking/status`, {
+    headers: {
+      Authorization: `Bearer ${sessionTwo.token}`
+    }
+  });
+  const statusOnePayload = (await statusOne.json()) as { status: string };
+  const statusTwoPayload = (await statusTwo.json()) as { status: string };
+  assert.equal(statusOnePayload.status, "matched");
+  assert.equal(statusTwoPayload.status, "matched");
 });
 
 test("matchmaking routes can carry matched players through room join and surrender-based elo settlement", async (t) => {

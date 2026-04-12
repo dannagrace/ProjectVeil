@@ -88,6 +88,7 @@ let analyticsRuntimeDependencies = defaultAnalyticsRuntimeDependencies;
 let pendingEvents: AnalyticsEvent[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
 let capturedAnalyticsEvents: AnalyticsEvent[] = [];
+const emittedAnalyticsAlerts = new Set<string>();
 const analyticsPipelineCounters: AnalyticsPipelineCounters = {
   ingestedEventsTotal: 0,
   flushedEventsTotal: 0,
@@ -218,6 +219,16 @@ function buildAnalyticsPipelineEventsSummary(): AnalyticsPipelineSnapshot["deliv
     });
 }
 
+function emitAnalyticsAlerts(config: AnalyticsPipelineConfig): void {
+  for (const alert of config.alerts) {
+    if (emittedAnalyticsAlerts.has(alert)) {
+      continue;
+    }
+    analyticsRuntimeDependencies.error(`[Analytics] ${alert}`);
+    emittedAnalyticsAlerts.add(alert);
+  }
+}
+
 export function getAnalyticsPipelineSnapshot(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineSnapshot {
   const config = resolveAnalyticsPipelineConfig(env);
   const alerts = [...config.alerts];
@@ -306,6 +317,7 @@ export function resetAnalyticsRuntimeDependencies(): void {
   analyticsRuntimeDependencies = defaultAnalyticsRuntimeDependencies;
   pendingEvents = [];
   capturedAnalyticsEvents = [];
+  emittedAnalyticsAlerts.clear();
   if (flushTimer) {
     analyticsRuntimeDependencies.clearTimeout(flushTimer);
   }
@@ -335,6 +347,7 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
   }
 
   const config = resolveAnalyticsPipelineConfig(env);
+  emitAnalyticsAlerts(config);
   const batch = pendingEvents;
   pendingEvents = [];
   if (flushTimer) {
@@ -444,6 +457,8 @@ export function registerAnalyticsRoutes(
   app.post("/api/analytics/events", async (request, response) => {
     try {
       const payload = await readJsonBody(request);
+      const config = resolveAnalyticsPipelineConfig();
+      emitAnalyticsAlerts(config);
       const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
         ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
         : [];
@@ -451,7 +466,7 @@ export function registerAnalyticsRoutes(
       pendingEvents.push(...events);
       recordIngestedEvents(events);
       scheduleFlush();
-      analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into ${getAnalyticsPipelineSnapshot().sink} sink`);
+      analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into ${config.sink} sink`);
       sendJson(response, 202, {
         accepted: events.length
       });

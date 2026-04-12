@@ -2246,6 +2246,70 @@ test("turn reminder subscribe message is sent after the next player has been dis
   ]);
 });
 
+test("turn reminder subscribe failures are logged without blocking turn advancement", async (t) => {
+  resetLobbyRoomRegistry();
+  const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
+  const store = new InstrumentedRoomSnapshotStore();
+  const notificationFailure = new Error("turn reminder send exploded");
+  const errorCalls: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+
+  configureRoomSnapshotStore(store);
+  configureRoomRuntimeDependencies({
+    sendWechatSubscribeMessage: async () => {
+      throw notificationFailure;
+    }
+  });
+
+  const room = await createTestRoom(`lifecycle-turn-reminder-failure-${Date.now()}`);
+  const attackerClient = createFakeClient("session-turn-reminder-failure-attacker");
+  const defenderClient = createFakeClient("session-turn-reminder-failure-defender");
+
+  t.after(() => {
+    console.error = originalConsoleError;
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+    resetRoomRuntimeDependencies();
+  });
+
+  await connectPlayer(room, attackerClient, "player-1", "connect-turn-reminder-failure-attacker");
+  await connectPlayer(room, defenderClient, "player-2", "connect-turn-reminder-failure-defender");
+  await store.bindPlayerAccountWechatMiniGameIdentity("player-2", {
+    openId: "wx-open-id-player-2",
+    displayName: "Player Two"
+  });
+
+  room.onLeave(defenderClient);
+  timer.nowMs += 31_000;
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: "turn-reminder-failure-end-day",
+    action: {
+      type: "turn.endDay"
+    }
+  });
+
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): { meta: { day: number } };
+    };
+  };
+  assert.equal(internalRoom.worldRoom.getInternalState().meta.day, 2);
+  assert.equal(errorCalls.length, 1);
+  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to send WeChat turn reminder subscribe message");
+  assert.deepEqual(errorCalls[0]?.[1], {
+    roomId: room.roomId,
+    playerId: "player-2",
+    turnNumber: 2,
+    error: notificationFailure
+  });
+});
+
 test("two consecutive AFK strikes trigger afk_forfeit and persist surrender-path ELO deltas", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));

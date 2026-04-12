@@ -9,6 +9,7 @@ It intentionally reuses the current evidence instead of introducing a parallel g
 - `npm run release:readiness:snapshot` for the baseline regression/build gate state
 - `npm run smoke:client:release-candidate` for packaged H5 smoke evidence
 - `npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>` for candidate-scoped reconnect soak evidence plus room cleanup evidence
+- `npm run release:cocos:rc-reconnect-replay -- --candidate <candidate-name>` for candidate-scoped Cocos 主客户端 resume / fresh join fallback replay evidence
 - `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` for WeChat release evidence
 - `configs/.config-center-library.json` for the latest applied config-center publish audit and config change risk summary
 
@@ -28,7 +29,7 @@ Use the latest local artifacts under `artifacts/release-readiness/` and `artifac
 npm run release:gate:summary
 ```
 
-When the current working set lives inside a candidate rehearsal bundle rather than the top-level artifact roots, the command now also scans nested directories under `artifacts/release-readiness/` and reuses the newest matching snapshot / H5 smoke / reconnect soak / WeChat evidence set from that bundle.
+When the current working set lives inside a candidate rehearsal bundle rather than the top-level artifact roots, the command now also scans nested directories under `artifacts/release-readiness/` and reuses the newest matching snapshot / H5 smoke / reconnect soak / Cocos reconnect replay / WeChat evidence set from that bundle.
 
 Pick the release target surface explicitly when needed:
 
@@ -47,6 +48,7 @@ npm run release:gate:summary -- \
   --snapshot artifacts/release-readiness/release-readiness-2026-03-29T08-12-04.512Z.json \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-abc1234-2026-03-29T08-15-10.000Z.json \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-phase1-rc-abc1234.json \
+  --cocos-rc-reconnect-replay artifacts/release-readiness/cocos-rc-reconnect-replay-phase1-rc-abc1234.json \
   --manual-evidence-ledger artifacts/release-readiness/manual-release-evidence-owner-ledger-abc1234.md \
   --config-center-library configs/.config-center-library.json \
   --wechat-artifacts-dir artifacts/wechat-release
@@ -82,7 +84,7 @@ Use this first when CI is red or when a PR comment needs one concise release/ops
 
 ## Gate Rules
 
-The summary contains five release dimensions:
+The summary contains six release dimensions when the Cocos reconnect replay artifact is present:
 
 - `release-readiness`
   - Fails when the snapshot is missing, when the snapshot summary is not `passed`, or when any required snapshot check is `failed` or `pending`.
@@ -94,6 +96,10 @@ The summary contains five release dimensions:
   - Fails closed when the post-soak cleanup counters show lingering active rooms, live connections, active battles, or hero snapshots.
   - The target-surface contract now distinguishes reconnect soak evidence that is `present`, `stale`, or `failing` for the current candidate revision instead of only reporting file presence.
   - Use this gate for release candidates and reconnect / room-recovery changes; keep `test:e2e:multiplayer:smoke` as the faster PR-level signal for canonical multiplayer link health.
+- `cocos-primary-client-reconnect-replay`
+  - Uses `release:cocos:rc-reconnect-replay` when the artifact is attached or auto-discovered from the current rehearsal bundle.
+  - Verifies the Cocos 主客户端 stored-token resume branch and the resume-failure -> fresh join fallback branch against the same candidate revision.
+  - Treat the generated Markdown summary plus milestone diagnostics JSON files as the reviewer-facing artifact set when reconnect evidence needs to be attached to the release packet or PR.
 - `wechat-release`
   - Prefers `codex.wechat.release-candidate-summary.json` when present.
   - Falls back to `codex.wechat.rc-validation-report.json` when the candidate summary is absent.
@@ -147,6 +153,7 @@ For `wechat`, the required surface evidence is:
 - release readiness snapshot
 - H5 packaged RC smoke
 - reconnect soak
+- Cocos primary-client reconnect replay
 - WeChat candidate summary
 - required WeChat manual-review checks with current owner/timestamp/revision metadata
 

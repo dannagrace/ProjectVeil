@@ -1,9 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ResourceLedger, ServerMessage, WorldState } from "../../../packages/shared/src/index";
+import { appendEventLogEntries, type EventLogEntry, type ResourceLedger, type ServerMessage, type WorldState } from "../../../packages/shared/src/index";
 import { GuildService } from "./guilds";
-import type { PlayerReportResolveInput, PlayerReportStatus, RoomSnapshotStore } from "./persistence";
+import type {
+  PlayerCompensationCreateInput,
+  PlayerCompensationRecord,
+  PlayerReportResolveInput,
+  PlayerReportStatus,
+  RoomSnapshotStore
+} from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 import { recordLeaderboardAbuseAlert } from "./observability";
 import { readRuntimeSecret } from "./runtime-secrets";
@@ -29,6 +35,7 @@ type AdminApp = {
   use: (handler: AdminMiddleware) => void;
   get: (path: string, handler: AdminRouteHandler) => void;
   post: (path: string, handler: AdminRouteHandler) => void;
+  delete: (path: string, handler: AdminRouteHandler) => void;
 };
 type AdminRole = "admin" | "support-moderator" | "support-supervisor";
 type BanApproval = {
@@ -99,7 +106,7 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, x-veil-admin-secret");
   response.end(JSON.stringify(payload));
 }
@@ -170,6 +177,38 @@ function hasPlayerAccountStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "loadPlayerAccount" | "savePlayerAccountProgress">> {
   return Boolean(store?.loadPlayerAccount && store.savePlayerAccountProgress);
+}
+
+type PlayerCompensationCurrency = "gems" | keyof ResourceLedger;
+type PlayerCompensationRequest = {
+  type: PlayerCompensationCreateInput["type"];
+  currency: PlayerCompensationCurrency;
+  amount: number;
+  reason: string;
+};
+type PlayerBalanceSnapshot = {
+  gems: number;
+  resources: ResourceLedger;
+};
+
+function hasPlayerCompensationStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<
+    Pick<
+      RoomSnapshotStore,
+      | "loadPlayerAccount"
+      | "ensurePlayerAccount"
+      | "savePlayerAccountProgress"
+      | "appendPlayerCompensationRecord"
+      | "listPlayerCompensationHistory"
+    >
+  > {
+  return Boolean(
+    store &&
+      store.appendPlayerCompensationRecord &&
+      store.listPlayerCompensationHistory
+  );
 }
 
 function hasBattleSnapshotHistoryStore(
@@ -330,12 +369,221 @@ function readLimit(request: IncomingMessage, fallback = 20): number {
   return Math.max(1, Math.floor(parsed));
 }
 
+function readPage(request: IncomingMessage, fallback = 1): number {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const parsed = Number(url.searchParams.get("page"));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
+type LeaderboardQueueFlagType =
+  | "daily_gain_cap_hit"
+  | "repeated_opponent_gain_cap_hit"
+  | "repeated_opponent_watch"
+  | "watch"
+  | "flagged"
+  | "frozen";
+
+const LEADERBOARD_QUEUE_FLAG_TYPES = new Set<LeaderboardQueueFlagType>([
+  "daily_gain_cap_hit",
+  "repeated_opponent_gain_cap_hit",
+  "repeated_opponent_watch",
+  "watch",
+  "flagged",
+  "frozen"
+]);
+
+function readLeaderboardQueueFlagType(request: IncomingMessage): LeaderboardQueueFlagType | undefined {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const raw = url.searchParams.get("flagType")?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  if (!LEADERBOARD_QUEUE_FLAG_TYPES.has(raw as LeaderboardQueueFlagType)) {
+    throw new InvalidAdminPayloadError(
+      '"flagType" must be one of "daily_gain_cap_hit", "repeated_opponent_gain_cap_hit", "repeated_opponent_watch", "watch", "flagged", or "frozen"'
+    );
+  }
+  return raw as LeaderboardQueueFlagType;
+}
+
+function getLeaderboardQueueFlagTypes(account: {
+  leaderboardAbuseState?: {
+    status?: "clear" | "watch" | "flagged";
+    lastAlertReasons?: string[];
+  };
+  leaderboardModerationState?: {
+    frozenAt?: string;
+  };
+}): LeaderboardQueueFlagType[] {
+  const flags = new Set<LeaderboardQueueFlagType>();
+  for (const reason of account.leaderboardAbuseState?.lastAlertReasons ?? []) {
+    if (LEADERBOARD_QUEUE_FLAG_TYPES.has(reason as LeaderboardQueueFlagType)) {
+      flags.add(reason as LeaderboardQueueFlagType);
+    }
+  }
+  if (account.leaderboardAbuseState?.status === "watch" || account.leaderboardAbuseState?.status === "flagged") {
+    flags.add(account.leaderboardAbuseState.status);
+  }
+  if (account.leaderboardModerationState?.frozenAt) {
+    flags.add("frozen");
+  }
+  return Array.from(flags);
+}
+
+function getLeaderboardQueueLastFlagAt(account: {
+  leaderboardAbuseState?: { lastAlertAt?: string };
+  leaderboardModerationState?: { frozenAt?: string };
+  updatedAt?: string;
+}): string {
+  return (
+    [account.leaderboardAbuseState?.lastAlertAt, account.leaderboardModerationState?.frozenAt, account.updatedAt]
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => right.localeCompare(left))[0] ?? new Date(0).toISOString()
+  );
+}
+
+function mapAbuseReasonToAlertType(reason: string): string {
+  switch (reason) {
+    case "daily_gain_cap_hit":
+      return "leaderboard_daily_gain_cap";
+    case "repeated_opponent_gain_cap_hit":
+      return "leaderboard_repeated_opponent_gain_cap";
+    case "repeated_opponent_watch":
+      return "leaderboard_repeated_opponent_watch";
+    default:
+      return reason;
+  }
+}
+
+function describeLeaderboardAbuseReason(reason: string): string {
+  switch (reason) {
+    case "daily_gain_cap_hit":
+      return "Player hit the leaderboard daily ELO gain cap.";
+    case "repeated_opponent_gain_cap_hit":
+      return "Player hit the repeated-opponent ELO gain cap.";
+    case "repeated_opponent_watch":
+      return "Player was flagged for repeated-opponent farming watch.";
+    case "frozen_match_skipped":
+      return "A leaderboard settlement was skipped because the player was frozen.";
+    default:
+      return reason;
+  }
+}
+
+function buildLeaderboardModerationEventEntry(input: {
+  playerId: string;
+  action: "frozen" | "freeze_cleared";
+  actorPlayerId: string;
+  occurredAt: string;
+  reason?: string | undefined;
+}): EventLogEntry {
+  const actionLabel = input.action === "frozen" ? "冻结排行榜结算" : "解除排行榜冻结";
+  return {
+    id: `leaderboard:${input.action}:${input.occurredAt}:${input.playerId}`,
+    timestamp: input.occurredAt,
+    roomId: "admin-console",
+    playerId: input.playerId,
+    category: "account",
+    description: `${actionLabel}（操作人：${input.actorPlayerId}${input.reason ? `，原因：${input.reason}` : ""}）`,
+    rewards: []
+  };
+}
+
+function buildLeaderboardAlertHistory(account: {
+  playerId: string;
+  leaderboardAbuseState?: {
+    lastAlertAt?: string;
+    lastAlertReasons?: string[];
+  };
+  leaderboardModerationState?: {
+    frozenAt?: string;
+    frozenByPlayerId?: string;
+    freezeReason?: string;
+  };
+  recentEventLog?: EventLogEntry[];
+}): Array<{
+  type: string;
+  at: string;
+  detail: string;
+  source: "abuse-state" | "event-log" | "moderation-state";
+}> {
+  const history: Array<{
+    type: string;
+    at: string;
+    detail: string;
+    source: "abuse-state" | "event-log" | "moderation-state";
+  }> = (account.recentEventLog ?? [])
+    .filter((entry) => entry.id.startsWith("leaderboard:"))
+    .map((entry) => {
+      const action = entry.id.split(":")[1] ?? "event";
+      return {
+        type: action,
+        at: entry.timestamp,
+        detail: entry.description,
+        source: "event-log" as const
+      };
+    });
+
+  if (account.leaderboardModerationState?.frozenAt) {
+    history.push({
+      type: "frozen",
+      at: account.leaderboardModerationState.frozenAt,
+      detail: `Leaderboard frozen by ${account.leaderboardModerationState.frozenByPlayerId ?? "unknown"}${
+        account.leaderboardModerationState.freezeReason ? ` (${account.leaderboardModerationState.freezeReason})` : ""
+      }.`,
+      source: "moderation-state"
+    });
+  }
+
+  for (const reason of account.leaderboardAbuseState?.lastAlertReasons ?? []) {
+    history.push({
+      type: mapAbuseReasonToAlertType(reason),
+      at: account.leaderboardAbuseState?.lastAlertAt ?? new Date(0).toISOString(),
+      detail: describeLeaderboardAbuseReason(reason),
+      source: "abuse-state"
+    });
+  }
+
+  return history.sort((left, right) => right.at.localeCompare(left.at) || right.type.localeCompare(left.type));
+}
+
 function parseResourceDeltaBody(value: unknown): ResourceLedger {
   const payload = readRequiredObjectBody(value);
   return {
     gold: readOptionalIntegerField(payload, "gold"),
     wood: readOptionalIntegerField(payload, "wood"),
     ore: readOptionalIntegerField(payload, "ore")
+  };
+}
+
+function parseCompensationBody(value: unknown): PlayerCompensationRequest {
+  const payload = readRequiredObjectBody(value);
+  const type = readOptionalTrimmedString(payload, "type");
+  const currency = readOptionalTrimmedString(payload, "currency")?.toLowerCase();
+  const reason = readOptionalTrimmedString(payload, "reason");
+  const amount = payload.amount;
+
+  if (type !== "add" && type !== "deduct") {
+    throw new InvalidAdminPayloadError('"type" must be "add" or "deduct"');
+  }
+  if (currency !== "gems" && currency !== "gold" && currency !== "wood" && currency !== "ore") {
+    throw new InvalidAdminPayloadError('"currency" must be one of "gems", "gold", "wood", or "ore"');
+  }
+  if (typeof amount !== "number" || !Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0) {
+    throw new InvalidAdminPayloadError('"amount" must be a positive integer');
+  }
+  if (!reason) {
+    throw new InvalidAdminPayloadError('"reason" must be a non-empty string');
+  }
+
+  return {
+    type,
+    currency,
+    amount,
+    reason
   };
 }
 
@@ -416,11 +664,144 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) {
+    return undefined;
+  }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(raw);
   } catch (error) {
     throw new InvalidAdminJsonError();
   }
+}
+
+function snapshotPlayerBalances(account: {
+  gems?: number;
+  globalResources?: Partial<ResourceLedger>;
+} | null): PlayerBalanceSnapshot {
+  return {
+    gems: Math.max(0, Math.floor(account?.gems ?? 0)),
+    resources: {
+      gold: Math.max(0, Math.floor(account?.globalResources?.gold ?? 0)),
+      wood: Math.max(0, Math.floor(account?.globalResources?.wood ?? 0)),
+      ore: Math.max(0, Math.floor(account?.globalResources?.ore ?? 0))
+    }
+  };
+}
+
+function applyCompensationToBalance(
+  current: PlayerBalanceSnapshot,
+  input: PlayerCompensationRequest
+): {
+  previousBalance: number;
+  next: PlayerBalanceSnapshot;
+} {
+  const previousBalance = input.currency === "gems" ? current.gems : current.resources[input.currency];
+  const delta = input.type === "add" ? input.amount : -input.amount;
+  const balanceAfter = Math.max(0, previousBalance + delta);
+
+  return {
+    previousBalance,
+    next: {
+      gems: input.currency === "gems" ? balanceAfter : current.gems,
+      resources:
+        input.currency === "gems"
+          ? { ...current.resources }
+          : {
+              ...current.resources,
+              [input.currency]: balanceAfter
+            }
+    }
+  };
+}
+
+function renderCompensationEvent(record: PlayerCompensationRecord): string {
+  const actionLabel = record.type === "deduct" ? "扣减" : "发放";
+  return `${actionLabel} ${record.currency} ${record.amount}（原因：${record.reason}，变更前 ${record.previousBalance}，变更后 ${record.balanceAfter}）`;
+}
+
+function buildCompensationEventEntry(
+  playerId: string,
+  record: PlayerCompensationRecord,
+  balances: PlayerBalanceSnapshot
+): {
+  id: string;
+  timestamp: string;
+  roomId: string;
+  playerId: string;
+  category: "account";
+  description: string;
+  rewards: [];
+} {
+  return {
+    id: `compensation:${record.auditId}`,
+    timestamp: record.createdAt,
+    roomId: "admin-console",
+    playerId,
+    category: "account",
+    description: `${renderCompensationEvent(record)}。当前余额：gems=${balances.gems}, gold=${balances.resources.gold}, wood=${balances.resources.wood}, ore=${balances.resources.ore}`,
+    rewards: []
+  };
+}
+
+function syncPlayerBalancesToActiveRooms(playerId: string, nextResources: ResourceLedger): boolean {
+  let syncedToRoom = false;
+  const activeRooms = getActiveRoomInstances();
+
+  for (const [roomId, vRoom] of activeRooms) {
+    if (vRoom.worldRoom) {
+      const roomInternals = vRoom as unknown as {
+        getPlayerId(client: { sessionId?: string }, fallback?: string): string | undefined;
+        buildStatePayload(
+          playerId: string,
+          extras?: {
+            events?: Array<{ type: "system.announcement"; text: string; tone: "system" }>;
+            movementPlan?: null;
+            reason?: string;
+          }
+        ): ServerMessage extends { type: "session.state"; payload: infer T } ? T : never;
+      };
+      const internalState = vRoom.worldRoom.getInternalState() as WorldState & {
+        playerResources?: Record<string, ResourceLedger>;
+      };
+
+      if (internalState.resources && internalState.resources[playerId]) {
+        internalState.resources[playerId] = { ...nextResources };
+      }
+
+      if (internalState.playerResources && internalState.playerResources[playerId]) {
+        internalState.playerResources[playerId] = { ...nextResources };
+      }
+
+      console.log(`[Admin] Patched room ${roomId} for ${playerId}:`, nextResources);
+
+      const snapshot = vRoom.worldRoom.getSnapshot(playerId);
+      snapshot.state.resources = { ...nextResources };
+
+      for (const client of vRoom.clients) {
+        const clientPlayerId = roomInternals.getPlayerId(client, playerId) ?? playerId;
+        client.send("session.state", {
+          requestId: "push",
+          delivery: "push",
+          payload: roomInternals.buildStatePayload(clientPlayerId, {
+            events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
+            movementPlan: null
+          })
+        });
+      }
+
+      syncedToRoom = true;
+    }
+  }
+
+  return syncedToRoom;
+}
+
+function hasLeaderboardModerationQueueStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "listPlayerAccounts">> {
+  return Boolean(store?.listPlayerAccounts);
 }
 
 export function registerAdminRoutes(
@@ -490,55 +871,7 @@ export function registerAdminRoutes(
       };
 
       if (store) await store.savePlayerAccountProgress(playerId, { globalResources: nextResources });
-
-      let syncedToRoom = false;
-      const activeRooms = getActiveRoomInstances();
-
-      for (const [roomId, vRoom] of activeRooms) {
-        if (vRoom.worldRoom) {
-          const roomInternals = vRoom as unknown as {
-            getPlayerId(client: { sessionId?: string }, fallback?: string): string | undefined;
-            buildStatePayload(
-              playerId: string,
-              extras?: {
-                events?: Array<{ type: "system.announcement"; text: string; tone: "system" }>;
-                movementPlan?: null;
-                reason?: string;
-              }
-            ): ServerMessage extends { type: "session.state"; payload: infer T } ? T : never;
-          };
-          const internalState = vRoom.worldRoom.getInternalState() as WorldState & {
-            playerResources?: Record<string, ResourceLedger>;
-          };
-
-          if (internalState.resources && internalState.resources[playerId]) {
-            internalState.resources[playerId] = { ...nextResources };
-          }
-
-          if (internalState.playerResources && internalState.playerResources[playerId]) {
-            internalState.playerResources[playerId] = { ...nextResources };
-          }
-
-          console.log(`[Admin] Patched room ${roomId} for ${playerId}:`, nextResources);
-
-          const snapshot = vRoom.worldRoom.getSnapshot(playerId);
-          snapshot.state.resources = { ...nextResources };
-
-          for (const client of vRoom.clients) {
-            const clientPlayerId = roomInternals.getPlayerId(client, playerId) ?? playerId;
-            client.send("session.state", {
-              requestId: "push",
-              delivery: "push",
-              payload: roomInternals.buildStatePayload(clientPlayerId, {
-                events: [{ type: "system.announcement", text: "资源已更新", tone: "system" }],
-                movementPlan: null
-              })
-            });
-          }
-
-          syncedToRoom = true;
-        }
-      }
+      const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, nextResources);
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
@@ -552,6 +885,72 @@ export function registerAdminRoutes(
       }
       console.error("[Admin] Sync error:", error);
       sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/players/:id/compensation", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerCompensationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const input = parseCompensationBody(await readJsonBody(request));
+      const account = (await store.loadPlayerAccount(playerId)) ?? (await store.ensurePlayerAccount({ playerId, displayName: playerId }));
+      const currentBalances = snapshotPlayerBalances(account);
+      const { previousBalance, next } = applyCompensationToBalance(currentBalances, input);
+
+      const record = await store.appendPlayerCompensationRecord(playerId, {
+        type: input.type,
+        currency: input.currency,
+        amount: input.amount,
+        reason: input.reason,
+        previousBalance,
+        balanceAfter: input.currency === "gems" ? next.gems : next.resources[input.currency]
+      });
+      const updatedAccount = await store.savePlayerAccountProgress(playerId, {
+        gems: next.gems,
+        globalResources: next.resources,
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [buildCompensationEventEntry(playerId, record, next)])
+      });
+      const balances = snapshotPlayerBalances(updatedAccount);
+      const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, balances.resources);
+
+      sendJson(response, 200, {
+        ok: true,
+        compensation: record,
+        balances,
+        syncedToRoom
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      console.error("[Admin] Compensation error:", error);
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/compensation/history", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    if (!hasPlayerCompensationStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request as AdminRequest, "id");
+      const items = await store.listPlayerCompensationHistory(playerId, { limit: readLimit(request) });
+      sendJson(response, 200, { items });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
     }
   });
 
@@ -766,20 +1165,31 @@ export function registerAdminRoutes(
       const playerId = readRequiredParam(request, "id");
       const input = parseGuildModerationBody(await readJsonBody(request));
       const account = (await store.loadPlayerAccount(playerId)) ?? (await store.ensurePlayerAccount({ playerId }));
+      const frozenAt = new Date().toISOString();
+      const actorPlayerId = `${role}:admin-console`;
       const leaderboardModerationState = {
         ...(account.leaderboardModerationState ?? {}),
-        frozenAt: new Date().toISOString(),
-        frozenByPlayerId: `${role}:admin-console`,
+        frozenAt,
+        frozenByPlayerId: actorPlayerId,
         ...(input.reason ? { freezeReason: input.reason } : {})
       };
       const updatedAccount = await store.savePlayerAccountProgress(playerId, {
-        leaderboardModerationState
+        leaderboardModerationState,
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [
+          buildLeaderboardModerationEventEntry({
+            playerId,
+            action: "frozen",
+            actorPlayerId,
+            occurredAt: frozenAt,
+            reason: input.reason
+          })
+        ])
       });
       recordLeaderboardAbuseAlert({
         type: "leaderboard_frozen_player_match",
         playerId,
         at: leaderboardModerationState.frozenAt,
-        detail: `Leaderboard frozen by ${role}:admin-console${input.reason ? ` (${input.reason})` : ""}.`
+        detail: `Leaderboard frozen by ${actorPlayerId}${input.reason ? ` (${input.reason})` : ""}.`
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
@@ -787,6 +1197,134 @@ export function registerAdminRoutes(
         sendInvalidJson(response);
         return;
       }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/players/:id/leaderboard/abuse-state", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!hasPlayerAccountStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, { error: "Player account not found" });
+        return;
+      }
+
+      sendJson(response, 200, {
+        playerId,
+        abuseState: account.leaderboardAbuseState ?? { status: "clear" },
+        moderationState: account.leaderboardModerationState ?? {},
+        alertHistory: buildLeaderboardAlertHistory(account)
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.delete("/api/admin/players/:id/leaderboard/freeze", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasPlayerAccountStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, { error: "Player account not found" });
+        return;
+      }
+
+      const input = parseGuildModerationBody(await readJsonBody(request));
+      const clearedAt = new Date().toISOString();
+      const actorPlayerId = `${role}:admin-console`;
+      const previousModerationState = account.leaderboardModerationState ?? {};
+      const leaderboardModerationState = {
+        ...(previousModerationState.hiddenAt ? { hiddenAt: previousModerationState.hiddenAt } : {}),
+        ...(previousModerationState.hiddenByPlayerId ? { hiddenByPlayerId: previousModerationState.hiddenByPlayerId } : {}),
+        ...(previousModerationState.hiddenReason ? { hiddenReason: previousModerationState.hiddenReason } : {})
+      };
+      const updatedAccount = await store.savePlayerAccountProgress(playerId, {
+        leaderboardModerationState,
+        recentEventLog: appendEventLogEntries(account.recentEventLog, [
+          buildLeaderboardModerationEventEntry({
+            playerId,
+            action: "freeze_cleared",
+            actorPlayerId,
+            occurredAt: clearedAt,
+            reason: input.reason
+          })
+        ])
+      });
+
+      sendJson(response, 200, {
+        ok: true,
+        account: updatedAccount,
+        audit: {
+          action: "freeze_cleared",
+          actorPlayerId,
+          occurredAt: clearedAt,
+          ...(input.reason ? { reason: input.reason } : {})
+        }
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/leaderboard/moderation-queue", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!hasLeaderboardModerationQueueStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const limit = readLimit(request, 20);
+      const page = readPage(request, 1);
+      const flagType = readLeaderboardQueueFlagType(request);
+      const accounts = await store.listPlayerAccounts({ limit: 10_000, offset: 0 });
+      const queue = accounts
+        .map((account) => ({
+          playerId: account.playerId,
+          displayName: account.displayName,
+          eloRating: account.eloRating ?? 1000,
+          abuseState: account.leaderboardAbuseState ?? { status: "clear" as const },
+          moderationState: account.leaderboardModerationState ?? {},
+          flagTypes: getLeaderboardQueueFlagTypes(account),
+          lastFlagAt: getLeaderboardQueueLastFlagAt(account)
+        }))
+        .filter((item) => item.flagTypes.length > 0)
+        .filter((item) => !flagType || item.flagTypes.includes(flagType))
+        .sort((left, right) => right.lastFlagAt.localeCompare(left.lastFlagAt) || left.playerId.localeCompare(right.playerId));
+
+      const total = queue.length;
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const offset = (page - 1) * limit;
+      sendJson(response, 200, {
+        items: queue.slice(offset, offset + limit),
+        page,
+        limit,
+        total,
+        totalPages,
+        ...(flagType ? { flagType } : {})
+      });
+    } catch (error) {
       if (error instanceof InvalidAdminPayloadError) {
         sendInvalidPayload(response, error.message);
         return;

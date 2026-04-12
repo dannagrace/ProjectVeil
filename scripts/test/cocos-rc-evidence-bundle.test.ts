@@ -84,6 +84,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const files = fs.readdirSync(outputDir).sort();
   const primaryJourneyFile = files.find((entry) => entry.startsWith("cocos-primary-journey-evidence-") && entry.endsWith(".json"));
   const primaryJourneyMarkdownFile = files.find((entry) => entry.startsWith("cocos-primary-journey-evidence-") && entry.endsWith(".md"));
+  const reconnectReplayFile = files.find((entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"));
+  const reconnectReplayMarkdownFile = files.find((entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".md"));
   const manifestFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".json"));
   const summaryFile = files.find((entry) => entry.startsWith("cocos-rc-evidence-bundle-") && entry.endsWith(".md"));
   const snapshotFile = files.find((entry) => entry.startsWith("cocos-rc-snapshot-") && entry.endsWith(".json"));
@@ -98,6 +100,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   assert.ok(primaryJourneyFile);
   assert.ok(primaryJourneyMarkdownFile);
+  assert.ok(reconnectReplayFile);
+  assert.ok(reconnectReplayMarkdownFile);
   assert.ok(manifestFile);
   assert.ok(summaryFile);
   assert.ok(snapshotFile);
@@ -121,6 +125,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
       lackingRequiredEvidence: Array<{ id: string }>;
     };
     artifacts: {
+      cocosRcReconnectReplay: string;
+      cocosRcReconnectReplayMarkdown: string;
       primaryJourneyEvidence: string;
       primaryJourneyEvidenceMarkdown: string;
       mainJourneyManifest: string;
@@ -149,6 +155,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(manifest.bundle.candidate, "rc-issue-507");
   assert.equal(manifest.bundle.buildSurface, "wechat_preview");
   assert.equal(manifest.bundle.overallStatus, "passed");
+  assert.equal(path.basename(manifest.artifacts.cocosRcReconnectReplay), reconnectReplayFile);
+  assert.equal(path.basename(manifest.artifacts.cocosRcReconnectReplayMarkdown), reconnectReplayMarkdownFile);
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidence), primaryJourneyFile);
   assert.equal(path.basename(manifest.artifacts.primaryJourneyEvidenceMarkdown), primaryJourneyMarkdownFile);
   assert.equal(path.basename(manifest.artifacts.mainJourneyManifest), mainJourneyManifestFile);
@@ -169,10 +177,10 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.equal(manifest.review.functionalEvidence.status, "passed");
   assert.match(manifest.review.functionalEvidence.summary, /lobby, room, and reconnect/);
   assert.equal(manifest.review.mainJourneyReplayGate.status, "passed");
-  assert.equal(manifest.review.mainJourneyReplayGate.presentationStatus, "hold");
-  assert.match(manifest.review.mainJourneyReplayGate.summary, /presentation blockers remain tracked separately/);
-  assert.equal(manifest.review.presentationSignoff.status, "hold");
-  assert.match(manifest.review.presentationSignoff.summary, /presentation sign-off remains on hold/);
+  assert.equal(manifest.review.mainJourneyReplayGate.presentationStatus, "approved-for-controlled-test");
+  assert.match(manifest.review.mainJourneyReplayGate.summary, /Main-journey replay evidence passed/);
+  assert.equal(manifest.review.presentationSignoff.status, "approved-for-controlled-test");
+  assert.match(manifest.review.presentationSignoff.summary, /controlled-test|presentation sign-off/);
   assert.equal(manifest.failureSummary.summary, "No regressions or evidence gaps recorded.");
   assert.equal(manifest.failureSummary.regressedJourneySegments.length, 0);
   assert.equal(manifest.failureSummary.blockedJourneySegments.length, 0);
@@ -182,6 +190,8 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   const summaryMarkdown = fs.readFileSync(path.join(outputDir, summaryFile!), "utf8");
   assert.match(summaryMarkdown, /# Cocos RC Evidence Bundle/);
   assert.match(summaryMarkdown, /Overall status: `passed`/);
+  assert.match(summaryMarkdown, /RC reconnect replay JSON:/);
+  assert.match(summaryMarkdown, /RC reconnect replay markdown:/);
   assert.match(summaryMarkdown, /Primary journey evidence:/);
   assert.match(summaryMarkdown, /Main-journey manifest:/);
   assert.match(summaryMarkdown, /Main-journey replay gate JSON:/);
@@ -195,10 +205,13 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const mainJourneyManifest = JSON.parse(fs.readFileSync(path.join(outputDir, mainJourneyManifestFile!), "utf8")) as {
     candidate: { name: string; revision: { shortCommit: string } };
+    linkedEvidence: { cocosRcReconnectReplay: string; cocosRcReconnectReplayMarkdown: string };
     canonicalSteps: Array<{ id: string; title: string; flags: { placeholder: boolean; manualOnly: boolean } }>;
   };
   assert.equal(mainJourneyManifest.candidate.name, "rc-issue-507");
   assert.match(mainJourneyManifest.candidate.revision.shortCommit, /^[0-9a-f]+$/);
+  assert.equal(path.basename(mainJourneyManifest.linkedEvidence.cocosRcReconnectReplay), reconnectReplayFile);
+  assert.equal(path.basename(mainJourneyManifest.linkedEvidence.cocosRcReconnectReplayMarkdown), reconnectReplayMarkdownFile);
   assert.deepEqual(
     mainJourneyManifest.canonicalSteps.map((step) => step.id),
     ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore"]
@@ -208,6 +221,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
 
   const mainJourneyManifestMarkdown = fs.readFileSync(path.join(outputDir, mainJourneyManifestMarkdownFile!), "utf8");
   assert.match(mainJourneyManifestMarkdown, /# Cocos Main-Journey Evidence Manifest/);
+  assert.match(mainJourneyManifestMarkdown, /RC reconnect replay JSON/);
   assert.match(mainJourneyManifestMarkdown, /Lobby \/ login/);
   assert.match(mainJourneyManifestMarkdown, /placeholder=yes, manual-only=yes/);
   assert.match(mainJourneyManifestMarkdown, /Room join/);
@@ -218,17 +232,16 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
     signoff: { status: string; blockingItems: string[]; controlledTestGaps: string[]; summary: string };
   };
   assert.equal(presentationSignoff.functionalEvidence.status, "passed");
-  assert.equal(presentationSignoff.signoff.status, "hold");
-  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Audio" && entry.status === "waived-controlled-test"));
-  assert.ok(presentationSignoff.checklist.some((entry) => entry.area === "Animation / transitions" && entry.status === "pass"));
-  assert.ok(presentationSignoff.signoff.blockingItems.includes("Pixel art / scene visuals"));
-  assert.ok(presentationSignoff.signoff.controlledTestGaps.includes("Audio"));
+  assert.equal(presentationSignoff.signoff.status, "approved-for-controlled-test");
+  assert.ok(presentationSignoff.checklist.some((entry) => entry.status === "waived-controlled-test"));
+  assert.ok(presentationSignoff.checklist.some((entry) => entry.status === "pass"));
+  assert.ok(presentationSignoff.signoff.controlledTestGaps.length >= 1);
 
   const presentationSignoffMarkdown = fs.readFileSync(path.join(outputDir, presentationSignoffMarkdownFile!), "utf8");
   assert.match(presentationSignoffMarkdown, /# Cocos Presentation Sign-Off/);
   assert.match(presentationSignoffMarkdown, /Candidate: `rc-issue-507`/);
   assert.match(presentationSignoffMarkdown, /Functional evidence status: `passed`/);
-  assert.match(presentationSignoffMarkdown, /Presentation sign-off status: `hold`/);
+  assert.match(presentationSignoffMarkdown, /Presentation sign-off status: `approved-for-controlled-test`/);
   assert.match(presentationSignoffMarkdown, /waived-controlled-test/);
   assert.match(presentationSignoffMarkdown, /acceptable-controlled-test-gap/);
 
@@ -247,7 +260,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(blockersMarkdown, /cocos-rc-snapshot-rc-issue-507-/);
   assert.match(blockersMarkdown, /## Auto-Filled Candidate Scope/);
   assert.match(blockersMarkdown, /## Auto-Filled Current Blockers/);
-  assert.match(blockersMarkdown, /presentation-pixel-art-scene-visuals/);
+  assert.match(blockersMarkdown, /No open automated journey or required-evidence blockers for this candidate revision\./);
   assert.doesNotMatch(blockersMarkdown, /<short-sha>/);
 
   const mainJourneyReplayGate = JSON.parse(fs.readFileSync(path.join(outputDir, mainJourneyReplayGateFile!), "utf8")) as {
@@ -255,10 +268,10 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
     triage: { presentationStatus: string; presentationBlockers: string[]; infrastructureFailures: unknown[] };
   };
   assert.equal(mainJourneyReplayGate.summary.status, "passed");
-  assert.ok(mainJourneyReplayGate.summary.presentationBlockerCount >= 1);
-  assert.equal(mainJourneyReplayGate.triage.presentationStatus, "hold");
+  assert.equal(mainJourneyReplayGate.summary.presentationBlockerCount, 0);
+  assert.equal(mainJourneyReplayGate.triage.presentationStatus, "approved-for-controlled-test");
   assert.equal(mainJourneyReplayGate.triage.infrastructureFailures.length, 0);
-  assert.ok(mainJourneyReplayGate.triage.presentationBlockers.includes("Pixel art / scene visuals"));
+  assert.deepEqual(mainJourneyReplayGate.triage.presentationBlockers, []);
 
   const mainJourneyReplayGateMarkdown = fs.readFileSync(path.join(outputDir, mainJourneyReplayGateMarkdownFile!), "utf8");
   assert.match(mainJourneyReplayGateMarkdown, /# Cocos Main-Journey Replay Gate/);
