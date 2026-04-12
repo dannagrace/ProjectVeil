@@ -104,6 +104,16 @@ export interface SeasonCloseSummary {
   totalGemsGranted: number;
 }
 
+export interface LeaderboardSeasonArchiveEntry {
+  seasonId: string;
+  rank: number;
+  playerId: string;
+  displayName: string;
+  finalRating: number;
+  tier: string;
+  archivedAt: string;
+}
+
 export interface PlayerReferralClaimResult {
   claimed: boolean;
   rewardGems: number;
@@ -291,6 +301,7 @@ export interface RoomSnapshotStore {
   listPlayerAccounts(options?: PlayerAccountListOptions): Promise<PlayerAccountSnapshot[]>;
   getCurrentSeason(): Promise<SeasonSnapshot | null>;
   listSeasons?(options?: SeasonListOptions): Promise<SeasonSnapshot[]>;
+  listLeaderboardSeasonArchive?(seasonId: string, limit?: number): Promise<LeaderboardSeasonArchiveEntry[]>;
   createSeason(seasonId: string): Promise<SeasonSnapshot>;
   closeSeason(seasonId: string): Promise<SeasonCloseSummary>;
   save(roomId: string, snapshot: RoomPersistenceSnapshot): Promise<void>;
@@ -1141,8 +1152,9 @@ export const MYSQL_GUILD_AUDIT_LOG_ACTOR_OCCURRED_INDEX = "idx_guild_audit_logs_
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const MYSQL_SEASON_TABLE = "veil_seasons";
-export const MYSQL_SEASON_RANKINGS_TABLE = "veil_season_rankings";
+export const MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE = "leaderboard_season_archives";
 export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
+const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
@@ -4120,14 +4132,16 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_TABLE}\` (
   PRIMARY KEY (\`season_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_RANKINGS_TABLE}\` (
+CREATE TABLE IF NOT EXISTS \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\` (
   \`season_id\` VARCHAR(64) NOT NULL,
+  \`rank_position\` INT NOT NULL,
   \`player_id\` VARCHAR(64) NOT NULL,
+  \`display_name\` VARCHAR(191) NOT NULL,
   \`final_rating\` INT NOT NULL,
   \`tier\` VARCHAR(32) NOT NULL,
-  \`rank_position\` INT NOT NULL,
   \`archived_at\` DATETIME NOT NULL,
-  PRIMARY KEY (\`season_id\`, \`player_id\`)
+  PRIMARY KEY (\`season_id\`, \`rank_position\`),
+  UNIQUE KEY \`uniq_leaderboard_season_archives_player\` (\`season_id\`, \`player_id\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET @veil_seasons_reward_distributed_exists := (
@@ -9067,6 +9081,33 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
+  async listLeaderboardSeasonArchive(seasonId: string, limit = MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE): Promise<LeaderboardSeasonArchiveEntry[]> {
+    const normalizedId = seasonId.trim();
+    if (!normalizedId) {
+      throw new Error("seasonId must not be empty");
+    }
+
+    const normalizedLimit = Math.min(MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE, Math.max(1, Math.floor(limit)));
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT season_id, rank_position, player_id, display_name, final_rating, tier, archived_at
+       FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\`
+       WHERE season_id = ?
+       ORDER BY rank_position ASC
+       LIMIT ?`,
+      [normalizedId, normalizedLimit]
+    );
+
+    return rows.map((row) => ({
+      seasonId: String(row.season_id),
+      rank: Math.max(1, Math.floor(Number(row.rank_position) || 0)),
+      playerId: String(row.player_id),
+      displayName: String(row.display_name || row.player_id),
+      finalRating: normalizeEloRating(Number(row.final_rating)),
+      tier: String(row.tier),
+      archivedAt: formatTimestamp(row.archived_at as Date | string) ?? new Date(0).toISOString()
+    }));
+  }
+
   async closeSeason(seasonId: string): Promise<SeasonCloseSummary> {
     const normalizedId = seasonId.trim();
     if (!normalizedId) {
@@ -9108,44 +9149,57 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         };
       }
 
-      const [existingRankingRows] = await connection.query<RowDataPacket[]>(
-        `SELECT player_id, final_rating, rank_position
-         FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\`
+      const [existingArchiveRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, rank_position
+         FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\`
          WHERE season_id = ?
-         ORDER BY final_rating DESC, rank_position ASC, player_id ASC`,
+         ORDER BY rank_position ASC`,
         [normalizedId]
       );
 
-      let rankedPlayers = existingRankingRows.map((row) => ({
-        playerId: String(row.player_id),
-        finalRating: normalizeEloRating(Number(row.final_rating)),
-        rankPosition: Math.max(1, Math.floor(Number(row.rank_position) || 0))
-      }));
+      const [accountRows] = await connection.query<RowDataPacket[]>(
+        `SELECT player_id, display_name, elo_rating
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE elo_rating IS NOT NULL
+         ORDER BY elo_rating DESC, player_id ASC
+         FOR UPDATE`
+      );
+      const rankedPlayers = accountRows.map((row, index) => {
+        const playerId = String(row.player_id);
+        const finalRating = normalizeEloRating(Number(row.elo_rating));
+        return {
+          playerId,
+          displayName: String(row.display_name || row.player_id),
+          finalRating,
+          rankPosition: index + 1
+        };
+      });
 
-      if (rankedPlayers.length === 0) {
-        const [accountRows] = await connection.query<RowDataPacket[]>(
-          `SELECT player_id, elo_rating
-           FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
-           WHERE elo_rating IS NOT NULL
-           ORDER BY elo_rating DESC, player_id ASC
-           FOR UPDATE`
-        );
-        const rankingValues: Array<[string, string, number, string, number, Date]> = [];
-        rankedPlayers = accountRows.map((row, index) => {
-          const playerId = String(row.player_id);
-          const finalRating = normalizeEloRating(Number(row.elo_rating));
-          rankingValues.push([normalizedId, playerId, finalRating, getTierForRating(finalRating), index + 1, now]);
-          return {
-            playerId,
-            finalRating,
-            rankPosition: index + 1
-          };
-        });
+      if (existingArchiveRows.length === 0) {
+        const archiveValues: Array<[string, number, string, string, number, string, Date]> = rankedPlayers
+          .slice(0, MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE)
+          .map((rankedPlayer) => [
+            normalizedId,
+            rankedPlayer.rankPosition,
+            rankedPlayer.playerId,
+            rankedPlayer.displayName,
+            rankedPlayer.finalRating,
+            getTierForRating(rankedPlayer.finalRating),
+            now
+          ]);
 
-        if (rankingValues.length > 0) {
+        if (archiveValues.length > 0) {
           await connection.query(
-            `INSERT INTO \`${MYSQL_SEASON_RANKINGS_TABLE}\` (season_id, player_id, final_rating, tier, rank_position, archived_at) VALUES ?`,
-            [rankingValues]
+            `INSERT INTO \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\` (
+               season_id,
+               rank_position,
+               player_id,
+               display_name,
+               final_rating,
+               tier,
+               archived_at
+             ) VALUES ?`,
+            [archiveValues]
           );
         }
       }
@@ -9229,11 +9283,16 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         const seasonHistory = [
           {
             seasonId: normalizedId,
+            rankPosition: rankedPlayer.rankPosition,
+            totalPlayers: rankedPlayers.length,
+            finalRating: rankedPlayer.finalRating,
             peakDivision,
             finalDivision: currentDivision,
             rewardTier: getTierForRating(rankedPlayer.finalRating),
+            rankPercentile: rankedPlayers.length > 0 ? rankedPlayer.rankPosition / rankedPlayers.length : 1,
             rewardClaimed: rewardedPlayerIds.has(rankedPlayer.playerId),
-            archivedAt: now.toISOString()
+            archivedAt: now.toISOString(),
+            ...(rewardedPlayerIds.has(rankedPlayer.playerId) ? { rewardsGrantedAt: now.toISOString() } : {})
           },
           ...(currentAccount.seasonHistory ?? [])
         ].slice(0, 20);

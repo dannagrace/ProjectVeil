@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { EventEmitter } from "node:events";
+import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { addUtcDays, getUtcWeekStart } from "../../../packages/shared/src/index";
 import { registerLeaderboardRoutes } from "../src/leaderboard";
@@ -9,6 +10,7 @@ type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void
 
 function createTestApp() {
   const gets = new Map<string, RouteHandler>();
+  const posts = new Map<string, RouteHandler>();
   const middlewares: Array<
     (request: IncomingMessage, response: ServerResponse, next: () => void) => void
   > = [];
@@ -20,9 +22,13 @@ function createTestApp() {
       },
       get(path: string, handler: RouteHandler) {
         gets.set(path, handler);
+      },
+      post(path: string, handler: RouteHandler) {
+        posts.set(path, handler);
       }
     },
     gets,
+    posts,
     middlewares
   };
 }
@@ -31,12 +37,19 @@ function createRequest(options: {
   method?: string;
   headers?: Record<string, string | undefined>;
   url?: string;
+  body?: string;
 } = {}): IncomingMessage {
-  const request = {} as IncomingMessage;
+  const request = new EventEmitter() as IncomingMessage & EventEmitter;
   Object.assign(request, {
     method: options.method ?? "GET",
     headers: options.headers ?? {},
     url: options.url ?? "/"
+  });
+  queueMicrotask(() => {
+    if (options.body !== undefined) {
+      request.emit("data", Buffer.from(options.body, "utf8"));
+    }
+    request.emit("end");
   });
   return request;
 }
@@ -83,9 +96,22 @@ async function runMiddlewares(
 }
 
 function registerRoutes(store = createMemoryRoomSnapshotStore()) {
-  const { app, gets, middlewares } = createTestApp();
+  const { app, gets, posts, middlewares } = createTestApp();
   registerLeaderboardRoutes(app, store);
-  return { gets, middlewares, store };
+  return { gets, posts, middlewares, store };
+}
+
+function withAdminToken(t: TestContext, token = "leaderboard-admin-token"): string {
+  const original = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = token;
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = original;
+    }
+  });
+  return token;
 }
 
 test("GET /api/leaderboard returns ranked players in elo order with competitive progression fields", async () => {
@@ -211,8 +237,8 @@ test("leaderboard route middleware responds to OPTIONS and applies CORS headers"
   assert.equal(response.statusCode, 204);
   assert.equal(response.body, "");
   assert.equal(response.headers["Access-Control-Allow-Origin"], "*");
-  assert.equal(response.headers["Access-Control-Allow-Methods"], "GET,OPTIONS");
-  assert.equal(response.headers["Access-Control-Allow-Headers"], "Content-Type");
+  assert.equal(response.headers["Access-Control-Allow-Methods"], "GET,POST,OPTIONS");
+  assert.equal(response.headers["Access-Control-Allow-Headers"], "Content-Type,X-Veil-Admin-Token");
 });
 
 test("leaderboard route middleware continues non-OPTIONS requests after applying CORS headers", async () => {
@@ -232,8 +258,8 @@ test("leaderboard route middleware continues non-OPTIONS requests after applying
   assert.equal(nextCalled, true);
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers["Access-Control-Allow-Origin"], "*");
-  assert.equal(response.headers["Access-Control-Allow-Methods"], "GET,OPTIONS");
-  assert.equal(response.headers["Access-Control-Allow-Headers"], "Content-Type");
+  assert.equal(response.headers["Access-Control-Allow-Methods"], "GET,POST,OPTIONS");
+  assert.equal(response.headers["Access-Control-Allow-Headers"], "Content-Type,X-Veil-Admin-Token");
 });
 
 test("GET /api/leaderboard returns a 500 payload when the store listing fails", async () => {
@@ -467,6 +493,147 @@ test("GET /api/player/:id/season-history returns a 500 payload when loading the 
       message: "season_history_unavailable"
     }
   });
+});
+
+test("GET /api/leaderboard/seasons/:seasonId returns archived rankings for the requested season", async () => {
+  const { gets, store } = registerRoutes();
+  const handler = gets.get("/api/leaderboard/seasons/:seasonId");
+  const response = createResponse();
+
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "Alpha" });
+  await store.savePlayerAccountProgress("player-1", { eloRating: 1650, rankDivision: "platinum_i" });
+  await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Beta" });
+  await store.savePlayerAccountProgress("player-2", { eloRating: 1400, rankDivision: "gold_i" });
+  await store.createSeason("season-archive");
+  await store.closeSeason("season-archive");
+
+  assert.ok(handler);
+  await handler(createRequest({ url: "/api/leaderboard/seasons/season-archive?limit=1" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    seasonId: "season-archive",
+    rankings: [
+      {
+        seasonId: "season-archive",
+        rank: 1,
+        playerId: "player-1",
+        displayName: "Alpha",
+        finalRating: 1650,
+        tier: "platinum",
+        archivedAt: JSON.parse(response.body).rankings[0].archivedAt
+      }
+    ]
+  });
+});
+
+test("POST /api/admin/leaderboard/season-rollover closes the current season, archives standings, and starts the next one", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+  const response = createResponse();
+
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "Alpha" });
+  await store.savePlayerAccountProgress("player-1", {
+    eloRating: 1650,
+    rankDivision: "platinum_i",
+    peakRankDivision: "diamond_i"
+  });
+  await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Beta" });
+  await store.savePlayerAccountProgress("player-2", {
+    eloRating: 1400,
+    rankDivision: "gold_i"
+  });
+  await store.createSeason("season-9");
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/leaderboard/season-rollover",
+      headers: { "x-veil-admin-token": token },
+      body: JSON.stringify({ seasonId: "season-9", nextSeasonId: "season-10" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    rolledOver: boolean;
+    nextSeason: { seasonId: string; status: string };
+    summary: { seasonId: string; playersRewarded: number };
+    archive: Array<{ playerId: string; rank: number }>;
+  };
+  assert.equal(payload.rolledOver, true);
+  assert.equal(payload.summary.seasonId, "season-9");
+  assert.equal(payload.nextSeason.seasonId, "season-10");
+  assert.equal(payload.nextSeason.status, "active");
+  assert.deepEqual(payload.archive.map((entry) => [entry.rank, entry.playerId]), [
+    [1, "player-1"],
+    [2, "player-2"]
+  ]);
+
+  const firstAccount = await store.loadPlayerAccount("player-1");
+  assert.equal(firstAccount?.seasonHistory?.[0]?.seasonId, "season-9");
+  assert.equal(firstAccount?.seasonHistory?.[0]?.rankPosition, 1);
+  assert.equal(firstAccount?.seasonHistory?.[0]?.finalRating, 1650);
+  assert.equal(firstAccount?.seasonHistory?.[0]?.totalPlayers, 2);
+  assert.equal(firstAccount?.seasonHistory?.[0]?.rewardClaimed, true);
+  assert.equal(firstAccount?.eloRating, 1300);
+  assert.equal((await store.getCurrentSeason())?.seasonId, "season-10");
+});
+
+test("POST /api/admin/leaderboard/season-rollover is idempotent for the same season pair", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+
+  await store.ensurePlayerAccount({ playerId: "player-1", displayName: "Alpha" });
+  await store.savePlayerAccountProgress("player-1", {
+    eloRating: 1650,
+    rankDivision: "platinum_i"
+  });
+  await store.createSeason("season-11");
+
+  assert.ok(handler);
+  const firstResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/leaderboard/season-rollover",
+      headers: { "x-veil-admin-token": token },
+      body: JSON.stringify({ seasonId: "season-11", nextSeasonId: "season-12" })
+    }),
+    firstResponse
+  );
+  const secondResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/leaderboard/season-rollover",
+      headers: { "x-veil-admin-token": token },
+      body: JSON.stringify({ seasonId: "season-11", nextSeasonId: "season-12" })
+    }),
+    secondResponse
+  );
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 200);
+  const secondPayload = JSON.parse(secondResponse.body) as {
+    rolledOver: boolean;
+    summary: { playersRewarded: number; totalGemsGranted: number };
+    nextSeason: { seasonId: string };
+    archive: Array<{ playerId: string }>;
+  };
+  assert.equal(secondPayload.rolledOver, false);
+  assert.deepEqual(secondPayload.summary, {
+    seasonId: "season-11",
+    playersRewarded: 0,
+    totalGemsGranted: 0
+  });
+  assert.equal(secondPayload.nextSeason.seasonId, "season-12");
+  assert.deepEqual(secondPayload.archive.map((entry) => entry.playerId), ["player-1"]);
+  assert.equal((await store.getCurrentSeason())?.seasonId, "season-12");
 });
 
 test("GET /api/matchmaking/tiers returns the published tier thresholds", async () => {

@@ -331,10 +331,9 @@ test("closeSeason distributes bracket rewards once and records badges in the rew
           reward_distributed_at: seasonState.rewardDistributedAt
         }]];
       }
-      if (/FROM `veil_season_rankings`/.test(sql) && /ORDER BY final_rating DESC/.test(sql)) {
+      if (/FROM `leaderboard_season_archives`/.test(sql) && /ORDER BY rank_position ASC/.test(sql)) {
         return [rankingRows.map((row) => ({
           player_id: row.playerId,
-          final_rating: row.finalRating,
           rank_position: row.rankPosition
         }))];
       }
@@ -343,13 +342,14 @@ test("closeSeason distributes bracket rewards once and records badges in the rew
           .sort((left, right) => right[1].eloRating - left[1].eloRating || left[0].localeCompare(right[0]))
           .map(([playerId, account]) => ({
             player_id: playerId,
+            display_name: playerId,
             elo_rating: account.eloRating
           }));
         return [rows];
       }
-      if (/INSERT INTO `veil_season_rankings`/.test(sql)) {
-        const values = params[0] as Array<[string, string, number, string, number]>;
-        for (const [seasonId, playerId, finalRating, tier, rankPosition] of values) {
+      if (/INSERT INTO `leaderboard_season_archives`/.test(sql)) {
+        const values = params[0] as Array<[string, number, string, string, number, string]>;
+        for (const [seasonId, rankPosition, playerId, _displayName, finalRating, tier] of values) {
           rankingRows.push({ seasonId, playerId, finalRating, tier, rankPosition });
         }
         return [{ affectedRows: values.length }];
@@ -415,6 +415,20 @@ test("closeSeason distributes bracket rewards once and records badges in the rew
           ...account,
           gems,
           seasonBadges: JSON.parse(seasonBadgesJson)
+        });
+        return [{ affectedRows: 1 }];
+      }
+      if (/UPDATE `player_accounts`/.test(sql) && /season_history_json = \?/.test(sql)) {
+        const [eloRating, rankDivision, peakRankDivision, _promotionSeriesJson, _demotionShieldJson, seasonHistoryJson, playerId] =
+          params as [number, string, string, string, string, string, string];
+        const account = accounts.get(playerId);
+        assert.ok(account);
+        accounts.set(playerId, {
+          ...account,
+          eloRating,
+          rankDivision,
+          peakRankDivision,
+          seasonHistory: JSON.parse(seasonHistoryJson)
         });
         return [{ affectedRows: 1 }];
       }

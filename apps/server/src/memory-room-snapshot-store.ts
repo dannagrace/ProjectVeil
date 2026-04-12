@@ -4,6 +4,7 @@ import {
   DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
   getTierForDivision,
+  getTierForRating,
   normalizeGuildState,
   normalizeCosmeticInventory,
   normalizeTextForModeration,
@@ -67,6 +68,7 @@ import {
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot,
+  type LeaderboardSeasonArchiveEntry,
   type SeasonCloseSummary,
   type SeasonListOptions,
   type SeasonSnapshot,
@@ -210,6 +212,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
+  private readonly leaderboardSeasonArchives = new Map<string, LeaderboardSeasonArchiveEntry[]>();
   private readonly seasonRewardLog = new Map<string, { gems: number; badge: string; distributedAt: string }>();
   private readonly referrals = new Set<string>();
   private nextReportId = 1;
@@ -2292,6 +2295,17 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return this.selectSeasons(options);
   }
 
+  async listLeaderboardSeasonArchive(seasonId: string, limit = 100): Promise<LeaderboardSeasonArchiveEntry[]> {
+    const normalizedSeasonId = seasonId.trim();
+    if (!normalizedSeasonId) {
+      throw new Error("seasonId must not be empty");
+    }
+
+    return (this.leaderboardSeasonArchives.get(normalizedSeasonId) ?? [])
+      .slice(0, Math.min(100, Math.max(1, Math.floor(limit))))
+      .map((entry) => structuredClone(entry));
+  }
+
   async createSeason(seasonId: string): Promise<import("./persistence").SeasonSnapshot> {
     const season: SeasonSnapshot = {
       seasonId: seasonId.trim(),
@@ -2330,6 +2344,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       );
 
     const distributedAt = new Date().toISOString();
+    if (!this.leaderboardSeasonArchives.has(normalizedSeasonId)) {
+      this.leaderboardSeasonArchives.set(
+        normalizedSeasonId,
+        rankedAccounts.slice(0, 100).map((account, index) => ({
+          seasonId: normalizedSeasonId,
+          rank: index + 1,
+          playerId: account.playerId,
+          displayName: account.displayName,
+          finalRating: normalizeEloRating(account.eloRating),
+          tier: getTierForRating(normalizeEloRating(account.eloRating)),
+          archivedAt: distributedAt
+        }))
+      );
+    }
     let playersRewarded = 0;
     let totalGemsGranted = 0;
     const rewardedPlayerIds = new Set<string>();
@@ -2359,6 +2387,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     for (const account of rankedAccounts) {
       const current = this.accounts.get(account.playerId) ?? account;
       const decay = applySeasonSoftDecay(current);
+      const rankPosition = rankedAccounts.findIndex((entry) => entry.playerId === account.playerId) + 1;
+      const finalRating = normalizeEloRating(current.eloRating ?? account.eloRating ?? 1000);
       await this.savePlayerAccountProgress(account.playerId, {
         eloRating: decayDivisionToRating(decay.rankDivision ?? current.rankDivision ?? "bronze_i"),
         rankDivision: decay.rankDivision,
@@ -2368,11 +2398,16 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         seasonHistory: [
           {
             seasonId: normalizedSeasonId,
+            rankPosition,
+            totalPlayers: rankedAccounts.length,
+            finalRating,
             peakDivision: current.peakRankDivision ?? current.rankDivision ?? "bronze_i",
             finalDivision: current.rankDivision ?? "bronze_i",
             rewardTier: getTierForDivision(current.rankDivision ?? "bronze_i"),
+            rankPercentile: rankedAccounts.length > 0 ? rankPosition / rankedAccounts.length : 1,
             rewardClaimed: rewardedPlayerIds.has(account.playerId),
-            archivedAt: distributedAt
+            archivedAt: distributedAt,
+            ...(rewardedPlayerIds.has(account.playerId) ? { rewardsGrantedAt: distributedAt } : {})
           },
           ...(current.seasonHistory ?? [])
         ].slice(0, 20)
@@ -2405,6 +2440,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     this.heroArchives.clear();
     this.shopPurchases.clear();
     this.seasons.clear();
+    this.leaderboardSeasonArchives.clear();
     this.seasonRewardLog.clear();
   }
 
