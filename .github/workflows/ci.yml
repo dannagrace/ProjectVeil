@@ -49,13 +49,22 @@ jobs:
         with:
           version: v1.33.1
 
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Pin Kubernetes image tag for validation
+        run: |
+          cp -R k8s "${RUNNER_TEMP}/k8s"
+          cd "${RUNNER_TEMP}/k8s"
+          kustomize edit set image ghcr.io/dannagrace/projectveil-server=ghcr.io/dannagrace/projectveil-server:${GITHUB_SHA}
+
       - name: Setup kind
         uses: engineerd/setup-kind@v0.6.2
         with:
           version: v0.24.0
 
       - name: Dry-run Kubernetes manifests
-        run: kubectl apply --dry-run=client -k k8s
+        run: kubectl apply --dry-run=client -k "${RUNNER_TEMP}/k8s"
 
   readme-script-gate:
     runs-on: ubuntu-latest
