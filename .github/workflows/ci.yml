@@ -148,6 +148,51 @@ jobs:
         if: steps.ops-tooling.outputs.touched == 'true'
         run: npm run typecheck:ops
 
+  k8s-configmap-placeholder-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Detect PRs that touch Kubernetes manifests
+        id: k8s-config
+        run: |
+          changed_paths="${RUNNER_TEMP}/k8s-configmap/changed-paths-${GITHUB_SHA}.txt"
+          mkdir -p "$(dirname "${changed_paths}")"
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee "${changed_paths}"
+
+          touched=false
+          if rg -n '^(k8s/|scripts/validate-k8s-configmap-placeholders\.ts|scripts/test/validate-k8s-configmap-placeholders\.test\.ts|\.github/workflows/ci\.yml|package(-lock)?\.json)$' "${changed_paths}" >/dev/null; then
+            touched=true
+          fi
+
+          echo "touched=${touched}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## K8s ConfigMap Placeholder Detection"
+            echo
+            echo "- Base ref: \`${{ github.base_ref }}\`"
+            echo "- Qualifying paths touched: \`${touched}\`"
+            echo "- Changed-path report: \`${changed_paths}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Validate k8s ConfigMap placeholder values
+        if: steps.k8s-config.outputs.touched == 'true'
+        run: npm run validate:k8s-configmap
+
   content-smoke-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 10

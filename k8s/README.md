@@ -9,6 +9,17 @@ This directory provides a production-oriented baseline for the Project Veil serv
 - `ConfigMap` for the non-secret env contract from `ops/env/production.env.example`
 - `HorizontalPodAutoscaler` keyed to the thresholds published in `docs/ops/capacity-planning.md`
 
+## CI placeholder gate
+
+Pull requests that touch `k8s/` now run `npm run validate:k8s-configmap` in CI. The validator scans `k8s/configmap.yaml` and fails if any `data` value still contains known placeholder tokens:
+
+- bare `.example` hostnames such as `analytics.projectveil.example/ingest`
+- `example.ingest.sentry.io`
+- `REPLACE_ME`
+- `TODO`
+
+The matcher is intentionally narrow so valid production-shaped values do not trip it accidentally. For example, S3-compatible endpoints like `https://s3.example.com` are allowed because they do not use the placeholder bare `.example` top-level domain.
+
 ## External stateful services
 
 These manifests assume managed backing services instead of in-cluster MySQL:
