@@ -2082,6 +2082,10 @@ function normalizePlayerId(playerId: string): string {
   return normalized;
 }
 
+function createDeletedFinancialRecordPseudonym(): string {
+  return `deleted-financial-${randomUUID()}`;
+}
+
 function normalizeBattleSnapshotStatus(status: BattleSnapshotStatus): BattleSnapshotStatus {
   if (status !== "active" && status !== "resolved" && status !== "compensated" && status !== "aborted") {
     throw new Error("battle snapshot status is invalid");
@@ -8485,6 +8489,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const deletedAt = normalizePrivacyConsentAt(input.deletedAt) ?? new Date().toISOString();
     const anonymizedDisplayName = `deleted-${normalizedPlayerId}`;
+    const retainedFinancialPlayerToken = createDeletedFinancialRecordPseudonym();
 
     const connection = await this.pool.getConnection();
     try {
@@ -8541,7 +8546,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [normalizedPlayerId, normalizedPlayerId]
       );
       await connection.query(
-        `DELETE FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\`
+        `DELETE FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\`
          WHERE player_id = ?`,
         [normalizedPlayerId]
       );
@@ -8549,6 +8554,23 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         `DELETE FROM \`${MYSQL_SEASON_REWARD_LOG_TABLE}\`
          WHERE player_id = ?`,
         [normalizedPlayerId]
+      );
+      await connection.query(
+        `UPDATE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+         INNER JOIN \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           ON \`${MYSQL_PAYMENT_ORDER_TABLE}\`.order_id = \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.order_id
+         SET \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
+         WHERE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
+           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.player_id = ?
+           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.status IN (?, ?)`,
+        [retainedFinancialPlayerToken, normalizedPlayerId, normalizedPlayerId, "settled", "dead_letter"]
+      );
+      await connection.query(
+        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         SET player_id = ?
+         WHERE player_id = ?
+           AND status IN (?, ?)`,
+        [retainedFinancialPlayerToken, normalizedPlayerId, "settled", "dead_letter"]
       );
 
       const verificationChecks = [
@@ -8603,13 +8625,23 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           params: [normalizedPlayerId, normalizedPlayerId]
         },
         {
-          label: MYSQL_SEASON_RANKINGS_TABLE,
-          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SEASON_RANKINGS_TABLE}\` WHERE player_id = ?`,
+          label: MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE}\` WHERE player_id = ?`,
           params: [normalizedPlayerId]
         },
         {
           label: MYSQL_SEASON_REWARD_LOG_TABLE,
           sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PAYMENT_ORDER_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PAYMENT_RECEIPT_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PAYMENT_RECEIPT_TABLE}\` WHERE player_id = ?`,
           params: [normalizedPlayerId]
         }
       ];

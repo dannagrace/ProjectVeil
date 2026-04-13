@@ -655,9 +655,18 @@ test("deletePlayerAccount deletes dependent rows, verifies cascade cleanup, and 
   assert.ok(queries.some((entry) => /DELETE FROM `player_compensation_history`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `guild_memberships`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `battle_snapshots`/.test(entry.sql)));
-  assert.ok(queries.some((entry) => /DELETE FROM `veil_season_rankings`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `leaderboard_season_archives`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `season_reward_log`/.test(entry.sql)));
-  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 12);
+  const retainedOrderUpdate = queries.find((entry) => /UPDATE `orders`/.test(entry.sql));
+  assert.ok(retainedOrderUpdate);
+  assert.equal(retainedOrderUpdate?.params[1], "player-1");
+  assert.match(String(retainedOrderUpdate?.params[0] ?? ""), /^deleted-financial-/);
+  assert.deepEqual(retainedOrderUpdate?.params.slice(2), ["settled", "dead_letter"]);
+  const retainedReceiptUpdate = queries.find((entry) => /UPDATE `payment_receipts`/.test(entry.sql));
+  assert.ok(retainedReceiptUpdate);
+  assert.equal(retainedReceiptUpdate?.params[0], retainedOrderUpdate?.params[0]);
+  assert.deepEqual(retainedReceiptUpdate?.params.slice(1), ["player-1", "player-1", "settled", "dead_letter"]);
+  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 14);
   const updateQuery = queries.find((entry) => /UPDATE `player_accounts`/.test(entry.sql));
   assert.ok(updateQuery);
   assert.equal(updateQuery?.params[0], "deleted-player-1");
@@ -719,6 +728,126 @@ test("deletePlayerAccount rolls back when post-delete verification finds remaini
   assert.equal(committed, false);
   assert.equal(rolledBack, true);
   assert.ok(queries.some((entry) => /SELECT COUNT\(\*\) AS total FROM `guild_memberships`/.test(entry.sql)));
+  assert.ok(queries.every((entry) => !/UPDATE `player_accounts`/.test(entry.sql)));
+});
+
+test("deletePlayerAccount rolls back when unsettled orders keep a raw player id", async () => {
+  const existingAccount = createExistingAccount({
+    displayName: "Veil Ranger",
+    loginId: "veil-ranger"
+  });
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let committed = false;
+  let rolledBack = false;
+  const connection = {
+    async beginTransaction() {},
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/FROM `orders`/.test(sql) && /SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 1 }]];
+      }
+      if (/SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 0 }]];
+      }
+
+      return [{ affectedRows: 1 }];
+    },
+    async commit() {
+      committed = true;
+    },
+    async rollback() {
+      rolledBack = true;
+    },
+    release() {}
+  };
+
+  const store = createStoreHarness();
+  store.loadPlayerAccount = async () => existingAccount;
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.ensurePlayerAccount = async () => existingAccount;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used by deletePlayerAccount");
+    },
+    getConnection: async () => connection
+  };
+
+  await assert.rejects(
+    () =>
+      store.deletePlayerAccount("player-1", {
+        deletedAt: "2026-03-21T00:00:00.000Z"
+      }),
+    /gdpr_delete_verification_failed:orders/
+  );
+
+  assert.equal(committed, false);
+  assert.equal(rolledBack, true);
+  const retainedOrderUpdate = queries.find((entry) => /UPDATE `orders`/.test(entry.sql));
+  assert.ok(retainedOrderUpdate);
+  assert.equal(retainedOrderUpdate?.params[1], "player-1");
+  assert.match(String(retainedOrderUpdate?.params[0] ?? ""), /^deleted-financial-/);
+  assert.deepEqual(retainedOrderUpdate?.params.slice(2), ["settled", "dead_letter"]);
+  assert.ok(queries.some((entry) => /SELECT COUNT\(\*\) AS total FROM `orders`/.test(entry.sql)));
+  assert.ok(queries.every((entry) => !/UPDATE `player_accounts`/.test(entry.sql)));
+});
+
+test("deletePlayerAccount rolls back when payment receipts verification still finds a raw player id", async () => {
+  const existingAccount = createExistingAccount({
+    displayName: "Veil Ranger",
+    loginId: "veil-ranger"
+  });
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  let committed = false;
+  let rolledBack = false;
+  const connection = {
+    async beginTransaction() {},
+    async query(sql: string, params: unknown[] = []) {
+      queries.push({ sql, params });
+      if (/FROM `payment_receipts`/.test(sql) && /SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 1 }]];
+      }
+      if (/SELECT COUNT\(\*\) AS total/.test(sql)) {
+        return [[{ total: 0 }]];
+      }
+
+      return [{ affectedRows: 1 }];
+    },
+    async commit() {
+      committed = true;
+    },
+    async rollback() {
+      rolledBack = true;
+    },
+    release() {}
+  };
+
+  const store = createStoreHarness();
+  store.loadPlayerAccount = async () => existingAccount;
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.ensurePlayerAccount = async () => existingAccount;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used by deletePlayerAccount");
+    },
+    getConnection: async () => connection
+  };
+
+  await assert.rejects(
+    () =>
+      store.deletePlayerAccount("player-1", {
+        deletedAt: "2026-03-21T00:00:00.000Z"
+      }),
+    /gdpr_delete_verification_failed:payment_receipts/
+  );
+
+  assert.equal(committed, false);
+  assert.equal(rolledBack, true);
+  const retainedReceiptUpdate = queries.find((entry) => /UPDATE `payment_receipts`/.test(entry.sql));
+  assert.ok(retainedReceiptUpdate);
+  assert.equal(retainedReceiptUpdate?.params[1], "player-1");
+  assert.equal(retainedReceiptUpdate?.params[2], "player-1");
+  assert.deepEqual(retainedReceiptUpdate?.params.slice(3), ["settled", "dead_letter"]);
+  assert.ok(queries.some((entry) => /SELECT COUNT\(\*\) AS total FROM `payment_receipts`/.test(entry.sql)));
   assert.ok(queries.every((entry) => !/UPDATE `player_accounts`/.test(entry.sql)));
 });
 

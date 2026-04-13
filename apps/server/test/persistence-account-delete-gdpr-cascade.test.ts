@@ -116,7 +116,7 @@ test("deletePlayerAccount removes GDPR-linked name history, guild chat, and refe
       (entry) => /SELECT COUNT\(\*\) AS total FROM `referrals` WHERE referrer_id = \? OR new_player_id = \?/.test(entry.sql)
     )
   );
-  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 12);
+  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 14);
 });
 
 test("deletePlayerAccount rolls back when guild chat rows remain after author cleanup", async () => {
