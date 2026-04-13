@@ -1,6 +1,6 @@
 # Season And Battle Pass Operations Runbook
 
-Issue: `#1206`
+Issues: `#1206`, `#1428`
 
 This runbook is the operational gate for season cadence and battle-pass rollout work. Use it before changing season dates, before closing a live season, and before promoting `battle_pass_enabled` for any new season/reward table revision.
 
@@ -15,10 +15,36 @@ This runbook is the operational gate for season cadence and battle-pass rollout 
 
 - Battle-pass config: [configs/battle-pass.json](/home/gpt/project/ProjectVeil/configs/battle-pass.json)
 - Season admin routes: [apps/server/src/seasons.ts](/home/gpt/project/ProjectVeil/apps/server/src/seasons.ts)
+- Seasonal event admin routes: [apps/server/src/event-engine.ts](/home/gpt/project/ProjectVeil/apps/server/src/event-engine.ts#L1265)
 - Season reward close implementation: [apps/server/src/persistence.ts](/home/gpt/project/ProjectVeil/apps/server/src/persistence.ts#L6927)
 - Battle-pass config normalization: [apps/server/src/battle-pass.ts](/home/gpt/project/ProjectVeil/apps/server/src/battle-pass.ts)
 - Compensation delivery path: [docs/player-mailbox-compensation.md](/home/gpt/project/ProjectVeil/docs/player-mailbox-compensation.md)
+- Seasonal event admin route coverage: [apps/server/test/event-admin-routes.test.ts](/home/gpt/project/ProjectVeil/apps/server/test/event-admin-routes.test.ts#L223)
 - XP pacing helper: [scripts/battle-pass-xp-balance.ts](/home/gpt/project/ProjectVeil/scripts/battle-pass-xp-balance.ts)
+
+## Seasonal Event Admin Surface
+
+Use these routes for live seasonal-event interventions. They are separate from ranked season create/close.
+
+- `GET /api/admin/seasonal-events`
+  - Returns live event status, participation totals, and the in-memory audit trail for recent admin actions.
+- `PATCH /api/admin/seasonal-events/:id`
+  - Applies a runtime override for `startsAt`, `endsAt`, `isActive`, `rewards`, `leaderboard`, or `rewardDistributionAt`.
+- `POST /api/admin/seasonal-events/:id/end`
+  - Force-ends the currently active event, stamps `endsAt` and `rewardDistributionAt` to now, and distributes threshold plus leaderboard rewards through the player mailbox flow.
+- `DELETE /api/admin/seasonal-events/:eventId/players/:playerId`
+  - Deletes one player's stored progress for one seasonal event.
+
+Authentication:
+
+- These routes require `VEIL_ADMIN_TOKEN` on the server.
+- Send the token as `x-veil-admin-token: $VEIL_ADMIN_TOKEN` for `curl` examples in this runbook.
+
+Important limits:
+
+- `PATCH /api/admin/seasonal-events/:id` writes an in-memory runtime override, not a config file change. The override disappears on process restart or redeploy.
+- `POST /api/admin/seasonal-events/:id/end` and the player-reset route require persistence-backed account storage. Treat `503 seasonal_event_persistence_unavailable` as a hard blocker.
+- Reward distribution for forced event close is mailbox-based and should be audited like any other compensation or live-ops grant.
 
 ## Season Lifecycle SOP
 
@@ -83,6 +109,119 @@ curl -sS -X POST "$VEIL_SERVER_URL/api/admin/seasons/create" \
 1. Sample current XP pacing against the original assumptions.
 2. Do not change XP numbers mid-season unless the economy owner and server on-call both approve.
 3. If XP tuning is unavoidable, announce the effective date and re-send the 72h/24h reminders using the revised pacing.
+
+## Seasonal Event Reward Override SOP
+
+Use this only when the live seasonal event reward table is wrong and waiting for a full config rollout would materially harm players.
+
+Pre-checks:
+
+1. Confirm the target event ID and current live state:
+
+```bash
+curl -sS "$VEIL_SERVER_URL/api/admin/seasonal-events" \
+  -H "x-veil-admin-token: $VEIL_ADMIN_TOKEN"
+```
+
+2. Save the current `event`, `participation`, and `audit` payload in the incident ticket before overriding anything.
+3. Decide whether the override is temporary incident mitigation or the intended final reward table. If it is final, open or link the follow-up config PR so the runtime patch is not lost on restart.
+
+Runtime reward override example:
+
+```bash
+curl -sS -X PATCH "$VEIL_SERVER_URL/api/admin/seasonal-events/defend-the-bridge" \
+  -H "content-type: application/json" \
+  -H "x-veil-admin-token: $VEIL_ADMIN_TOKEN" \
+  -d '{
+    "rewards": [
+      {
+        "id": "bridge-ration-cache",
+        "name": "Ration Cache",
+        "pointsRequired": 40,
+        "kind": "resources",
+        "resources": { "gold": 200, "wood": 25 }
+      }
+    ]
+  }'
+```
+
+Post-checks:
+
+1. Re-run `GET /api/admin/seasonal-events` and confirm the event audit trail contains `action=patched`.
+2. Confirm the override scope is the minimum needed. Do not widen `leaderboard.rewardTiers` and threshold rewards together unless the incident requires both.
+3. Record the expected expiry condition for the patch:
+   - superseded by config rollout
+   - removed during planned restart
+   - followed immediately by forced event close
+
+## Forced Seasonal Event End SOP
+
+Use this when the event must close immediately because the reward config is irreparably wrong, the event is causing live-service instability, or policy requires an early stop.
+
+Pre-checks:
+
+1. Confirm the event is currently `active`:
+
+```bash
+curl -sS "$VEIL_SERVER_URL/api/admin/seasonal-events" \
+  -H "x-veil-admin-token: $VEIL_ADMIN_TOKEN"
+```
+
+2. Capture the current event payload and participation totals before ending it.
+3. Confirm mailbox delivery is the intended reward path and CS has the player-facing macro ready in case follow-up messaging is required.
+4. If the event should end with a corrected reward table instead of the currently live table, apply the reward override first and verify it through `GET /api/admin/seasonal-events`.
+
+Force-end command:
+
+```bash
+curl -sS -X POST "$VEIL_SERVER_URL/api/admin/seasonal-events/defend-the-bridge/end" \
+  -H "x-veil-admin-token: $VEIL_ADMIN_TOKEN"
+```
+
+Expected behavior:
+
+1. The route sets `endsAt` to now, flips `isActive` to `false`, and stamps `rewardDistributionAt`.
+2. Threshold and leaderboard rewards are delivered through the mailbox pipeline.
+3. The response includes a `distribution` summary and an audit entry with `action=force_ended`.
+
+Post-checks:
+
+1. Re-run `GET /api/admin/seasonal-events` and confirm the event is no longer active.
+2. Save the `distribution` block in the incident or release log, including:
+   - `deliveredThresholdRewards`
+   - `deliveredLeaderboardRewards`
+   - any skipped delivery counts if present
+3. Spot-check at least one impacted account mailbox when the incident severity justifies it.
+4. Do not re-run the end route after success unless engineering has explicitly confirmed duplicate mailbox IDs remain safe for the current event definition.
+
+## Single-Player Seasonal State Reset SOP
+
+Use this for one-off player recovery when a single account has corrupted or unfair event progress and broad reward compensation is not the correct fix.
+
+Pre-checks:
+
+1. Confirm the target event ID and player ID.
+2. Check whether the player already claimed any event rewards; a reset removes stored progress and may intentionally require separate mailbox compensation if the player should retain value.
+3. Capture the current player-support note before mutating state.
+
+Reset command:
+
+```bash
+curl -sS -X DELETE "$VEIL_SERVER_URL/api/admin/seasonal-events/defend-the-bridge/players/player-123" \
+  -H "x-veil-admin-token: $VEIL_ADMIN_TOKEN"
+```
+
+Expected behavior:
+
+1. The route removes only the requested event entry from `seasonalEventStates`.
+2. The response returns `reset=true`, the updated account snapshot, and an audit entry with `action=player_progress_reset`.
+3. If the player has no progress for that event, the route returns `404 seasonal_event_progress_not_found`.
+
+Post-checks:
+
+1. Save the response payload in the support ticket with the previous points noted in the audit metadata.
+2. If the player should keep previously earned value, send any make-good through the mailbox compensation path instead of direct account edits.
+3. Reconfirm the player can re-enter the event loop normally before closing the support task.
 
 ### Season Close
 
