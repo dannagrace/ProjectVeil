@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
-import { registerAnalyticsRoutes } from "./analytics";
+import { getAnalyticsPipelineSnapshot, registerAnalyticsRoutes } from "./analytics";
 import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
 import { registerClientErrorRoutes } from "./client-error";
 import {
@@ -446,6 +446,10 @@ export async function startDevServer(
     );
   } else {
     deps.logger.log("Error monitoring: SENTRY_DSN not configured; external delivery skipped");
+  }
+
+  for (const alert of getAnalyticsPipelineSnapshot().alerts) {
+    deps.logger.warn(`ANALYTICS WARNING: ${alert}`);
   }
 
   let snapshotCleanupTimer: CleanupTimerHandle | null = null;

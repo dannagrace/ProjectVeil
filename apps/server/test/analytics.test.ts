@@ -218,6 +218,18 @@ test("getAnalyticsPipelineSnapshot warns when http sink is requested without an 
   assert.match(snapshot.alerts[0] ?? "", /ANALYTICS_ENDPOINT/);
 });
 
+test("getAnalyticsPipelineSnapshot warns when ANALYTICS_ENDPOINT still uses a .example hostname", () => {
+  const snapshot = getAnalyticsPipelineSnapshot({
+    ANALYTICS_SINK: "http",
+    ANALYTICS_ENDPOINT: "https://analytics.projectveil.example/ingest"
+  });
+
+  assert.equal(snapshot.status, "warn");
+  assert.equal(snapshot.sink, "http");
+  assert.equal(snapshot.endpoint, "https://analytics.projectveil.example/ingest");
+  assert.match(snapshot.alerts[0] ?? "", /ANALYTICS_ENDPOINT uses a \.example hostname/);
+});
+
 test("registerAnalyticsRoutes rejects malformed analytics payloads", async () => {
   let handler:
     | ((request: never, response: TestResponse) => void | Promise<void>)

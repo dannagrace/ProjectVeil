@@ -18,6 +18,12 @@ spec:
         - name: server
           image: ghcr.io/dannagrace/projectveil-server
           imagePullPolicy: IfNotPresent
+          env:
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: project-veil-server-secrets
+                  key: SENTRY_DSN
           envFrom:
             - configMapRef:
                 name: project-veil-server-config
