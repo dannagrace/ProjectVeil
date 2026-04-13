@@ -193,6 +193,9 @@ export function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.wechatCandidateSummaryPath) {
     lines.push(`- WeChat candidate summary: \`${report.artifacts.wechatCandidateSummaryPath}\``);
   }
+  if (report.artifacts.wechatCandidateMarkdownPath) {
+    lines.push(`- WeChat candidate summary markdown: \`${report.artifacts.wechatCandidateMarkdownPath}\``);
+  }
   if (report.artifacts.runtimeObservabilityBundlePath) {
     lines.push(`- Runtime observability bundle: \`${report.artifacts.runtimeObservabilityBundlePath}\``);
   }
