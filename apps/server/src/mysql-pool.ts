@@ -29,6 +29,23 @@ interface TrackablePoolInternals {
   _connectionQueue?: unknown[];
 }
 
+interface ObservablePoolState {
+  activeConnections: number;
+  queueDepth: number;
+}
+
+interface EventablePool {
+  on(event: "acquire", listener: () => void): unknown;
+  off(event: "enqueue", listener: () => void): unknown;
+  on(event: "enqueue", listener: () => void): unknown;
+  once(event: "enqueue", listener: () => void): unknown;
+  on(event: "release", listener: () => void): unknown;
+}
+
+interface WrapableCorePool {
+  getConnection(callback: (error: Error | null, connection: unknown) => void): void;
+}
+
 export interface MySqlPoolMetricsSnapshot {
   pool: string;
   connectionLimit: number;
@@ -43,10 +60,16 @@ export interface MySqlPoolMetricsSnapshot {
   utilizationRatio: number;
 }
 
-const trackedPools = new Map<string, { pool: Pool; config: MySqlPoolConfig }>();
+const trackedPools = new Map<string, { pool: Pool; config: MySqlPoolConfig; state: ObservablePoolState }>();
 
 function coerceLength(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
+  if (Array.isArray(value)) {
+    return value.length;
+  }
+  if (value && typeof value === "object" && "length" in value && typeof value.length === "number") {
+    return value.length;
+  }
+  return 0;
 }
 
 function getTrackedPoolInternals(pool: Pool): TrackablePoolInternals {
@@ -54,9 +77,54 @@ function getTrackedPoolInternals(pool: Pool): TrackablePoolInternals {
   return candidate.pool ?? {};
 }
 
-export function createTrackedMySqlPool(label: string, config: MySqlPoolConnectionConfig): Pool {
-  const pool = createPool(buildMySqlPoolOptions(config));
-  trackedPools.set(label, { pool, config: config.pool });
+function attachPoolObservability(pool: Pool, state: ObservablePoolState): void {
+  const observablePool = pool as unknown as EventablePool;
+  observablePool.on("acquire", () => {
+    state.activeConnections += 1;
+  });
+  observablePool.on("release", () => {
+    state.activeConnections = Math.max(0, state.activeConnections - 1);
+  });
+  observablePool.on("enqueue", () => {
+    state.queueDepth += 1;
+  });
+
+  const candidate = pool as unknown as { pool?: WrapableCorePool };
+  const corePool = candidate.pool;
+  if (!corePool) {
+    return;
+  }
+
+  const originalGetConnection = corePool.getConnection.bind(corePool);
+  corePool.getConnection = (callback) => {
+    let requestWasQueued = false;
+    const markQueued = () => {
+      requestWasQueued = true;
+    };
+    observablePool.once("enqueue", markQueued);
+
+    originalGetConnection((error, connection) => {
+      observablePool.off("enqueue", markQueued);
+      if (requestWasQueued) {
+        state.queueDepth = Math.max(0, state.queueDepth - 1);
+      }
+      callback(error, connection);
+    });
+  };
+}
+
+export function createTrackedMySqlPool(
+  label: string,
+  config: MySqlPoolConnectionConfig,
+  createPoolFn: (options: PoolOptions) => Pool = createPool
+): Pool {
+  const pool = createPoolFn(buildMySqlPoolOptions(config));
+  const state: ObservablePoolState = {
+    activeConnections: 0,
+    queueDepth: 0
+  };
+  attachPoolObservability(pool, state);
+  trackedPools.set(label, { pool, config: config.pool, state });
 
   const originalEnd = pool.end.bind(pool);
   (pool as { end: () => Promise<void> }).end = async () => {
@@ -89,8 +157,8 @@ export function getMySqlPoolMetricsSnapshot(): MySqlPoolMetricsSnapshot[] {
       const internals = getTrackedPoolInternals(entry.pool);
       const totalConnections = coerceLength(internals._allConnections);
       const idleConnections = coerceLength(internals._freeConnections);
-      const queueDepth = coerceLength(internals._connectionQueue);
-      const activeConnections = Math.max(0, totalConnections - idleConnections);
+      const activeConnections = entry.state.activeConnections;
+      const queueDepth = entry.state.queueDepth;
       const utilizationRatio =
         entry.config.connectionLimit > 0 ? activeConnections / entry.config.connectionLimit : 0;
 
