@@ -396,6 +396,7 @@ export function renderReleaseOpsOwnershipMarkdown(entries: ReleaseOpsOwnershipEn
     "",
     "- Run `validate:season-reward-config` before pre-season promotion or any seasonal reset rehearsal so malformed `configs/season-rewards.json` changes fail before runtime.",
     "- Treat `configs/schemas/season-rewards.schema.json` as the contract for structural edits; changes to bracket fields or types should land with matching validator and test updates.",
+    "- Treat config-center key `leaderboard.tier_thresholds` as a release-ops owned seasonal tuning surface; ship threshold changes with focused leaderboard API validation and publish audit evidence.",
     "",
     "## Summary",
     "",

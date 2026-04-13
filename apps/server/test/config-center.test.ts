@@ -20,6 +20,7 @@ import {
   resetConfigHotReloadState
 } from "../src/config-center";
 import type { WorldConfigPreview } from "../src/config-center";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
 import { recordRuntimeErrorEvent, resetRuntimeObservability } from "../src/observability";
 
 const WORLD_CONFIG = {
@@ -171,6 +172,11 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(BATTLE_BALANCE_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(rootDir, "leaderboard-tier-thresholds.json"),
+    `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 test.afterEach(() => {
@@ -194,9 +200,34 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds"]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
+});
+
+test("config center validates leaderboard tier thresholds as a contiguous config key", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "leaderboardTierThresholds",
+    JSON.stringify({
+      key: "leaderboard.tier_thresholds",
+      tiers: [
+        { tier: "bronze", minRating: 0, maxRating: 1099 },
+        { tier: "silver", minRating: 1200, maxRating: 1299 },
+        { tier: "gold", minRating: 1300, maxRating: 1499 },
+        { tier: "platinum", minRating: 1500, maxRating: 1799 },
+        { tier: "diamond", minRating: 1800 }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.equal(report.schema.id, "project-veil.config-center.leaderboardTierThresholds");
+  assert.match(report.summary, /当前文档问题/);
+  assert.match(report.issues[0]?.path ?? "", /^tiers\[1\]\.minRating$/);
 });
 
 test("config center save writes file and refreshes runtime world config", async () => {

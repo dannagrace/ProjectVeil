@@ -73,6 +73,20 @@ function createConfigCenterStore(mode: "filesystem" | "mysql") {
     mode,
     initializeCalls: 0,
     closeCalls: 0,
+    async loadDocument() {
+      return {
+        content: JSON.stringify({
+          key: "leaderboard.tier_thresholds",
+          tiers: [
+            { tier: "bronze", minRating: 0, maxRating: 1099 },
+            { tier: "silver", minRating: 1100, maxRating: 1299 },
+            { tier: "gold", minRating: 1300, maxRating: 1499 },
+            { tier: "platinum", minRating: 1500, maxRating: 1799 },
+            { tier: "diamond", minRating: 1800 }
+          ]
+        })
+      };
+    },
     async initializeRuntimeConfigs() {
       this.initializeCalls += 1;
     },

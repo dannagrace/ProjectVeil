@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { addUtcDays, getUtcWeekStart } from "../../../packages/shared/src/index";
 import { registerLeaderboardRoutes } from "../src/leaderboard";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 
@@ -95,9 +96,14 @@ async function runMiddlewares(
   await next();
 }
 
-function registerRoutes(store = createMemoryRoomSnapshotStore()) {
+function registerRoutes(
+  store = createMemoryRoomSnapshotStore(),
+  configCenterStore?: {
+    loadDocument(id: "leaderboardTierThresholds"): Promise<{ content: string }>;
+  }
+) {
   const { app, gets, posts, middlewares } = createTestApp();
-  registerLeaderboardRoutes(app, store);
+  registerLeaderboardRoutes(app, store, configCenterStore);
   return { gets, posts, middlewares, store };
 }
 
@@ -646,12 +652,42 @@ test("GET /api/matchmaking/tiers returns the published tier thresholds", async (
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(response.body), {
+    tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS
+  });
+});
+
+test("leaderboard routes load tier thresholds from config-center at initialization", async () => {
+  const { gets } = registerRoutes(createMemoryRoomSnapshotStore(), {
+    async loadDocument() {
+      return {
+        content: JSON.stringify({
+          key: "leaderboard.tier_thresholds",
+          tiers: [
+            { tier: "bronze", minRating: 0, maxRating: 999 },
+            { tier: "silver", minRating: 1000, maxRating: 1199 },
+            { tier: "gold", minRating: 1200, maxRating: 1399 },
+            { tier: "platinum", minRating: 1400, maxRating: 1599 },
+            { tier: "diamond", minRating: 1600 }
+          ]
+        })
+      };
+    }
+  });
+  const handler = gets.get("/api/matchmaking/tiers");
+  const response = createResponse();
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(handler);
+  await handler(createRequest({ url: "/api/matchmaking/tiers" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
     tiers: [
-      { tier: "bronze", minRating: 0, maxRating: 1099 },
-      { tier: "silver", minRating: 1100, maxRating: 1299 },
-      { tier: "gold", minRating: 1300, maxRating: 1499 },
-      { tier: "platinum", minRating: 1500, maxRating: 1799 },
-      { tier: "diamond", minRating: 1800, maxRating: null }
+      { tier: "bronze", minRating: 0, maxRating: 999 },
+      { tier: "silver", minRating: 1000, maxRating: 1199 },
+      { tier: "gold", minRating: 1200, maxRating: 1399 },
+      { tier: "platinum", minRating: 1400, maxRating: 1599 },
+      { tier: "diamond", minRating: 1600, maxRating: null }
     ]
   });
 });

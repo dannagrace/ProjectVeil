@@ -11,7 +11,14 @@ interface CliArgs {
   help: boolean;
 }
 
-const VALID_DOCUMENT_IDS: ConfigDocumentId[] = ["world", "mapObjects", "units", "battleSkills", "battleBalance"];
+const VALID_DOCUMENT_IDS: ConfigDocumentId[] = [
+  "world",
+  "mapObjects",
+  "units",
+  "battleSkills",
+  "battleBalance",
+  "leaderboardTierThresholds"
+];
 
 function printUsage(): void {
   console.log(`Usage: npm run config-center:restore -- --document <id> [--snapshot-id <snapshot>] [--publish-id <publish>]

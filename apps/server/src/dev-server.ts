@@ -93,6 +93,7 @@ interface CleanupTimerHandle {
 
 interface DevServerConfigCenterStore {
   initializeRuntimeConfigs(): Promise<void>;
+  loadDocument(id: "leaderboardTierThresholds"): Promise<{ content: string }>;
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -141,7 +142,11 @@ export interface DevServerBootstrapDependencies {
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
-  registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerLeaderboardRoutes(
+    app: unknown,
+    store: DevServerRoomSnapshotStore | null,
+    configCenterStore?: Pick<DevServerConfigCenterStore, "loadDocument">
+  ): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(
     app: unknown,
@@ -227,7 +232,12 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerMinorProtectionRoutes: (app, store) =>
       registerMinorProtectionRoutes(app as never, store as RoomSnapshotStore | null),
-    registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
+    registerLeaderboardRoutes: (app, store, configCenterStore) =>
+      registerLeaderboardRoutes(
+        app as never,
+        store as RoomSnapshotStore | null,
+        configCenterStore as Pick<ConfigCenterStore, "loadDocument"> | undefined
+      ),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
     validateBackupStorage: () => validateBackupStorageOnStartup(),
@@ -378,7 +388,7 @@ export async function startDevServer(
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore, configCenterStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, {
     store: effectiveSnapshotStore,
