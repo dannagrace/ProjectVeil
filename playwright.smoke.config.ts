@@ -52,7 +52,7 @@ const DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: /(daily-quest-claim|lobby-smoke|onboarding-funnel|reconnect-prediction-convergence)\.spec\.ts/,
+  testMatch: /(daily-quest-claim|lobby-smoke|onboarding-funnel|reconnect-prediction-convergence|seasonal-event-lifecycle)\.spec\.ts/,
   timeout: 30_000,
   retries: process.env.CI ? 2 : 0,
   fullyParallel: false,
@@ -74,6 +74,7 @@ export default defineConfig({
       env: {
         ...process.env,
         ANALYTICS_ENDPOINT: "http://127.0.0.1:2567/api/analytics/events",
+        VEIL_ADMIN_TOKEN: process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token",
         VEIL_DAILY_QUESTS_ENABLED: "1",
         VEIL_DAILY_QUEST_ROTATIONS_JSON: DAILY_QUEST_SMOKE_ROTATIONS
       },

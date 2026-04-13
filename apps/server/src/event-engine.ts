@@ -9,6 +9,7 @@ import type {
   SeasonalEventReward,
   SeasonalEventState
 } from "../../../packages/shared/src/index";
+import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { DailyQuestConfigDefinition } from "./daily-quest-config";
 import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQuestState, RoomSnapshotStore } from "./persistence";
@@ -1104,6 +1105,16 @@ export function registerEventRoutes(
             }
           : {}),
         seasonalEventStates: upsertSeasonalEventState(account.seasonalEventStates, claim.state)
+      });
+      emitAnalyticsEvent("seasonal_event_reward_claimed", {
+        playerId: account.playerId,
+        roomId: account.lastRoomId ?? `seasonal-event:${event.id}`,
+        payload: {
+          eventId: event.id,
+          rewardId: claim.reward.id,
+          rewardKind: claim.reward.kind,
+          pointsRequired: claim.reward.pointsRequired
+        }
       });
 
       sendJson(response, 200, {

@@ -2269,6 +2269,13 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.dailyDungeonState
           ? { dailyDungeonState: structuredClone(existing.dailyDungeonState) }
           : {}),
+      ...(patch.seasonalEventStates !== undefined
+        ? patch.seasonalEventStates
+          ? { seasonalEventStates: structuredClone(patch.seasonalEventStates) }
+          : {}
+        : existing.seasonalEventStates
+          ? { seasonalEventStates: structuredClone(existing.seasonalEventStates) }
+          : {}),
       ...(patch.leaderboardAbuseState !== undefined
         ? patch.leaderboardAbuseState
           ? { leaderboardAbuseState: structuredClone(patch.leaderboardAbuseState) }
