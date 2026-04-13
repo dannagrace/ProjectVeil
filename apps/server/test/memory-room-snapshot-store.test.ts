@@ -235,4 +235,16 @@ test("memory room snapshot store matches season reward bracket distribution and 
     totalGemsGranted: 0
   });
   assert.equal((await store.loadPlayerAccount("player-001"))?.gems, 201);
+  const archive = await store.listLeaderboardSeasonArchive?.("season-rewards", 3);
+  assert.deepEqual(archive?.map((entry) => [entry.rank, entry.playerId, entry.finalRating]), [
+    [1, "player-001", 2000],
+    [2, "player-002", 1999],
+    [3, "player-003", 1998]
+  ]);
+  const firstHistory = (await store.loadPlayerAccount("player-001"))?.seasonHistory?.[0];
+  assert.equal(firstHistory?.seasonId, "season-rewards");
+  assert.equal(firstHistory?.rankPosition, 1);
+  assert.equal(firstHistory?.totalPlayers, 100);
+  assert.equal(firstHistory?.finalRating, 2000);
+  assert.equal(firstHistory?.rewardClaimed, true);
 });

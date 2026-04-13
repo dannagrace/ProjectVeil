@@ -104,6 +104,7 @@ test("battle replay capture creates a stable player replay record from settlemen
       neutralArmyId: "neutral-1",
       startedAt: "2026-03-29T12:00:00.000Z",
       completedAt: "2026-03-29T12:01:00.000Z",
+      expiresAt: "2026-06-27T12:01:00.000Z",
       initialState: completed.initialState,
       steps: completed.steps,
       result: "attacker_victory"
@@ -167,6 +168,7 @@ test("battle replay emitted summaries stay compatible with normalized replay pay
     opponentHeroId: "hero-1",
     startedAt: "2026-03-29T13:00:00.000Z",
     completedAt: "2026-03-29T13:02:00.000Z",
+    expiresAt: "2026-06-27T13:02:00.000Z",
     initialState: completed.initialState,
     steps: [
       {
@@ -256,6 +258,51 @@ test("battle replay capture records sequential immutable steps for each action a
       unitId: "hero-stack"
     }
   });
+});
+
+test("battle replay summary rejects payloads larger than the configured byte budget", () => {
+  const previousMaxBytes = process.env.VEIL_BATTLE_REPLAY_MAX_BYTES;
+  process.env.VEIL_BATTLE_REPLAY_MAX_BYTES = "200";
+
+  try {
+    const completed = finalizeBattleReplayCapture(
+      appendBattleReplayStep(
+        createBattleReplayCapture(
+          "room-large-272",
+          createBattleState({
+            id: "battle-large-272",
+            worldHeroId: "hero-1"
+          }),
+          { attackerPlayerId: "player-1" },
+          "2026-03-29T13:00:00.000Z"
+        ),
+        {
+          type: "battle.wait",
+          unitId: "hero-stack-".repeat(32)
+        },
+        "player"
+      ),
+      createBattleState({
+        id: "battle-large-272",
+        worldHeroId: "hero-1"
+      }),
+      {
+        status: "attacker_victory",
+        survivingAttackers: ["hero-1-stack"],
+        survivingDefenders: []
+      },
+      "2026-03-29T13:02:00.000Z"
+    );
+
+    assert.ok(completed);
+    assert.equal(buildPlayerBattleReplaySummary(completed, "player-1", "hero-1", "attacker"), null);
+  } finally {
+    if (previousMaxBytes === undefined) {
+      delete process.env.VEIL_BATTLE_REPLAY_MAX_BYTES;
+    } else {
+      process.env.VEIL_BATTLE_REPLAY_MAX_BYTES = previousMaxBytes;
+    }
+  }
 });
 
 test("battle replay capture preserves structured rejections for invalid appended actions", () => {

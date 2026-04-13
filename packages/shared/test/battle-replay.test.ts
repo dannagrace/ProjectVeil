@@ -260,6 +260,21 @@ test("normalizePlayerBattleReplaySummaries sorts by completedAt descending", () 
   assert.equal(result[1]?.id, "r-b");
 });
 
+test("normalizePlayerBattleReplaySummaries filters out entries whose expiresAt has passed", () => {
+  const expired = makeReplay({
+    id: "expired",
+    expiresAt: "2024-01-02T00:00:00.000Z"
+  });
+  const retained = makeReplay({
+    id: "retained",
+    expiresAt: "2999-01-01T00:00:00.000Z"
+  });
+
+  const result = normalizePlayerBattleReplaySummaries([expired, retained]);
+  assert.deepEqual(result.map((replay) => replay.id), ["retained"]);
+  assert.equal(result[0]?.expiresAt, "2999-01-01T00:00:00.000Z");
+});
+
 test("normalizePlayerBattleReplaySummaries rejects invalid battleKind", () => {
   const replay = { ...makeReplay(), battleKind: "invalid" } as unknown as PlayerBattleReplaySummary;
   const result = normalizePlayerBattleReplaySummaries([replay]);

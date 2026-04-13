@@ -37,6 +37,8 @@ interface RuntimeObservabilityCounters {
   battleActionsTotal: number;
   websocketActionRateLimitedTotal: number;
   websocketActionKickTotal: number;
+  socialFriendLeaderboardRequestsTotal: number;
+  socialShareActivityRequestsTotal: number;
 }
 
 interface AuthObservabilityCounters {
@@ -160,6 +162,10 @@ interface RoomLifecycleObservabilityCounters {
   battleAbortsTotal: number;
 }
 
+interface HttpObservabilityCounters {
+  rateLimitedTotal: number;
+}
+
 type RoomLifecycleEventKind =
   | "room.created"
   | "room.disposed"
@@ -184,6 +190,7 @@ interface RuntimeObservabilityState {
   errorEvents: RuntimeDiagnosticsErrorEvent[];
   counters: RuntimeObservabilityCounters;
   prometheus: {
+    configCenterStoreType: 0 | 1;
     dbBackupLastSuccessTimestamp: number | null;
     battleDurationSeconds: HistogramMetricState;
     httpRequestDurationSeconds: HistogramMetricState;
@@ -198,6 +205,9 @@ interface RuntimeObservabilityState {
   roomLifecycle: {
     counters: RoomLifecycleObservabilityCounters;
     recentEvents: RoomLifecycleEvent[];
+  };
+  http: {
+    counters: HttpObservabilityCounters;
   };
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
@@ -238,13 +248,15 @@ interface RuntimeHealthPayload {
     activeBattleCount: number;
     heroCount: number;
     gameplayTraffic: {
-        connectMessagesTotal: number;
-        worldActionsTotal: number;
-        battleActionsTotal: number;
-        actionMessagesTotal: number;
-        websocketActionRateLimitedTotal: number;
-        websocketActionKickTotal: number;
-      };
+      connectMessagesTotal: number;
+      worldActionsTotal: number;
+      battleActionsTotal: number;
+      actionMessagesTotal: number;
+      websocketActionRateLimitedTotal: number;
+      websocketActionKickTotal: number;
+      socialFriendLeaderboardRequestsTotal: number;
+      socialShareActivityRequestsTotal: number;
+    };
     auth: {
       reconnect: {
         pendingWindowCount: number;
@@ -278,6 +290,9 @@ interface RuntimeHealthPayload {
     roomLifecycle: {
       counters: RoomLifecycleObservabilityCounters;
       recentEventsTracked: number;
+    };
+    http: {
+      counters: HttpObservabilityCounters;
     };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
@@ -385,9 +400,12 @@ const runtimeObservability: RuntimeObservabilityState = {
     worldActionsTotal: 0,
     battleActionsTotal: 0,
     websocketActionRateLimitedTotal: 0,
-    websocketActionKickTotal: 0
+    websocketActionKickTotal: 0,
+    socialFriendLeaderboardRequestsTotal: 0,
+    socialShareActivityRequestsTotal: 0
   },
   prometheus: {
+    configCenterStoreType: 1,
     dbBackupLastSuccessTimestamp: null,
     battleDurationSeconds: createHistogramMetricState(BATTLE_DURATION_SECONDS_BUCKETS),
     httpRequestDurationSeconds: createHistogramMetricState(HTTP_REQUEST_DURATION_SECONDS_BUCKETS),
@@ -459,6 +477,11 @@ const runtimeObservability: RuntimeObservabilityState = {
       battleAbortsTotal: 0
     },
     recentEvents: []
+  },
+  http: {
+    counters: {
+      rateLimitedTotal: 0
+    }
   },
   matchmaking: {
     counters: {
@@ -601,7 +624,9 @@ function buildHealthPayload(
         battleActionsTotal: runtimeObservability.counters.battleActionsTotal,
         actionMessagesTotal,
         websocketActionRateLimitedTotal: runtimeObservability.counters.websocketActionRateLimitedTotal,
-        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal
+        websocketActionKickTotal: runtimeObservability.counters.websocketActionKickTotal,
+        socialFriendLeaderboardRequestsTotal: runtimeObservability.counters.socialFriendLeaderboardRequestsTotal,
+        socialShareActivityRequestsTotal: runtimeObservability.counters.socialShareActivityRequestsTotal
       },
       auth: {
         reconnect: {
@@ -635,6 +660,9 @@ function buildHealthPayload(
       roomLifecycle: {
         counters: { ...runtimeObservability.roomLifecycle.counters },
         recentEventsTracked: runtimeObservability.roomLifecycle.recentEvents.length
+      },
+      http: {
+        counters: { ...runtimeObservability.http.counters }
       },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
@@ -863,6 +891,7 @@ function buildRuntimeDiagnosticSnapshot(service = "project-veil-server"): Runtim
         `service ${service} rooms=${health.runtime.activeRoomCount} connections=${health.runtime.connectionCount}`,
         `traffic connect=${health.runtime.gameplayTraffic.connectMessagesTotal} world=${health.runtime.gameplayTraffic.worldActionsTotal} battle=${health.runtime.gameplayTraffic.battleActionsTotal}`,
         `ws_action_rate_limit violations=${health.runtime.gameplayTraffic.websocketActionRateLimitedTotal} kicks=${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
+        `social friend_leaderboard=${health.runtime.gameplayTraffic.socialFriendLeaderboardRequestsTotal} share_activity=${health.runtime.gameplayTraffic.socialShareActivityRequestsTotal}`,
         `auth guest=${health.runtime.auth.activeGuestSessionCount} account=${health.runtime.auth.activeAccountSessionCount} queue=${health.runtime.auth.tokenDelivery.queueCount} rateLimited=${health.runtime.auth.counters.rateLimitedTotal}`,
         `matchmaking rateLimited=${health.runtime.matchmaking.counters.rateLimitedTotal}`
       ],
@@ -920,6 +949,10 @@ export function buildPrometheusMetricsDocument(): string {
   ];
 
   lines.push(
+    "# HELP veil_db_pool_active_connections Active database connections borrowed from the pool.",
+    "# TYPE veil_db_pool_active_connections gauge",
+    "# HELP veil_db_pool_queue_depth Database pool wait queue depth.",
+    "# TYPE veil_db_pool_queue_depth gauge",
     "# HELP veil_mysql_pool_connection_limit Configured MySQL pool connection limit.",
     "# TYPE veil_mysql_pool_connection_limit gauge",
     "# HELP veil_mysql_pool_connections_active Active MySQL connections borrowed from the pool.",
@@ -932,6 +965,8 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_mysql_pool_connection_utilization_ratio gauge"
   );
   if (mysqlPools.length === 0) {
+    lines.push("veil_db_pool_active_connections 0");
+    lines.push("veil_db_pool_queue_depth 0");
     lines.push("veil_mysql_pool_connection_limit 0");
     lines.push("veil_mysql_pool_connections_active 0");
     lines.push("veil_mysql_pool_connections_idle 0");
@@ -940,6 +975,8 @@ export function buildPrometheusMetricsDocument(): string {
   } else {
     for (const pool of mysqlPools) {
       const labels = formatPrometheusLabels({ pool: pool.pool });
+      lines.push(`veil_db_pool_active_connections${labels} ${pool.activeConnections}`);
+      lines.push(`veil_db_pool_queue_depth${labels} ${pool.queueDepth}`);
       lines.push(`veil_mysql_pool_connection_limit${labels} ${pool.connectionLimit}`);
       lines.push(`veil_mysql_pool_connections_active${labels} ${pool.activeConnections}`);
       lines.push(`veil_mysql_pool_connections_idle${labels} ${pool.idleConnections}`);
@@ -949,6 +986,9 @@ export function buildPrometheusMetricsDocument(): string {
   }
 
   lines.push(
+    "# HELP veil_config_center_store_type Config center storage backend for this process (0=mysql, 1=filesystem).",
+    "# TYPE veil_config_center_store_type gauge",
+    `veil_config_center_store_type ${runtimeObservability.prometheus.configCenterStoreType}`,
     "# HELP veil_db_backup_last_success_timestamp Unix timestamp of the latest verified database backup success marker.",
     "# TYPE veil_db_backup_last_success_timestamp gauge",
     `veil_db_backup_last_success_timestamp ${runtimeObservability.prometheus.dbBackupLastSuccessTimestamp ?? 0}`,
@@ -1106,6 +1146,12 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_ws_action_kicks_total Total client disconnects triggered by WebSocket action rate-limit violations.",
     "# TYPE veil_ws_action_kicks_total counter",
     `veil_ws_action_kicks_total ${health.runtime.gameplayTraffic.websocketActionKickTotal}`,
+    "# HELP veil_social_friend_leaderboard_requests_total Total friend leaderboard websocket requests processed.",
+    "# TYPE veil_social_friend_leaderboard_requests_total counter",
+    `veil_social_friend_leaderboard_requests_total ${health.runtime.gameplayTraffic.socialFriendLeaderboardRequestsTotal}`,
+    "# HELP veil_social_share_activity_requests_total Total share activity websocket requests processed.",
+    "# TYPE veil_social_share_activity_requests_total counter",
+    `veil_social_share_activity_requests_total ${health.runtime.gameplayTraffic.socialShareActivityRequestsTotal}`,
     "# HELP veil_reconnect_backlog_count Players currently waiting inside the Colyseus reconnection window.",
     "# TYPE veil_reconnect_backlog_count gauge",
     `veil_reconnect_backlog_count ${health.runtime.auth.reconnect.pendingWindowCount}`,
@@ -1175,6 +1221,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_rate_limited_total Total auth requests rejected by rate limiting.",
     "# TYPE veil_auth_rate_limited_total counter",
     `veil_auth_rate_limited_total ${health.runtime.auth.counters.rateLimitedTotal}`,
+    "# HELP veil_http_rate_limited_total Total HTTP requests rejected by rate limiting.",
+    "# TYPE veil_http_rate_limited_total counter",
+    `veil_http_rate_limited_total ${health.runtime.http.counters.rateLimitedTotal}`,
     "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
     "# TYPE veil_auth_credential_stuffing_blocked_total counter",
     `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
@@ -1746,6 +1795,14 @@ export function recordWebSocketActionKick(): void {
   runtimeObservability.counters.websocketActionKickTotal += 1;
 }
 
+export function recordSocialFriendLeaderboardRequest(): void {
+  runtimeObservability.counters.socialFriendLeaderboardRequestsTotal += 1;
+}
+
+export function recordSocialShareActivityRequest(): void {
+  runtimeObservability.counters.socialShareActivityRequestsTotal += 1;
+}
+
 export function setAuthGuestSessionCount(count: number): void {
   runtimeObservability.auth.activeGuestSessionCount = Math.max(0, Math.floor(count));
 }
@@ -1836,6 +1893,10 @@ export function recordAuthLogout(): void {
 
 export function recordAuthRateLimited(): void {
   runtimeObservability.auth.counters.rateLimitedTotal += 1;
+}
+
+export function recordHttpRateLimited(): void {
+  runtimeObservability.http.counters.rateLimitedTotal += 1;
 }
 
 export function recordAuthCredentialStuffingBlocked(): void {
@@ -1988,6 +2049,10 @@ export function recordReconnectWindowResolved(
   }
 }
 
+export function setConfigCenterStoreType(mode: "mysql" | "filesystem"): void {
+  runtimeObservability.prometheus.configCenterStoreType = mode === "mysql" ? 0 : 1;
+}
+
 export function setDbBackupLastSuccessTimestamp(timestampSeconds: number | null): void {
   runtimeObservability.prometheus.dbBackupLastSuccessTimestamp =
     timestampSeconds != null && Number.isFinite(timestampSeconds) ? Math.max(0, Math.floor(timestampSeconds)) : null;
@@ -2003,6 +2068,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.counters.battleActionsTotal = 0;
   runtimeObservability.counters.websocketActionRateLimitedTotal = 0;
   runtimeObservability.counters.websocketActionKickTotal = 0;
+  runtimeObservability.prometheus.configCenterStoreType = 1;
   runtimeObservability.prometheus.dbBackupLastSuccessTimestamp = null;
   resetHistogram(runtimeObservability.prometheus.battleDurationSeconds);
   resetHistogram(runtimeObservability.prometheus.httpRequestDurationSeconds);
@@ -2057,6 +2123,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.battleCompletionsTotal = 0;
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
+  runtimeObservability.http.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.queueDepth = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;

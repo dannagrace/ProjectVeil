@@ -48,6 +48,45 @@ test("social routes persist notification prefs and validate group challenge expi
   assert.equal(prefsPayload.notificationPreferences.matchFound, false);
   assert.equal((await store.loadPlayerAccount("player-7"))?.notificationPreferences?.matchFound, false);
 
+  const pushRegisterResponse = await fetch(`http://127.0.0.1:${port}/api/players/me/push-token`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      platform: "ios",
+      token: "apns-token-player-7"
+    })
+  });
+  const pushRegisterPayload = (await pushRegisterResponse.json()) as {
+    pushTokens: Array<{ platform: string; token: string }>;
+  };
+  assert.equal(pushRegisterResponse.status, 200);
+  assert.equal(pushRegisterPayload.pushTokens.length, 1);
+  assert.equal(pushRegisterPayload.pushTokens[0]?.platform, "ios");
+  assert.equal(pushRegisterPayload.pushTokens[0]?.token, "apns-token-player-7");
+  assert.deepEqual((await store.loadPlayerAccount("player-7"))?.pushTokens?.map((entry) => entry.token), [
+    "apns-token-player-7"
+  ]);
+
+  const pushDeleteResponse = await fetch(`http://127.0.0.1:${port}/api/players/me/push-token`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      platform: "ios"
+    })
+  });
+  const pushDeletePayload = (await pushDeleteResponse.json()) as {
+    pushTokens: Array<{ platform: string; token: string }>;
+  };
+  assert.equal(pushDeleteResponse.status, 200);
+  assert.deepEqual(pushDeletePayload.pushTokens, []);
+  assert.equal((await store.loadPlayerAccount("player-7"))?.pushTokens, undefined);
+
   const leaderboardResponse = await fetch(
     `http://127.0.0.1:${port}/api/social/friend-leaderboard?friendIds=${encodeURIComponent("friend-1")}`,
     {

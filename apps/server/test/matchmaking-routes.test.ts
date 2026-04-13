@@ -312,7 +312,7 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   assert.equal(dequeueOnePayload.status, "idle");
 });
 
-test("matchmaking routes send WeChat subscribe notifications when a match is created", async (t) => {
+test("matchmaking routes send match-found notifications when a match is created", async (t) => {
   const store = createMemoryRoomSnapshotStore();
   await store.save(
     "room-frontier_basin",
@@ -330,9 +330,14 @@ test("matchmaking routes send WeChat subscribe notifications when a match is cre
   });
 
   const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  const pushCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
   configureMatchmakingRuntimeDependencies({
     sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
       subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    },
+    sendMobilePushNotification: async (playerId, templateKey, data) => {
+      pushCalls.push({ playerId, templateKey, data });
       return true;
     }
   });
@@ -385,9 +390,34 @@ test("matchmaking routes send WeChat subscribe notifications when a match is cre
       }
     ]
   );
+  assert.deepEqual(
+    pushCalls.sort((left, right) => left.playerId.localeCompare(right.playerId)),
+    [
+      {
+        playerId: "player-1",
+        templateKey: "match_found",
+        data: {
+          mapName: "Phase1",
+          opponentName: "Two",
+          roomId: pushCalls[0]?.data.roomId
+        }
+      },
+      {
+        playerId: "player-2",
+        templateKey: "match_found",
+        data: {
+          mapName: "Phase1",
+          opponentName: "One",
+          roomId: pushCalls[1]?.data.roomId
+        }
+      }
+    ]
+  );
+  assert.match(String(pushCalls[0]?.data.roomId ?? ""), /^pvp-match-/);
+  assert.match(String(pushCalls[1]?.data.roomId ?? ""), /^pvp-match-/);
 });
 
-test("matchmaking routes log WeChat subscribe failures without breaking match creation", async (t) => {
+test("matchmaking routes log match-found notification failures without breaking match creation", async (t) => {
   const store = createMemoryRoomSnapshotStore();
   await store.save(
     "room-frontier_basin",
@@ -448,7 +478,7 @@ test("matchmaking routes log WeChat subscribe failures without breaking match cr
   });
 
   await waitFor(() => errorCalls.length === 1);
-  assert.equal(errorCalls[0]?.[0], "[matchmaking] Failed to send WeChat match-found notification");
+  assert.equal(errorCalls[0]?.[0], "[matchmaking] Failed to send match-found notification");
   const loggedDetails = errorCalls[0]?.[1] as {
     roomId?: string;
     playerId?: string;

@@ -930,8 +930,34 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     const account: PlayerAccountSnapshot = {
       ...existing,
       displayName: `deleted-${existing.playerId}`,
+      eloRating: undefined,
+      rankDivision: undefined,
+      peakRankDivision: undefined,
+      promotionSeries: undefined,
+      demotionShield: undefined,
+      seasonHistory: [],
+      rankedWeeklyProgress: undefined,
+      seasonXp: 0,
+      seasonPassTier: 1,
+      seasonPassPremium: false,
+      seasonPassClaimedTiers: [],
+      seasonBadges: [],
+      campaignProgress: undefined,
+      seasonalEventStates: undefined,
+      mailbox: undefined,
+      cosmeticInventory: { ownedIds: [] },
+      equippedCosmetics: {},
       globalResources: { gold: 0, wood: 0, ore: 0 },
       achievements: [],
+      recentEventLog: [],
+      recentBattleReplays: [],
+      dailyDungeonState: undefined,
+      leaderboardAbuseState: undefined,
+      leaderboardModerationState: {
+        hiddenAt: new Date().toISOString(),
+        hiddenByPlayerId: "system:gdpr-delete"
+      },
+      tutorialStep: 0,
       banStatus: "none",
       accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
       updatedAt: new Date().toISOString()
@@ -948,6 +974,9 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     delete account.lastPlayDate;
     delete account.banExpiry;
     delete account.banReason;
+    delete account.phoneNumber;
+    delete account.phoneNumberBoundAt;
+    delete account.notificationPreferences;
     delete account.refreshSessionId;
     delete account.refreshTokenExpiresAt;
     delete account.wechatMiniGameOpenId;
@@ -3288,8 +3317,11 @@ test("player deletion anonymizes personal data, clears wechat bindings, and revo
   assert.equal(deletedAccount?.loginId, undefined);
   assert.equal(deletedAccount?.privacyConsentAt, undefined);
   assert.equal(deletedAccount?.wechatMiniGameOpenId, undefined);
-  assert.equal(deletedAccount?.recentBattleReplays?.[0]?.id, "delete-replay-1");
-  assert.equal(deletedAccount?.recentEventLog[0]?.id, "delete-event-1");
+  assert.deepEqual(deletedAccount?.recentBattleReplays, []);
+  assert.deepEqual(deletedAccount?.recentEventLog, []);
+  assert.equal(deletedAccount?.mailbox, undefined);
+  assert.equal(deletedAccount?.eloRating, undefined);
+  assert.equal(deletedAccount?.leaderboardModerationState?.hiddenByPlayerId, "system:gdpr-delete");
 
   const reloginOpenId = await store.loadPlayerAccountByWechatMiniGameOpenId("wx-delete-openid");
   assert.equal(reloginOpenId, null);
@@ -3304,6 +3336,51 @@ test("player deletion anonymizes personal data, clears wechat bindings, and revo
   };
   assert.equal(meResponse.status, 401);
   assert.equal(mePayload.error.code, "session_revoked");
+});
+
+test("delete route returns a 500 payload when cascade verification fails", async (t) => {
+  const port = 44860 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-delete-fail",
+    displayName: "雾海旅人",
+    privacyConsentAt: "2026-03-27T12:00:00.000Z"
+  });
+  await store.bindPlayerAccountCredentials("player-delete-fail", {
+    loginId: "delete-ranger-fail",
+    passwordHash: "hashed-password"
+  });
+  const originalDeletePlayerAccount = store.deletePlayerAccount.bind(store);
+  store.deletePlayerAccount = async (...args) => {
+    await originalDeletePlayerAccount(...args);
+    throw new Error("gdpr_delete_verification_failed:guild_memberships");
+  };
+
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "player-delete-fail",
+    displayName: "雾海旅人",
+    loginId: "delete-ranger-fail",
+    sessionVersion: 0
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/players/me/delete`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const deletePayload = (await deleteResponse.json()) as {
+    error: { code: string; message: string };
+  };
+
+  assert.equal(deleteResponse.status, 500);
+  assert.equal(deletePayload.error.code, "Error");
+  assert.equal(deletePayload.error.message, "gdpr_delete_verification_failed:guild_memberships");
 });
 
 test("daily claim increments streak and grants the configured consecutive-day reward", async (t) => {

@@ -203,7 +203,9 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
 - 发布就绪快照：`npm run release:readiness:snapshot`
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
+- Release evidence lifecycle / archive policy：`docs/release-evidence-lifecycle.md`
 - Candidate-scoped release evidence manifest：runtime observability bundle / candidate evidence audit 会自动 upsert `artifacts/release-readiness/candidate-evidence-manifest-<candidate>-<short-sha>.json|md`（reviewer front door；先打开这个 manifest，再顺着条目里的 artifact/source 跳到 bundle、gate、audit 与底层证据，而不是手工翻目录）
+- Release evidence lifecycle maintenance：`npm run release:evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2 [--apply]`（默认 dry-run，只产出 lifecycle JSON / Markdown 报告，列出当前 retained reviewer front doors、archive candidates 与过期 archive runs；加 `--apply` 后会把旧 artifact sets 移到 `artifacts/release-archive/runs/<timestamp>/`，同时不会再让现有 gate/dashboard 从 live 目录误读这些历史件）
 - Candidate-level 发布证据 freshness / consistency audit：`npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>`（输出 candidate-scoped JSON / Markdown 审计，汇总 blocking vs warning 结论，并校验 release snapshot、Cocos RC bundle 内联的 RC snapshot / primary-journey evidence、runtime observability evidence / gate、WeChat manual checks、owner ledger freshness；同一次运行还会在 `artifacts/release-readiness/` 额外生成 `candidate-evidence-owner-reminder-report-<candidate>-<short-sha>.json|md`、`candidate-evidence-freshness-history-<candidate>.json`，并自动更新同一 candidate 的 `candidate-evidence-manifest-<candidate>-<short-sha>.json|md`；推荐在当前 candidate 的证据产物生成完、最终 owner ping / sign-off 前执行，并在 RC review 时先打开该 manifest，再检查 history 文件是否持续变好或重复回归；兼容旧别名 `release:same-candidate:evidence-audit`）
 - 统一发布门禁汇总：`npm run release:gate:summary`
 - Candidate-scoped runtime observability bundle：`npm run release:runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url> [--include-room-lifecycle]`（推荐的 reviewer-facing capture flow；在 `artifacts/release-readiness/runtime-observability-bundle-<candidate>-<short-sha>/` 一次性输出 bundle JSON / Markdown，并归档对应的 runtime evidence + gate artifact；同一次运行会自动更新 candidate evidence manifest，把 bundle/evidence/gate 及其上游 endpoint/source 记到统一索引里；`--include-room-lifecycle` 会把 `/api/runtime/room-lifecycle-summary` 一并纳入候选环境包）
@@ -287,6 +289,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - 多人同步治理矩阵说明：`docs/sync-governance-matrix.md`
 - 共享 contract 快照说明：`docs/shared-contract-snapshots.md`
 - WeChat Pay 退款 / 争议 / 防欺诈运营手册：`docs/wechat-pay-ops-runbook.md`
+- GDPR 删除核验 runbook：`docs/gdpr-delete-runbook.md`
 - Codex automation 分支审计与清理 runbook：`docs/codex-automation-branch-maintenance.md`
 - GitHub issue intake fallback runbook：`docs/github-issue-intake-fallback.md`
 - GitHub issue intake fallback smoke checklist：`docs/github-issue-intake-fallback-smoke-checklist.md`

@@ -4,7 +4,6 @@ import {
   applyBattleReplayPlaybackCommand,
   buildPlayerBattleReportCenter,
   buildPlayerProgressionSnapshot,
-  canSkipTutorial,
   DEFAULT_TUTORIAL_STEP,
   findPlayerBattleReplaySummary,
   getRankDivisionForRating,
@@ -19,8 +18,7 @@ import {
   summarizePlayerMailbox,
   type BattleReplayPlaybackCommand,
   type PlayerBattleReplaySummary,
-  type SeasonalEventState,
-  type TutorialProgressAction
+  type SeasonalEventState
 } from "../../../packages/shared/src/index";
 import {
   createDailyQuestClaimEventLogEntry,
@@ -73,7 +71,9 @@ import {
   normalizeNotificationPreferences,
   validateGroupChallengeToken
 } from "./wechat-social";
+import { removeMobilePushToken, upsertMobilePushToken } from "./mobile-push-tokens";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
+import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -400,28 +400,6 @@ async function withDailyQuestBoard(
       new Date(),
       enabled && isTutorialComplete(account.tutorialStep)
     )
-  };
-}
-
-function normalizeTutorialProgressAction(input: unknown, currentStep?: number | null): TutorialProgressAction {
-  const raw = input as Partial<TutorialProgressAction> | null | undefined;
-  const reason =
-    raw?.reason === "skip" || raw?.reason === "complete" || raw?.reason === "advance" ? raw.reason : "advance";
-  const step = raw?.step == null ? null : Math.floor(raw.step);
-
-  if (step !== null && (!Number.isFinite(step) || step <= 0)) {
-    throw new Error("tutorial_progress_invalid_step");
-  }
-  if (reason === "skip" && !canSkipTutorial(currentStep)) {
-    throw new Error("tutorial_skip_locked");
-  }
-  if (reason === "advance" && step === null) {
-    throw new Error("tutorial_progress_invalid_step");
-  }
-
-  return {
-    step,
-    reason
   };
 }
 
@@ -916,6 +894,7 @@ function toPublicPlayerAccount(
   | "phoneNumberBoundAt"
   | "wechatMiniGameOpenId"
   | "wechatMiniGameUnionId"
+  | "pushTokens"
   | "banStatus"
   | "banExpiry"
   | "banReason"
@@ -929,6 +908,7 @@ function toPublicPlayerAccount(
     phoneNumberBoundAt: _phoneNumberBoundAt,
     wechatMiniGameOpenId: _wechatMiniGameOpenId,
     wechatMiniGameUnionId: _wechatMiniGameUnionId,
+    pushTokens: _pushTokens,
     banStatus: _banStatus,
     banExpiry: _banExpiry,
     banReason: _banReason,
@@ -1439,6 +1419,80 @@ export function registerPlayerAccountRoutes(
     }
   });
 
+  app.put("/api/players/me/push-token", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "persistence_unavailable",
+          message: "Push token registration requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { platform: string; token: string };
+      const existing = await store.loadPlayerAccount(authSession.playerId);
+      const pushTokens = upsertMobilePushToken(existing?.pushTokens, body);
+      const account = await store.savePlayerAccountProfile(authSession.playerId, { pushTokens });
+      sendJson(response, 200, {
+        pushTokens: account.pushTokens ?? pushTokens
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.delete("/api/players/me/push-token", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+    if (!store) {
+      sendJson(response, 503, {
+        error: {
+          code: "persistence_unavailable",
+          message: "Push token removal requires configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { platform?: string; token?: string };
+      if (!body.platform?.trim() && !body.token?.trim()) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_push_token",
+            message: "platform or token is required"
+          }
+        });
+        return;
+      }
+
+      const existing = await store.loadPlayerAccount(authSession.playerId);
+      const pushTokens = removeMobilePushToken(existing?.pushTokens, body) ?? null;
+      const account = await store.savePlayerAccountProfile(authSession.playerId, { pushTokens });
+      sendJson(response, 200, {
+        pushTokens: account.pushTokens ?? []
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
   app.post("/api/player/daily-claim", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
     if (!authSession) {
@@ -1847,15 +1901,7 @@ export function registerPlayerAccountRoutes(
       emitAnalyticsEvent("tutorial_step", {
         playerId: account.playerId,
         roomId: account.lastRoomId ?? "lobby",
-        payload: {
-          stepId:
-            action.step == null
-              ? action.reason === "skip"
-                ? "tutorial_skipped"
-                : "tutorial_completed"
-              : `step_${action.step}`,
-          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active"
-        }
+        payload: toTutorialAnalyticsPayload(action)
       });
 
       sendJson(response, 200, {
@@ -1877,6 +1923,15 @@ export function registerPlayerAccountRoutes(
           error: {
             code: "tutorial_progress_invalid_step",
             message: "Tutorial progress payload is invalid"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "tutorial_progress_out_of_order") {
+        sendJson(response, 409, {
+          error: {
+            code: "tutorial_progress_out_of_order",
+            message: "Tutorial progress must advance in order"
           }
         });
         return;
@@ -1908,6 +1963,51 @@ export function registerPlayerAccountRoutes(
       sendJson(response, 200, {
         campaign: toCampaignResponse(account, accessContext)
       });
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/campaigns/missions/:id", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    const missionId = request.params.id?.trim();
+    if (!missionId) {
+      sendNotFound(response);
+      return;
+    }
+
+    try {
+      const account = store
+        ? ((await store.loadPlayerAccount(authSession.playerId)) ??
+          (await store.ensurePlayerAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName
+          })))
+        : createLocalModeAccount({
+            playerId: authSession.playerId,
+            displayName: authSession.displayName,
+            ...(authSession.loginId ? { loginId: authSession.loginId } : {})
+          });
+      const accessContext = await loadCampaignAccessContext(store, account);
+      const mission = buildCampaignMissionStates(resolveCampaignConfig(), account.campaignProgress, accessContext).find(
+        (entry) => entry.id === missionId
+      );
+
+      if (!mission) {
+        sendJson(response, 404, {
+          error: {
+            code: "campaign_mission_not_found",
+            message: "Campaign mission was not found"
+          }
+        });
+        return;
+      }
+
+      sendJson(response, 200, { mission });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

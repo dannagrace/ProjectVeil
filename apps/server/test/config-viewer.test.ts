@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
+import { getDefaultBattleSkillCatalog } from "../../../packages/shared/src/index";
 import { FileSystemConfigCenterStore } from "../src/config-center";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
 import { buildConfigViewerPageForTest, registerConfigViewerRoutes } from "../src/config-viewer";
 
 const WORLD_CONFIG = {
@@ -91,33 +93,7 @@ const UNIT_CONFIG = {
   ]
 };
 
-const BATTLE_SKILL_CONFIG = {
-  skills: [
-    {
-      id: "power_shot",
-      name: "Power Shot",
-      description: "Ranged hit.",
-      kind: "active" as const,
-      target: "enemy" as const,
-      cooldown: 2,
-      effects: {
-        damageMultiplier: 0.85,
-        allowRetaliation: false
-      }
-    }
-  ],
-  statuses: [
-    {
-      id: "poisoned",
-      name: "Poisoned",
-      description: "Takes damage over time.",
-      duration: 2,
-      attackModifier: 0,
-      defenseModifier: 0,
-      damagePerTurn: 2
-    }
-  ]
-};
+const BATTLE_SKILL_CONFIG = getDefaultBattleSkillCatalog();
 
 const BATTLE_BALANCE_CONFIG = {
   damage: {
@@ -148,6 +124,11 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(BATTLE_BALANCE_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(rootDir, "leaderboard-tier-thresholds.json"),
+    `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 async function startConfigViewerServer(port: number, rootDir: string): Promise<{ server: Server; store: FileSystemConfigCenterStore }> {
@@ -197,10 +178,10 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   };
 
   assert.equal(listResponse.status, 200);
-  assert.equal(listPayload.items.length, 5);
+  assert.equal(listPayload.items.length, 6);
   assert.deepEqual(
     listPayload.items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds"]
   );
   assert.ok(listPayload.items.every((item) => item.updatedAt && item.summary && item.storage && item.version >= 1));
 

@@ -100,6 +100,18 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/current-release-evidence-index-<short-sha>.md`",
     ],
   },
+  "release:evidence:lifecycle": {
+    purpose:
+      "Plan or apply release evidence retention, archival, and archive cleanup without changing the live directories by default, while writing a reviewer-facing report of the currently valid front-door artifacts.",
+    requiredInputs: [
+      "Existing artifacts under `artifacts/release-readiness/`, `artifacts/release-readiness/phase1-candidate-rehearsal/`, and `artifacts/wechat-release/`; optional retention flags, archive root overrides, and `--apply` control whether the command only reports or also moves/removes artifacts.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.json`",
+      "`artifacts/release-readiness/release-evidence-lifecycle-report-<short-sha>.md`",
+      "When `--apply` archives anything, a matching manifest is also written under `artifacts/release-archive/runs/<timestamp>/` next to the moved artifact sets.",
+    ],
+  },
   "release:gate:summary": {
     purpose:
       "Aggregate readiness, H5, reconnect soak, Cocos reconnect replay, WeChat, and config-change evidence into one top-level release gate decision.",
@@ -162,12 +174,12 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
   },
   "release:phase1:candidate-rehearsal": {
     purpose:
-      "Run the full candidate rehearsal flow and stage reviewer front-door outputs into one release-readiness bundle directory, with `SUMMARY.md` as the canonical packet-level reviewer entrypoint that foregrounds the release candidate manifest Markdown artifact plus its JSON companion for Cocos primary journey evidence, the Cocos reconnect replay artifact, the Cocos main-journey replay gate, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the release gate summary and its Markdown companion, the release health summary and its Markdown companion, the CI trend summary and its Markdown companion, the release readiness snapshot, the runtime observability gate and its Markdown companion, H5 candidate smoke report, reconnect soak summary, WeChat candidate summary, the runtime observability bundle, raw runtime observability evidence, the candidate-scoped Cocos RC bundle, the same-revision bundle's manifest, owner ledger, and dashboard, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier and its Markdown companion, the final go/no-go packet, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index and its Markdown companion, and the reviewer-facing release PR summary.",
+      "Run the full candidate rehearsal flow and stage reviewer front-door outputs into one release-readiness bundle directory, with `SUMMARY.md` as the canonical packet-level reviewer entrypoint that foregrounds the release candidate manifest Markdown artifact, the same-candidate evidence audit Markdown, the runtime observability gate Markdown companion, and then the JSON/checkpoint companions for Cocos primary journey evidence, the Cocos reconnect replay artifact, the Cocos main-journey replay gate, Cocos primary diagnostics, the candidate revision triage digest derived from those checkpoints, the release gate summary and its Markdown companion, the release health summary and its Markdown companion, the CI trend summary and its Markdown companion, the release readiness snapshot, the runtime observability gate, H5 candidate smoke report, reconnect soak summary, WeChat candidate summary, the runtime observability bundle, raw runtime observability evidence, the candidate-scoped Cocos RC bundle, the same-revision bundle's manifest, owner ledger, and dashboard, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier and its Markdown companion, the final go/no-go packet, the candidate evidence audit, the dedicated freshness guard, its owner reminder and freshness history companions, the current evidence index and its Markdown companion, and the reviewer-facing release PR summary.",
     requiredInputs: [
       "Pass `--candidate` and optionally `--server-url`, target-surface settings, or prebuilt artifact paths to avoid rerunning every stage.",
     ],
     producedArtifacts: [
-      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the release candidate manifest JSON/Markdown pair surfaced at the top of `SUMMARY.md`, Cocos primary journey evidence, the Cocos reconnect replay artifact, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the release readiness snapshot, the staged runtime observability gate plus its Markdown companion, the staged H5 candidate smoke report, the staged reconnect soak summary, the staged WeChat candidate summary, the runtime observability bundle, raw runtime observability evidence, the candidate-scoped Cocos RC bundle, the restaged release-readiness dashboard, the same-revision evidence bundle manifest, the release gate summary plus its Markdown companion, the release health summary plus its Markdown companion, the staged CI trend summary plus its Markdown companion, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier plus its Markdown companion, the final go/no-go packet, the manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index plus its Markdown companion, the reviewer-facing release PR summary, and a top-level `SUMMARY.md` that serves as the canonical packet-level reviewer entrypoint.",
+      "Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the release candidate manifest JSON/Markdown pair, the same-candidate evidence audit Markdown, and the runtime observability gate Markdown companion surfaced at the top of `SUMMARY.md`, Cocos primary journey evidence, the Cocos reconnect replay artifact, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the release readiness snapshot, the staged runtime observability gate, the staged H5 candidate smoke report, the staged reconnect soak summary, the staged WeChat candidate summary, the runtime observability bundle, raw runtime observability evidence, the candidate-scoped Cocos RC bundle, the restaged release-readiness dashboard, the same-revision evidence bundle manifest, the release gate summary plus its Markdown companion, the release health summary plus its Markdown companion, the staged CI trend summary plus its Markdown companion, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier plus its Markdown companion, the final go/no-go packet, the manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index plus its Markdown companion, the reviewer-facing release PR summary, and a top-level `SUMMARY.md` that serves as the canonical packet-level reviewer entrypoint.",
     ],
   },
   "release:phase1:evidence-drift-gate": {
@@ -412,6 +424,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     ],
     producedArtifacts: [
       "No tracked artifact; exits non-zero on schema drift and reports findings on stdout/stderr.",
+    ],
+  },
+  "validate:season-reward-config": {
+    purpose:
+      "Validate `configs/season-rewards.json` against the checked-in schema and server semantics before startup, build, or a seasonal reset can proceed.",
+    requiredInputs: [
+      "`configs/season-rewards.json`, `configs/schemas/season-rewards.schema.json`, and the server-side reward resolver in the current repo checkout.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; exits non-zero when the season reward config has schema/type errors or overlapping reward thresholds.",
     ],
   },
   "validate:assets": {

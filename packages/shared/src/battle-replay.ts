@@ -27,6 +27,7 @@ export interface PlayerBattleReplaySummary {
   neutralArmyId?: string;
   startedAt: string;
   completedAt: string;
+  expiresAt?: string;
   initialState: BattleState;
   steps: BattleReplayStep[];
   result: BattleReplayResult;
@@ -425,6 +426,7 @@ function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | unde
 export function normalizePlayerBattleReplaySummaries(
   replays?: Partial<PlayerBattleReplaySummary>[] | null
 ): PlayerBattleReplaySummary[] {
+  const now = Date.now();
   return (replays ?? [])
     .map((replay) => {
       const id = replay?.id?.trim();
@@ -434,6 +436,7 @@ export function normalizePlayerBattleReplaySummaries(
       const heroId = replay?.heroId?.trim();
       const startedAt = normalizeTimestamp(replay?.startedAt);
       const completedAt = normalizeTimestamp(replay?.completedAt);
+      const expiresAt = normalizeTimestamp(replay?.expiresAt);
       const initialState = replay?.initialState;
       if (
         !id ||
@@ -468,12 +471,21 @@ export function normalizePlayerBattleReplaySummaries(
         ...(replay.neutralArmyId?.trim() ? { neutralArmyId: replay.neutralArmyId.trim() } : {}),
         startedAt,
         completedAt,
+        ...(expiresAt ? { expiresAt } : {}),
         initialState: cloneBattleState(initialState),
         steps,
         result: replay.result
       };
     })
     .filter((replay): replay is PlayerBattleReplaySummary => Boolean(replay))
+    .filter((replay) => {
+      if (!replay.expiresAt) {
+        return true;
+      }
+
+      const expiresAt = new Date(replay.expiresAt).getTime();
+      return !Number.isFinite(expiresAt) || expiresAt > now;
+    })
     .sort((left, right) => right.completedAt.localeCompare(left.completedAt) || left.id.localeCompare(right.id))
     .filter((replay, index, list) => index === list.findIndex((candidate) => candidate.id === replay.id));
 }

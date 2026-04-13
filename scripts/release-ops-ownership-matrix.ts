@@ -130,6 +130,15 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
           "Indexes the current revision artifact families. Use it to prove the packet is complete before deeper review; missing required families should stop release review.",
         reviewTreatment: "release blocker",
       };
+    case "release:evidence:lifecycle":
+      return {
+        owner: "release ops",
+        scope: "review-aid",
+        decisionRole: "required evidence",
+        blockingSemantics:
+          "Defines which live evidence stays reviewer-visible, which stale artifact sets move to the archive root, and which expired archive runs can be deleted. Use the dry-run report before cleanup and treat unexpected archive candidates as a release-review blocker until the policy is understood.",
+        reviewTreatment: "review aid",
+      };
     case "release:candidate:evidence-audit":
     case "release:candidate:evidence:freshness-guard":
     case "release:same-candidate:evidence-audit":
@@ -333,6 +342,7 @@ function classifyOwnership(entry: ReleaseScriptInventoryEntry): OwnershipMetadat
   }
 
   if (
+    script === "validate:season-reward-config" ||
     script === "validate:analytics-schema" ||
     script === "validate:e2e:fixtures" ||
     script === "validate:quickstart" ||
@@ -381,6 +391,12 @@ export function renderReleaseOpsOwnershipMarkdown(entries: ReleaseOpsOwnershipEn
     "- For live runtime alert response, pair this ownership map with [`docs/alerting-runbook.md`](./alerting-runbook.md) so the responder can move from the owning role to the per-alert triage steps quickly.",
     "- `Decision role` distinguishes the canonical gate from supporting evidence and reviewer-facing diagnostics.",
     "- `Review treatment` makes the blocker boundary explicit: use `merge/release blocker` for changes that can stop both PR approval and candidate promotion, `release blocker` for candidate-only proof, and `review aid` for summaries that should not override the owning gate.",
+    "",
+    "## Pre-Season Ops Checklist",
+    "",
+    "- Run `validate:season-reward-config` before pre-season promotion or any seasonal reset rehearsal so malformed `configs/season-rewards.json` changes fail before runtime.",
+    "- Treat `configs/schemas/season-rewards.schema.json` as the contract for structural edits; changes to bracket fields or types should land with matching validator and test updates.",
+    "- Treat config-center key `leaderboard.tier_thresholds` as a release-ops owned seasonal tuning surface; ship threshold changes with focused leaderboard API validation and publish audit evidence.",
     "",
     "## Summary",
     "",

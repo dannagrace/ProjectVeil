@@ -1681,6 +1681,14 @@ async function validateAuthToken(
   }
 }
 
+export async function validateGuestAuthToken(
+  token: string,
+  store: RoomSnapshotStore | null,
+  expectedKind: "access" | "refresh" = "access"
+): Promise<ValidateAuthSessionResult> {
+  return validateAuthToken(token, store, expectedKind);
+}
+
 export async function validateAuthSessionFromRequest(
   request: Pick<IncomingMessage, "headers">,
   store: RoomSnapshotStore | null,

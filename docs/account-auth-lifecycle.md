@@ -12,6 +12,7 @@
 - 口令账号登录：`POST /api/auth/account-login`
 - 会话校验 / 刷新 / 退出：`GET /api/auth/session`、`POST /api/auth/refresh`、`POST /api/auth/logout`
 - 正式账号设备会话列表 / 撤销：`GET /api/player-accounts/me/sessions`、`DELETE /api/player-accounts/me/sessions/:sessionId`
+- 原生移动端推送令牌注册 / 注销：`PUT /api/players/me/push-token`、`DELETE /api/players/me/push-token`
 - 已登录账号修改口令：`PUT /api/player-accounts/me`
 - 迁移规则与边界场景说明：`docs/account-migration-rules.md`
 
@@ -47,6 +48,14 @@
 - `GET /api/player-accounts/me/sessions` 只返回当前账号仍然活跃的设备会话，并额外标记 `current=true` 的当前设备。
 - `DELETE /api/player-accounts/me/sessions/:sessionId` 仅允许撤销“非当前设备”的会话；被撤销的设备会话会立刻从列表消失，且旧刷新令牌随后会返回 `401 session_revoked`。
 - `POST /api/auth/logout` 与口令修改仍然属于“全量撤销”：会清空当前账号全部设备会话，并通过提升 `accountSessionVersion` 让旧访问令牌也一起失效。
+
+## 移动推送令牌
+
+- `PUT /api/players/me/push-token` 接收 `{ "platform": "ios" | "android", "token": "..." }`，按平台为当前玩家保存一个原生推送 token。
+- `DELETE /api/players/me/push-token` 接收 `{ "platform"?: "...", "token"?: "..." }`，按平台或 token 删除已登记的原生推送 token。
+- 当前服务端会把原生推送接到既有的 `match_found` 与 `turn_reminder` 事件链路；推送失败只记日志，不阻塞匹配或回合推进。
+- APNs 依赖 `VEIL_APNS_KEY_ID`、`VEIL_APNS_TEAM_ID`、`VEIL_APNS_PRIVATE_KEY`、`VEIL_APNS_TOPIC`，默认在非生产环境走 sandbox，可用 `VEIL_APNS_USE_SANDBOX=false` 或 `VEIL_APNS_HOST` 覆盖。
+- FCM 依赖 `VEIL_FCM_SERVER_KEY`，发送地址默认 `https://fcm.googleapis.com/fcm/send`，可用 `VEIL_FCM_SEND_URL` 覆盖到测试项目或代理。
 
 ## 鉴权观测面
 

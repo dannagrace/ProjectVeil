@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ import {
   resetAnalyticsRuntimeDependencies
 } from "../src/analytics";
 import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "../src/config-center";
+import { issueAccountAuthSession, issueNextAuthSession, type GuestAuthSession } from "../src/auth";
 import {
   VeilColyseusRoom,
   configureRoomRuntimeDependencies,
@@ -312,7 +314,8 @@ async function connectPlayer(
   room: VeilColyseusRoom,
   client: FakeClient,
   playerId: string,
-  requestId: string
+  requestId: string,
+  authToken?: string
 ): Promise<void> {
   room.clients.push(client);
   room.onJoin(client, { playerId });
@@ -320,8 +323,37 @@ async function connectPlayer(
     type: "connect",
     requestId,
     roomId: room.roomId,
-    playerId
+    playerId,
+    ...(authToken ? { authToken } : {})
   });
+}
+
+function cloneSessionWithExpiresAt(session: GuestAuthSession, expiresAt: string): GuestAuthSession {
+  const [encodedPayload] = session.token.split(".");
+  assert.ok(encodedPayload, "expected a signed auth token");
+  const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
+    issuedAt: string;
+    expiresAt: string;
+  };
+  const issuedAt = new Date(Date.now() - 1_000).toISOString();
+  const nextPayload = Buffer.from(
+    JSON.stringify({
+      ...payload,
+      issuedAt,
+      expiresAt
+    })
+  ).toString("base64url");
+  const signature = createHmac("sha256", process.env.VEIL_AUTH_SECRET ?? "project-veil-dev-secret")
+    .update(nextPayload)
+    .digest("base64url");
+
+  return {
+    ...session,
+    token: `${nextPayload}.${signature}`,
+    issuedAt,
+    expiresAt,
+    lastUsedAt: new Date().toISOString()
+  };
 }
 
 function getBattleForPlayer(room: VeilColyseusRoom, playerId: string): BattleState | null {
@@ -834,6 +866,98 @@ test("stale leave after a successful reconnect does not clear the resumed player
 
   assert.equal(internalRoom.playerIdBySessionId.get("session-stale-reconnected"), "player-1");
   assert.equal(listLobbyRooms().find((entry) => entry.roomId === room.roomId)?.connectedPlayers, 1);
+});
+
+test("reconnect with an expired tracked auth token sends SESSION_EXPIRED and rejects the resumed client", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-expired-token-${Date.now()}`);
+  const originalClient = createFakeClient("session-expired-token-original");
+  const reconnectedClient = createFakeClient("session-expired-token-resumed");
+  const expiringSession = cloneSessionWithExpiresAt(
+    issueAccountAuthSession({
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    }),
+    new Date(Date.now() + 20).toISOString()
+  );
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-expired-token", expiringSession.token);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  internalRoom.allowReconnection = async () => reconnectedClient;
+  await room.onDrop(originalClient);
+
+  const expiredMessage = reconnectedClient.sent.find(
+    (message): message is Extract<ServerMessage, { type: "SESSION_EXPIRED" }> => message.type === "SESSION_EXPIRED"
+  );
+  assert.ok(expiredMessage);
+  assert.equal(expiredMessage.reason, "token_expired");
+  assert.equal(internalRoom.playerIdBySessionId.has(reconnectedClient.sessionId), false);
+  assert.equal(reconnectedClient.leaveCalls.at(-1)?.reason, "session_expired");
+  assert.equal(reconnectedClient.sent.some((message) => message.type === "session.state"), false);
+});
+
+test("TOKEN_REFRESH updates the tracked auth session so reconnect accepts the refreshed token", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-reconnect-token-refresh-${Date.now()}`);
+  const originalClient = createFakeClient("session-token-refresh-original");
+  const reconnectedClient = createFakeClient("session-token-refresh-resumed");
+  const expiringSession = cloneSessionWithExpiresAt(
+    issueAccountAuthSession({
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    }),
+    new Date(Date.now() + 20).toISOString()
+  );
+  const refreshedSession = issueNextAuthSession(
+    {
+      playerId: "player-1",
+      displayName: "Player One",
+      loginId: "player-one"
+    },
+    expiringSession
+  );
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+    allowReconnection(client: Client, seconds: number): Promise<Client>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, originalClient, "player-1", "connect-token-refresh", expiringSession.token);
+  await emitRoomMessage(room, "TOKEN_REFRESH", originalClient, {
+    type: "TOKEN_REFRESH",
+    requestId: "token-refresh",
+    authToken: refreshedSession.token
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  internalRoom.allowReconnection = async () => reconnectedClient;
+  await room.onDrop(originalClient);
+
+  assert.equal(internalRoom.playerIdBySessionId.get(reconnectedClient.sessionId), "player-1");
+  assert.equal(reconnectedClient.sent.some((message) => message.type === "SESSION_EXPIRED"), false);
+  assert.equal(reconnectedClient.leaveCalls.length, 0);
+  assert.equal(lastSessionState(originalClient, "reply").requestId, "token-refresh");
+  assert.equal(lastSessionState(reconnectedClient, "push").requestId, "push");
 });
 
 test("client that misses the reconnect window is cleaned up from the player slot map", async (t) => {
@@ -2212,10 +2336,15 @@ test("turn reminder subscribe message is skipped while the next player is still 
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
   const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  const pushCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
   configureRoomSnapshotStore(store);
   configureRoomRuntimeDependencies({
     sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
       subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    },
+    sendMobilePushNotification: async (playerId, templateKey, data) => {
+      pushCalls.push({ playerId, templateKey, data });
       return true;
     }
   });
@@ -2247,19 +2376,25 @@ test("turn reminder subscribe message is skipped while the next player is still 
   });
 
   assert.deepEqual(subscribeCalls, []);
+  assert.deepEqual(pushCalls, []);
   assert.equal(lastSessionState(defenderClient, "push").payload.world.meta.day, 2);
   assert.equal(timer.nowMs, Date.parse("2026-04-04T00:00:00.000Z"));
 });
 
-test("turn reminder subscribe message is sent after the next player has been disconnected for over 30 seconds", async (t) => {
+test("turn reminder notifications are sent after the next player has been disconnected for over 30 seconds", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
   const subscribeCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
+  const pushCalls: Array<{ playerId: string; templateKey: string; data: Record<string, unknown> }> = [];
   configureRoomSnapshotStore(store);
   configureRoomRuntimeDependencies({
     sendWechatSubscribeMessage: async (playerId, templateKey, data) => {
       subscribeCalls.push({ playerId, templateKey, data });
+      return true;
+    },
+    sendMobilePushNotification: async (playerId, templateKey, data) => {
+      pushCalls.push({ playerId, templateKey, data });
       return true;
     }
   });
@@ -2303,9 +2438,10 @@ test("turn reminder subscribe message is sent after the next player has been dis
       }
     }
   ]);
+  assert.deepEqual(pushCalls, subscribeCalls);
 });
 
-test("turn reminder subscribe failures are logged without blocking turn advancement", async (t) => {
+test("turn reminder notification failures are logged without blocking turn advancement", async (t) => {
   resetLobbyRoomRegistry();
   const timer = createManualRoomTimer(Date.parse("2026-04-04T00:00:00.000Z"));
   const store = new InstrumentedRoomSnapshotStore();
@@ -2360,7 +2496,7 @@ test("turn reminder subscribe failures are logged without blocking turn advancem
   };
   assert.equal(internalRoom.worldRoom.getInternalState().meta.day, 2);
   assert.equal(errorCalls.length, 1);
-  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to send WeChat turn reminder subscribe message");
+  assert.equal(errorCalls[0]?.[0], "[VeilRoom] Failed to send turn reminder notification");
   assert.deepEqual(errorCalls[0]?.[1], {
     roomId: room.roomId,
     playerId: "player-2",
@@ -2674,6 +2810,286 @@ test("room battle emotes reply to the sender and broadcast to other participants
         message.playerId === "player-1" &&
         message.cosmeticId === "emote-cheer-spark" &&
         message.action === "emote"
+    ),
+    true
+  );
+});
+
+test("room cosmetic purchases reply, broadcast, and persist the unlocked cosmetic", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-buy-cosmetic-${Date.now()}`);
+  const buyerClient = createFakeClient("session-buy-cosmetic-owner");
+  const watcherClient = createFakeClient("session-buy-cosmetic-watcher");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, buyerClient, "player-1", "connect-buy-cosmetic-owner");
+  await connectPlayer(room, watcherClient, "player-2", "connect-buy-cosmetic-watcher");
+  await store.savePlayerAccountProgress("player-1", {
+    gems: 100
+  });
+
+  await emitRoomMessage(room, "BUY_COSMETIC", buyerClient, {
+    type: "BUY_COSMETIC",
+    requestId: "buy-cosmetic-1",
+    cosmeticId: "border-vanguard"
+  });
+
+  assert.equal(
+    buyerClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "buy-cosmetic-1" &&
+        message.delivery === "reply" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "border-vanguard" &&
+        message.action === "purchased"
+    ),
+    true
+  );
+  assert.equal(
+    watcherClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "push" &&
+        message.delivery === "push" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "border-vanguard" &&
+        message.action === "purchased"
+    ),
+    true
+  );
+
+  const account = await store.loadPlayerAccount("player-1");
+  assert.equal(account?.gems, 70);
+  assert.deepEqual(account?.cosmeticInventory?.ownedIds, ["border-vanguard"]);
+});
+
+test("room cosmetic purchases return insufficient_gems when the player cannot afford the cosmetic", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-buy-cosmetic-insufficient-${Date.now()}`);
+  const buyerClient = createFakeClient("session-buy-cosmetic-insufficient");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, buyerClient, "player-1", "connect-buy-cosmetic-insufficient");
+  await store.savePlayerAccountProgress("player-1", {
+    gems: 5
+  });
+
+  await emitRoomMessage(room, "BUY_COSMETIC", buyerClient, {
+    type: "BUY_COSMETIC",
+    requestId: "buy-cosmetic-insufficient",
+    cosmeticId: "border-vanguard"
+  });
+
+  assert.equal(
+    buyerClient.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "buy-cosmetic-insufficient" &&
+        message.reason === "insufficient_gems"
+    ),
+    true
+  );
+
+  const account = await store.loadPlayerAccount("player-1");
+  assert.equal(account?.gems, 5);
+  assert.deepEqual(account?.cosmeticInventory?.ownedIds ?? [], []);
+});
+
+test("room cosmetic handlers return cosmetics_unavailable when cosmetic persistence is not configured", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-cosmetics-unavailable-${Date.now()}`);
+  const client = createFakeClient("session-cosmetics-unavailable");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-cosmetics-unavailable");
+
+  await emitRoomMessage(room, "BUY_COSMETIC", client, {
+    type: "BUY_COSMETIC",
+    requestId: "buy-cosmetics-unavailable",
+    cosmeticId: "border-vanguard"
+  });
+  await emitRoomMessage(room, "EQUIP_COSMETIC", client, {
+    type: "EQUIP_COSMETIC",
+    requestId: "equip-cosmetics-unavailable",
+    cosmeticId: "border-vanguard"
+  });
+
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "buy-cosmetics-unavailable" &&
+        message.reason === "cosmetics_unavailable"
+    ),
+    true
+  );
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "equip-cosmetics-unavailable" &&
+        message.reason === "cosmetics_unavailable"
+    ),
+    true
+  );
+});
+
+test("room cosmetic handlers return cosmetic_not_found for unknown cosmetics", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-cosmetic-not-found-${Date.now()}`);
+  const client = createFakeClient("session-cosmetic-not-found");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, client, "player-1", "connect-cosmetic-not-found");
+  await store.savePlayerAccountProgress("player-1", {
+    gems: 100
+  });
+
+  await emitRoomMessage(room, "BUY_COSMETIC", client, {
+    type: "BUY_COSMETIC",
+    requestId: "buy-cosmetic-not-found",
+    cosmeticId: "missing-cosmetic"
+  });
+  await emitRoomMessage(room, "EQUIP_COSMETIC", client, {
+    type: "EQUIP_COSMETIC",
+    requestId: "equip-cosmetic-not-found",
+    cosmeticId: "missing-cosmetic"
+  });
+
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "buy-cosmetic-not-found" &&
+        message.reason === "cosmetic_not_found"
+    ),
+    true
+  );
+  assert.equal(
+    client.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "equip-cosmetic-not-found" &&
+        message.reason === "cosmetic_not_found"
+    ),
+    true
+  );
+});
+
+test("room cosmetic equips reply, broadcast, and persist equipped cosmetics", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-equip-cosmetic-${Date.now()}`);
+  const equipClient = createFakeClient("session-equip-cosmetic-owner");
+  const watcherClient = createFakeClient("session-equip-cosmetic-watcher");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, equipClient, "player-1", "connect-equip-cosmetic-owner");
+  await connectPlayer(room, watcherClient, "player-2", "connect-equip-cosmetic-watcher");
+  await store.savePlayerAccountProgress("player-1", {
+    cosmeticInventory: {
+      ownedIds: ["border-vanguard"]
+    }
+  });
+
+  await emitRoomMessage(room, "EQUIP_COSMETIC", equipClient, {
+    type: "EQUIP_COSMETIC",
+    requestId: "equip-cosmetic-1",
+    cosmeticId: "border-vanguard"
+  });
+
+  assert.equal(
+    equipClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "equip-cosmetic-1" &&
+        message.delivery === "reply" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "border-vanguard" &&
+        message.action === "equipped" &&
+        message.equippedCosmetics?.profileBorderId === "border-vanguard"
+    ),
+    true
+  );
+  assert.equal(
+    watcherClient.sent.some(
+      (message) =>
+        message.type === "COSMETIC_APPLIED" &&
+        message.requestId === "push" &&
+        message.delivery === "push" &&
+        message.playerId === "player-1" &&
+        message.cosmeticId === "border-vanguard" &&
+        message.action === "equipped" &&
+        message.equippedCosmetics?.profileBorderId === "border-vanguard"
+    ),
+    true
+  );
+
+  const account = await store.loadPlayerAccount("player-1");
+  assert.equal(account?.equippedCosmetics?.profileBorderId, "border-vanguard");
+});
+
+test("room cosmetic equips return cosmetic_not_owned when the cosmetic is not unlocked", async (t) => {
+  resetLobbyRoomRegistry();
+  const store = new MemoryRoomSnapshotStore();
+  configureRoomSnapshotStore(store);
+  const room = await createTestRoom(`lifecycle-equip-cosmetic-not-owned-${Date.now()}`);
+  const equipClient = createFakeClient("session-equip-cosmetic-not-owned");
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  await connectPlayer(room, equipClient, "player-1", "connect-equip-cosmetic-not-owned");
+
+  await emitRoomMessage(room, "EQUIP_COSMETIC", equipClient, {
+    type: "EQUIP_COSMETIC",
+    requestId: "equip-cosmetic-not-owned",
+    cosmeticId: "border-vanguard"
+  });
+
+  assert.equal(
+    equipClient.sent.some(
+      (message) =>
+        message.type === "error" &&
+        message.requestId === "equip-cosmetic-not-owned" &&
+        message.reason === "cosmetic_not_owned"
     ),
     true
   );

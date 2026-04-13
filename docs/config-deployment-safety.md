@@ -11,9 +11,10 @@ Recommended operator workflow:
 1. Prefer the low-traffic deployment window between 03:00 and 05:00 local server time.
 2. Confirm no high-priority live event, tournament, or guided playtest is running.
 3. Check active room count and active battle count before publishing.
-4. Publish config changes through Config Center staged publish rather than ad hoc file edits.
-5. Watch room/runtime errors for at least the configured rollback window after the update clears the battle gate.
-6. If the publish remains pending because battles are still active, wait for settlement instead of forcing a room restart.
+4. In Config Center, load the staged `diff-preview` for every document in the publish bundle and confirm the grouped `added / modified / removed` blast radius before enabling publish.
+5. Publish config changes through Config Center staged publish rather than ad hoc file edits. The publish request should carry the latest `confirmedDiffHash` so drift between preview and publish is rejected.
+6. Watch room/runtime errors for at least the configured rollback window after the update clears the battle gate.
+7. If the publish remains pending because battles are still active, wait for settlement instead of forcing a room restart.
 
 Rollback guidance:
 

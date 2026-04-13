@@ -33,6 +33,7 @@ interface Args {
   ciTrendSummaryPath?: string;
   coverageSummaryPath?: string;
   configCenterLibraryPath?: string;
+  cocosRcReconnectReplayPath?: string;
   targetSurface: TargetSurface;
   outputDir?: string;
   outputPath?: string;
@@ -492,6 +493,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--cocos-rc-reconnect-replay" && next) {
+      cocosRcReconnectReplayPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--wechat-artifacts-dir" && next) {
       wechatArtifactsDir = next;
       index += 1;
@@ -596,6 +602,7 @@ function parseArgs(argv: string[]): Args {
     ...(ciTrendSummaryPath ? { ciTrendSummaryPath } : {}),
     ...(coverageSummaryPath ? { coverageSummaryPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
+    ...(cocosRcReconnectReplayPath ? { cocosRcReconnectReplayPath } : {}),
     targetSurface,
     ...(outputDir ? { outputDir } : {}),
     ...(outputPath ? { outputPath } : {}),
@@ -654,6 +661,10 @@ function resolveOptionalPath(explicitPath: string | undefined, fallback: string 
 
 function resolveInputPaths(args: Args): Phase1CandidateDossier["inputs"] {
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
+  const cocosReconnectReplayPath = resolveOptionalPath(
+    args.cocosRcReconnectReplayPath,
+    resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"))
+  );
   return {
     ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
     ...(resolveOptionalPath(args.runtimeObservabilityGatePath, undefined)
@@ -735,7 +746,8 @@ function resolveInputPaths(args: Args): Phase1CandidateDossier["inputs"] {
       : {}),
     ...(resolveOptionalPath(args.configCenterLibraryPath, DEFAULT_CONFIG_CENTER_LIBRARY_PATH)
       ? { configCenterLibraryPath: resolveOptionalPath(args.configCenterLibraryPath, DEFAULT_CONFIG_CENTER_LIBRARY_PATH)! }
-      : {})
+      : {}),
+    ...(cocosReconnectReplayPath ? { cocosRcReconnectReplayPath: cocosReconnectReplayPath } : {})
   };
 }
 
@@ -1729,6 +1741,7 @@ function buildSupportingReports(
       ...(inputs.wechatRcValidationPath ? { wechatRcValidationPath: inputs.wechatRcValidationPath } : {}),
       ...(inputs.wechatSmokeReportPath ? { wechatSmokeReportPath: inputs.wechatSmokeReportPath } : {}),
       ...(inputs.configCenterLibraryPath ? { configCenterLibraryPath: inputs.configCenterLibraryPath } : {}),
+      ...(inputs.cocosRcReconnectReplayPath ? { cocosRcReconnectReplayPath: inputs.cocosRcReconnectReplayPath } : {}),
       targetSurface: args.targetSurface
     },
     revision

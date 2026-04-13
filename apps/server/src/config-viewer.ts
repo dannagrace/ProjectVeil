@@ -259,7 +259,7 @@ function buildViewerHtml(): string {
       <section class="hero">
         <p class="eyebrow">Project Veil</p>
         <h1>Config Viewer</h1>
-        <p>Read-only server page for the five runtime config documents. Each row shows the latest metadata, and expanding a row fetches the full JSON on demand.</p>
+        <p>Read-only server page for the config-center documents. Each row shows the latest metadata, and expanding a row fetches the full JSON on demand.</p>
         <div id="status" class="status" role="status" aria-live="polite">Loading config documents...</div>
       </section>
       <section id="list" class="list" aria-label="Config documents"></section>

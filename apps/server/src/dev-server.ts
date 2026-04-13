@@ -5,6 +5,7 @@ import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { registerAnalyticsRoutes } from "./analytics";
 import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
+import { registerClientErrorRoutes } from "./client-error";
 import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
@@ -15,6 +16,7 @@ import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "./
 import { registerConfigViewerRoutes } from "./config-viewer";
 import { registerEventRoutes } from "./event-engine";
 import { registerGuildRoutes } from "./guilds";
+import { registerHttpRateLimitMiddleware } from "./http-rate-limit";
 import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
@@ -25,6 +27,7 @@ import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes,
+  setConfigCenterStoreType,
   setDbBackupLastSuccessTimestamp,
   type RuntimePersistenceHealth
 } from "./observability";
@@ -37,9 +40,12 @@ import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
 import { registerShopRoutes } from "./shop";
+import { registerApplePaymentRoutes } from "./apple-iap";
+import { registerGooglePlayRoutes } from "./google-play";
 import { registerWechatPayRoutes } from "./wechat-pay";
 import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
 import { recordRuntimeErrorEvent } from "./observability";
+import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "./battle-replay-retention";
 
 loadEnv();
 
@@ -87,6 +93,7 @@ interface CleanupTimerHandle {
 
 interface DevServerConfigCenterStore {
   initializeRuntimeConfigs(): Promise<void>;
+  loadDocument(id: "leaderboardTierThresholds"): Promise<{ content: string }>;
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -98,6 +105,7 @@ interface DevServerRoomSnapshotStore {
 
 interface DevServerMySqlSnapshotStore extends DevServerRoomSnapshotStore {
   pruneExpired(): Promise<number>;
+  pruneExpiredBattleReplays(): Promise<number>;
   getRetentionPolicy(): SnapshotRetentionPolicy;
 }
 
@@ -121,17 +129,24 @@ export interface DevServerBootstrapDependencies {
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerAnalyticsRoutes(app: unknown): void;
+  registerClientErrorRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerGuildRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerApplePaymentRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerGooglePlayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
-  registerLeaderboardRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerLeaderboardRoutes(
+    app: unknown,
+    store: DevServerRoomSnapshotStore | null,
+    configCenterStore?: Pick<DevServerConfigCenterStore, "loadDocument">
+  ): void;
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(
     app: unknown,
@@ -140,11 +155,13 @@ export interface DevServerBootstrapDependencies {
   validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerPrometheusMetricsMiddleware(app: unknown): void;
+  registerHttpRateLimitMiddleware(app: unknown): void;
   registerPrometheusMetricsRoute(app: unknown): void;
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
+  readBattleReplayRetentionPolicy(): BattleReplayRetentionPolicy;
   setInterval(handler: () => void, delayMs: number): CleanupTimerHandle;
   clearInterval(timer: CleanupTimerHandle): void;
   isMySqlSnapshotStore(store: DevServerRoomSnapshotStore): store is DevServerMySqlSnapshotStore;
@@ -200,25 +217,34 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerAnalyticsRoutes: (app) => registerAnalyticsRoutes(app as never),
+    registerClientErrorRoutes: (app, store) => registerClientErrorRoutes(app as never, store as RoomSnapshotStore | null),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
     registerGuildRoutes: (app, store) => registerGuildRoutes(app as never, store as RoomSnapshotStore),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
     registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
+    registerApplePaymentRoutes: (app, store) => registerApplePaymentRoutes(app as never, store as RoomSnapshotStore),
+    registerGooglePlayRoutes: (app, store) => registerGooglePlayRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerMinorProtectionRoutes: (app, store) =>
       registerMinorProtectionRoutes(app as never, store as RoomSnapshotStore | null),
-    registerLeaderboardRoutes: (app, store) => registerLeaderboardRoutes(app as never, store as RoomSnapshotStore | null),
+    registerLeaderboardRoutes: (app, store, configCenterStore) =>
+      registerLeaderboardRoutes(
+        app as never,
+        store as RoomSnapshotStore | null,
+        configCenterStore as Pick<ConfigCenterStore, "loadDocument"> | undefined
+      ),
     registerSeasonRoutes: (app, store) => registerSeasonRoutes(app as never, store as RoomSnapshotStore | null),
     registerRuntimeObservabilityRoutes: (app, options) => registerRuntimeObservabilityRoutes(app as never, options),
     validateBackupStorage: () => validateBackupStorageOnStartup(),
     registerRetentionSummaryRoute: (app, store) =>
       registerRetentionSummaryRoute(app as never, store as RoomSnapshotStore | null),
     registerPrometheusMetricsMiddleware: (app) => registerPrometheusMetricsMiddleware(app as DevServerHttpApp),
+    registerHttpRateLimitMiddleware: (app) => registerHttpRateLimitMiddleware(app as DevServerHttpApp),
     registerPrometheusMetricsRoute: (app) => registerPrometheusMetricsRoute(app as DevServerHttpApp),
     registerAdminRoutes: (app, store, gameServer) =>
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
@@ -230,6 +256,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
       }),
     logger: console,
     process,
+    readBattleReplayRetentionPolicy,
     setInterval: (handler, delayMs) => setInterval(handler, delayMs),
     clearInterval: (timer) => clearInterval(timer as NodeJS.Timeout),
     isMySqlSnapshotStore: (store): store is DevServerMySqlSnapshotStore => store instanceof MySqlRoomSnapshotStore
@@ -271,20 +298,33 @@ export async function startDevServer(
   }
 
   const mysqlConfig = deps.readMySqlPersistenceConfig();
+  const logNonProductionMySqlFallback = (error: unknown): void => {
+    deps.logger.error(
+      "MySQL bootstrap failed; falling back to in-memory room persistence and filesystem config center in non-production mode",
+      error
+    );
+  };
 
   if (mysqlConfig) {
+    let migrationStatus;
+
     try {
-      const migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
-      if (migrationStatus.pending.length > 0) {
-        const warning = deps.formatSchemaMigrationWarning(migrationStatus);
-        if (isProductionEnvironment) {
-          await failStartup(
-            "Refusing to start with in-memory persistence in production while schema migrations are pending",
-            new Error(warning)
-          );
-        }
-        deps.logger.warn(warning);
-      } else {
+      migrationStatus = await deps.getSchemaMigrationStatus(mysqlConfig);
+    } catch (error) {
+      if (isProductionEnvironment) {
+        await failStartup("MySQL migration/bootstrap failed during production startup", error);
+      }
+      logNonProductionMySqlFallback(error);
+    }
+
+    if ((migrationStatus?.pending.length ?? 0) > 0 && migrationStatus) {
+      const warning = deps.formatSchemaMigrationWarning(migrationStatus);
+      if (isProductionEnvironment) {
+        await failStartup("Schema migrations are pending during production startup", new Error(warning));
+      }
+      deps.logger.warn(warning);
+    } else if (migrationStatus) {
+      try {
         const mysqlSnapshotStore = await deps.createMySqlRoomSnapshotStore(mysqlConfig);
         try {
           const mysqlConfigCenterStore = await deps.createMySqlConfigCenterStore(mysqlConfig);
@@ -301,21 +341,18 @@ export async function startDevServer(
           });
           throw error;
         }
+      } catch (error) {
+        if (isProductionEnvironment) {
+          await failStartup("MySQL migration/bootstrap failed during production startup", error);
+        }
+        logNonProductionMySqlFallback(error);
       }
-    } catch (error) {
-      if (isProductionEnvironment) {
-        await failStartup("MySQL migration/bootstrap failed during production startup", error);
-      }
-      deps.logger.warn(
-        `MySQL migration/bootstrap failed; falling back to in-memory room persistence in non-production mode: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
     }
   }
 
   const effectiveSnapshotStore = snapshotStore ?? deps.createMemoryRoomSnapshotStore();
   deps.configureRoomSnapshotStore(effectiveSnapshotStore);
+  setConfigCenterStoreType(configCenterStore.mode);
   await configCenterStore.initializeRuntimeConfigs();
   const backupStorage = await deps.validateBackupStorage();
   setDbBackupLastSuccessTimestamp(backupStorage.lastSuccessTimestamp);
@@ -332,9 +369,11 @@ export async function startDevServer(
   const expressApp = transport.getExpressApp();
   installHttpRequestObservability(expressApp as unknown as Parameters<typeof installHttpRequestObservability>[0], deps.logger);
   deps.registerPrometheusMetricsMiddleware(expressApp);
+  deps.registerHttpRateLimitMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerAnalyticsRoutes(expressApp);
+  deps.registerClientErrorRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);
   if ("use" in (expressApp as object) && "get" in (expressApp as object)) {
@@ -343,11 +382,13 @@ export async function startDevServer(
   deps.registerGuildRoutes(expressApp, effectiveSnapshotStore);
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
   deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerApplePaymentRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore, configCenterStore);
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, {
     store: effectiveSnapshotStore,
@@ -365,6 +406,8 @@ export async function startDevServer(
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
 
+  const errorMonitoringEnabled = isErrorMonitoringEnabled();
+
   deps.logger.log(`Project Veil Colyseus dev server listening on ws://${host}:${port}`);
   deps.logger.log(`Config center API available at http://${host}:${port}/api/config-center/configs`);
   deps.logger.log(`Config viewer available at http://${host}:${port}/config-viewer`);
@@ -372,6 +415,8 @@ export async function startDevServer(
   deps.logger.log(`Guild API available at http://${host}:${port}/api/guilds`);
   deps.logger.log(`Guest auth API available at http://${host}:${port}/api/auth/guest-login`);
   deps.logger.log(`WeChat auth API available at http://${host}:${port}/api/auth/wechat-login`);
+  deps.logger.log(`Apple IAP verify API available at http://${host}:${port}/api/payments/apple/verify`);
+  deps.logger.log(`Google Play Billing verify API available at http://${host}:${port}/api/payments/google/verify`);
   deps.logger.log(`WeChat Pay API available at http://${host}:${port}/api/payments/wechat/create`);
   deps.logger.log(`Lobby API available at http://${host}:${port}/api/lobby/rooms`);
   deps.logger.log(`Matchmaking API available at http://${host}:${port}/api/matchmaking/status`);
@@ -393,42 +438,71 @@ export async function startDevServer(
     deps.logger.log("Persistence mode: degraded/in-memory");
     deps.logger.log(persistenceHealth.message);
   }
-  deps.logger.log(
-    isErrorMonitoringEnabled()
-      ? "Error monitoring: SENTRY_DSN configured; Sentry delivery enabled"
-      : "Error monitoring: SENTRY_DSN not configured; external delivery skipped"
-  );
+  if (errorMonitoringEnabled) {
+    deps.logger.log("Error monitoring: SENTRY_DSN configured; Sentry delivery enabled");
+  } else if (isProductionEnvironment) {
+    deps.logger.warn(
+      "OBSERVABILITY WARNING: SENTRY_DSN is not configured for production startup; runtime errors will not be delivered to Sentry."
+    );
+  } else {
+    deps.logger.log("Error monitoring: SENTRY_DSN not configured; external delivery skipped");
+  }
 
-  let cleanupTimer: CleanupTimerHandle | null = null;
+  let snapshotCleanupTimer: CleanupTimerHandle | null = null;
+  let battleReplayCleanupTimer: CleanupTimerHandle | null = null;
   if (deps.isMySqlSnapshotStore(effectiveSnapshotStore)) {
     const retention = effectiveSnapshotStore.getRetentionPolicy();
+    const battleReplayRetention = deps.readBattleReplayRetentionPolicy();
     deps.logger.log(
       `Snapshot retention: ttl=${retention.ttlHours == null ? "disabled" : `${retention.ttlHours}h`} / cleanup=${retention.cleanupIntervalMinutes == null ? "disabled" : `${retention.cleanupIntervalMinutes}m`}`
     );
+    deps.logger.log(
+      `Battle replay retention: ttl=${battleReplayRetention.ttlDays == null ? "disabled" : `${battleReplayRetention.ttlDays}d`} / max=${battleReplayRetention.maxBytes == null ? "disabled" : `${battleReplayRetention.maxBytes}B`} / cleanup=${battleReplayRetention.cleanupIntervalMinutes == null ? "disabled" : `${battleReplayRetention.cleanupIntervalMinutes}m`} / batch=${battleReplayRetention.cleanupBatchSize}`
+    );
 
-    const runCleanup = async (): Promise<void> => {
+    const runSnapshotCleanup = async (): Promise<void> => {
       const removed = await effectiveSnapshotStore.pruneExpired();
       if (removed > 0) {
         deps.logger.log(`Pruned ${removed} expired room snapshot(s)`);
       }
     };
 
-    await runCleanup();
+    const runBattleReplayCleanup = async (): Promise<void> => {
+      const removed = await effectiveSnapshotStore.pruneExpiredBattleReplays();
+      if (removed > 0) {
+        deps.logger.log(`Pruned ${removed} expired battle replay(s)`);
+      }
+    };
+
+    await Promise.all([runSnapshotCleanup(), runBattleReplayCleanup()]);
 
     if (retention.cleanupIntervalMinutes != null) {
-      cleanupTimer = deps.setInterval(() => {
-        void runCleanup().catch((error) => {
+      snapshotCleanupTimer = deps.setInterval(() => {
+        void runSnapshotCleanup().catch((error) => {
           deps.logger.error("Failed to prune expired room snapshots", error);
         });
       }, retention.cleanupIntervalMinutes * 60 * 1000);
-      cleanupTimer.unref?.();
+      snapshotCleanupTimer.unref?.();
+    }
+
+    if (battleReplayRetention.cleanupIntervalMinutes != null) {
+      battleReplayCleanupTimer = deps.setInterval(() => {
+        void runBattleReplayCleanup().catch((error) => {
+          deps.logger.error("Failed to prune expired battle replays", error);
+        });
+      }, battleReplayRetention.cleanupIntervalMinutes * 60 * 1000);
+      battleReplayCleanupTimer.unref?.();
     }
   }
 
   const closeStore = async (): Promise<void> => {
-    if (cleanupTimer) {
-      deps.clearInterval(cleanupTimer);
-      cleanupTimer = null;
+    if (snapshotCleanupTimer) {
+      deps.clearInterval(snapshotCleanupTimer);
+      snapshotCleanupTimer = null;
+    }
+    if (battleReplayCleanupTimer) {
+      deps.clearInterval(battleReplayCleanupTimer);
+      battleReplayCleanupTimer = null;
     }
 
     if (!snapshotStore) {

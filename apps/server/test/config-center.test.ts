@@ -20,6 +20,7 @@ import {
   resetConfigHotReloadState
 } from "../src/config-center";
 import type { WorldConfigPreview } from "../src/config-center";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
 import { recordRuntimeErrorEvent, resetRuntimeObservability } from "../src/observability";
 
 const WORLD_CONFIG = {
@@ -171,6 +172,11 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(BATTLE_BALANCE_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(rootDir, "leaderboard-tier-thresholds.json"),
+    `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 test.afterEach(() => {
@@ -194,9 +200,34 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds"]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
+});
+
+test("config center validates leaderboard tier thresholds as a contiguous config key", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const report = await store.validateDocument(
+    "leaderboardTierThresholds",
+    JSON.stringify({
+      key: "leaderboard.tier_thresholds",
+      tiers: [
+        { tier: "bronze", minRating: 0, maxRating: 1099 },
+        { tier: "silver", minRating: 1200, maxRating: 1299 },
+        { tier: "gold", minRating: 1300, maxRating: 1499 },
+        { tier: "platinum", minRating: 1500, maxRating: 1799 },
+        { tier: "diamond", minRating: 1800 }
+      ]
+    })
+  );
+
+  assert.equal(report.valid, false);
+  assert.equal(report.schema.id, "project-veil.config-center.leaderboardTierThresholds");
+  assert.match(report.summary, /当前文档问题/);
+  assert.match(report.issues[0]?.path ?? "", /^tiers\[1\]\.minRating$/);
 });
 
 test("config center save writes file and refreshes runtime world config", async () => {
@@ -777,6 +808,106 @@ test("config center staged publish blocks invalid drafts", async () => {
   await assert.rejects(
     () => store.publishStagedDraft({ author: "Ops", summary: "bad publish" }),
     /未通过校验|修复/
+  );
+});
+
+test("config center staged diff preview returns grouped added, modified, and removed entries with a stable stage hash", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  const live = {
+    ...MAP_OBJECTS_CONFIG,
+    buildings: MAP_OBJECTS_CONFIG.buildings.map((building) =>
+      building.kind === "resource_mine"
+        ? {
+            ...building,
+            lastHarvestDay: 2
+          }
+        : building
+    )
+  };
+  await store.saveDocument("mapObjects", JSON.stringify(live));
+
+  const staged = {
+    ...live,
+    buildings: live.buildings.map((building) => {
+      if (building.kind === "resource_mine") {
+        const { lastHarvestDay: _lastHarvestDay, ...rest } = building;
+        return {
+          ...rest,
+          income: building.income + 1
+        };
+      }
+      if (building.kind === "attribute_shrine") {
+        return {
+          ...building,
+          lastUsedDay: 3
+        };
+      }
+      return building;
+    })
+  };
+  await store.saveStagedDraft([
+    {
+      id: "mapObjects",
+      content: JSON.stringify(staged)
+    }
+  ]);
+
+  const preview = await store.previewStagedDiff("mapObjects");
+
+  assert.equal(preview.documentId, "mapObjects");
+  assert.equal(typeof preview.hash, "string");
+  assert.equal(typeof preview.stageHash, "string");
+  assert.ok(preview.stageHash.length > 0);
+  assert.equal(preview.added.some((entry) => entry.key === "buildings[1].lastUsedDay" && entry.after === "3"), true);
+  assert.equal(
+    preview.modified.some(
+      (entry) => entry.key === "buildings[2].income" && entry.before === "2" && entry.after === "3"
+    ),
+    true
+  );
+  assert.equal(
+    preview.removed.some((entry) => entry.key === "buildings[2].lastHarvestDay" && entry.before === "2"),
+    true
+  );
+});
+
+test("config center staged publish rejects confirmed diff hashes after staged drift", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+
+  await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: WORLD_CONFIG.width + 1
+      })
+    }
+  ]);
+  const preview = await store.previewStagedDiff("world");
+
+  await store.saveStagedDraft([
+    {
+      id: "world",
+      content: JSON.stringify({
+        ...WORLD_CONFIG,
+        width: WORLD_CONFIG.width + 2
+      })
+    }
+  ]);
+
+  await assert.rejects(
+    () =>
+      store.publishStagedDraft({
+        author: "ConfigOps",
+        summary: "stale preview",
+        confirmedDiffHash: preview.stageHash
+      }),
+    /漂移.*diff-preview|diff-preview.*漂移/
   );
 });
 

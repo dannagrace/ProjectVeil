@@ -4,6 +4,7 @@ import {
   DEFAULT_TUTORIAL_STEP,
   getEquipmentDefinition,
   getTierForDivision,
+  getTierForRating,
   normalizeGuildState,
   normalizeCosmeticInventory,
   normalizeTextForModeration,
@@ -19,6 +20,9 @@ import {
 import {
   createPlayerAccountsFromWorldState,
   type GuildAuditLogCreateInput,
+  type GuildChatMessageCreateInput,
+  type GuildChatMessageListOptions,
+  type GuildChatMessageRecord,
   type GuildAuditLogListOptions,
   type GuildAuditLogRecord,
   type GuildListOptions,
@@ -55,6 +59,9 @@ import {
   type PlayerCompensationCreateInput,
   type PlayerCompensationListOptions,
   type PlayerCompensationRecord,
+  type PlayerPurchaseHistoryQuery,
+  type PlayerPurchaseHistoryRecord,
+  type PlayerPurchaseHistorySnapshot,
   type PlayerAccountWechatMiniGameIdentityInput,
   type PlayerAccountProfilePatch,
   type PlayerAccountProgressPatch,
@@ -67,12 +74,14 @@ import {
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot,
+  type LeaderboardSeasonArchiveEntry,
   type SeasonCloseSummary,
   type SeasonListOptions,
   type SeasonSnapshot,
   type ShopPurchaseMutationInput,
   type ShopPurchaseResult
 } from "./persistence";
+import { normalizeMobilePushTokenRegistrations } from "./mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,
   buildBannedAccountNameReservationExpiry
@@ -143,6 +152,30 @@ function normalizeDisplayNameLookup(displayName: string): string {
   return normalized.slice(0, 191);
 }
 
+function parseGuildChatCursor(cursor?: string): { createdAt: string; messageId: string } | null {
+  const normalized = cursor?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const separatorIndex = normalized.indexOf("|");
+  if (separatorIndex <= 0 || separatorIndex === normalized.length - 1) {
+    throw new Error("beforeCursor must be formatted as createdAt|messageId");
+  }
+
+  const createdAt = normalized.slice(0, separatorIndex);
+  const messageId = normalized.slice(separatorIndex + 1).trim();
+  const createdAtDate = new Date(createdAt);
+  if (Number.isNaN(createdAtDate.getTime()) || !messageId) {
+    throw new Error("beforeCursor is invalid");
+  }
+
+  return {
+    createdAt: createdAtDate.toISOString(),
+    messageId
+  };
+}
+
 function normalizeAvatarUrl(avatarUrl?: string | null): string | undefined {
   const normalized = avatarUrl?.trim();
   return normalized ? normalized.slice(0, MAX_PLAYER_AVATAR_URL_LENGTH) : undefined;
@@ -174,6 +207,14 @@ function normalizeResourceLedger(resources?: PlayerAccountSnapshot["globalResour
   };
 }
 
+function normalizePurchaseHistoryDate(value: string, field: "from" | "to"): number {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${field} must be a valid ISO timestamp`);
+  }
+  return timestamp;
+}
+
 export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly battleSnapshots = new Map<string, BattleSnapshotRecord>();
@@ -181,6 +222,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly guildAuditLogs: GuildAuditLogRecord[] = [];
+  private readonly guildMessages = new Map<string, GuildChatMessageRecord[]>();
   private readonly nameHistoryByPlayerId = new Map<string, Array<{
     id: number;
     playerId: string;
@@ -210,6 +252,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
+  private readonly leaderboardSeasonArchives = new Map<string, LeaderboardSeasonArchiveEntry[]>();
   private readonly seasonRewardLog = new Map<string, { gems: number; badge: string; distributedAt: string }>();
   private readonly referrals = new Set<string>();
   private nextReportId = 1;
@@ -299,6 +342,68 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
     this.guildAuditLogs.push(entry);
     return structuredClone(entry);
+  }
+
+  async listGuildChatMessages(options: GuildChatMessageListOptions): Promise<GuildChatMessageRecord[]> {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 50)));
+    const cursor = parseGuildChatCursor(options.beforeCursor);
+    const items = (this.guildMessages.get(options.guildId.trim()) ?? [])
+      .filter((message) => new Date(message.expiresAt).getTime() > Date.now())
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.messageId.localeCompare(left.messageId))
+      .filter((message) => {
+        if (!cursor) {
+          return true;
+        }
+
+        return (
+          message.createdAt < cursor.createdAt ||
+          (message.createdAt === cursor.createdAt && message.messageId < cursor.messageId)
+        );
+      })
+      .slice(0, safeLimit);
+
+    return items.map((message) => structuredClone(message));
+  }
+
+  async loadGuildChatMessage(guildId: string, messageId: string): Promise<GuildChatMessageRecord | null> {
+    const item = (this.guildMessages.get(guildId.trim()) ?? []).find((message) => message.messageId === messageId.trim());
+    if (!item || new Date(item.expiresAt).getTime() <= Date.now()) {
+      return null;
+    }
+
+    return structuredClone(item);
+  }
+
+  async createGuildChatMessage(input: GuildChatMessageCreateInput): Promise<GuildChatMessageRecord> {
+    const record: GuildChatMessageRecord = {
+      messageId: randomUUID(),
+      guildId: input.guildId.trim(),
+      authorPlayerId: normalizePlayerId(input.authorPlayerId),
+      authorDisplayName: normalizeDisplayName(input.authorPlayerId, input.authorDisplayName),
+      content: input.content.trim().slice(0, 500),
+      createdAt: new Date(input.createdAt ?? Date.now()).toISOString(),
+      expiresAt: new Date(input.expiresAt).toISOString()
+    };
+    const existing = this.guildMessages.get(record.guildId) ?? [];
+    existing.push(structuredClone(record));
+    this.guildMessages.set(record.guildId, existing);
+    return structuredClone(record);
+  }
+
+  async deleteGuildChatMessage(guildId: string, messageId: string): Promise<boolean> {
+    const normalizedGuildId = guildId.trim();
+    const existing = this.guildMessages.get(normalizedGuildId) ?? [];
+    const next = existing.filter((message) => message.messageId !== messageId.trim());
+    if (next.length === existing.length) {
+      return false;
+    }
+
+    if (next.length === 0) {
+      this.guildMessages.delete(normalizedGuildId);
+    } else {
+      this.guildMessages.set(normalizedGuildId, next);
+    }
+    return true;
   }
 
   async loadPaymentOrder(orderId: string): Promise<PaymentOrderSnapshot | null> {
@@ -661,6 +766,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async ensurePlayerAccount(input: PlayerAccountEnsureInput): Promise<PlayerAccountSnapshot> {
     const playerId = normalizePlayerId(input.playerId);
     const existing = this.accounts.get(playerId);
+    const existingPushTokens = existing?.pushTokens ? normalizeMobilePushTokenRegistrations(existing.pushTokens) : undefined;
     const nextDisplayName = normalizeDisplayName(playerId, input.displayName ?? existing?.displayName);
     if (!existing || nextDisplayName !== existing.displayName) {
       await assertDisplayNameAvailableOrThrow(this, nextDisplayName, playerId);
@@ -715,6 +821,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       ...(existing?.notificationPreferences
         ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
         : {}),
+      ...(existingPushTokens ? { pushTokens: existingPushTokens } : {}),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1400,6 +1507,57 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     return structuredClone((this.banHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
   }
 
+  async listPlayerPurchaseHistory(
+    playerId: string,
+    query: PlayerPurchaseHistoryQuery = {}
+  ): Promise<PlayerPurchaseHistorySnapshot> {
+    const normalizedPlayerId = normalizePlayerId(playerId);
+    const safeLimit = Math.max(1, Math.floor(query.limit ?? 20));
+    const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
+    const normalizedItemId = query.itemId?.trim();
+    const fromTimestamp = query.from ? normalizePurchaseHistoryDate(query.from, "from") : Number.NEGATIVE_INFINITY;
+    const toTimestamp = query.to ? normalizePurchaseHistoryDate(query.to, "to") : Number.POSITIVE_INFINITY;
+    if (fromTimestamp > toTimestamp) {
+      throw new Error("from must be earlier than or equal to to");
+    }
+
+    const items: PlayerPurchaseHistoryRecord[] = [];
+    for (const [key, purchase] of this.shopPurchases.entries()) {
+      const [entryPlayerId] = key.split(":", 1);
+      if (entryPlayerId !== normalizedPlayerId) {
+        continue;
+      }
+      if (normalizedItemId && purchase.productId !== normalizedItemId) {
+        continue;
+      }
+      const grantedAtTimestamp = new Date(purchase.processedAt).getTime();
+      if (grantedAtTimestamp < fromTimestamp || grantedAtTimestamp > toTimestamp) {
+        continue;
+      }
+      items.push({
+        purchaseId: purchase.purchaseId,
+        itemId: purchase.productId,
+        quantity: purchase.quantity,
+        currency: "gems",
+        amount: purchase.totalPrice,
+        paymentMethod: "gems",
+        grantedAt: purchase.processedAt,
+        status: "completed"
+      });
+    }
+
+    items.sort(
+      (left, right) =>
+        right.grantedAt.localeCompare(left.grantedAt) || right.purchaseId.localeCompare(left.purchaseId)
+    );
+    return {
+      items: structuredClone(items.slice(safeOffset, safeOffset + safeLimit)),
+      total: items.length,
+      limit: safeLimit,
+      offset: safeOffset
+    };
+  }
+
   async appendPlayerCompensationRecord(
     playerId: string,
     input: PlayerCompensationCreateInput
@@ -1854,6 +2012,34 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.playerIdByWechatOpenId.delete(existing.wechatMiniGameOpenId);
     }
     this.authSessionsByPlayerId.delete(normalizedPlayerId);
+    this.playerQuestStates.delete(normalizedPlayerId);
+    this.compensationHistoryByPlayerId.delete(normalizedPlayerId);
+    this.guildIdByPlayerId.delete(normalizedPlayerId);
+    for (const [key, snapshot] of Array.from(this.battleSnapshots.entries())) {
+      if (snapshot.attackerPlayerId === normalizedPlayerId || snapshot.defenderPlayerId === normalizedPlayerId) {
+        this.battleSnapshots.delete(key);
+      }
+    }
+    for (const key of Array.from(this.shopPurchases.keys())) {
+      if (key.startsWith(`${normalizedPlayerId}:`)) {
+        this.shopPurchases.delete(key);
+      }
+    }
+    for (const [reportId, report] of Array.from(this.reports.entries())) {
+      if (report.reporterId === normalizedPlayerId || report.targetId === normalizedPlayerId) {
+        this.reports.delete(reportId);
+      }
+    }
+    for (const referral of Array.from(this.referrals)) {
+      if (referral.includes(`:${normalizedPlayerId}:`) || referral.endsWith(`:${normalizedPlayerId}`)) {
+        this.referrals.delete(referral);
+      }
+    }
+    for (const key of Array.from(this.seasonRewardLog.keys())) {
+      if (key.endsWith(`:${normalizedPlayerId}`)) {
+        this.seasonRewardLog.delete(key);
+      }
+    }
     for (const key of Array.from(this.heroArchives.keys())) {
       if (key.startsWith(`${normalizedPlayerId}:`)) {
         this.heroArchives.delete(key);
@@ -1864,13 +2050,39 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const nextAccount: PlayerAccountSnapshot = {
       ...existing,
       displayName: `deleted-${normalizedPlayerId}`,
+      seasonHistory: [],
       globalResources: { gold: 0, wood: 0, ore: 0 },
       achievements: [],
+      recentEventLog: [],
+      recentBattleReplays: [],
+      seasonXp: 0,
+      seasonPassTier: 1,
+      seasonPassPremium: false,
+      seasonPassClaimedTiers: [],
+      seasonBadges: [],
+      cosmeticInventory: { ownedIds: [] },
+      equippedCosmetics: {},
+      leaderboardModerationState: {
+        hiddenAt: deletedAt,
+        hiddenByPlayerId: "system:gdpr-delete"
+      },
+      tutorialStep: DEFAULT_TUTORIAL_STEP,
       banStatus: "none",
       accountSessionVersion: (existing.accountSessionVersion ?? 0) + 1,
       updatedAt: deletedAt
     };
     delete nextAccount.avatarUrl;
+    delete nextAccount.eloRating;
+    delete nextAccount.rankDivision;
+    delete nextAccount.peakRankDivision;
+    delete nextAccount.promotionSeries;
+    delete nextAccount.demotionShield;
+    delete nextAccount.rankedWeeklyProgress;
+    delete nextAccount.campaignProgress;
+    delete nextAccount.seasonalEventStates;
+    delete nextAccount.mailbox;
+    delete nextAccount.dailyDungeonState;
+    delete nextAccount.leaderboardAbuseState;
     delete nextAccount.lastSeenAt;
     delete nextAccount.lastRoomId;
     delete nextAccount.loginId;
@@ -1882,6 +2094,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     delete nextAccount.lastPlayDate;
     delete nextAccount.banExpiry;
     delete nextAccount.banReason;
+    delete nextAccount.phoneNumber;
+    delete nextAccount.phoneNumberBoundAt;
+    delete nextAccount.notificationPreferences;
     delete nextAccount.refreshSessionId;
     delete nextAccount.refreshTokenExpiresAt;
     delete nextAccount.wechatMiniGameOpenId;
@@ -1914,6 +2129,14 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const existing = await this.ensurePlayerAccount({ playerId: normalizedPlayerId });
+    const nextPushTokens =
+      patch.pushTokens !== undefined
+        ? patch.pushTokens?.length
+          ? normalizeMobilePushTokenRegistrations(patch.pushTokens)
+          : undefined
+        : existing.pushTokens
+          ? normalizeMobilePushTokenRegistrations(existing.pushTokens)
+          : undefined;
     const normalizedAvatarUrl =
       patch.avatarUrl !== undefined ? normalizeAvatarUrl(patch.avatarUrl) : existing.avatarUrl;
     const nextDisplayName =
@@ -1939,8 +2162,12 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         : existing.notificationPreferences
           ? { notificationPreferences: structuredClone(existing.notificationPreferences) }
           : {}),
+      ...(nextPushTokens ? { pushTokens: nextPushTokens } : {}),
       updatedAt: new Date().toISOString()
     };
+    if (patch.pushTokens !== undefined && !nextPushTokens) {
+      delete nextAccount.pushTokens;
+    }
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
     if (nextDisplayName !== existing.displayName) {
       this.appendPlayerNameHistory(normalizedPlayerId, nextDisplayName, nextAccount.updatedAt);
@@ -2261,6 +2488,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       this.guildIdByPlayerId.delete(member.playerId);
     }
     this.guilds.delete(normalizedGuildId);
+    this.guildMessages.delete(normalizedGuildId);
   }
 
   async pruneExpired(): Promise<number> {
@@ -2281,6 +2509,19 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         })
       );
     }
+
+    for (const [guildId, messages] of this.guildMessages.entries()) {
+      const nextMessages = messages.filter((message) => new Date(message.expiresAt).getTime() > now.getTime());
+      removedCount += messages.length - nextMessages.length;
+      if (nextMessages.length === 0) {
+        this.guildMessages.delete(guildId);
+      } else if (nextMessages.length !== messages.length) {
+        this.guildMessages.set(
+          guildId,
+          nextMessages.map((message) => structuredClone(message))
+        );
+      }
+    }
     return removedCount;
   }
 
@@ -2290,6 +2531,17 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
 
   async listSeasons(options: SeasonListOptions = {}): Promise<SeasonSnapshot[]> {
     return this.selectSeasons(options);
+  }
+
+  async listLeaderboardSeasonArchive(seasonId: string, limit = 100): Promise<LeaderboardSeasonArchiveEntry[]> {
+    const normalizedSeasonId = seasonId.trim();
+    if (!normalizedSeasonId) {
+      throw new Error("seasonId must not be empty");
+    }
+
+    return (this.leaderboardSeasonArchives.get(normalizedSeasonId) ?? [])
+      .slice(0, Math.min(100, Math.max(1, Math.floor(limit))))
+      .map((entry) => structuredClone(entry));
   }
 
   async createSeason(seasonId: string): Promise<import("./persistence").SeasonSnapshot> {
@@ -2330,6 +2582,20 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       );
 
     const distributedAt = new Date().toISOString();
+    if (!this.leaderboardSeasonArchives.has(normalizedSeasonId)) {
+      this.leaderboardSeasonArchives.set(
+        normalizedSeasonId,
+        rankedAccounts.slice(0, 100).map((account, index) => ({
+          seasonId: normalizedSeasonId,
+          rank: index + 1,
+          playerId: account.playerId,
+          displayName: account.displayName,
+          finalRating: normalizeEloRating(account.eloRating),
+          tier: getTierForRating(normalizeEloRating(account.eloRating)),
+          archivedAt: distributedAt
+        }))
+      );
+    }
     let playersRewarded = 0;
     let totalGemsGranted = 0;
     const rewardedPlayerIds = new Set<string>();
@@ -2359,6 +2625,8 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     for (const account of rankedAccounts) {
       const current = this.accounts.get(account.playerId) ?? account;
       const decay = applySeasonSoftDecay(current);
+      const rankPosition = rankedAccounts.findIndex((entry) => entry.playerId === account.playerId) + 1;
+      const finalRating = normalizeEloRating(current.eloRating ?? account.eloRating ?? 1000);
       await this.savePlayerAccountProgress(account.playerId, {
         eloRating: decayDivisionToRating(decay.rankDivision ?? current.rankDivision ?? "bronze_i"),
         rankDivision: decay.rankDivision,
@@ -2368,11 +2636,16 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         seasonHistory: [
           {
             seasonId: normalizedSeasonId,
+            rankPosition,
+            totalPlayers: rankedAccounts.length,
+            finalRating,
             peakDivision: current.peakRankDivision ?? current.rankDivision ?? "bronze_i",
             finalDivision: current.rankDivision ?? "bronze_i",
             rewardTier: getTierForDivision(current.rankDivision ?? "bronze_i"),
+            rankPercentile: rankedAccounts.length > 0 ? rankPosition / rankedAccounts.length : 1,
             rewardClaimed: rewardedPlayerIds.has(account.playerId),
-            archivedAt: distributedAt
+            archivedAt: distributedAt,
+            ...(rewardedPlayerIds.has(account.playerId) ? { rewardsGrantedAt: distributedAt } : {})
           },
           ...(current.seasonHistory ?? [])
         ].slice(0, 20)
@@ -2405,6 +2678,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     this.heroArchives.clear();
     this.shopPurchases.clear();
     this.seasons.clear();
+    this.leaderboardSeasonArchives.clear();
     this.seasonRewardLog.clear();
   }
 

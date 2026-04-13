@@ -106,6 +106,20 @@ export const ANALYTICS_EVENT_CATALOG = {
       orderStatus: "grant_pending"
     }
   ),
+  purchase_high_value_alert: defineAnalyticsEvent(
+    "purchase_high_value_alert",
+    1,
+    "High-value shop purchase exceeded the configured review threshold.",
+    {
+      purchaseId: "purchase-1",
+      productId: "gem_pack_small",
+      quantity: 1,
+      totalPrice: 600,
+      threshold: 500,
+      paymentMethod: "gems",
+      status: "completed"
+    }
+  ),
   purchase: defineAnalyticsEvent("purchase", 1, "Shop purchase completed successfully.", {
     purchaseId: "purchase-1",
     productId: "gem_pack_small",
@@ -119,7 +133,8 @@ export const ANALYTICS_EVENT_CATALOG = {
   }),
   tutorial_step: defineAnalyticsEvent("tutorial_step", 1, "Tutorial milestone advanced by the player.", {
     stepId: "movement_intro",
-    status: "completed"
+    status: "completed",
+    reason: "advance"
   }),
   experiment_exposure: defineAnalyticsEvent("experiment_exposure", 1, "Experiment assignment was exposed to a player in a product surface.", {
     experimentKey: "account_portal_copy",

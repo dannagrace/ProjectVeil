@@ -3,6 +3,8 @@ import type {
   BattleState,
   CosmeticId,
   EquippedCosmetics,
+  FriendLeaderboardEntry,
+  GroupChallenge,
   MovementPlan,
   Vec2,
   WorldAction,
@@ -77,6 +79,11 @@ export type ClientMessage =
       displayName?: string;
       authToken?: string;
       seed?: number;
+    }
+  | {
+      type: "TOKEN_REFRESH";
+      requestId: string;
+      authToken: string;
     }
   | {
       type: "world.action";
@@ -224,6 +231,12 @@ export type ServerMessage =
       };
     }
   | {
+      type: "SESSION_EXPIRED";
+      requestId: string;
+      delivery: "push";
+      reason: string;
+    }
+  | {
       type: "report.player";
       requestId: string;
       reportId: string;
@@ -258,6 +271,22 @@ export type ServerMessage =
       type: "guild.roster";
       requestId: string;
       roster: GuildRosterView;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      items: FriendLeaderboardEntry[];
+      friendCount: number;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId: string;
+      shareUrl: string;
+      shareMessage: string;
+      challenge?: GroupChallenge;
+      challengeToken?: string;
     }
   | {
       type: "COSMETIC_APPLIED";

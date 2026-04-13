@@ -73,6 +73,49 @@ interface ConfigDiff {
   entries: ConfigDiffEntry[];
 }
 
+interface ConfigDiffPreviewAddedEntry {
+  key: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreviewModifiedEntry {
+  key: string;
+  before: string;
+  after: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreviewRemovedEntry {
+  key: string;
+  before: string;
+  kind: ConfigDiffChangeKind;
+  required: boolean;
+  fieldType: string;
+  description: string;
+  blastRadius: string[];
+}
+
+interface ConfigDiffPreview {
+  documentId: ConfigDocumentId;
+  hash: string;
+  stageHash: string;
+  changeCount: number;
+  structuralChangeCount: number;
+  added: ConfigDiffPreviewAddedEntry[];
+  modified: ConfigDiffPreviewModifiedEntry[];
+  removed: ConfigDiffPreviewRemovedEntry[];
+  impactSummary: ConfigImpactSummary | null;
+}
+
 type ConfigImpactRiskLevel = "low" | "medium" | "high";
 
 interface ConfigImpactSummary {
@@ -152,6 +195,7 @@ interface ConfigStageState {
   updatedAt: string;
   documents: ConfigStageDocumentSummary[];
   valid: boolean;
+  previewHash: string | null;
 }
 
 type TerrainType = "grass" | "dirt" | "sand" | "water";
@@ -281,6 +325,9 @@ interface AppState {
   publishAuditFilterRevision: string;
   publishStage: ConfigStageState | null;
   publishStageLoading: boolean;
+  publishDiffPreviews: Partial<Record<ConfigDocumentId, ConfigDiffPreview>>;
+  publishDiffStageHash: string | null;
+  publishDiffLoading: boolean;
 }
 
 interface ConfigCenterControllerOptions {
@@ -316,6 +363,18 @@ function labelForDiffKind(kind: ConfigDiffChangeKind): string {
 
 function structuralDiffEntries(diff: ConfigDiff | null): ConfigDiffEntry[] {
   return diff?.entries.filter((entry) => entry.kind !== "value") ?? [];
+}
+
+function stagePreviewCoverageReady(
+  stage: ConfigStageState | null,
+  previews: Partial<Record<ConfigDocumentId, ConfigDiffPreview>>,
+  stageHash: string | null
+): boolean {
+  if (!stage || stage.documents.length === 0 || !stageHash) {
+    return false;
+  }
+
+  return stage.documents.every((document) => previews[document.id]?.stageHash === stageHash);
 }
 
 function buildDiffConfirmationMessage(snapshotId: string, diff: ConfigDiff | null): string {
@@ -411,7 +470,10 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     publishAuditFilterCandidate: "",
     publishAuditFilterRevision: "",
     publishStage: null,
-    publishStageLoading: false
+    publishStageLoading: false,
+    publishDiffPreviews: {},
+    publishDiffStageHash: null,
+    publishDiffLoading: false
   };
 
   let previewRequestVersion = 0;
@@ -657,11 +719,53 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       }>("/api/config-center/publish-stage");
       state.storageMode = response.storage;
       state.publishStage = response.stage ?? null;
+      state.publishDiffPreviews = {};
+      state.publishDiffStageHash = null;
+      if (response.stage?.documents.length) {
+        await loadPublishDiffPreviews(response.stage);
+      }
     } catch (error) {
       state.statusTone = "error";
       state.statusMessage = error instanceof Error ? error.message : "加载发布草稿失败";
     } finally {
       state.publishStageLoading = false;
+      notify();
+    }
+  }
+
+  async function loadPublishDiffPreviews(stage = state.publishStage): Promise<void> {
+    if (!stage || stage.documents.length === 0) {
+      state.publishDiffPreviews = {};
+      state.publishDiffStageHash = null;
+      notify();
+      return;
+    }
+
+    state.publishDiffLoading = true;
+    notify();
+    try {
+      const previews: Partial<Record<ConfigDocumentId, ConfigDiffPreview>> = {};
+      let sharedStageHash: string | null = null;
+
+      for (const document of stage.documents) {
+        const response = await requestJson<{
+          storage: "filesystem" | "mysql";
+          preview: ConfigDiffPreview;
+        }>(`/api/config-center/configs/${document.id}/diff-preview`);
+        state.storageMode = response.storage;
+        previews[document.id] = response.preview;
+        sharedStageHash = response.preview.stageHash;
+      }
+
+      state.publishDiffPreviews = previews;
+      state.publishDiffStageHash = sharedStageHash;
+    } catch (error) {
+      state.publishDiffPreviews = {};
+      state.publishDiffStageHash = null;
+      state.statusTone = "error";
+      state.statusMessage = error instanceof Error ? error.message : "加载发布差异预览失败";
+    } finally {
+      state.publishDiffLoading = false;
       notify();
     }
   }
@@ -756,6 +860,11 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       });
       state.storageMode = response.storage;
       state.publishStage = response.stage ?? null;
+      state.publishDiffPreviews = {};
+      state.publishDiffStageHash = null;
+      if (response.stage?.documents.length) {
+        await loadPublishDiffPreviews(response.stage);
+      }
       state.statusTone = "success";
       state.statusMessage = successMessage;
     } catch (error) {
@@ -833,6 +942,13 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
       return;
     }
 
+    if (!stagePreviewCoverageReady(stage, state.publishDiffPreviews, state.publishDiffStageHash)) {
+      state.statusTone = "error";
+      state.statusMessage = "请先加载最新 diff-preview，再执行发布。";
+      notify();
+      return;
+    }
+
     const author = promptImpl("发布人（用于记录到历史）", "ConfigOps")?.trim();
     if (!author) {
       state.statusTone = "neutral";
@@ -878,11 +994,14 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
           author,
           summary,
           candidate,
-          revision
+          revision,
+          confirmedDiffHash: state.publishDiffStageHash
         })
       });
       state.storageMode = response.storage;
       state.publishStage = response.stage ?? null;
+      state.publishDiffPreviews = {};
+      state.publishDiffStageHash = null;
       state.statusTone = "success";
       state.statusMessage = `已发布 ${response.publish.changes.length} 个草稿，并刷新运行时配置。`;
       await loadPublishAuditHistory();
@@ -1502,6 +1621,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
     loadSnapshotDiff,
     computeDiff,
     loadPublishStage,
+    loadPublishDiffPreviews,
     loadPublishAuditHistory,
     loadWorldPreview,
     applyHotloadPreview,
@@ -1532,6 +1652,7 @@ export function createConfigCenterController(options: ConfigCenterControllerOpti
 export type {
   AppState,
   ConfigDiff,
+  ConfigDiffPreview,
   ConfigDocument,
   ConfigDocumentId,
   ConfigDocumentSummary,
