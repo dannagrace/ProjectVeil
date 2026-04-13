@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createGuild,
-  normalizeGuildChatMessageContent,
   createGuildRosterView,
   createGuildSummaryView,
   findDisplayNameModerationViolation,
+  validateGuildChatMessageContentOrThrow,
   joinGuild,
   leaveGuild,
   type GuildChatMessage,
@@ -15,6 +15,7 @@ import {
   type GuildMembershipEvent
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
+import { loadDisplayNameValidationRules } from "./display-name-rules";
 import { recordHttpRateLimited } from "./observability";
 import type { GuildAuditLogRecord, GuildChatMessageRecord, RoomSnapshotStore } from "./persistence";
 
@@ -235,6 +236,9 @@ function mapGuildError(error: unknown): { status: number; code: string; message:
   ) {
     return { status: 400, code: "invalid_request", message };
   }
+  if (error instanceof Error && error.name === "guild_chat_content_violation") {
+    return { status: 400, code: "guild_chat_content_violation", message };
+  }
   if (/guild_not_found/.test(message)) {
     return { status: 404, code: "guild_not_found", message };
   }
@@ -437,7 +441,10 @@ export class GuildService {
       displayName: authSession.displayName
     });
     const guild = await this.requireGuildMembership(guildId, authSession.playerId);
-    const normalizedContent = normalizeGuildChatMessageContent(typeof action.content === "string" ? action.content : "");
+    const normalizedContent = validateGuildChatMessageContentOrThrow(
+      typeof action.content === "string" ? action.content : "",
+      loadDisplayNameValidationRules()
+    );
     const rateLimitResult = this.guildChatRateLimiter.consume(authSession.playerId, request);
     if (!rateLimitResult.allowed) {
       throw new Error(`guild_chat_rate_limited: retry after ${rateLimitResult.retryAfterSeconds ?? 1} seconds`);
