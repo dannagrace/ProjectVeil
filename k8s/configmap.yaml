@@ -40,5 +40,5 @@ data:
   VEIL_AUTH_REFRESH_TTL_SECONDS: "2592000"
   VEIL_AUTH_GUEST_TTL_SECONDS: "604800"
   VEIL_MATCHMAKING_QUEUE_TTL_SECONDS: "300"
-  ANALYTICS_ENDPOINT: https://analytics.projectveil.example/ingest
-  SENTRY_DSN: https://public@example.ingest.sentry.io/42
+  ANALYTICS_ENDPOINT: https://analytics.projectveil.internal/ingest
+  SENTRY_DSN: https://public@o123456.ingest.sentry.io/42
