@@ -175,6 +175,9 @@ export function renderMarkdown(report: RehearsalReport): string {
   if (report.artifacts.runtimeObservabilityGatePath) {
     lines.push(`- Runtime observability gate: \`${report.artifacts.runtimeObservabilityGatePath}\``);
   }
+  if (report.artifacts.runtimeObservabilityGateMarkdownPath) {
+    lines.push(`- Runtime observability gate markdown: \`${report.artifacts.runtimeObservabilityGateMarkdownPath}\``);
+  }
   if (report.artifacts.stableH5SmokePath) {
     lines.push(`- H5 candidate smoke: \`${report.artifacts.stableH5SmokePath}\``);
   }
