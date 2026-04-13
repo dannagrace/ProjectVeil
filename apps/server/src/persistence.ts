@@ -8556,16 +8556,21 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [normalizedPlayerId]
       );
       await connection.query(
-        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
-         SET player_id = ?
-         WHERE player_id = ?`,
-        [retainedFinancialPlayerToken, normalizedPlayerId]
+        `UPDATE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+         INNER JOIN \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+           ON \`${MYSQL_PAYMENT_ORDER_TABLE}\`.order_id = \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.order_id
+         SET \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
+         WHERE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
+           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.player_id = ?
+           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.status IN (?, ?)`,
+        [retainedFinancialPlayerToken, normalizedPlayerId, normalizedPlayerId, "settled", "dead_letter"]
       );
       await connection.query(
-        `UPDATE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
+        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          SET player_id = ?
-         WHERE player_id = ?`,
-        [retainedFinancialPlayerToken, normalizedPlayerId]
+         WHERE player_id = ?
+           AND status IN (?, ?)`,
+        [retainedFinancialPlayerToken, normalizedPlayerId, "settled", "dead_letter"]
       );
 
       const verificationChecks = [
