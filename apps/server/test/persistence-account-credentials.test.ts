@@ -655,9 +655,16 @@ test("deletePlayerAccount deletes dependent rows, verifies cascade cleanup, and 
   assert.ok(queries.some((entry) => /DELETE FROM `player_compensation_history`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `guild_memberships`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `battle_snapshots`/.test(entry.sql)));
-  assert.ok(queries.some((entry) => /DELETE FROM `veil_season_rankings`/.test(entry.sql)));
+  assert.ok(queries.some((entry) => /DELETE FROM `leaderboard_season_archives`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `season_reward_log`/.test(entry.sql)));
-  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 12);
+  const retainedOrderUpdate = queries.find((entry) => /UPDATE `orders`/.test(entry.sql));
+  assert.ok(retainedOrderUpdate);
+  assert.equal(retainedOrderUpdate?.params[1], "player-1");
+  assert.match(String(retainedOrderUpdate?.params[0] ?? ""), /^deleted-financial-/);
+  const retainedReceiptUpdate = queries.find((entry) => /UPDATE `payment_receipts`/.test(entry.sql));
+  assert.ok(retainedReceiptUpdate);
+  assert.deepEqual(retainedReceiptUpdate?.params, retainedOrderUpdate?.params);
+  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 14);
   const updateQuery = queries.find((entry) => /UPDATE `player_accounts`/.test(entry.sql));
   assert.ok(updateQuery);
   assert.equal(updateQuery?.params[0], "deleted-player-1");

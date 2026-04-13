@@ -33,12 +33,20 @@ SELECT 'battle_snapshots', COUNT(*)
 FROM battle_snapshots
 WHERE attacker_player_id = :player_id OR defender_player_id = :player_id
 UNION ALL
-SELECT 'veil_season_rankings', COUNT(*)
-FROM veil_season_rankings
+SELECT 'leaderboard_season_archives', COUNT(*)
+FROM leaderboard_season_archives
 WHERE player_id = :player_id
 UNION ALL
 SELECT 'season_reward_log', COUNT(*)
 FROM season_reward_log
+WHERE player_id = :player_id
+UNION ALL
+SELECT 'orders (raw player_id removed)', COUNT(*)
+FROM orders
+WHERE player_id = :player_id
+UNION ALL
+SELECT 'payment_receipts (raw player_id removed)', COUNT(*)
+FROM payment_receipts
 WHERE player_id = :player_id;
 ```
 
