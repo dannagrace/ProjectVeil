@@ -25,9 +25,21 @@ SELECT 'player_event_history', COUNT(*)
 FROM player_event_history
 WHERE player_id = :player_id
 UNION ALL
+SELECT 'player_name_history', COUNT(*)
+FROM player_name_history
+WHERE player_id = :player_id
+UNION ALL
 SELECT 'guild_memberships', COUNT(*)
 FROM guild_memberships
 WHERE player_id = :player_id
+UNION ALL
+SELECT 'guild_messages', COUNT(*)
+FROM guild_messages
+WHERE author_player_id = :player_id
+UNION ALL
+SELECT 'referrals', COUNT(*)
+FROM referrals
+WHERE referrer_id = :player_id OR new_player_id = :player_id
 UNION ALL
 SELECT 'battle_snapshots', COUNT(*)
 FROM battle_snapshots
