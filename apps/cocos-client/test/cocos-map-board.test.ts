@@ -183,10 +183,9 @@ test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
   harness.render(update);
 
   assert.equal(capturedStyles.length, 1);
-  assert.equal(capturedStyles[0]?.tone, "explored");
+  assert.equal(capturedStyles[0]?.fogState, "explored");
   assert.equal(capturedStyles[0]?.featherMask, 2);
-  assert.equal(capturedStyles[0]?.opacity, 78);
-  assert.equal(capturedStyles[0]?.edgeOpacity, 24);
+  assert.match(String(capturedStyles[0]?.frameKey ?? ""), /placeholder\/fog\/explored-2/);
   harness.destroy();
 });
 

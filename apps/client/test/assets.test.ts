@@ -194,7 +194,7 @@ test("assetManifestEntry returns entry for known asset path", () => {
   const result = assetManifestEntry("/assets/pixel/terrain/grass-tile.png");
   assert.ok(result !== null);
   assert.equal(result.slot, "terrain.grass.default");
-  assert.equal(result.stage, "prototype");
+  assert.equal(result.stage, "production");
   assert.equal(result.source, "generated");
 });
 

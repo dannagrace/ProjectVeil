@@ -5964,7 +5964,8 @@ export class VeilRoot extends Component {
                 ? "tutorial_skipped"
                 : "tutorial_completed"
               : `step_${action.step}`,
-          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active"
+          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active",
+          reason: action.reason ?? "advance"
         },
         profile.lastRoomId ?? this.roomId
       );

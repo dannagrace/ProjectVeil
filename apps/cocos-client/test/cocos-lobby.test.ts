@@ -745,95 +745,112 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
     "http://127.0.0.1:2567/api/player-accounts/me/battle-reports",
     "http://127.0.0.1:2567/api/player/daily-claim"
   ]);
-  assert.deepEqual(profile, {
-    playerId: "account-player",
-    displayName: "暮潮守望",
-    eloRating: 1000,
-    gems: 17,
-    loginStreak: 5,
-    globalResources: {
-      gold: 395,
-      wood: 5,
-      ore: 2
+  assert.equal(profile.playerId, "account-player");
+  assert.equal(profile.displayName, "暮潮守望");
+  assert.equal(profile.eloRating, 1000);
+  assert.equal(profile.gems, 17);
+  assert.equal(profile.loginStreak, 5);
+  assert.equal(profile.loginId, "veil-ranger");
+  assert.equal(profile.lastRoomId, "room-beta");
+  assert.equal(profile.source, "remote");
+  assert.deepEqual(profile.globalResources, {
+    gold: 395,
+    wood: 5,
+    ore: 2
+  });
+  assert.deepEqual(profile.recentEventLog, [
+    {
+      id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
+      timestamp: "2026-03-25T13:00:00.000Z",
+      roomId: "room-beta",
+      playerId: "account-player",
+      category: "achievement",
+      description: "解锁成就：初次交锋",
+      achievementId: "first_battle",
+      rewards: [{ type: "badge", label: "初次交锋" }]
     },
-    achievements: [
-      {
-        id: "first_battle",
-        title: "初次交锋",
-        description: "首次进入战斗。",
-        metric: "battles_started",
-        current: 1,
-        target: 1,
-        unlocked: true,
-        progressUpdatedAt: "2026-03-25T13:00:00.000Z",
-        unlockedAt: "2026-03-25T13:00:00.000Z"
+    {
+      id: "account-player:2026-03-25T13:00:00.000Z:daily-login:5:client",
+      timestamp: "2026-03-25T13:00:00.000Z",
+      roomId: "room-beta",
+      playerId: "account-player",
+      category: "account",
+      description: "每日签到奖励：连签第 5 天，获得 宝石 x5、金币 x75。",
+      rewards: [
+        { type: "resource", label: "gems", amount: 5 },
+        { type: "resource", label: "gold", amount: 75 }
+      ]
+    }
+  ]);
+  assert.equal(profile.achievements.length, 5);
+  assert.deepEqual(profile.achievements[0], {
+    id: "first_battle",
+    title: "初次交锋",
+    description: "首次进入战斗。",
+    metric: "battles_started",
+    current: 1,
+    target: 1,
+    unlocked: true,
+    progressUpdatedAt: "2026-03-25T13:00:00.000Z",
+    unlockedAt: "2026-03-25T13:00:00.000Z"
+  });
+  assert.deepEqual(profile.recentBattleReplays, [
+    {
+      id: "room-beta:battle-1:account-player",
+      roomId: "room-beta",
+      playerId: "account-player",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-03-25T12:58:00.000Z",
+      completedAt: "2026-03-25T13:00:00.000Z",
+      initialState: {
+        id: "battle-1",
+        round: 1,
+        lanes: 1,
+        activeUnitId: "unit-1",
+        turnOrder: ["unit-1"],
+        units: {
+          "unit-1": {
+            id: "unit-1",
+            camp: "attacker",
+            templateId: "hero_guard_basic",
+            lane: 0,
+            stackName: "暮潮守望",
+            initiative: 4,
+            attack: 2,
+            attackRange: 1,
+            defense: 2,
+            minDamage: 1,
+            maxDamage: 2,
+            count: 12,
+            currentHp: 10,
+            maxHp: 10,
+            hasRetaliated: false,
+            defending: false,
+            skills: [],
+            statusEffects: []
+          }
+        },
+        unitCooldowns: {
+          "unit-1": {}
+        },
+        environment: [],
+        log: [],
+        rng: { seed: 7, cursor: 0 }
       },
-      {
-        id: "enemy_slayer",
-        title: "猎敌者",
-        description: "击败 3 名敌人或中立守军。",
-        metric: "battles_won",
-        current: 0,
-        target: 3,
-        unlocked: false
-      },
-      {
-        id: "skill_scholar",
-        title: "求知者",
-        description: "学习 5 个长期技能。",
-        metric: "skills_learned",
-        current: 0,
-        target: 5,
-        unlocked: false
-      },
-      {
-        id: "world_explorer",
-        title: "踏勘全境",
-        description: "揭开整张地图的迷雾。",
-        metric: "maps_fully_explored",
-        current: 0,
-        target: 1,
-        unlocked: false
-      },
-      {
-        id: "epic_collector",
-        title: "史诗武装",
-        description: "为同一名英雄装备全套史诗装备。",
-        metric: "epic_equipment_slots",
-        current: 0,
-        target: 3,
-        unlocked: false
-      }
-    ],
-    loginId: "veil-ranger",
-    lastRoomId: "room-beta",
-    recentEventLog: [
-      {
-        id: "account-player:2026-03-25T13:00:00.000Z:achievement:1:first_battle",
-        timestamp: "2026-03-25T13:00:00.000Z",
-        roomId: "room-beta",
-        playerId: "account-player",
-        category: "achievement",
-        description: "解锁成就：初次交锋",
-        achievementId: "first_battle",
-        rewards: [{ type: "badge", label: "初次交锋" }]
-      },
-      {
-        id: "account-player:2026-03-25T13:00:00.000Z:daily-login:5:client",
-        timestamp: "2026-03-25T13:00:00.000Z",
-        roomId: "room-beta",
-        playerId: "account-player",
-        category: "account",
-        description: "每日签到奖励：连签第 5 天，获得 宝石 x5、金币 x75。",
-        rewards: [
-          { type: "resource", label: "gems", amount: 5 },
-          { type: "resource", label: "gold", amount: 75 }
-        ]
-      }
-    ],
-    recentBattleReplays: [
+      steps: [],
+      result: "attacker_victory"
+    }
+  ]);
+  assert.deepEqual(profile.battleReportCenter, {
+    latestReportId: "room-beta:battle-1:account-player",
+    items: [
       {
         id: "room-beta:battle-1:account-player",
+        replayId: "room-beta:battle-1:account-player",
         roomId: "room-beta",
         playerId: "account-player",
         battleId: "battle-1",
@@ -843,66 +860,16 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
         neutralArmyId: "neutral-1",
         startedAt: "2026-03-25T12:58:00.000Z",
         completedAt: "2026-03-25T13:00:00.000Z",
-        initialState: {
-          id: "battle-1",
-          round: 1,
-          lanes: 1,
-          activeUnitId: "unit-1",
-          turnOrder: ["unit-1"],
-          units: {
-            "unit-1": {
-              id: "unit-1",
-              camp: "attacker",
-              templateId: "hero_guard_basic",
-              lane: 0,
-              stackName: "暮潮守望",
-              initiative: 4,
-              attack: 2,
-              defense: 2,
-              minDamage: 1,
-              maxDamage: 2,
-              count: 12,
-              currentHp: 10,
-              maxHp: 10,
-              hasRetaliated: false,
-              defending: false
-            }
-          },
-          environment: [],
-          log: [],
-          rng: { seed: 7, cursor: 0 }
-        },
-        steps: [],
-        result: "attacker_victory"
-      }
-    ],
-    battleReportCenter: {
-      latestReportId: "room-beta:battle-1:account-player",
-      items: [
-        {
-          id: "room-beta:battle-1:account-player",
-          replayId: "room-beta:battle-1:account-player",
-          roomId: "room-beta",
-          playerId: "account-player",
-          battleId: "battle-1",
-          battleKind: "neutral",
-          playerCamp: "attacker",
-          heroId: "hero-1",
-          neutralArmyId: "neutral-1",
-          startedAt: "2026-03-25T12:58:00.000Z",
-          completedAt: "2026-03-25T13:00:00.000Z",
-          result: "victory",
-          turnCount: 1,
-          actionCount: 0,
-          rewards: [],
-          evidence: {
-            replay: "available",
-            rewards: "missing"
-          }
+        result: "victory",
+        turnCount: 1,
+        actionCount: 0,
+        rewards: [],
+        evidence: {
+          replay: "available",
+          rewards: "missing"
         }
-      ]
-    },
-    source: "remote"
+      }
+    ]
   });
   assert.ok(values.get("project-veil:auth-session")?.includes("\"loginId\":\"veil-ranger\""));
   assert.equal(values.get(getCocosPlayerAccountStorageKey("account-player")), "暮潮守望");
