@@ -1,5 +1,11 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Issue #1444 - Runtime gate markdown front door - 2026-04-13
+
+- Frontloaded the staged `runtimeObservabilityGateMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable runtime gate companion directly from `SUMMARY.md`.
+- Locked the new reviewer entry with markdown and artifact-path assertions in `scripts/test/phase1-candidate-rehearsal.test.ts`.
+- Updated the rehearsal docs and release script inventory so the reviewer packet description explicitly includes the runtime observability gate Markdown companion.
+
 ## Issue #1388 - Release evidence index markdown front door - 2026-04-12
 
 - Frontloaded the staged `releaseEvidenceIndexMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable current evidence index directly from `SUMMARY.md`.
