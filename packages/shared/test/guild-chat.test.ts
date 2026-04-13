@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GUILD_CHAT_MAX_MESSAGE_LENGTH, normalizeGuildChatMessageContent } from "../src/guild-chat";
+import {
+  GUILD_CHAT_MAX_MESSAGE_LENGTH,
+  GuildChatContentViolationError,
+  normalizeGuildChatMessageContent,
+  validateGuildChatMessageContentOrThrow
+} from "../src/guild-chat";
 
 test("normalizeGuildChatMessageContent trims valid messages", () => {
   assert.equal(normalizeGuildChatMessageContent("  Rally at dusk  "), "Rally at dusk");
@@ -19,4 +24,18 @@ test("normalizeGuildChatMessageContent rejects messages longer than the limit", 
     () => normalizeGuildChatMessageContent("x".repeat(GUILD_CHAT_MAX_MESSAGE_LENGTH + 1)),
     /guild_chat_message_too_long/
   );
+});
+
+test("validateGuildChatMessageContentOrThrow blocks moderated content after normalization", () => {
+  assert.throws(
+    () => validateGuildChatMessageContentOrThrow("  G.M! rally now  "),
+    (error: unknown) =>
+      error instanceof GuildChatContentViolationError &&
+      error.name === "guild_chat_content_violation" &&
+      error.violation.term === "gm"
+  );
+});
+
+test("validateGuildChatMessageContentOrThrow allows clean one-character messages", () => {
+  assert.equal(validateGuildChatMessageContentOrThrow("  a  "), "a");
 });

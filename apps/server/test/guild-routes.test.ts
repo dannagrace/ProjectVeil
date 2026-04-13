@@ -959,6 +959,19 @@ test("guild chat routes validate messages and rate limit bursts", async (t) => {
   });
   assert.equal(tooLong.status, 400);
 
+  const moderated = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "G.M! rally now" })
+  });
+  const moderatedPayload = (await moderated.json()) as { error: { code: string; message: string } };
+  assert.equal(moderated.status, 400);
+  assert.equal(moderatedPayload.error.code, "guild_chat_content_violation");
+  assert.match(moderatedPayload.error.message, /reserved term|banned content/i);
+
   for (const content of ["Alpha", "Bravo"]) {
     const response = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
       method: "POST",
