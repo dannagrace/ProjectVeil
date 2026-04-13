@@ -2066,6 +2066,15 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
+      if (mission.status === "completed") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_already_completed",
+            message: "Campaign mission has already been completed"
+          }
+        });
+        return;
+      }
 
       sendJson(response, 200, {
         started: true,
@@ -2114,6 +2123,15 @@ export function registerPlayerAccountRoutes(
         globalResources: rewardMutation.globalResources
       });
       const accessContext = await loadCampaignAccessContext(store, nextAccount);
+      emitAnalyticsEvent("mission_complete", {
+        playerId: account.playerId,
+        roomId: account.lastRoomId ?? result.mission.mapId,
+        payload: {
+          campaignId: result.mission.chapterId,
+          missionId: result.mission.id,
+          reward: result.reward
+        }
+      });
 
       sendJson(response, 200, {
         completed: true,
