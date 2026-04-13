@@ -65,7 +65,7 @@ function toText(value: string | Buffer | null | undefined): string {
   return value.toString("utf8");
 }
 
-function parseLatestSuccessTimestamp(markerJson: string): number | null {
+export function parseLatestSuccessTimestamp(markerJson: string): number | null {
   try {
     const parsed = JSON.parse(markerJson) as {
       timestamp?: unknown;
@@ -91,7 +91,7 @@ function parseLatestSuccessTimestamp(markerJson: string): number | null {
   }
 }
 
-function parseLatestTimestampFromListing(listing: string): number | null {
+export function parseLatestTimestampFromListing(listing: string): number | null {
   const candidates = listing
     .split("\n")
     .map((line) => line.trim())
