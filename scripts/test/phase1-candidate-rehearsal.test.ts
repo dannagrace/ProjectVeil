@@ -272,6 +272,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /H5 candidate smoke:/);
   assert.match(markdown, /Reconnect soak summary:/);
   assert.match(markdown, /WeChat candidate summary:/);
+  assert.match(markdown, /WeChat candidate summary markdown:/);
   assert.match(markdown, /Runtime observability bundle:/);
   assert.match(markdown, /Runtime observability evidence:/);
   assert.match(markdown, /Runtime observability gate:/);
