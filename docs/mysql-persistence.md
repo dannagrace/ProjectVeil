@@ -455,7 +455,7 @@ That flow downloads the archive and `.sha256`, verifies integrity before touchin
 
 ## MySQL Alerting
 
-`/metrics` now exports `veil_mysql_pool_connection_limit`, `veil_mysql_pool_connections_active`, `veil_mysql_pool_connections_idle`, `veil_mysql_pool_queue_depth`, and `veil_mysql_pool_connection_utilization_ratio` for the long-lived `room_snapshot` and `config_center` pools. Use those together with the `VeilMySqlPoolPressureHigh` alert in [`docs/alerting-rules.yml`](./alerting-rules.yml) when sizing the server-side pools.
+`/metrics` now exports `veil_db_pool_active_connections`, `veil_db_pool_queue_depth`, `veil_mysql_pool_connection_limit`, `veil_mysql_pool_connections_active`, `veil_mysql_pool_connections_idle`, `veil_mysql_pool_queue_depth`, and `veil_mysql_pool_connection_utilization_ratio` for the long-lived `room_snapshot` and `config_center` pools. Use the `db_pool_*` gauges for alerting and the `mysql_pool_*` gauges for deeper pool sizing context when working with the `VeilMySqlPoolPressureHigh` alert in [`docs/alerting-rules.yml`](./alerting-rules.yml).
 
 Replication lag alerting depends on your MySQL exporter exposing `mysql_slave_status_seconds_behind_master`. Project Veil documents the threshold and response flow in the same alerting bundle so HA drills and backup restore drills use one source of truth.
 

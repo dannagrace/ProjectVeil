@@ -330,15 +330,15 @@ curl -fsS "$VEIL_RUNTIME_URL/api/runtime/health" | jq '{activeRoomCount: .runtim
 
 Mitigation steps:
 
-1. Check whether `veil_mysql_pool_queue_depth` is non-zero or whether utilization is simply hovering near the configured cap. Queue depth means callers are already waiting.
-2. If the queue is growing, inspect recent MySQL latency, lock contention, and replication health before only increasing pool limits.
-3. If MySQL is healthy but utilization is consistently above `0.8`, raise `VEIL_MYSQL_POOL_CONNECTION_LIMIT` conservatively and keep `maxIdle` aligned with the new steady-state expectation.
+1. Check whether `veil_db_pool_queue_depth` is above `5`. That means callers are already waiting for a connection rather than just running the pool hot.
+2. Inspect the matching `veil_db_pool_active_connections` and `veil_mysql_pool_connection_limit` values to see whether the pool is pinned at its cap or whether slow queries are simply holding the queue open.
+3. If the queue is growing, inspect recent MySQL latency, lock contention, and replication health before only increasing pool limits.
 4. If pressure is isolated to one pool label, treat that subsystem first: snapshot pressure points to persistence/save load, while config-center pressure points to operator workflows or config churn.
 
 Escalation thresholds:
 
-- escalate if queue depth stays above `0` for 20 minutes after load reduction or pool tuning
-- escalate immediately if utilization reaches `1.0`, if HTTP latency is also elevated, or if persistence-related error logs begin surfacing
+- escalate if queue depth stays above `5` for more than one additional 30-second window after load reduction or query mitigation
+- escalate immediately if `veil_db_pool_active_connections` is pinned to `veil_mysql_pool_connection_limit`, if HTTP latency is also elevated, or if persistence-related error logs begin surfacing
 
 ## Alert: VeilMySqlReplicationLagHigh
 

@@ -949,6 +949,10 @@ export function buildPrometheusMetricsDocument(): string {
   ];
 
   lines.push(
+    "# HELP veil_db_pool_active_connections Active database connections borrowed from the pool.",
+    "# TYPE veil_db_pool_active_connections gauge",
+    "# HELP veil_db_pool_queue_depth Database pool wait queue depth.",
+    "# TYPE veil_db_pool_queue_depth gauge",
     "# HELP veil_mysql_pool_connection_limit Configured MySQL pool connection limit.",
     "# TYPE veil_mysql_pool_connection_limit gauge",
     "# HELP veil_mysql_pool_connections_active Active MySQL connections borrowed from the pool.",
@@ -961,6 +965,8 @@ export function buildPrometheusMetricsDocument(): string {
     "# TYPE veil_mysql_pool_connection_utilization_ratio gauge"
   );
   if (mysqlPools.length === 0) {
+    lines.push("veil_db_pool_active_connections 0");
+    lines.push("veil_db_pool_queue_depth 0");
     lines.push("veil_mysql_pool_connection_limit 0");
     lines.push("veil_mysql_pool_connections_active 0");
     lines.push("veil_mysql_pool_connections_idle 0");
@@ -969,6 +975,8 @@ export function buildPrometheusMetricsDocument(): string {
   } else {
     for (const pool of mysqlPools) {
       const labels = formatPrometheusLabels({ pool: pool.pool });
+      lines.push(`veil_db_pool_active_connections${labels} ${pool.activeConnections}`);
+      lines.push(`veil_db_pool_queue_depth${labels} ${pool.queueDepth}`);
       lines.push(`veil_mysql_pool_connection_limit${labels} ${pool.connectionLimit}`);
       lines.push(`veil_mysql_pool_connections_active${labels} ${pool.activeConnections}`);
       lines.push(`veil_mysql_pool_connections_idle${labels} ${pool.idleConnections}`);
