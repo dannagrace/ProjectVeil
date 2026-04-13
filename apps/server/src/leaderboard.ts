@@ -1,6 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getRankDivisionForRating, getTierForRating } from "../../../packages/shared/src/index";
+import { getRankDivisionForRating } from "../../../packages/shared/src/index";
 import { getCurrentAndPreviousWeeklyEntries } from "./competitive-season";
+import type { ConfigCenterStore } from "./config-center";
+import {
+  DEFAULT_LEADERBOARD_TIER_THRESHOLDS,
+  getLeaderboardTierForRating,
+  parseLeaderboardTierThresholdsConfigDocument,
+  type LeaderboardTierThreshold
+} from "./leaderboard-tier-thresholds";
 import type { RoomSnapshotStore } from "./persistence";
 import { isLeaderboardFrozen, isLeaderboardHidden } from "./leaderboard-anti-abuse";
 import { readRuntimeSecret } from "./runtime-secrets";
@@ -17,14 +24,6 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     message: error instanceof Error ? error.message : String(error)
   };
 }
-
-const TIER_THRESHOLDS = [
-  { tier: "bronze", minRating: 0, maxRating: 1099 },
-  { tier: "silver", minRating: 1100, maxRating: 1299 },
-  { tier: "gold", minRating: 1300, maxRating: 1499 },
-  { tier: "platinum", minRating: 1500, maxRating: 1799 },
-  { tier: "diamond", minRating: 1800, maxRating: null }
-] as const;
 
 function readHeaderValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -70,8 +69,22 @@ export function registerLeaderboardRoutes(
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
     post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   },
-  store: RoomSnapshotStore | null
+  store: RoomSnapshotStore | null,
+  configCenterStore?: Pick<ConfigCenterStore, "loadDocument">
 ): void {
+  let cachedTierThresholds: readonly LeaderboardTierThreshold[] = DEFAULT_LEADERBOARD_TIER_THRESHOLDS;
+
+  if (configCenterStore) {
+    void configCenterStore
+      .loadDocument("leaderboardTierThresholds")
+      .then((document) => {
+        cachedTierThresholds = parseLeaderboardTierThresholdsConfigDocument(document.content).tiers;
+      })
+      .catch((error) => {
+        console.warn("[leaderboard] Failed to load config-center leaderboard tier thresholds; using defaults", error);
+      });
+  }
+
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -106,7 +119,7 @@ export function registerLeaderboardRoutes(
         playerId: account.playerId,
         displayName: account.displayName,
         eloRating: account.eloRating,
-        tier: getTierForRating(account.eloRating ?? 1000),
+        tier: getLeaderboardTierForRating(account.eloRating, cachedTierThresholds),
         division: account.rankDivision ?? getRankDivisionForRating(account.eloRating ?? 1000),
         isFrozen: isLeaderboardFrozen(account.leaderboardModerationState),
         promotionSeries: account.promotionSeries ?? null,
@@ -253,6 +266,6 @@ export function registerLeaderboardRoutes(
   });
 
   app.get("/api/matchmaking/tiers", (_request, response) => {
-    sendJson(response, 200, { tiers: TIER_THRESHOLDS });
+    sendJson(response, 200, { tiers: cachedTierThresholds });
   });
 }

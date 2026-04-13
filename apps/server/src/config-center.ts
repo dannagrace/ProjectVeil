@@ -48,6 +48,11 @@ import {
   type WorldGenerationConfig
 } from "../../../packages/shared/src/index";
 import {
+  parseLeaderboardTierThresholdsConfigDocument,
+  validateLeaderboardTierThresholdsConfigDocument,
+  type LeaderboardTierThresholdsConfigDocument
+} from "./leaderboard-tier-thresholds";
+import {
   MYSQL_CONFIG_DOCUMENT_TABLE,
   MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX,
   type MySqlPersistenceConfig,
@@ -57,7 +62,15 @@ import { createTrackedMySqlPool } from "./mysql-pool";
 import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "./observability";
 import { captureServerError } from "./error-monitoring";
 
-export type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+export type ConfigDocumentId =
+  | "world"
+  | "mapObjects"
+  | "units"
+  | "battleSkills"
+  | "battleBalance"
+  | "leaderboardTierThresholds";
+
+type RuntimeConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 
 interface ConfigDefinition {
   id: ConfigDocumentId;
@@ -71,7 +84,8 @@ type ParsedConfigDocument =
   | MapObjectsConfig
   | UnitCatalogConfig
   | BattleSkillCatalogConfig
-  | BattleBalanceConfig;
+  | BattleBalanceConfig
+  | LeaderboardTierThresholdsConfigDocument;
 
 interface ErrorPayload {
   code: string;
@@ -449,8 +463,16 @@ const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     fileName: "battle-balance.json",
     title: "战斗平衡",
     description: "伤害公式、战场环境和 PVP ELO 参数。"
+  },
+  {
+    id: "leaderboardTierThresholds",
+    fileName: "leaderboard-tier-thresholds.json",
+    title: "排行榜段位阈值",
+    description: "排行榜 tier 展示与运营调参使用的评分阈值。"
   }
 ];
+
+const RUNTIME_CONFIG_DOCUMENT_IDS = ["world", "mapObjects", "units", "battleSkills", "battleBalance"] as const;
 
 interface ConfigSnapshotRecord {
   id: string;
@@ -591,7 +613,8 @@ const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
   mapObjects: ["地图对象编辑器", "世界预览"],
   units: ["战斗模拟器", "招募面板"],
   battleSkills: ["技能编辑器", "战斗模拟器"],
-  battleBalance: ["战斗平衡计算", "PVP 匹配"]
+  battleBalance: ["战斗平衡计算", "PVP 匹配"],
+  leaderboardTierThresholds: ["排行榜展示", "赛季运营调参"]
 };
 const CONFIG_IMPACT_RULES: Record<
   ConfigDocumentId,
@@ -625,6 +648,11 @@ const CONFIG_IMPACT_RULES: Record<
     defaultRisk: "high",
     impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
     suggestedValidationActions: ["战斗公式回归", "PVP 结算检查"]
+  },
+  leaderboardTierThresholds: {
+    defaultRisk: "medium",
+    impactedModules: ["排行榜展示", "赛季 reset 调参", "运营阈值发布"],
+    suggestedValidationActions: ["排行榜 API smoke", "赛季阈值回归检查"]
   }
 };
 
@@ -935,6 +963,37 @@ const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
         required: ["eloK"],
         properties: {
           eloK: { type: "integer", minimum: 1, description: "ELO K 因子。" }
+        }
+      }
+    }
+  },
+  leaderboardTierThresholds: {
+    type: "object",
+    title: "Leaderboard Tier Thresholds",
+    description: "排行榜段位阈值配置，发布 key 为 leaderboard.tier_thresholds。",
+    required: ["key", "tiers"],
+    properties: {
+      key: {
+        type: "string",
+        enum: ["leaderboard.tier_thresholds"],
+        description: "配置中心发布 key。"
+      },
+      tiers: {
+        type: "array",
+        minItems: 5,
+        description: "按 bronze -> diamond 顺序定义的连续段位阈值。",
+        items: {
+          type: "object",
+          required: ["tier", "minRating"],
+          properties: {
+            tier: {
+              type: "string",
+              enum: ["bronze", "silver", "gold", "platinum", "diamond"],
+              description: "段位名。"
+            },
+            minRating: { type: "integer", minimum: 0, description: "该段位的最低评分。" },
+            maxRating: { type: "integer", minimum: 0, description: "该段位的最高评分；最后一档留空表示无上限。" }
+          }
         }
       }
     }
@@ -1738,8 +1797,17 @@ function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
     return `${config.skills.length} skill(s) · ${config.statuses.length} status(es)`;
   }
 
+  if (id === "leaderboardTierThresholds") {
+    const config = parsed as LeaderboardTierThresholdsConfigDocument;
+    return `${config.tiers.length} tier(s) · ${config.key}`;
+  }
+
   const config = parsed as BattleBalanceConfig;
   return `damage/env/timer/pvp · ${config.turnTimerSeconds}s/${config.afkStrikesBeforeForfeit} AFK · K=${config.pvp.eloK} · trap=${config.environment.trapDamage}`;
+}
+
+function isRuntimeConfigDocumentId(id: ConfigDocumentId): id is RuntimeConfigDocumentId {
+  return (RUNTIME_CONFIG_DOCUMENT_IDS as readonly string[]).includes(id);
 }
 
 function normalizeJsonContent(
@@ -1956,6 +2024,10 @@ function applyBuiltinPresetToContent(
   content: string,
   presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): string {
+  if (id === "leaderboardTierThresholds") {
+    return content;
+  }
+
   const parsed = parseConfigDocument(id, content);
   const next =
     id === "world"
@@ -2023,6 +2095,10 @@ function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS[number
 }
 
 function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSummary[] {
+  if (id === "leaderboardTierThresholds") {
+    return [];
+  }
+
   const summaries = BUILTIN_DIFFICULTY_PRESET_IDS.map((presetId) => buildBuiltinPresetSummary(presetId));
   if (id === "world") {
     summaries.push(...BUILTIN_WORLD_LAYOUT_PRESETS.map((presetId) => buildLayoutPresetSummary(presetId)));
@@ -2034,6 +2110,10 @@ function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSummary[] 
 }
 
 function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: string, presetId: string): string | null {
+  if (id === "leaderboardTierThresholds") {
+    return null;
+  }
+
   if (BUILTIN_DIFFICULTY_PRESET_IDS.includes(presetId as typeof BUILTIN_DIFFICULTY_PRESET_IDS[number])) {
     return applyBuiltinPresetToContent(
       id,
@@ -2145,6 +2225,10 @@ function parseConfigDocument(
   id: ConfigDocumentId,
   content: string
 ): ParsedConfigDocument {
+  if (id === "leaderboardTierThresholds") {
+    return parseLeaderboardTierThresholdsConfigDocument(content);
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -2179,7 +2263,7 @@ function parseConfigDocument(
   return nextBattleBalance;
 }
 
-function buildRuntimeBundleWithParsedDocument(id: ConfigDocumentId, parsed: ParsedConfigDocument): RuntimeConfigBundle {
+function buildRuntimeBundleWithParsedDocument(id: RuntimeConfigDocumentId, parsed: ParsedConfigDocument): RuntimeConfigBundle {
   switch (id) {
     case "world":
       return buildRuntimeConfigBundle({ world: parsed as WorldGenerationConfig });
@@ -2194,7 +2278,7 @@ function buildRuntimeBundleWithParsedDocument(id: ConfigDocumentId, parsed: Pars
   }
 }
 
-function contentForDocumentId(bundle: RuntimeConfigBundle, id: ConfigDocumentId): ParsedConfigDocument {
+function contentForDocumentId(bundle: RuntimeConfigBundle, id: RuntimeConfigDocumentId): ParsedConfigDocument {
   switch (id) {
     case "world":
       return bundle.world;
@@ -2389,7 +2473,7 @@ let pendingRuntimeBundleState: PendingRuntimeBundleState | null = null;
 let configRollbackMonitorState: ConfigRollbackMonitorState | null = null;
 let lastConfigRuntimeApplyResult: ConfigRuntimeApplyResult | null = null;
 
-function serializeBundleDocument(bundle: RuntimeConfigBundle, id: ConfigDocumentId): string {
+function serializeBundleDocument(bundle: RuntimeConfigBundle, id: RuntimeConfigDocumentId): string {
   return normalizeJsonContent(contentForDocumentId(bundle, id));
 }
 
@@ -2520,7 +2604,7 @@ function assertRuntimeBundleHotReloadCompatible(bundle: RuntimeConfigBundle): vo
   }
 
   const currentBundle = appliedRuntimeBundle;
-  const incompatibleEntries = (["world", "mapObjects", "units", "battleSkills", "battleBalance"] as const)
+  const incompatibleEntries = RUNTIME_CONFIG_DOCUMENT_IDS
     .flatMap((documentId) =>
       buildConfigDiffEntries(
         documentId,
@@ -2741,7 +2825,7 @@ function buildValidationReportFromError(id: ConfigDocumentId, error: Error, cont
       valid: false,
       summary: "Content-pack consistency was not evaluated because the current document could not be parsed.",
       issueCount: 0,
-      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      checkedDocuments: [...RUNTIME_CONFIG_DOCUMENT_IDS],
       issues: []
     }
   };
@@ -3053,7 +3137,7 @@ function validateBattleBalanceDetailed(
 }
 
 function buildCandidateRuntimeBundle(
-  id: ConfigDocumentId,
+  id: RuntimeConfigDocumentId,
   parsed: ParsedConfigDocument,
   dependencies: {
     world: WorldGenerationConfig;
@@ -3091,12 +3175,12 @@ async function validateDocumentDetailed(
   try {
     const parsed = JSON.parse(content) as ParsedConfigDocument;
     const issues: ValidationIssue[] = [];
-    let contentPack: ContentPackValidationReport = {
+  let contentPack: ContentPackValidationReport = {
       schemaVersion: 1,
       valid: true,
       summary: "Content-pack consistency checks are pending.",
       issueCount: 0,
-      checkedDocuments: ["world", "mapObjects", "units", "battleSkills", "battleBalance"],
+      checkedDocuments: [...RUNTIME_CONFIG_DOCUMENT_IDS],
       issues: []
     };
     validateSchemaNode(parsed, CONFIG_DOCUMENT_SCHEMAS[id], "", issues);
@@ -3118,12 +3202,32 @@ async function validateDocumentDetailed(
                 )
               : id === "battleSkills"
                 ? validateBattleSkillsDetailed(parsed as BattleSkillCatalogConfig)
-              : validateBattleBalanceDetailed(
-                  parsed as BattleBalanceConfig,
-                  dependencies.battleSkills
-                );
+              : id === "battleBalance"
+                ? validateBattleBalanceDetailed(
+                    parsed as BattleBalanceConfig,
+                    dependencies.battleSkills
+                  )
+                : validateLeaderboardTierThresholdsConfigDocument(
+                    parsed as LeaderboardTierThresholdsConfigDocument
+                  ).map((issue) => ({
+                    path: issue.path,
+                    severity: "error" as const,
+                    message: issue.message,
+                    suggestion: "调整排行榜段位阈值为连续且无重叠的区间。"
+                  }));
       issues.push(...semanticIssues);
-      contentPack = validateContentPackConsistency(buildCandidateRuntimeBundle(id, parsed, dependencies));
+      if (isRuntimeConfigDocumentId(id)) {
+        contentPack = validateContentPackConsistency(buildCandidateRuntimeBundle(id, parsed, dependencies));
+      } else {
+        contentPack = {
+          schemaVersion: 1,
+          valid: true,
+          summary: "Content-pack consistency is not required for leaderboard threshold-only changes.",
+          issueCount: 0,
+          checkedDocuments: [...RUNTIME_CONFIG_DOCUMENT_IDS],
+          issues: []
+        };
+      }
     } catch {
       // Schema issues above already explain malformed structures; skip dependent semantic checks.
     }
@@ -3255,7 +3359,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
   }
 
   async initializeRuntimeConfigs(): Promise<void> {
-    const documents = await Promise.all(CONFIG_DEFINITIONS.map((definition) => this.loadDocument(definition.id)));
+    const documents = await Promise.all(RUNTIME_CONFIG_DOCUMENT_IDS.map((id) => this.loadDocument(id)));
     const bundle = buildRuntimeConfigBundle(
       Object.fromEntries(
         documents.map((document) => [document.id, parseConfigDocument(document.id, document.content)])
@@ -3472,9 +3576,11 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
         )
       });
 
-      assertRuntimeBundleHotReloadCompatible(
-        buildRuntimeBundleWithParsedDocument(stagedDocument.id, parseConfigDocument(stagedDocument.id, stagedDocument.content))
-      );
+      if (isRuntimeConfigDocumentId(stagedDocument.id)) {
+        assertRuntimeBundleHotReloadCompatible(
+          buildRuntimeBundleWithParsedDocument(stagedDocument.id, parseConfigDocument(stagedDocument.id, stagedDocument.content))
+        );
+      }
     }
 
     try {
@@ -3807,7 +3913,7 @@ abstract class BaseConfigCenterStore implements ConfigCenterStore {
   }
 
   protected async loadRuntimeBundleFromStore(): Promise<RuntimeConfigBundle> {
-    const documents = await Promise.all(CONFIG_DEFINITIONS.map((definition) => this.loadDocument(definition.id)));
+    const documents = await Promise.all(RUNTIME_CONFIG_DOCUMENT_IDS.map((id) => this.loadDocument(id)));
     return buildRuntimeConfigBundle(
       Object.fromEntries(
         documents.map((document) => [document.id, parseConfigDocument(document.id, document.content)])
@@ -3843,8 +3949,8 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
-    const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
-    const serialized = normalizeJsonContent(contentForDocumentId(bundle, id));
+    const bundle = isRuntimeConfigDocumentId(id) ? buildRuntimeBundleWithParsedDocument(id, parsed) : null;
+    const serialized = bundle && isRuntimeConfigDocumentId(id) ? serializeBundleDocument(bundle, id) : normalizeJsonContent(parsed);
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
@@ -3855,7 +3961,9 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
     await this.exportDocumentToFile(id, serialized);
     await this.setFilesystemVersion(id, nextVersion);
-    applyRuntimeBundle(bundle);
+    if (bundle) {
+      applyRuntimeBundle(bundle);
+    }
 
     const saved = await this.loadDocument(id);
     await this.createAutomaticSnapshot(saved);
@@ -3917,8 +4025,8 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
 
   async saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument> {
     const parsed = parseConfigDocument(id, content);
-    const bundle = buildRuntimeBundleWithParsedDocument(id, parsed);
-    const serialized = normalizeJsonContent(contentForDocumentId(bundle, id));
+    const bundle = isRuntimeConfigDocumentId(id) ? buildRuntimeBundleWithParsedDocument(id, parsed) : null;
+    const serialized = bundle && isRuntimeConfigDocumentId(id) ? serializeBundleDocument(bundle, id) : normalizeJsonContent(parsed);
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
@@ -3935,7 +4043,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     );
 
     await this.exportDocumentToFile(id, serialized);
-    applyRuntimeBundle(bundle);
+    if (bundle) {
+      applyRuntimeBundle(bundle);
+    }
 
     const saved = await this.loadDocument(id);
     await this.createAutomaticSnapshot(saved);
