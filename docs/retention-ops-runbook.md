@@ -78,3 +78,27 @@ Issue `#1376` adds a second retention slice for battle replay payloads stored in
   Confirm the replay has an `expiresAt` value, then check whether the server is running with MySQL persistence and whether the cleanup interval is enabled.
 - Cleanup logs missing:
   Verify `VEIL_BATTLE_REPLAY_CLEANUP_INTERVAL_MINUTES` is positive and the process has completed at least one startup cycle since the config change.
+
+## Player Name History Retention
+
+Issue `#1426` adds retention enforcement for `player_name_history`, which stores historical display names and therefore contains PII.
+
+### Current Scope
+
+- MySQL-backed server startup prunes expired `player_name_history` rows immediately, then repeats on `VEIL_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES` (default `1440`, or every 24 hours).
+- The retention window is `VEIL_PLAYER_NAME_HISTORY_TTL_DAYS` (default `90`).
+- Each cleanup pass deletes up to `VEIL_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE` oldest expired rows (default `1000`).
+- Cleanup activity is emitted to the server log as `Pruned N expired player name history row(s)`.
+
+### Operator Checks
+
+- Confirm startup logs include a line shaped like `Player name history retention: ttl=90d / cleanup=1440m / batch=1000`.
+- Confirm cleanup logs periodically emit `Pruned N expired player name history row(s)` when stale rows exist.
+- When investigating moderation history, remember entries older than the configured TTL are expected to disappear after the next cleanup cycle.
+
+### Triage Notes
+
+- Old name-history row still visible:
+  Check the row's `changed_at`, then verify the runtime config and whether the process has completed startup or a scheduled cleanup pass since the row expired.
+- Cleanup logs missing:
+  Verify `VEIL_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES` is positive and the process is running with MySQL persistence.
