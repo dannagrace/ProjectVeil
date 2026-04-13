@@ -657,7 +657,7 @@ test("deletePlayerAccount deletes dependent rows, verifies cascade cleanup, and 
   assert.ok(queries.some((entry) => /DELETE FROM `battle_snapshots`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `veil_season_rankings`/.test(entry.sql)));
   assert.ok(queries.some((entry) => /DELETE FROM `season_reward_log`/.test(entry.sql)));
-  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 9);
+  assert.equal(queries.filter((entry) => /SELECT COUNT\(\*\) AS total/.test(entry.sql)).length, 12);
   const updateQuery = queries.find((entry) => /UPDATE `player_accounts`/.test(entry.sql));
   assert.ok(updateQuery);
   assert.equal(updateQuery?.params[0], "deleted-player-1");
