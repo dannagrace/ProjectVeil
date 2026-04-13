@@ -3,13 +3,18 @@ kind: Ingress
 metadata:
   name: project-veil-server
   annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - game.projectveil.prod
+      secretName: project-veil-server-tls
   rules:
-    - host: game.projectveil.example
+    - host: game.projectveil.prod
       http:
         paths:
           - path: /
