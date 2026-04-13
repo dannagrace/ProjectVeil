@@ -1386,3 +1386,76 @@ test("dev server emits a prominent production warning when SENTRY_DSN is absent"
     "OBSERVABILITY WARNING: SENTRY_DSN is not configured for production startup; runtime errors will not be delivered to Sentry."
   ]);
 });
+
+test("dev server warns at startup when ANALYTICS_ENDPOINT still points at a .example host", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const originalAnalyticsSink = process.env.ANALYTICS_SINK;
+  const originalAnalyticsEndpoint = process.env.ANALYTICS_ENDPOINT;
+  process.env.ANALYTICS_SINK = "http";
+  process.env.ANALYTICS_ENDPOINT = "https://analytics.projectveil.example/ingest";
+
+  try {
+    await startDevServer(3113, "127.0.0.1", {
+      readMySqlPersistenceConfig: () => null,
+      createFileSystemConfigCenterStore: () => configCenterStore,
+      createMemoryRoomSnapshotStore: () => memoryStore,
+      configureRoomSnapshotStore: () => undefined,
+      createTransport: () => base.transport,
+      readRedisUrl: () => null,
+      createRedisPresence: () => {
+        throw new Error("createRedisPresence should not be used without REDIS_URL");
+      },
+      createRedisDriver: () => {
+        throw new Error("createRedisDriver should not be used without REDIS_URL");
+      },
+      registerAuthRoutes: () => undefined,
+      registerConfigCenterRoutes: () => undefined,
+      registerConfigViewerRoutes: () => undefined,
+      registerGuildRoutes: () => undefined,
+      registerPlayerAccountRoutes: () => undefined,
+      registerShopRoutes: () => undefined,
+      registerWechatPayRoutes: () => undefined,
+      registerLobbyRoutes: () => undefined,
+      registerMatchmakingRoutes: () => undefined,
+      registerMinorProtectionRoutes: () => undefined,
+      registerPrometheusMetricsMiddleware: () => undefined,
+      registerHttpRateLimitMiddleware: () => undefined,
+      registerPrometheusMetricsRoute: () => undefined,
+      registerLeaderboardRoutes: () => undefined,
+      registerSeasonRoutes: () => undefined,
+      registerRuntimeObservabilityRoutes: () => undefined,
+      validateBackupStorage: async () => backupValidationSkipped(),
+      registerAdminRoutes: () => undefined,
+      createGameServer: (_transport, realtimeOptions) => {
+        base.gameServer.realtimeOptions.push(realtimeOptions);
+        return base.gameServer;
+      },
+      logger: base.logger,
+      process: base.process,
+      setInterval: () => {
+        throw new Error("setInterval should not be used for in-memory startup");
+      },
+      clearInterval: () => undefined,
+      isMySqlSnapshotStore: () => false
+    });
+  } finally {
+    if (originalAnalyticsSink === undefined) {
+      delete process.env.ANALYTICS_SINK;
+    } else {
+      process.env.ANALYTICS_SINK = originalAnalyticsSink;
+    }
+
+    if (originalAnalyticsEndpoint === undefined) {
+      delete process.env.ANALYTICS_ENDPOINT;
+    } else {
+      process.env.ANALYTICS_ENDPOINT = originalAnalyticsEndpoint;
+    }
+  }
+
+  assert.deepEqual(base.logger.warnings, [
+    "ANALYTICS WARNING: ANALYTICS_ENDPOINT uses a .example hostname; analytics delivery is still pointed at a placeholder endpoint."
+  ]);
+});

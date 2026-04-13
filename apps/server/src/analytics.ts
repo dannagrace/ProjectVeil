@@ -172,6 +172,15 @@ function recordFlushFailure(message: string): void {
   analyticsPipelineCounters.lastErrorMessage = message;
 }
 
+function usesExampleHostname(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.trim().toLowerCase();
+    return hostname === "example" || hostname.endsWith(".example");
+  } catch {
+    return /\.example($|\/|:)/.test(value.trim().toLowerCase());
+  }
+}
+
 function resolveAnalyticsPipelineConfig(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineConfig {
   const requestedSink = env.ANALYTICS_SINK?.trim().toLowerCase();
   const configuredEndpoint = env.ANALYTICS_ENDPOINT?.trim() || env.ANALYTICS_HTTP_ENDPOINT?.trim() || null;
@@ -186,6 +195,10 @@ function resolveAnalyticsPipelineConfig(env: NodeJS.ProcessEnv = process.env): A
   if (sink === "http" && !configuredEndpoint) {
     alerts.push("ANALYTICS_SINK=http but ANALYTICS_ENDPOINT is not configured; falling back to stdout.");
     sink = "stdout";
+  }
+
+  if (configuredEndpoint && usesExampleHostname(configuredEndpoint)) {
+    alerts.push("ANALYTICS_ENDPOINT uses a .example hostname; analytics delivery is still pointed at a placeholder endpoint.");
   }
 
   return {

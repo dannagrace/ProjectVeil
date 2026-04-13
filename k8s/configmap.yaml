@@ -18,7 +18,6 @@ data:
   VEIL_AWS_SECRETS_MANAGER_REGION: us-east-1
   VEIL_BACKUP_S3_BUCKET: project-veil-prod-backups
   VEIL_BACKUP_S3_PREFIX: backups/mysql
-  VEIL_BACKUP_S3_ENDPOINT: https://s3.example.com
   VEIL_BACKUP_S3_REGION: us-east-1
   VEIL_BACKUP_AWS_PROFILE: project-veil-production
   VEIL_BACKUP_KEEP_DAILY_DAYS: "30"
@@ -41,4 +40,3 @@ data:
   VEIL_AUTH_GUEST_TTL_SECONDS: "604800"
   VEIL_MATCHMAKING_QUEUE_TTL_SECONDS: "300"
   ANALYTICS_ENDPOINT: https://analytics.projectveil.internal/ingest
-  SENTRY_DSN: https://public@o123456.ingest.sentry.io/42

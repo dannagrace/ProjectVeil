@@ -40,6 +40,7 @@ Create a `Secret` named `project-veil-server-secrets` with the sensitive keys do
 - `SUPPORT_SUPERVISOR_SECRET`
 - `VEIL_ADMIN_TOKEN`
 - `VEIL_MYSQL_PASSWORD`
+- `SENTRY_DSN`
 
 The deployment uses `envFrom` so the secret keys should match the runtime env var names exactly.
 
