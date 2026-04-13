@@ -1233,6 +1233,7 @@ export const MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX = "idx_guild_messages_expires_
 export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
 export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
 export const MYSQL_SEASON_TABLE = "veil_seasons";
+export const MYSQL_SEASON_RANKINGS_TABLE = "veil_season_rankings";
 export const MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE = "leaderboard_season_archives";
 export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
 const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
@@ -8515,9 +8516,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [normalizedPlayerId]
       );
       await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
         `DELETE FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\`
          WHERE player_id = ?`,
         [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\`
+         WHERE author_player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_REFERRAL_TABLE}\`
+         WHERE referrer_id = ? OR new_player_id = ?`,
+        [normalizedPlayerId, normalizedPlayerId]
       );
       await connection.query(
         `DELETE FROM \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\`
@@ -8562,9 +8578,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           params: [normalizedPlayerId]
         },
         {
+          label: MYSQL_PLAYER_NAME_HISTORY_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
           label: MYSQL_GUILD_MEMBERSHIP_TABLE,
           sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_GUILD_MEMBERSHIP_TABLE}\` WHERE player_id = ?`,
           params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_GUILD_MESSAGE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_GUILD_MESSAGE_TABLE}\` WHERE author_player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_REFERRAL_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_REFERRAL_TABLE}\` WHERE referrer_id = ? OR new_player_id = ?`,
+          params: [normalizedPlayerId, normalizedPlayerId]
         },
         {
           label: MYSQL_BATTLE_SNAPSHOT_TABLE,
