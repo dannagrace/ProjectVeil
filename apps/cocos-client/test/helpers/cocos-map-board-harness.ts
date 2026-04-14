@@ -1,4 +1,4 @@
-import { Node, view } from "cc";
+import { Node, Sprite, UIOpacity, view } from "cc";
 import { VeilMapBoard } from "../../assets/scripts/VeilMapBoard.ts";
 import type { PlayerTileView, SessionUpdate, Vec2 } from "../../assets/scripts/VeilCocosSession.ts";
 import { createComponentHarness } from "./cocos-panel-harness.ts";
@@ -92,6 +92,19 @@ export function createMapBoardHarness(options: CreateMapBoardHarnessOptions) {
         originalRender(style, enabled);
       };
       return captured;
+    },
+    fogOverlayState(key: string): { active: boolean; frameName: string | null; opacity: number | null } | null {
+      const tileNode = state().tileNodes.get(key);
+      const fogOverlayNode = tileNode?.fogOverlay.node ?? null;
+      if (!fogOverlayNode) {
+        return null;
+      }
+
+      return {
+        active: fogOverlayNode.active,
+        frameName: fogOverlayNode.getComponent(Sprite)?.spriteFrame?.name ?? null,
+        opacity: fogOverlayNode.getComponent(UIOpacity)?.opacity ?? null
+      };
     },
     tapTile(update: SessionUpdate, position: Vec2, eventType = Node.EventType.TOUCH_END): void {
       const overlay = state().inputOverlayNode ?? node;

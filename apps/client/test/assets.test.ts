@@ -192,10 +192,12 @@ test("objectBadgeAssets handles partial metadata with only interactionType", () 
 
 test("assetManifestEntry returns entry for known asset path", () => {
   const result = assetManifestEntry("/assets/pixel/terrain/grass-tile.png");
-  assert.ok(result !== null);
-  assert.equal(result.slot, "terrain.grass.default");
-  assert.equal(result.stage, "production");
-  assert.equal(result.source, "generated");
+  assert.deepEqual(result, {
+    slot: "terrain.grass.default",
+    stage: "production",
+    source: "generated",
+    notes: "Promoted from the shared Cocos tile bundle for H5/Cocos release use."
+  });
 });
 
 test("assetManifestEntry returns entry for known resource asset path", () => {
