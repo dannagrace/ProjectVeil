@@ -35,23 +35,28 @@ class PayloadTooLargeError extends Error {
 
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
-    return Promise.reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
-  }
+  const initiallyTooLarge = Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES;
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
+    let tooLarge = initiallyTooLarge;
+
     request.on("data", (chunk: Buffer) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       totalBytes += buffer.byteLength;
-      if (totalBytes > MAX_JSON_BODY_BYTES) {
+      if (tooLarge || totalBytes > MAX_JSON_BODY_BYTES) {
+        // Mark as too large but continue draining so the connection is not reset
+        tooLarge = true;
+      } else {
+        chunks.push(buffer);
+      }
+    });
+    request.on("end", () => {
+      if (tooLarge) {
         reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
         return;
       }
-      chunks.push(buffer);
-    });
-    request.on("end", () => {
       try {
         if (chunks.length === 0) {
           resolve({});
