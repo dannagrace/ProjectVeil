@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
@@ -1042,7 +1044,8 @@ test("GET /api/admin/players/:id/purchase-history returns filtered purchase audi
 });
 
 test("admin console html includes compensation form and history table", async () => {
-  const html = await readFile("/home/gpt/project/ProjectVeil/apps/client/admin.html", "utf8");
+  const adminHtmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin.html");
+  const html = await readFile(adminHtmlPath, "utf8");
   assert.match(html, /玩家补偿 \/ 退款/);
   assert.match(html, /compensationHistoryBody/);
   assert.match(html, /submitCompensation/);
