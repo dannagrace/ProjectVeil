@@ -681,21 +681,37 @@ class PayloadTooLargeError extends Error {
   }
 }
 
+async function drainRequest(request: IncomingMessage): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _ of request) {
+    // drain remaining chunks so the connection is not reset
+  }
+}
+
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    // Drain the stream before throwing so the connection is not reset
+    await drainRequest(request);
     throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
   }
 
   const chunks: Buffer[] = [];
   let totalBytes = 0;
+  let tooLarge = false;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     totalBytes += buffer.byteLength;
     if (totalBytes > MAX_JSON_BODY_BYTES) {
-      throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+      // Mark as too large but continue draining so the connection is not reset
+      tooLarge = true;
+    } else {
+      chunks.push(buffer);
     }
-    chunks.push(buffer);
+  }
+
+  if (tooLarge) {
+    throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
   }
 
   const raw = Buffer.concat(chunks).toString("utf8").trim();
