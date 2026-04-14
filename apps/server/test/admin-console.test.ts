@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
@@ -1042,7 +1044,8 @@ test("GET /api/admin/players/:id/purchase-history returns filtered purchase audi
 });
 
 test("admin console html includes compensation form and history table", async () => {
-  const html = await readFile("/home/gpt/project/ProjectVeil/apps/client/admin.html", "utf8");
+  const adminHtmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin.html");
+  const html = await readFile(adminHtmlPath, "utf8");
   assert.match(html, /玩家补偿 \/ 退款/);
   assert.match(html, /compensationHistoryBody/);
   assert.match(html, /submitCompensation/);
@@ -2227,4 +2230,78 @@ test("support moderators can delete guilds without removing audit history", asyn
   assert.equal(audit[0]?.action, "deleted");
   assert.equal(audit[0]?.reason, "spam cleanup");
   assert.equal(audit[1]?.action, "created");
+});
+
+test("POST /api/admin/players/:id/resources returns 413 when content-length declares a 2 MB body", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-413" },
+      headers: {
+        "x-veil-admin-secret": secret,
+        "content-length": String(2 * 1024 * 1024)
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
+});
+
+test("POST /api/admin/players/:id/resources returns 413 when streamed body exceeds 32 KB", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-413-stream" },
+      headers: { "x-veil-admin-secret": secret },
+      body: "x".repeat(33 * 1024)
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
+});
+
+test("POST /api/admin/players/:id/resources returns 413 immediately when content-length is oversized without waiting for body stream to end", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+
+  // Create an async iterable that never ends — simulates a slow-loris upload.
+  // The handler must return 413 before the stream finishes.
+  async function* neverEndingBody() {
+    await new Promise<void>(() => {}); // hangs forever, never yields
+  }
+
+  const request = neverEndingBody() as unknown as IncomingMessage & { params: Record<string, string> };
+  Object.assign(request, {
+    method: "POST",
+    headers: {
+      "x-veil-admin-secret": secret,
+      "content-length": String(2 * 1024 * 1024)
+    },
+    params: { id: "player-413-fast" }
+  });
+
+  await handler(request, response);
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
 });
