@@ -31,7 +31,14 @@ import {
   setDbBackupLastSuccessTimestamp,
   type RuntimePersistenceHealth
 } from "./observability";
-import { type MySqlPersistenceConfig, MySqlRoomSnapshotStore, type RoomSnapshotStore, readMySqlPersistenceConfig, type SnapshotRetentionPolicy } from "./persistence";
+import {
+  type MySqlPersistenceConfig,
+  MySqlRoomSnapshotStore,
+  type PlayerNameHistoryRetentionPolicy,
+  type RoomSnapshotStore,
+  readMySqlPersistenceConfig,
+  type SnapshotRetentionPolicy
+} from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
 import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
 import { registerRetentionSummaryRoute } from "./retention-summary";
@@ -106,7 +113,9 @@ interface DevServerRoomSnapshotStore {
 interface DevServerMySqlSnapshotStore extends DevServerRoomSnapshotStore {
   pruneExpired(): Promise<number>;
   pruneExpiredBattleReplays(): Promise<number>;
+  pruneExpiredPlayerNameHistory(): Promise<number>;
   getRetentionPolicy(): SnapshotRetentionPolicy;
+  getPlayerNameHistoryRetentionPolicy(): PlayerNameHistoryRetentionPolicy;
 }
 
 interface SchemaMigrationStatusSummary {
@@ -454,14 +463,19 @@ export async function startDevServer(
 
   let snapshotCleanupTimer: CleanupTimerHandle | null = null;
   let battleReplayCleanupTimer: CleanupTimerHandle | null = null;
+  let playerNameHistoryCleanupTimer: CleanupTimerHandle | null = null;
   if (deps.isMySqlSnapshotStore(effectiveSnapshotStore)) {
     const retention = effectiveSnapshotStore.getRetentionPolicy();
     const battleReplayRetention = deps.readBattleReplayRetentionPolicy();
+    const playerNameHistoryRetention = effectiveSnapshotStore.getPlayerNameHistoryRetentionPolicy();
     deps.logger.log(
       `Snapshot retention: ttl=${retention.ttlHours == null ? "disabled" : `${retention.ttlHours}h`} / cleanup=${retention.cleanupIntervalMinutes == null ? "disabled" : `${retention.cleanupIntervalMinutes}m`}`
     );
     deps.logger.log(
       `Battle replay retention: ttl=${battleReplayRetention.ttlDays == null ? "disabled" : `${battleReplayRetention.ttlDays}d`} / max=${battleReplayRetention.maxBytes == null ? "disabled" : `${battleReplayRetention.maxBytes}B`} / cleanup=${battleReplayRetention.cleanupIntervalMinutes == null ? "disabled" : `${battleReplayRetention.cleanupIntervalMinutes}m`} / batch=${battleReplayRetention.cleanupBatchSize}`
+    );
+    deps.logger.log(
+      `Player name history retention: ttl=${playerNameHistoryRetention.ttlDays == null ? "disabled" : `${playerNameHistoryRetention.ttlDays}d`} / cleanup=${playerNameHistoryRetention.cleanupIntervalMinutes == null ? "disabled" : `${playerNameHistoryRetention.cleanupIntervalMinutes}m`} / batch=${playerNameHistoryRetention.cleanupBatchSize}`
     );
 
     const runSnapshotCleanup = async (): Promise<void> => {
@@ -478,7 +492,14 @@ export async function startDevServer(
       }
     };
 
-    await Promise.all([runSnapshotCleanup(), runBattleReplayCleanup()]);
+    const runPlayerNameHistoryCleanup = async (): Promise<void> => {
+      const removed = await effectiveSnapshotStore.pruneExpiredPlayerNameHistory();
+      if (removed > 0) {
+        deps.logger.log(`Pruned ${removed} expired player name history row(s)`);
+      }
+    };
+
+    await Promise.all([runSnapshotCleanup(), runBattleReplayCleanup(), runPlayerNameHistoryCleanup()]);
 
     if (retention.cleanupIntervalMinutes != null) {
       snapshotCleanupTimer = deps.setInterval(() => {
@@ -497,6 +518,15 @@ export async function startDevServer(
       }, battleReplayRetention.cleanupIntervalMinutes * 60 * 1000);
       battleReplayCleanupTimer.unref?.();
     }
+
+    if (playerNameHistoryRetention.cleanupIntervalMinutes != null) {
+      playerNameHistoryCleanupTimer = deps.setInterval(() => {
+        void runPlayerNameHistoryCleanup().catch((error) => {
+          deps.logger.error("Failed to prune expired player name history", error);
+        });
+      }, playerNameHistoryRetention.cleanupIntervalMinutes * 60 * 1000);
+      playerNameHistoryCleanupTimer.unref?.();
+    }
   }
 
   const closeStore = async (): Promise<void> => {
@@ -507,6 +537,10 @@ export async function startDevServer(
     if (battleReplayCleanupTimer) {
       deps.clearInterval(battleReplayCleanupTimer);
       battleReplayCleanupTimer = null;
+    }
+    if (playerNameHistoryCleanupTimer) {
+      deps.clearInterval(playerNameHistoryCleanupTimer);
+      playerNameHistoryCleanupTimer = null;
     }
 
     if (!snapshotStore) {

@@ -326,6 +326,12 @@ export interface SnapshotRetentionPolicy {
   cleanupIntervalMinutes: number | null;
 }
 
+export interface PlayerNameHistoryRetentionPolicy {
+  ttlDays: number | null;
+  cleanupIntervalMinutes: number | null;
+  cleanupBatchSize: number;
+}
+
 export interface MySqlPersistenceConfig {
   host: string;
   port: number;
@@ -334,6 +340,7 @@ export interface MySqlPersistenceConfig {
   database: string;
   pool: MySqlPoolConfig;
   retention: SnapshotRetentionPolicy;
+  playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy;
 }
 
 interface RoomSnapshotRow extends RowDataPacket {
@@ -1205,6 +1212,7 @@ export const MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX = "idx_playe
 export const MYSQL_PLAYER_NAME_HISTORY_TABLE = "player_name_history";
 export const MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX = "idx_player_name_history_player_changed";
 export const MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX = "idx_player_name_history_normalized_changed";
+export const MYSQL_PLAYER_NAME_HISTORY_CHANGED_AT_INDEX = "idx_player_name_history_changed_at";
 export const MYSQL_PLAYER_NAME_RESERVATION_TABLE = "player_name_reservations";
 export const MYSQL_PLAYER_NAME_RESERVATION_UNTIL_INDEX = "idx_player_name_reservations_until";
 export const MYSQL_PLAYER_NAME_RESERVATION_NORMALIZED_INDEX = "uidx_player_name_reservations_normalized";
@@ -1239,6 +1247,9 @@ export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
 const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
+export const DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS = 90;
+export const DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES = 1440;
+export const DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE = 1000;
 export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
 export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
 export const MAX_PLAYER_AVATAR_URL_LENGTH = 512;
@@ -2672,6 +2683,20 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
       cleanupIntervalMinutes: readOptionalPositiveNumber(
         env.VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES,
         DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES
+      )
+    },
+    playerNameHistoryRetention: {
+      ttlDays: readOptionalPositiveNumber(
+        env.VEIL_PLAYER_NAME_HISTORY_TTL_DAYS,
+        DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS
+      ),
+      cleanupIntervalMinutes: readOptionalPositiveNumber(
+        env.VEIL_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
+        DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES
+      ),
+      cleanupBatchSize: readPositiveInteger(
+        env.VEIL_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
+        DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE
       )
     }
   };
@@ -5358,18 +5383,25 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
   private readonly pool: Pool;
   private readonly database: string;
   private readonly retention: SnapshotRetentionPolicy;
+  private readonly playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy;
 
-  private constructor(pool: Pool, database: string, retention: SnapshotRetentionPolicy) {
+  private constructor(
+    pool: Pool,
+    database: string,
+    retention: SnapshotRetentionPolicy,
+    playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy
+  ) {
     this.pool = pool;
     this.database = database;
     this.retention = retention;
+    this.playerNameHistoryRetention = playerNameHistoryRetention;
   }
 
   static async create(config: MySqlPersistenceConfig): Promise<MySqlRoomSnapshotStore> {
     const pool = createTrackedMySqlPool("room_snapshot", config);
     await pool.query("SELECT 1");
 
-    return new MySqlRoomSnapshotStore(pool, config.database, config.retention);
+    return new MySqlRoomSnapshotStore(pool, config.database, config.retention, config.playerNameHistoryRetention);
   }
 
   async load(roomId: string): Promise<RoomPersistenceSnapshot | null> {
@@ -9509,6 +9541,24 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     return removedCount;
   }
 
+  async pruneExpiredPlayerNameHistory(referenceTime = new Date()): Promise<number> {
+    const retention = this.playerNameHistoryRetention;
+    if (retention.ttlDays == null) {
+      return 0;
+    }
+
+    const cutoff = new Date(referenceTime.getTime() - retention.ttlDays * 24 * 60 * 60 * 1000);
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `DELETE FROM \`${MYSQL_PLAYER_NAME_HISTORY_TABLE}\`
+       WHERE changed_at <= ?
+       ORDER BY changed_at ASC
+       LIMIT ?`,
+      [cutoff, retention.cleanupBatchSize]
+    );
+
+    return result.affectedRows;
+  }
+
   async listSnapshots(limit = 20, referenceTime = new Date()): Promise<RoomSnapshotSummary[]> {
     const safeLimit = Math.max(1, Math.floor(limit));
     const [rows] = await this.pool.query<RoomSnapshotSummaryRow[]>(
@@ -9918,6 +9968,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
   getRetentionPolicy(): SnapshotRetentionPolicy {
     return this.retention;
+  }
+
+  getPlayerNameHistoryRetentionPolicy(): PlayerNameHistoryRetentionPolicy {
+    return this.playerNameHistoryRetention;
   }
 
   describe(): string {

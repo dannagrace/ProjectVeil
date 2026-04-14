@@ -34,6 +34,9 @@ The server reads these variables on startup:
 | `VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS` | No | `true` | Whether callers wait for a free pooled connection instead of failing immediately |
 | `VEIL_MYSQL_SNAPSHOT_TTL_HOURS` | No | `72` | Snapshot retention window in hours. Set `0` or a negative value to disable expiry |
 | `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES` | No | `30` | Periodic cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
+| `VEIL_PLAYER_NAME_HISTORY_TTL_DAYS` | No | `90` | Player name history retention window in days. Set `0` or a negative value to disable expiry |
+| `VEIL_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES` | No | `1440` | Periodic player-name-history cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
+| `VEIL_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE` | No | `1000` | Maximum expired `player_name_history` rows deleted per cleanup pass |
 | `VEIL_DISPLAY_NAME_RULES_PATH` | No | `configs/display-name-rules.json` | Display-name moderation rules file path. The server hot-reloads this file without a redeploy |
 | `VEIL_DISPLAY_NAME_RULES_RELOAD_INTERVAL_MS` | No | `30000` | How often the server rechecks the display-name rules file for updates |
 | `VEIL_DISPLAY_NAME_RULES_JSON` | No | - | Optional JSON override for display-name moderation rules, useful for ops validation |
@@ -186,8 +189,11 @@ Recommended indexes:
 
 - `idx_player_name_history_player_changed` on `(player_id, changed_at DESC)`
 - `idx_player_name_history_normalized_changed` on `(normalized_name, changed_at DESC)`
+- `idx_player_name_history_changed_at` on `(changed_at)`
 
 This append-only table records the initial display name and every subsequent rename accepted by the server. Admin/support tooling can query by `player_id` to inspect a single account timeline or by `normalized_name` to trace who previously used a suspicious name.
+
+MySQL-backed server startup now prunes expired rows immediately, then repeats on the configured cleanup interval. The default retention window is `90` days and each pass deletes up to `1000` rows ordered by oldest `changed_at` first so historical PII no longer persists indefinitely by default.
 
 ## Guest Upgrade Transaction
 

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS,
   DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES,
   DEFAULT_SNAPSHOT_TTL_HOURS,
   isPlayerBanActive,
@@ -30,6 +33,12 @@ test("mysql persistence config uses default snapshot retention policy", () => {
   assert.equal(config.pool.waitForConnections, DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS);
   assert.equal(config.retention.ttlHours, DEFAULT_SNAPSHOT_TTL_HOURS);
   assert.equal(config.retention.cleanupIntervalMinutes, DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES);
+  assert.equal(config.playerNameHistoryRetention.ttlDays, DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS);
+  assert.equal(
+    config.playerNameHistoryRetention.cleanupIntervalMinutes,
+    DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES
+  );
+  assert.equal(config.playerNameHistoryRetention.cleanupBatchSize, DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE);
 });
 
 test("mysql persistence config allows disabling ttl and periodic cleanup", () => {
@@ -38,12 +47,17 @@ test("mysql persistence config allows disabling ttl and periodic cleanup", () =>
     VEIL_MYSQL_USER: "root",
     VEIL_MYSQL_PASSWORD: "secret",
     VEIL_MYSQL_SNAPSHOT_TTL_HOURS: "0",
-    VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES: "-1"
+    VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES: "-1",
+    VEIL_PLAYER_NAME_HISTORY_TTL_DAYS: "0",
+    VEIL_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES: "-1"
   });
 
   assert.ok(config);
   assert.equal(config.retention.ttlHours, null);
   assert.equal(config.retention.cleanupIntervalMinutes, null);
+  assert.equal(config.playerNameHistoryRetention.ttlDays, null);
+  assert.equal(config.playerNameHistoryRetention.cleanupIntervalMinutes, null);
+  assert.equal(config.playerNameHistoryRetention.cleanupBatchSize, DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE);
 });
 
 test("mysql persistence config reads explicit pool tuning from env", () => {

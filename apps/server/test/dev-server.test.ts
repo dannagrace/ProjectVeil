@@ -3,7 +3,11 @@ import test from "node:test";
 import { listLobbyRooms } from "../src/colyseus-room";
 import { startDevServer, type DevServerBootstrapDependencies } from "../src/dev-server";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "../src/observability";
-import type { MySqlPersistenceConfig, SnapshotRetentionPolicy } from "../src/persistence";
+import type {
+  MySqlPersistenceConfig,
+  PlayerNameHistoryRetentionPolicy,
+  SnapshotRetentionPolicy
+} from "../src/persistence";
 
 interface TestLogger {
   logs: string[];
@@ -105,15 +109,24 @@ function createMemoryStore() {
   };
 }
 
+const defaultPlayerNameHistoryRetention: PlayerNameHistoryRetentionPolicy = {
+  ttlDays: 90,
+  cleanupIntervalMinutes: 1440,
+  cleanupBatchSize: 1000
+};
+
 function createMySqlStore(
   retention: SnapshotRetentionPolicy,
   pruneImpl: () => Promise<number>,
-  pruneBattleReplaysImpl: () => Promise<number> = async () => 0
+  pruneBattleReplaysImpl: () => Promise<number> = async () => 0,
+  playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy = defaultPlayerNameHistoryRetention,
+  prunePlayerNameHistoryImpl: () => Promise<number> = async () => 0
 ) {
   return {
     closeCalls: 0,
     pruneCalls: 0,
     pruneBattleReplayCalls: 0,
+    prunePlayerNameHistoryCalls: 0,
     async close() {
       this.closeCalls += 1;
     },
@@ -125,8 +138,15 @@ function createMySqlStore(
       this.pruneBattleReplayCalls += 1;
       return pruneBattleReplaysImpl();
     },
+    async pruneExpiredPlayerNameHistory() {
+      this.prunePlayerNameHistoryCalls += 1;
+      return prunePlayerNameHistoryImpl();
+    },
     getRetentionPolicy() {
       return retention;
+    },
+    getPlayerNameHistoryRetentionPolicy() {
+      return playerNameHistoryRetention;
     }
   };
 }
@@ -611,7 +631,8 @@ test("dev server falls back to in-memory persistence and warns when schema migra
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
-    }
+    },
+    playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   let mysqlStoreCreated = false;
   let mysqlConfigStoreCreated = false;
@@ -717,7 +738,8 @@ test("dev server exits non-zero in production when schema migrations are pending
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
-    }
+    },
+    playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   const originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -822,7 +844,8 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
-    }
+    },
+    playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   const originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -925,7 +948,8 @@ test("dev server logs and exports filesystem config center fallback when MySQL c
     retention: {
       ttlHours: 24,
       cleanupIntervalMinutes: 30
-    }
+    },
+    playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   const bootstrapError = new Error("config center access denied");
 
@@ -1091,6 +1115,13 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   const pruneFailure = new Error("cleanup failed");
   let pruneBattleReplayAttempt = 0;
   const pruneBattleReplayFailure = new Error("battle replay cleanup failed");
+  const playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy = {
+    ttlDays: 30,
+    cleanupIntervalMinutes: 45,
+    cleanupBatchSize: 50
+  };
+  let prunePlayerNameHistoryAttempt = 0;
+  const prunePlayerNameHistoryFailure = new Error("player name history cleanup failed");
   const mysqlStore = createMySqlStore(retention, async () => {
     pruneAttempt += 1;
     if (pruneAttempt === 1) {
@@ -1105,6 +1136,13 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     }
 
     throw pruneBattleReplayFailure;
+  }, playerNameHistoryRetention, async () => {
+    prunePlayerNameHistoryAttempt += 1;
+    if (prunePlayerNameHistoryAttempt === 1) {
+      return 4;
+    }
+
+    throw prunePlayerNameHistoryFailure;
   });
   const mysqlConfig: MySqlPersistenceConfig = {
     host: "127.0.0.1",
@@ -1119,7 +1157,8 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
       queueLimit: 0,
       waitForConnections: true
     },
-    retention
+    retention,
+    playerNameHistoryRetention
   };
   const scheduledTimers: TestTimer[] = [];
   const clearedTimers: TestTimer[] = [];
@@ -1201,6 +1240,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
   assert.equal(configCenterStore.initializeCalls, 1);
   assert.equal(mysqlStore.pruneCalls, 1);
   assert.equal(mysqlStore.pruneBattleReplayCalls, 1);
+  assert.equal(mysqlStore.prunePlayerNameHistoryCalls, 1);
   assert.equal(base.logger.warnings.length, 0);
   assert.deepEqual(persistenceHealth, {
     status: "ok",
@@ -1218,22 +1258,28 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     /Persistence mode: production\/mysql/,
     /Snapshot retention: ttl=48h \/ cleanup=15m/,
     /Battle replay retention: ttl=90d \/ max=524288B \/ cleanup=60m \/ batch=25/,
+    /Player name history retention: ttl=30d \/ cleanup=45m \/ batch=50/,
     /Pruned 2 expired room snapshot\(s\)/,
-    /Pruned 3 expired battle replay\(s\)/
+    /Pruned 3 expired battle replay\(s\)/,
+    /Pruned 4 expired player name history row\(s\)/
   ]);
-  assert.equal(scheduledTimers.length, 2);
+  assert.equal(scheduledTimers.length, 3);
   assert.equal(scheduledTimers[0]?.delayMs, 15 * 60 * 1000);
   assert.equal(scheduledTimers[0]?.unrefCalls, 1);
   assert.equal(scheduledTimers[1]?.delayMs, 60 * 60 * 1000);
   assert.equal(scheduledTimers[1]?.unrefCalls, 1);
+  assert.equal(scheduledTimers[2]?.delayMs, 45 * 60 * 1000);
+  assert.equal(scheduledTimers[2]?.unrefCalls, 1);
   assert.match(buildPrometheusMetricsDocument(), /^veil_config_center_store_type 0$/m);
 
   scheduledTimers[0]?.callback();
   scheduledTimers[1]?.callback();
+  scheduledTimers[2]?.callback();
   await flushAsyncWork();
 
   assert.equal(mysqlStore.pruneCalls, 2);
   assert.equal(mysqlStore.pruneBattleReplayCalls, 2);
+  assert.equal(mysqlStore.prunePlayerNameHistoryCalls, 2);
   assert.deepEqual(base.logger.errors, [
     {
       message: "Failed to prune expired room snapshots",
@@ -1242,6 +1288,10 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
     {
       message: "Failed to prune expired battle replays",
       error: pruneBattleReplayFailure
+    },
+    {
+      message: "Failed to prune expired player name history",
+      error: prunePlayerNameHistoryFailure
     }
   ]);
 
@@ -1250,7 +1300,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
 
   assert.equal(mysqlStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
-  assert.deepEqual(clearedTimers, [scheduledTimers[0], scheduledTimers[1]]);
+  assert.deepEqual(clearedTimers, [scheduledTimers[0], scheduledTimers[1], scheduledTimers[2]]);
   assert.deepEqual(base.process.exitCodes, [0]);
 });
 
