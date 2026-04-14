@@ -2228,3 +2228,47 @@ test("support moderators can delete guilds without removing audit history", asyn
   assert.equal(audit[0]?.reason, "spam cleanup");
   assert.equal(audit[1]?.action, "created");
 });
+
+test("POST /api/admin/players/:id/resources returns 413 when content-length declares a 2 MB body", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-413" },
+      headers: {
+        "x-veil-admin-secret": secret,
+        "content-length": String(2 * 1024 * 1024)
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
+});
+
+test("POST /api/admin/players/:id/resources returns 413 when streamed body exceeds 32 KB", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: "player-413-stream" },
+      headers: { "x-veil-admin-secret": secret },
+      body: "x".repeat(33 * 1024)
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
+});

@@ -24,15 +24,41 @@ function isAdminAuthorized(request: IncomingMessage): boolean {
   return headerToken === adminToken;
 }
 
+const MAX_JSON_BODY_BYTES = 32 * 1024;
+
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    request.resume();
+    return Promise.reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+  }
+
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
     request.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > MAX_JSON_BODY_BYTES) {
+        reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+        return;
+      }
+      chunks.push(buffer);
     });
     request.on("end", () => {
       try {
-        resolve(body ? JSON.parse(body) : {});
+        if (chunks.length === 0) {
+          resolve({});
+          return;
+        }
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch (error) {
         reject(error);
       }
@@ -171,6 +197,10 @@ export function registerSeasonRoutes(
       const season = await store.createSeason(seasonId || `season_${Date.now()}`);
       sendJson(response, 201, { season });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       if (error instanceof SyntaxError) {
         sendJson(response, 400, {
           error: {

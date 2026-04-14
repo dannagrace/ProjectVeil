@@ -672,11 +672,32 @@ function requireSupportRole(response: ServerResponse, request: IncomingMessage, 
   return role;
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+const MAX_JSON_BODY_BYTES = 32 * 1024;
+
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
   }
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_JSON_BODY_BYTES) {
+      throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
+    }
+    chunks.push(buffer);
+  }
+
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) {
     return undefined;
@@ -888,6 +909,10 @@ export function registerAdminRoutes(
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -936,6 +961,10 @@ export function registerAdminRoutes(
         syncedToRoom
       });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1017,6 +1046,10 @@ export function registerAdminRoutes(
       }
       sendJson(response, 200, { ok: true });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1051,6 +1084,10 @@ export function registerAdminRoutes(
       }
       sendJson(response, 200, { ok: true, account, disconnectedClients });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1079,6 +1116,10 @@ export function registerAdminRoutes(
       const account = await store.clearPlayerBan(playerId, input);
       sendJson(response, 200, { ok: true, account });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1157,6 +1198,10 @@ export function registerAdminRoutes(
 
       sendJson(response, 200, { ok: true, report, disconnectedClients });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1245,6 +1290,10 @@ export function registerAdminRoutes(
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1330,6 +1379,10 @@ export function registerAdminRoutes(
         }
       });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1405,6 +1458,10 @@ export function registerAdminRoutes(
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1446,6 +1503,10 @@ export function registerAdminRoutes(
       const guild = await guildService.hideGuild(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1469,6 +1530,10 @@ export function registerAdminRoutes(
       const guild = await guildService.unhideGuild(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
@@ -1492,6 +1557,10 @@ export function registerAdminRoutes(
       await guildService.deleteGuildAsAdmin(guildId, `${role}:admin-console`, input.reason);
       sendJson(response, 200, { ok: true, guildId });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: String(error) });
+        return;
+      }
       if (error instanceof InvalidAdminJsonError) {
         sendInvalidJson(response);
         return;
