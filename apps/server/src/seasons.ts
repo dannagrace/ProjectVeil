@@ -36,7 +36,6 @@ class PayloadTooLargeError extends Error {
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
-    request.resume();
     return Promise.reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
   }
 

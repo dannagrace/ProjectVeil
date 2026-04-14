@@ -910,7 +910,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -962,7 +962,7 @@ export function registerAdminRoutes(
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1047,7 +1047,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1085,7 +1085,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, account, disconnectedClients });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1117,7 +1117,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, account });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1199,7 +1199,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, report, disconnectedClients });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1291,7 +1291,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1380,7 +1380,7 @@ export function registerAdminRoutes(
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1459,7 +1459,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1504,7 +1504,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1531,7 +1531,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
@@ -1558,7 +1558,7 @@ export function registerAdminRoutes(
       sendJson(response, 200, { ok: true, guildId });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, { error: String(error) });
+        sendJson(response, 413, { error: (error as Error).message });
         return;
       }
       if (error instanceof InvalidAdminJsonError) {
