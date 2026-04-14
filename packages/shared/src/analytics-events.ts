@@ -53,6 +53,17 @@ export const ANALYTICS_EVENT_CATALOG = {
       gold: 50
     }
   }),
+  seasonal_event_reward_claimed: defineAnalyticsEvent(
+    "seasonal_event_reward_claimed",
+    1,
+    "Seasonal event threshold reward claimed by the player.",
+    {
+      eventId: "defend-the-bridge",
+      rewardId: "bridge-relief-fund",
+      rewardKind: "gems",
+      pointsRequired: 120
+    }
+  ),
   daily_login: defineAnalyticsEvent("daily_login", 1, "Daily first-login reward was issued to the player.", {
     dateKey: "2026-04-11",
     streak: 3,
