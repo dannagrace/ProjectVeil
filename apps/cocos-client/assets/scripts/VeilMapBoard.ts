@@ -796,13 +796,12 @@ export class VeilMapBoard extends Component {
     objectNode.spriteNode.setPosition(0, 1, 0.1);
     this.layoutObjectBadgeNodes(objectNode, chipSize);
     this.paintObjectChip(objectNode.graphics, markerVisual);
-    const hasPixelAssets = Boolean(getPixelSpriteAssets());
     const hasSpriteFrame = this.syncObjectSprite(
       { node: objectNode.spriteNode, sprite: objectNode.sprite, spriteOpacity: objectNode.spriteOpacity },
       markerVisual
     );
     this.syncObjectBadges(objectNode, markerVisual);
-    objectNode.label.string = hasSpriteFrame || (!hasPixelAssets && markerVisual.iconKey !== null) ? "" : markerVisual.fallbackLabel;
+    objectNode.label.string = hasSpriteFrame ? "" : markerVisual.fallbackLabel;
     objectNode.node.setPosition(
       tile.position.x * this.tileSize - width / 2 + this.tileSize * 0.28,
       height / 2 - tile.position.y * this.tileSize - this.tileSize * 0.28,
