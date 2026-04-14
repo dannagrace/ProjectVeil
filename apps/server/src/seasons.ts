@@ -33,8 +33,8 @@ function readJsonBody(request: IncomingMessage): Promise<unknown> {
     request.on("end", () => {
       try {
         resolve(body ? JSON.parse(body) : {});
-      } catch {
-        resolve({});
+      } catch (error) {
+        reject(error);
       }
     });
     request.on("error", reject);
@@ -171,6 +171,15 @@ export function registerSeasonRoutes(
       const season = await store.createSeason(seasonId || `season_${Date.now()}`);
       sendJson(response, 201, { season });
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        sendJson(response, 400, {
+          error: {
+            code: "invalid_json",
+            message: "Request body must be valid JSON"
+          }
+        });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });
