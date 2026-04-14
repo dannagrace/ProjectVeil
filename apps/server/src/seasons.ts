@@ -35,12 +35,21 @@ class PayloadTooLargeError extends Error {
 
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
-  const initiallyTooLarge = Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES;
+
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    // Fail fast: reject immediately based on Content-Length alone.
+    // Resume the stream in the background to drain it without accumulating
+    // data, so the connection is not reset — but do NOT await it, as that
+    // would keep the handler blocked (slow-loris risk).
+    request.on("error", () => {});
+    request.resume();
+    return Promise.reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+  }
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
-    let tooLarge = initiallyTooLarge;
+    let tooLarge = false;
 
     request.on("data", (chunk: Buffer) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);

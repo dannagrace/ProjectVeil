@@ -691,8 +691,10 @@ async function drainRequest(request: IncomingMessage): Promise<void> {
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
-    // Drain the stream before throwing so the connection is not reset
-    await drainRequest(request);
+    // Fail fast: reject immediately based on Content-Length alone.
+    // Drain in the background so the connection is not reset, but do NOT
+    // await it — that would keep the handler blocked (slow-loris risk).
+    void drainRequest(request).catch(() => {});
     throw new PayloadTooLargeError(MAX_JSON_BODY_BYTES);
   }
 

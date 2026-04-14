@@ -2275,3 +2275,33 @@ test("POST /api/admin/players/:id/resources returns 413 when streamed body excee
   assert.equal(response.statusCode, 413);
   assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
 });
+
+test("POST /api/admin/players/:id/resources returns 413 immediately when content-length is oversized without waiting for body stream to end", async (t) => {
+  const secret = withAdminSecret(t);
+  const { posts } = registerRoutes(null);
+  const handler = posts.get("/api/admin/players/:id/resources");
+  const response = createResponse();
+
+  assert.ok(handler);
+
+  // Create an async iterable that never ends — simulates a slow-loris upload.
+  // The handler must return 413 before the stream finishes.
+  async function* neverEndingBody() {
+    await new Promise<void>(() => {}); // hangs forever, never yields
+  }
+
+  const request = neverEndingBody() as unknown as IncomingMessage & { params: Record<string, string> };
+  Object.assign(request, {
+    method: "POST",
+    headers: {
+      "x-veil-admin-secret": secret,
+      "content-length": String(2 * 1024 * 1024)
+    },
+    params: { id: "player-413-fast" }
+  });
+
+  await handler(request, response);
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error, `Request body exceeds ${32 * 1024} bytes`);
+});
