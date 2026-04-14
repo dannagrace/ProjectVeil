@@ -9,6 +9,7 @@ import type { SessionUpdate } from "../assets/scripts/VeilCocosSession";
 import {
   createWorldUpdate
 } from "./helpers/cocos-panel-harness.ts";
+import { useCcSpriteResourceDoubles } from "./helpers/cc-sprite-resources.ts";
 import { createMapBoardHarness } from "./helpers/cocos-map-board-harness.ts";
 
 function createBaseUpdate(): SessionUpdate {
@@ -148,7 +149,8 @@ test("VeilMapBoard translates overlay pointer input into one tile selection per 
   harness.destroy();
 });
 
-test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
+test("VeilMapBoard refreshes fog overlays when the pulse phase changes", async (t) => {
+  useCcSpriteResourceDoubles(t);
   const update = createBaseUpdate();
   update.world.map.width = 2;
   update.world.map.height = 1;
@@ -175,6 +177,7 @@ test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
 
   const harness = createMapBoardHarness({ width: 220, height: 120, tileSize: 48 });
   harness.render(update);
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   const capturedStyles = harness.captureFogStyles("0-0");
   assert.equal(capturedStyles.length, 0);
@@ -183,10 +186,12 @@ test("VeilMapBoard refreshes fog overlays when the pulse phase changes", () => {
   harness.render(update);
 
   assert.equal(capturedStyles.length, 1);
-  assert.equal(capturedStyles[0]?.tone, "explored");
+  assert.equal(capturedStyles[0]?.fogState, "explored");
   assert.equal(capturedStyles[0]?.featherMask, 2);
-  assert.equal(capturedStyles[0]?.opacity, 78);
-  assert.equal(capturedStyles[0]?.edgeOpacity, 24);
+  const overlayState = harness.fogOverlayState("0-0");
+  assert.equal(overlayState?.active, true);
+  assert.equal(overlayState?.opacity, 255);
+  assert.match(String(overlayState?.frameName ?? ""), /placeholder\/fog\/explored-2/);
   harness.destroy();
 });
 
