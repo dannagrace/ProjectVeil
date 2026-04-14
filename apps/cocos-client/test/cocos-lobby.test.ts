@@ -794,6 +794,42 @@ test("loadCocosPlayerAccountProfile uses /me for authenticated sessions and pres
     progressUpdatedAt: "2026-03-25T13:00:00.000Z",
     unlockedAt: "2026-03-25T13:00:00.000Z"
   });
+  assert.deepEqual(profile.achievements[1], {
+    id: "enemy_slayer",
+    title: "猎敌者",
+    description: "击败 3 名敌人或中立守军。",
+    metric: "battles_won",
+    current: 0,
+    target: 3,
+    unlocked: false
+  });
+  assert.deepEqual(profile.achievements[2], {
+    id: "skill_scholar",
+    title: "求知者",
+    description: "学习 5 个长期技能。",
+    metric: "skills_learned",
+    current: 0,
+    target: 5,
+    unlocked: false
+  });
+  assert.deepEqual(profile.achievements[3], {
+    id: "world_explorer",
+    title: "踏勘全境",
+    description: "揭开整张地图的迷雾。",
+    metric: "maps_fully_explored",
+    current: 0,
+    target: 1,
+    unlocked: false
+  });
+  assert.deepEqual(profile.achievements[4], {
+    id: "epic_collector",
+    title: "史诗武装",
+    description: "为同一名英雄装备全套史诗装备。",
+    metric: "epic_equipment_slots",
+    current: 0,
+    target: 3,
+    unlocked: false
+  });
   assert.deepEqual(profile.recentBattleReplays, [
     {
       id: "room-beta:battle-1:account-player",

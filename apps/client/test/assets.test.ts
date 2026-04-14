@@ -191,7 +191,10 @@ test("objectBadgeAssets handles partial metadata with only interactionType", () 
 // assetManifestEntry
 
 test("assetManifestEntry returns entry for known asset path", () => {
-  const result = assetManifestEntry("/assets/pixel/terrain/grass-tile.png");
+  const assetPath = terrainAsset("grass", 0, 0);
+  const result = assetManifestEntry(assetPath);
+
+  assert.equal(assetPath, "/assets/pixel/terrain/grass-tile.png");
   assert.deepEqual(result, {
     slot: "terrain.grass.default",
     stage: "production",
