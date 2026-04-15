@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -17,6 +20,7 @@ import {
   resetRuntimeObservability,
   setAuthTokenDeliveryQueueLatency
 } from "../../apps/server/src/observability";
+import { runRuntimeSloSummaryCli } from "../runtime-slo-summary.ts";
 
 function seedRooms(count: number): void {
   for (let index = 0; index < count; index += 1) {
@@ -107,4 +111,75 @@ test("buildRuntimeSloSummaryPayload classifies backlog, latency, and error-rate 
   assert.equal(candidateGate?.checks.find((check) => check.id === "reconnect_error_rate")?.status, "fail");
   assert.equal(candidateGate?.checks.find((check) => check.id === "token_delivery_error_rate")?.status, "fail");
   assert.match(renderRuntimeSloSummaryMarkdown(report), /Alert-Friendly Diagnostics/);
+});
+
+test("runRuntimeSloSummaryCli returns exit code 1 and writes all artifacts when candidate_gate fails", async () => {
+  // Seed a failing observability state (too few rooms, no gameplay traffic)
+  resetRuntimeObservability();
+  for (let index = 0; index < 3; index += 1) {
+    recordRuntimeRoom({
+      roomId: `room-${index + 1}`,
+      day: 3,
+      connectedPlayers: 1,
+      heroCount: 2,
+      activeBattles: 0,
+      updatedAt: "2026-04-16T12:00:00.000Z"
+    });
+  }
+
+  const payload = buildRuntimeSloSummaryPayload("project-veil-test");
+  const markdown = renderRuntimeSloSummaryMarkdown(payload);
+  const text = renderRuntimeSloSummaryText(payload);
+
+  const candidateGate = payload.profiles.find((p) => p.id === "candidate_gate");
+  assert.equal(candidateGate?.status, "fail", "setup: candidate_gate must be failing for this test to be meaningful");
+
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-slo-cli-test-"));
+  const jsonPath = path.join(workspace, "slo.json");
+  const mdPath = path.join(workspace, "slo.md");
+  const txtPath = path.join(workspace, "slo.txt");
+  const serverUrl = "http://127.0.0.1:19999";
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    if (url === `${serverUrl}/api/runtime/slo-summary`) {
+      return { ok: true, status: 200, json: async () => payload, text: async () => "" } as Response;
+    }
+    if (url === `${serverUrl}/api/runtime/slo-summary?format=markdown`) {
+      return { ok: true, status: 200, json: async () => ({}), text: async () => markdown } as Response;
+    }
+    if (url === `${serverUrl}/api/runtime/slo-summary?format=text`) {
+      return { ok: true, status: 200, json: async () => ({}), text: async () => text } as Response;
+    }
+    throw new Error(`Unexpected fetch in test: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const exitCode = await runRuntimeSloSummaryCli([
+      "node",
+      "scripts/runtime-slo-summary.ts",
+      "--server-url",
+      serverUrl,
+      "--profile",
+      "candidate_gate",
+      "--output",
+      jsonPath,
+      "--markdown-output",
+      mdPath,
+      "--text-output",
+      txtPath
+    ]);
+
+    assert.equal(exitCode, 1, "CLI must exit with code 1 when candidate_gate is failing");
+    assert.ok(fs.existsSync(jsonPath), "JSON artifact must be written even when candidate_gate fails");
+    assert.ok(fs.existsSync(mdPath), "markdown artifact must be written even when candidate_gate fails");
+    assert.ok(fs.existsSync(txtPath), "text artifact must be written even when candidate_gate fails");
+
+    const written = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+    assert.equal(written.profiles.find((p: { id: string }) => p.id === "candidate_gate")?.status, "fail");
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
