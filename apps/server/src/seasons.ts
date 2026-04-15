@@ -24,15 +24,54 @@ function isAdminAuthorized(request: IncomingMessage): boolean {
   return headerToken === adminToken;
 }
 
+const MAX_JSON_BODY_BYTES = 32 * 1024;
+
+class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "payload_too_large";
+  }
+}
+
 function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const declaredLength = Number(request.headers["content-length"]);
+
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+    // Fail fast: reject immediately based on Content-Length alone.
+    // Resume the stream in the background to drain it without accumulating
+    // data, so the connection is not reset — but do NOT await it, as that
+    // would keep the handler blocked (slow-loris risk).
+    request.on("error", () => {});
+    request.resume();
+    return Promise.reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+  }
+
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let tooLarge = false;
+
     request.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (tooLarge || totalBytes > MAX_JSON_BODY_BYTES) {
+        // Mark as too large but continue draining so the connection is not reset
+        tooLarge = true;
+      } else {
+        chunks.push(buffer);
+      }
     });
     request.on("end", () => {
+      if (tooLarge) {
+        reject(new PayloadTooLargeError(MAX_JSON_BODY_BYTES));
+        return;
+      }
       try {
-        resolve(body ? JSON.parse(body) : {});
+        if (chunks.length === 0) {
+          resolve({});
+          return;
+        }
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch (error) {
         reject(error);
       }
@@ -171,6 +210,10 @@ export function registerSeasonRoutes(
       const season = await store.createSeason(seasonId || `season_${Date.now()}`);
       sendJson(response, 201, { season });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
       if (error instanceof SyntaxError) {
         sendJson(response, 400, {
           error: {

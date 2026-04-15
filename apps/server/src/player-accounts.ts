@@ -2056,6 +2056,15 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
+      if (mission.status === "completed") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_already_completed",
+            message: "Campaign mission has already been completed"
+          }
+        });
+        return;
+      }
       if (mission.status === "locked") {
         sendJson(response, 403, {
           error: {
@@ -2063,15 +2072,6 @@ export function registerPlayerAccountRoutes(
             message: "Campaign mission is not unlocked yet"
           },
           unlock_requirements: (mission.unlockRequirements ?? []).filter((requirement) => requirement.satisfied !== true)
-        });
-        return;
-      }
-      if (mission.status === "completed") {
-        sendJson(response, 409, {
-          error: {
-            code: "campaign_mission_already_completed",
-            message: "Campaign mission has already been completed"
-          }
         });
         return;
       }
@@ -2125,7 +2125,7 @@ export function registerPlayerAccountRoutes(
       const accessContext = await loadCampaignAccessContext(store, nextAccount);
       emitAnalyticsEvent("mission_complete", {
         playerId: account.playerId,
-        roomId: account.lastRoomId ?? result.mission.mapId,
+        roomId: result.mission.mapId,
         payload: {
           campaignId: result.mission.chapterId,
           missionId: result.mission.id,

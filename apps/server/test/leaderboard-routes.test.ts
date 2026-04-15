@@ -44,7 +44,8 @@ function createRequest(options: {
   Object.assign(request, {
     method: options.method ?? "GET",
     headers: options.headers ?? {},
-    url: options.url ?? "/"
+    url: options.url ?? "/",
+    resume() {}
   });
   queueMicrotask(() => {
     if (options.body !== undefined) {
@@ -690,4 +691,81 @@ test("leaderboard routes load tier thresholds from config-center at initializati
       { tier: "diamond", minRating: 1600, maxRating: null }
     ]
   });
+});
+
+test("POST /api/admin/leaderboard/season-rollover returns 413 when content-length declares a 2 MB body", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+  await store.createSeason("season-413");
+
+  assert.ok(handler);
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/leaderboard/season-rollover",
+      headers: {
+        "x-veil-admin-token": token,
+        "content-length": String(2 * 1024 * 1024)
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error.code, "payload_too_large");
+});
+
+test("POST /api/admin/leaderboard/season-rollover returns 413 when streamed body exceeds 32 KB", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+  await store.createSeason("season-413-stream");
+
+  assert.ok(handler);
+  const response = createResponse();
+  const request = new EventEmitter() as IncomingMessage & EventEmitter;
+  Object.assign(request, {
+    method: "POST",
+    headers: { "x-veil-admin-token": token },
+    url: "/api/admin/leaderboard/season-rollover"
+  });
+  queueMicrotask(() => {
+    request.emit("data", Buffer.alloc(33 * 1024, "x"));
+    request.emit("end");
+  });
+
+  await handler(request, response);
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error.code, "payload_too_large");
+});
+
+test("POST /api/admin/leaderboard/season-rollover returns 413 immediately when content-length is oversized without waiting for body stream to end", async (t) => {
+  const token = withAdminToken(t);
+  const { posts, store } = registerRoutes();
+  const handler = posts.get("/api/admin/leaderboard/season-rollover");
+  await store.createSeason("season-413-fast");
+
+  assert.ok(handler);
+  const response = createResponse();
+
+  // Build a stream that never emits "end" — simulates a slow-loris upload.
+  // The handler must return 413 before the stream finishes.
+  const request = new EventEmitter() as IncomingMessage & EventEmitter;
+  Object.assign(request, {
+    method: "POST",
+    headers: {
+      "x-veil-admin-token": token,
+      "content-length": String(2 * 1024 * 1024)
+    },
+    url: "/api/admin/leaderboard/season-rollover",
+    resume() {}
+  });
+
+  await handler(request, response);
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(JSON.parse(response.body).error.code, "payload_too_large");
 });

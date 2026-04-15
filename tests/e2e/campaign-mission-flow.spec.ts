@@ -3,6 +3,7 @@ import { pollForAnalyticsEvent } from "./analytics-helpers";
 
 const SERVER_BASE_URL = "http://127.0.0.1:2567";
 const FIRST_MISSION_ID = "chapter1-ember-watch";
+const FIRST_MISSION_MAP_ID = "amber-fields";
 const FIRST_CHAPTER_ID = "chapter1";
 const CHAPTER_TWO_FIRST_MISSION_ID = "chapter2-highland-muster";
 const CHAPTER_ONE_MISSION_IDS = [
@@ -240,6 +241,8 @@ test("campaign mission smoke covers mission start, reward settlement, unlock pro
         gold: 140
       }
     });
+    // Verify attribution uses the mission's mapId, not the stale account.lastRoomId
+    expect(missionCompleteEvent.roomId).toBe(FIRST_MISSION_MAP_ID);
   });
 
   await test.step("api: completed missions reject both restart and re-completion attempts", async () => {
