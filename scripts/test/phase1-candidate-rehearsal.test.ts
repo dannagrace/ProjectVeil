@@ -363,6 +363,14 @@ test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with e
     fs.writeFileSync(outputA, '{"stale":true}\n', "utf8");
     fs.writeFileSync(outputB, "# Stale\n", "utf8");
 
+    // Back-date the files to clearly beyond the COARSE_MTIME_TOLERANCE_MS (2 s)
+    // window so the wall-clock freshness check reliably classifies them as stale.
+    // Real stale artifacts from a prior run would have been written minutes or
+    // hours earlier; we use 5 s here to keep the test fast while staying safe.
+    const staleTime = new Date(Date.now() - 5000);
+    fs.utimesSync(outputA, staleTime, staleTime);
+    fs.utimesSync(outputB, staleTime, staleTime);
+
     // Command exits with code 1 but does NOT write or touch the output files,
     // simulating a server-unreachable failure during a rerun.
     const result = runOptionalFailingDiagnosticStage(
@@ -375,6 +383,48 @@ test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with e
     assert.equal(result.status, "failed", "stale artifacts + exit 1 must be reported as failed, not passed");
     assert.equal(result.exitCode, 1);
     assert.match(result.summary, /not refreshed by this invocation/, "summary must identify the stale artifact problem");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runOptionalFailingDiagnosticStage: freshly rewritten artifacts with same mtime are not misclassified as stale on coarse-mtime filesystems", () => {
+  // Regression: the original mtime-to-mtime comparison (`currentMtime <= priorMtime`)
+  // falsely classified a freshly rewritten file as stale when the write landed in the
+  // same coarse time-bucket as the pre-run snapshot (e.g. FAT32 at 2 s or NFS at 1 s).
+  // We simulate this by having the command rewrite the artifact and then restore its
+  // mtime to the original value via utimesSync, as a coarse filesystem would.
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-coarse-mtime-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+
+    // Pre-create the artifact with a current mtime (recent, but pre-existing).
+    fs.writeFileSync(outputA, '{"old":true}\n', "utf8");
+    const existingMtimeMs = fs.statSync(outputA).mtimeMs;
+
+    // The command rewrites outputA but then resets its mtime back to the original
+    // value, mimicking a coarse-grained filesystem that rounds the write timestamp
+    // into the same bucket as the prior write.
+    const writeScript = [
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(outputA)}, '{"new":true}\\n');`,
+      `fs.utimesSync(${JSON.stringify(outputA)}, new Date(${existingMtimeMs}), new Date(${existingMtimeMs}));`,
+      "process.exit(1);"
+    ].join(" ");
+
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", writeScript],
+      [outputA]
+    );
+
+    assert.equal(
+      result.status,
+      "passed",
+      "freshly rewritten artifact whose mtime was not advanced by a coarse filesystem must not be misclassified as stale"
+    );
+    assert.equal(result.exitCode, 1);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
