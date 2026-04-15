@@ -1,3 +1,5 @@
+import type { CampaignReward } from "./models";
+
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 
 interface AnalyticsEventDefinition<Name extends string, Payload extends Record<string, unknown>> {
@@ -62,6 +64,21 @@ export const ANALYTICS_EVENT_CATALOG = {
       rewardId: "bridge-relief-fund",
       rewardKind: "gems",
       pointsRequired: 120
+    }
+  ),
+  mission_complete: defineAnalyticsEvent<"mission_complete", { campaignId: string; missionId: string; reward: CampaignReward }>(
+    "mission_complete",
+    1,
+    "Campaign mission completed and rewards settled for the player.",
+    {
+      campaignId: "chapter1",
+      missionId: "chapter1-ember-watch",
+      reward: {
+        gems: 12,
+        resources: {
+          gold: 140
+        }
+      }
     }
   ),
   daily_login: defineAnalyticsEvent("daily_login", 1, "Daily first-login reward was issued to the player.", {

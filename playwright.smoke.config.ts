@@ -52,7 +52,8 @@ const DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: /(daily-quest-claim|lobby-smoke|onboarding-funnel|reconnect-prediction-convergence|seasonal-event-lifecycle)\.spec\.ts/,
+  testMatch:
+    /(campaign-mission-flow|daily-quest-claim|lobby-smoke|onboarding-funnel|reconnect-prediction-convergence|seasonal-event-lifecycle)\.spec\.ts/,
   timeout: 30_000,
   retries: process.env.CI ? 2 : 0,
   fullyParallel: false,
