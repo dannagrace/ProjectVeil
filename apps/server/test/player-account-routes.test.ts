@@ -4415,7 +4415,7 @@ test("campaign mission completion unlocks the next chapter 1 mission and grants 
   };
 
   assert.equal(initialResponse.status, 200);
-  assert.equal(initialPayload.campaign.totalMissions, 27);
+  assert.equal(initialPayload.campaign.totalMissions, 41);
   assert.equal(initialPayload.campaign.nextMissionId, "chapter1-ember-watch");
   assert.equal(initialPayload.campaign.missions[0]?.status, "available");
   assert.equal(initialPayload.campaign.missions[1]?.status, "locked");
@@ -4548,6 +4548,59 @@ test("campaign mission start returns 403 unlock requirements until chapter gates
   assert.equal(unlockedPayload.started, true);
   assert.equal(unlockedPayload.mission.id, "chapter4-basin-breach");
   assert.equal(unlockedPayload.mission.chapterId, "chapter4");
+});
+
+test("completed campaign mission returns 409 for both restart and re-completion attempts", async (t) => {
+  const port = 44992 + Math.floor(Math.random() * 100);
+  const store = new MemoryPlayerAccountStore();
+  store.seedAccount({
+    playerId: "completed-mission-player",
+    displayName: "Campaign Finisher",
+    rankDivision: "unranked",
+    gems: 0,
+    globalResources: { gold: 0, wood: 0, ore: 0 },
+    achievements: [],
+    recentEventLog: [],
+    recentBattleReplays: [],
+    campaignProgress: {
+      missions: [{ missionId: "chapter1-ember-watch", attempts: 1, completedAt: "2026-04-01T00:00:00.000Z" }]
+    },
+    tutorialStep: DEFAULT_TUTORIAL_STEP,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "completed-mission-player",
+    displayName: "Campaign Finisher",
+    loginId: "completed-mission-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const restartResponse = await fetch(
+    `http://127.0.0.1:${port}/api/campaigns/chapter1/missions/chapter1-ember-watch/start`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.token}` }
+    }
+  );
+  const restartPayload = (await restartResponse.json()) as { error: { code: string } };
+  assert.equal(restartResponse.status, 409);
+  assert.equal(restartPayload.error.code, "campaign_mission_already_completed");
+
+  const reCompleteResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/me/campaign/chapter1-ember-watch/complete`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.token}` }
+    }
+  );
+  const reCompletePayload = (await reCompleteResponse.json()) as { error: { code: string } };
+  assert.equal(reCompleteResponse.status, 409);
+  assert.equal(reCompletePayload.error.code, "campaign_mission_already_completed");
 });
 
 test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {
