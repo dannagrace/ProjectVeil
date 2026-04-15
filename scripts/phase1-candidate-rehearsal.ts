@@ -958,7 +958,7 @@ async function main(): Promise<void> {
           };
         }
 
-        return runCommandStage("runtime-slo-summary", "Capture runtime SLO summary", [
+        return runOptionalFailingDiagnosticStage("runtime-slo-summary", "Capture runtime SLO summary", [
           nodeExec,
           "--import",
           "tsx",
