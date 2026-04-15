@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { runOptionalFailingDiagnosticStage } from "../phase1-candidate-rehearsal.ts";
+
 const repoRoot = path.resolve(__dirname, "../..");
 const fixtureBuildDir = path.join(repoRoot, "apps", "cocos-client", "test", "fixtures", "wechatgame-export");
 const defaultConfigPath = path.join(repoRoot, "apps", "cocos-client", "wechat-minigame.build.json");
@@ -349,4 +351,86 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.notEqual(runtimeSloMarkdownIndex, -1);
   assert.notEqual(runtimeObservabilityGateIndex, -1);
   assert.ok(runtimeSloMarkdownIndex < runtimeObservabilityGateIndex);
+});
+
+test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with exit code 1 are reported as failed", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-stale-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+    const outputB = path.join(workspace, "output-b.md");
+
+    // Pre-create stale artifacts that would have been left from a previous invocation.
+    fs.writeFileSync(outputA, '{"stale":true}\n', "utf8");
+    fs.writeFileSync(outputB, "# Stale\n", "utf8");
+
+    // Command exits with code 1 but does NOT write or touch the output files,
+    // simulating a server-unreachable failure during a rerun.
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", "process.exit(1)"],
+      [outputA, outputB]
+    );
+
+    assert.equal(result.status, "failed", "stale artifacts + exit 1 must be reported as failed, not passed");
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /not refreshed by this invocation/, "summary must identify the stale artifact problem");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runOptionalFailingDiagnosticStage: freshly written artifacts with exit code 1 are reported as passed", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-fresh-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+    const outputB = path.join(workspace, "output-b.md");
+
+    // No pre-existing files — command writes them fresh and exits 1 (the expected
+    // candidate_gate diagnostic case where the gate itself fails but artifacts are produced).
+    const writeScript = [
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(outputA)}, '{}\\n');`,
+      `fs.writeFileSync(${JSON.stringify(outputB)}, '#ok\\n');`,
+      "process.exit(1);"
+    ].join(" ");
+
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", writeScript],
+      [outputA, outputB]
+    );
+
+    assert.equal(result.status, "passed", "freshly written artifacts + exit 1 must be reported as passed");
+    assert.equal(result.exitCode, 1);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runOptionalFailingDiagnosticStage: exit code 2 is always reported as failed regardless of artifacts", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-exit2-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+
+    // Command writes the artifact but exits with code 2 (not 0 or 1).
+    const writeScript = [
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(outputA)}, '{}\\n');`,
+      "process.exit(2);"
+    ].join(" ");
+
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", writeScript],
+      [outputA]
+    );
+
+    assert.equal(result.status, "failed", "exit code 2 must always be reported as failed");
+    assert.equal(result.exitCode, 2);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   buildCandidateRevisionTriageDigestFromPaths,
@@ -373,7 +374,19 @@ function runCommandStage(id: string, title: string, command: string[], outputs: 
   };
 }
 
-function runOptionalFailingDiagnosticStage(id: string, title: string, command: string[], outputs: string[]): StageResult {
+export function runOptionalFailingDiagnosticStage(id: string, title: string, command: string[], outputs: string[]): StageResult {
+  // Snapshot pre-run modification times so we can detect whether outputs were
+  // freshly written by this invocation versus inherited as stale artifacts from
+  // a previous run on the same candidate/revision.
+  const preRunMtimes = new Map<string, number>();
+  for (const filePath of outputs) {
+    try {
+      preRunMtimes.set(filePath, fs.statSync(filePath).mtimeMs);
+    } catch {
+      // File does not yet exist — expected on first run.
+    }
+  }
+
   const result = spawnSync(command[0], command.slice(1), {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -417,6 +430,35 @@ function runOptionalFailingDiagnosticStage(id: string, title: string, command: s
       exitCode: result.status,
       outputs: outputs.map(toRelative)
     };
+  }
+
+  // For a non-zero exit (the expected candidate_gate diagnostic code 1), verify
+  // that every output file was freshly written by this invocation. Stale artifacts
+  // left over from a previous run on the same candidate/revision must not mask a
+  // real current-run failure.
+  if (result.status !== 0) {
+    const staleOutputs = outputs.filter((filePath) => {
+      try {
+        const currentMtime = fs.statSync(filePath).mtimeMs;
+        const priorMtime = preRunMtimes.get(filePath);
+        // "Fresh" means the file was absent before this run, or its mtime advanced.
+        return priorMtime !== undefined && currentMtime <= priorMtime;
+      } catch {
+        return true; // Cannot stat — treat as stale/missing.
+      }
+    });
+    if (staleOutputs.length > 0) {
+      const summary = stderr ?? stdout ?? `Command exited with code ${result.status}.`;
+      return {
+        id,
+        title,
+        status: "failed",
+        summary: `${summary} (artifact(s) not refreshed by this invocation: ${staleOutputs.map(toRelative).join(", ")})`,
+        command: formatCommand(command),
+        exitCode: result.status,
+        outputs: outputs.map(toRelative)
+      };
+    }
   }
 
   const outputLines = `${stdout ?? ""}\n${stderr ?? ""}`
@@ -1787,7 +1829,11 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error(`Phase 1 candidate rehearsal failed: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+const executedDirectly = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+
+if (executedDirectly) {
+  main().catch((error) => {
+    console.error(`Phase 1 candidate rehearsal failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}
