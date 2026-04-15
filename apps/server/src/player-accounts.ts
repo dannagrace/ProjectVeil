@@ -2532,7 +2532,12 @@ export function registerPlayerAccountRoutes(
         }
       });
     } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
+      sendJson(response, 500, {
+        error: {
+          code: "gdpr_delete_failed",
+          message: error instanceof Error ? error.message : String(error)
+        }
+      });
     }
   });
 
