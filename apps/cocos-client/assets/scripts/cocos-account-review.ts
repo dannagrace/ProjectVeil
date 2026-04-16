@@ -4,6 +4,7 @@ import {
   formatAchievementLabel,
   formatWorldEventTypeLabel,
   getLatestProgressedAchievement,
+  getNextProgressionGoalAchievement,
   getLatestUnlockedAchievement,
   type EventLogEntry,
   type PlayerBattleReportCenter,
@@ -367,8 +368,25 @@ function buildProgressionItems(snapshot: PlayerProgressionSnapshot): CocosAccoun
   const summary = snapshot.summary;
   const latestUnlocked = getLatestUnlockedAchievement(snapshot.achievements);
   const latestProgressed = getLatestProgressedAchievement(snapshot.achievements);
+  const nextGoal = getNextProgressionGoalAchievement(snapshot.achievements);
 
   const items: CocosAccountReviewItem[] = [
+    {
+      title: nextGoal ? `下一解锁目标 · ${nextGoal.title}` : "成长路线",
+      detail: nextGoal
+        ? `还差 ${Math.max(0, nextGoal.target - nextGoal.current)} 点进度 · 当前 ${nextGoal.current}/${nextGoal.target} · ${nextGoal.description}`
+        : "已解锁全部成就，接下来重点把战报、活动奖励和长期成长条线一起收满。",
+      footnote: nextGoal
+        ? latestUnlocked
+          ? `最近刚解锁 ${latestUnlocked.title} · 继续推进会更快滚起下一层成长目标`
+          : nextGoal.progressUpdatedAt
+            ? `最近推进 ${formatReviewTimestamp(nextGoal.progressUpdatedAt)}`
+            : "继续完成主线、战斗和奖励领取可稳步推高长期成长"
+        : summary.latestEventAt
+          ? `最近活跃 ${formatReviewTimestamp(summary.latestEventAt)}`
+          : "当前成长路线已全部完成",
+      emphasis: nextGoal ? "positive" : "neutral"
+    },
     {
       title: "成长概览",
       detail: formatProgressionHeadline(snapshot),
