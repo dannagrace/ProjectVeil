@@ -706,6 +706,36 @@ test("VeilRoot completes an active campaign mission from the owned battle result
   });
 });
 
+test("VeilRoot announces gameplay panel switches for the main PVE navigation surfaces", async () => {
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "campaign-player";
+  root.displayName = "余烬守望";
+  root.authMode = "account";
+  root.authProvider = "account-password";
+  root.authToken = "signed.token";
+  root.lastUpdate = createSessionUpdate(1);
+  root.lastUpdate.featureFlags = {
+    battle_pass_enabled: true,
+    pve_enabled: true,
+    quest_system_enabled: true,
+    tutorial_enabled: true
+  };
+
+  root.refreshGameplayCampaign = async () => undefined;
+  root.refreshDailyDungeonPanel = async () => undefined;
+  root.refreshSeasonProgress = async () => undefined;
+
+  await root.toggleGameplayCampaignPanel(true);
+  assert.match(root.predictionStatus, /已切到主线任务/);
+
+  await root.toggleGameplayDailyDungeonPanel(true);
+  assert.match(root.predictionStatus, /已切到今日地城/);
+
+  await root.toggleGameplayBattlePassPanel(true);
+  assert.match(root.predictionStatus, /已切到成长目标/);
+});
+
 test("VeilRoot settings logout routes through the auth revoke path", async () => {
   const storage = createMemoryStorage();
   (sys as unknown as { localStorage: Storage }).localStorage = storage;

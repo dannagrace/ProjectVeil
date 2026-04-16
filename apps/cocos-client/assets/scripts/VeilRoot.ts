@@ -2277,6 +2277,7 @@ export class VeilRoot extends Component {
       return;
     }
 
+    this.announceGameplayPanelSwitch("成长目标", "正在同步赛季通行证、长期成长与下一解锁目标。");
     this.seasonProgress = this.snapshotSeasonProgressFromProfile();
     this.renderView();
     await this.refreshSeasonProgress();
@@ -2294,6 +2295,7 @@ export class VeilRoot extends Component {
       return;
     }
 
+    this.announceGameplayPanelSwitch("今日地城", "正在同步今日轮换、剩余次数与可领取奖励。");
     this.renderView();
     await this.refreshDailyDungeonPanel();
   }
@@ -2696,6 +2698,7 @@ export class VeilRoot extends Component {
     this.gameplayEquipmentPanelOpen = forceOpen ?? !this.gameplayEquipmentPanelOpen;
     if (this.gameplayEquipmentPanelOpen) {
       this.gameplayCampaignPanelOpen = false;
+      this.announceGameplayPanelSwitch("装备背包", "可以整理战利品、查看穿戴收益并准备下一次推进。");
     }
     this.renderView();
   }
@@ -2714,6 +2717,7 @@ export class VeilRoot extends Component {
     this.gameplayBattlePassPanelOpen = false;
     this.gameplaySeasonalEventPanelOpen = false;
     this.gameplayEquipmentPanelOpen = false;
+    this.announceGameplayPanelSwitch("主线任务", "正在同步当前章节、下一任务和路线建议。");
     this.renderView();
     await this.refreshGameplayCampaign();
   }
@@ -3153,6 +3157,7 @@ export class VeilRoot extends Component {
   }
 
   private async openGameplayBattleReportCenter(): Promise<void> {
+    this.announceGameplayPanelSwitch("战报回看", "正在打开最近一战与完整战报页，方便决定下一局路线。");
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "section.selected",
       section: "battle-replays"
@@ -3162,6 +3167,11 @@ export class VeilRoot extends Component {
       replayId: this.lobbyAccountProfile.battleReportCenter?.latestReportId ?? this.lobbyAccountReviewState.selectedBattleReplayId
     });
     await this.toggleGameplayAccountReviewPanel(true);
+  }
+
+  private announceGameplayPanelSwitch(title: string, detail: string): void {
+    this.predictionStatus = `已切到${title}：${detail}`;
+    this.pushLog(`已切到${title}：${detail}`);
   }
 
   private async refreshAccountReviewPage(
