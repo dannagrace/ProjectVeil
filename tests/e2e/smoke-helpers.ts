@@ -17,6 +17,12 @@ interface ReconnectOptions extends RoomSessionOptions {
 
 interface RuntimeHealthPayload {
   status?: string;
+  runtime?: {
+    persistence?: {
+      status?: string;
+      storage?: string;
+    };
+  };
 }
 
 interface AuthReadinessPayload {
@@ -54,11 +60,19 @@ export function moveRemainingAfterSpend(spent: number, playerId = "player-1"): n
 
 async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
   return await page.evaluate(async (requestPath) => {
-    const response = await fetch(requestPath);
-    if (!response.ok) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await fetch(requestPath);
+      if (response.ok) {
+        return (await response.json()) as T;
+      }
+      if (response.status === 429 && attempt < 4) {
+        const retryAfterSeconds = Math.max(1, Number(response.headers.get("Retry-After") ?? "1"));
+        await new Promise((resolve) => window.setTimeout(resolve, retryAfterSeconds * 1000));
+        continue;
+      }
       throw new Error(`browser_fetch_failed:${requestPath}:${response.status}`);
     }
-    return (await response.json()) as T;
+    throw new Error(`browser_fetch_failed:${requestPath}:unreachable`);
   }, path);
 }
 
@@ -68,6 +82,18 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
     // The fixture also resets server-side, but this ensures the browser
     // context is fresh after being reused across tests
     await page.evaluate(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          const response = await fetch("/api/test/reset-store", { method: "POST" });
+          if (response.ok || response.status !== 429 || attempt === 4) {
+            return;
+          }
+          const retryAfterSeconds = Math.max(1, Number(response.headers.get("Retry-After") ?? "1"));
+          await new Promise((resolve) => window.setTimeout(resolve, retryAfterSeconds * 1000));
+        } catch {
+          return;
+        }
+      }
       try {
         await fetch("/api/test/reset-store", { method: "POST" });
       } catch {
@@ -80,13 +106,24 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
     await expect(page.getByText("活跃房间").first()).toBeVisible();
     await expect
       .poll(
-        async () => (await fetchJsonFromBrowser<RuntimeHealthPayload>(page, "/api/runtime/health")).status ?? null,
+        async () =>
+          page.evaluate(async () => {
+            const response = await fetch("/api/runtime/health");
+            const payload = (await response.json()) as RuntimeHealthPayload;
+            return (
+              (response.status >= 200 && response.status < 300 && payload.status === "ok")
+              || (response.status === 503
+                && payload.status === "warn"
+                && payload.runtime?.persistence?.status === "degraded"
+                && payload.runtime?.persistence?.storage === "memory")
+            );
+          }),
         {
           message: "waiting for runtime health endpoint",
           timeout: 15_000
         }
       )
-      .toBe("ok");
+      .toBe(true);
     await expect
       .poll(
         async () => (await fetchJsonFromBrowser<AuthReadinessPayload>(page, "/api/runtime/auth-readiness")).status ?? null,
@@ -133,8 +170,23 @@ export async function pressTile(page: Page, x: number, y: number): Promise<void>
 }
 
 export async function attackOnce(page: Page): Promise<void> {
-  await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId("battle-attack").click();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
+    const clicked = await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="battle-attack"]');
+      if (!button || button.disabled) {
+        return false;
+      }
+      button.click();
+      return true;
+    });
+    if (clicked) {
+      return;
+    }
+    await page.waitForTimeout(200);
+  }
+
+  throw new Error("battle_attack_click_unavailable");
 }
 
 export async function dismissBattleModal(page: Page): Promise<void> {

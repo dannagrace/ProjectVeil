@@ -21,7 +21,12 @@ export const test = base.extend({
   page: async ({ page }, use) => {
     // Reset the server's in-memory store before each test
     try {
-      const response = await page.context().request.post(RESET_ENDPOINT);
+      let response = await page.context().request.post(RESET_ENDPOINT);
+      for (let attempt = 0; attempt < 4 && response.status() === 429; attempt += 1) {
+        const retryAfterSeconds = Math.max(1, Number(response.headers()["retry-after"] ?? "1"));
+        await new Promise((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
+        response = await page.context().request.post(RESET_ENDPOINT);
+      }
       if (!response.ok()) {
         console.warn(`Store reset failed: ${response.status()}`);
       }
