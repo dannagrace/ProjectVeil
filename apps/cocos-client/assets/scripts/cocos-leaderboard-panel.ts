@@ -8,6 +8,7 @@ export interface LeaderboardRowView {
   ratingLabel: string;
   tierLabel: string;
   summary: string;
+  spotlight: string;
   isCurrentPlayer: boolean;
 }
 
@@ -15,6 +16,7 @@ export interface CocosLeaderboardPanelView {
   rows: LeaderboardRowView[];
   myRankRow: LeaderboardRowView | null;
   tierBadge: string;
+  focusSummary: string;
 }
 
 export interface CocosLeaderboardPanelInput {
@@ -61,11 +63,54 @@ function formatPromotionSummary(entry: LeaderboardEntry): string {
   return "";
 }
 
+function formatLeaderboardSpotlight(
+  entry: LeaderboardEntry,
+  previousEntry: LeaderboardEntry | null,
+  leadingEntry: LeaderboardEntry | null
+): string {
+  const promotionSummary = formatPromotionSummary(entry);
+  if (promotionSummary) {
+    return promotionSummary;
+  }
+
+  if (entry.rank <= 1 || !leadingEntry) {
+    return "当前领跑";
+  }
+
+  if (previousEntry) {
+    const gapToPrevious = Math.max(0, previousEntry.eloRating - entry.eloRating);
+    if (gapToPrevious > 0) {
+      return `距前一名 ${gapToPrevious} ELO`;
+    }
+  }
+
+  const gapToLeader = Math.max(0, leadingEntry.eloRating - entry.eloRating);
+  return gapToLeader > 0 ? `距榜首 ${gapToLeader} ELO` : "继续巩固当前名次";
+}
+
+function formatLeaderboardFocusSummary(rows: LeaderboardRowView[], myRankRow: LeaderboardRowView | null): string {
+  const leaderRow = rows[0] ?? null;
+  if (!leaderRow) {
+    return "先完成一场结算对局，再回来判断今天的冲榜目标。";
+  }
+
+  if (!myRankRow) {
+    return `先打一场排位进入榜单，再去追 ${leaderRow.displayName} 的当前节奏。`;
+  }
+
+  if (myRankRow.rank === 1) {
+    return `你当前领跑榜单，继续赢一局就能把优势再拉开一点。`;
+  }
+
+  return `今天的排位焦点：继续逼近 ${leaderRow.displayName}，把 ${myRankRow.spotlight} 先追回来。`;
+}
+
 export function buildCocosLeaderboardPanelView(input: CocosLeaderboardPanelInput): CocosLeaderboardPanelView {
-  const rows = input.entries.map<LeaderboardRowView>((entry) => {
+  const leadingEntry = input.entries[0] ?? null;
+  const rows = input.entries.map<LeaderboardRowView>((entry, index) => {
     const tierLabel = formatDivisionLabel(entry);
-    const promotionSummary = formatPromotionSummary(entry);
     const isCurrentPlayer = entry.playerId === input.myPlayerId;
+    const spotlight = formatLeaderboardSpotlight(entry, input.entries[index - 1] ?? null, leadingEntry);
     return {
       playerId: entry.playerId,
       rank: entry.rank,
@@ -73,7 +118,8 @@ export function buildCocosLeaderboardPanelView(input: CocosLeaderboardPanelInput
       displayName: entry.displayName.trim() || entry.playerId,
       ratingLabel: `ELO ${entry.eloRating}`,
       tierLabel,
-      summary: `#${entry.rank} ${entry.displayName.trim() || entry.playerId} · ELO ${entry.eloRating} · ${tierLabel}${promotionSummary ? ` · ${promotionSummary}` : ""}`,
+      summary: `#${entry.rank} ${entry.displayName.trim() || entry.playerId} · ELO ${entry.eloRating} · ${tierLabel} · ${spotlight}`,
+      spotlight,
       isCurrentPlayer
     };
   });
@@ -82,6 +128,7 @@ export function buildCocosLeaderboardPanelView(input: CocosLeaderboardPanelInput
   return {
     rows,
     myRankRow,
-    tierBadge: formatTierBadge(myRankRow, input.entries[0]?.tier)
+    tierBadge: formatTierBadge(myRankRow, input.entries[0]?.tier),
+    focusSummary: formatLeaderboardFocusSummary(rows, myRankRow)
   };
 }

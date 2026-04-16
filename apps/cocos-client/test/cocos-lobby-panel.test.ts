@@ -583,10 +583,11 @@ test("VeilLobbyPanel renders leaderboard rows and highlights the current player 
   component.scheduleOnce = () => undefined;
   component.render(state);
 
-  assert.match(readCardLabel(node, "LobbyLeaderboardStatus"), /当前徽记 铂金/);
-  assert.match(readCardLabel(node, "LobbyLeaderboardList"), /#2 Bravo · 我 · ELO 1524 · 铂金/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardStatus"), /当前冲榜 铂金 · #2/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardStatus"), /继续逼近 Alpha/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardList"), /#2 Bravo · ELO 1524 · 铂金 · 距前一名 164 ELO · 我/);
   assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /我的排名/);
-  assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /#2 Bravo/);
+  assert.match(readCardLabel(node, "LobbyLeaderboardMyRank"), /#2 Bravo · ELO 1524 · 铂金 · 距前一名 164 ELO/);
   component.onDestroy();
 });
 

@@ -203,11 +203,11 @@ test("buildCocosBattleReplayCenterView adds next-run motivation when only summar
     roomId: replay.roomId,
     playerId: replay.playerId,
     battleId: replay.battleId,
-    battleKind: replay.battleKind,
+    battleKind: "hero",
     playerCamp: replay.playerCamp,
     heroId: replay.heroId,
-    opponentHeroId: replay.opponentHeroId,
-    neutralArmyId: replay.neutralArmyId,
+    opponentHeroId: "hero-9",
+    neutralArmyId: undefined,
     startedAt: replay.startedAt,
     completedAt: replay.completedAt,
     result: "defeat",
@@ -226,8 +226,8 @@ test("buildCocosBattleReplayCenterView adds next-run motivation when only summar
   });
 
   assert.equal(view.state, "ready");
-  assert.match(view.detailLines.join("\n"), /复盘提示：本局 3 回合 \/ 5 步/);
-  assert.match(view.detailLines.join("\n"), /下一局：先回主线或地城补强，再回来挑战这支守军。/);
+  assert.match(view.detailLines.join("\n"), /复盘提示：本局 3 回合 \/ 5 步，建议先回看 hero-9 先手后的掉员节点。/);
+  assert.match(view.detailLines.join("\n"), /下一局：先补兵、换技能，再回到房间里找 hero-9 复仇。/);
 });
 
 test("buildCocosBattleReplayCenterView updates controls across playing, stepped, completed and reset playback states", () => {

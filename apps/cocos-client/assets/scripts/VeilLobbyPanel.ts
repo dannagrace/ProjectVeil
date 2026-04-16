@@ -1379,12 +1379,18 @@ export class VeilLobbyPanel extends Component {
     });
     const statusLines =
       leaderboardStatus === "loading"
-        ? ["排行榜", "正在同步最新天梯...", "读取前 50 名与当前账号排位。"]
+        ? ["排行榜", "正在同步最新天梯...", "读取前 50 名与当前账号排位，稍后会刷新今日冲榜焦点。"]
         : leaderboardStatus === "error"
           ? ["排行榜", "同步失败", leaderboardError?.trim() || "暂时无法读取排行榜，请稍后重试。"]
           : leaderboardView.rows.length === 0
-            ? ["排行榜", "暂时没有已结算的排名数据", "完成对局并结算后，这里会显示最新天梯名次。"]
-            : ["排行榜", `当前徽记 ${leaderboardView.tierBadge}`, `已同步 ${leaderboardView.rows.length} 名玩家 · 使用 HUD 强调当前账号。`];
+            ? ["排行榜", "暂时没有已结算的排名数据", leaderboardView.focusSummary]
+            : [
+                "排行榜",
+                leaderboardView.myRankRow
+                  ? `当前冲榜 ${leaderboardView.tierBadge} · ${leaderboardView.myRankRow.rankLabel}`
+                  : `当前冲榜 ${leaderboardView.tierBadge} · 仍未上榜`,
+                leaderboardView.focusSummary
+              ];
 
     let nextTopY = this.renderCard(
       "LobbyLeaderboardStatus",
@@ -1415,9 +1421,7 @@ export class VeilLobbyPanel extends Component {
       return nextTopY;
     }
 
-    const rows = leaderboardView.rows.slice(0, 5).map((row) =>
-      `${row.rankLabel} ${row.displayName}${row.isCurrentPlayer ? " · 我" : ""} · ${row.ratingLabel} · ${row.tierLabel}`
-    );
+    const rows = leaderboardView.rows.slice(0, 5).map((row) => `${row.summary}${row.isCurrentPlayer ? " · 我" : ""}`);
     nextTopY = this.renderCard(
       "LobbyLeaderboardList",
       centerX,
@@ -1438,10 +1442,10 @@ export class VeilLobbyPanel extends Component {
     const myRankLines = leaderboardView.myRankRow
       ? [
           "我的排名",
-          `${leaderboardView.myRankRow.rankLabel} ${leaderboardView.myRankRow.displayName}`,
-          `${leaderboardView.myRankRow.ratingLabel} · ${leaderboardView.myRankRow.tierLabel}`
+          leaderboardView.myRankRow.summary,
+          leaderboardView.focusSummary
         ]
-      : ["我的排名", "当前未进入前 50", "继续完成排位对局即可冲榜。"];
+      : ["我的排名", "当前未进入前 50", leaderboardView.focusSummary];
 
     return this.renderCard(
       "LobbyLeaderboardMyRank",

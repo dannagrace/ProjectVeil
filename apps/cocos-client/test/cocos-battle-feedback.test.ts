@@ -203,7 +203,7 @@ test("battle feedback summarizes action, progress, and outcome", () => {
   assert.equal(victoryFeedback?.tone, "victory");
   assert.equal(victoryFeedback?.badge, "WIN");
   assert.match(victoryFeedback?.detail ?? "", /战线：我方剩余 1 队 \/ 对方剩余 0 队/);
-  assert.match(victoryFeedback?.detail ?? "", /准备返回世界地图/);
+  assert.match(victoryFeedback?.detail ?? "", /返回世界地图继续推进当前回合/);
 
   const defeatFeedback = buildBattleTransitionFeedback(createResolvedUpdate("defender_victory"), "hero-1", battle);
   assert.equal(defeatFeedback?.tone, "defeat");
@@ -252,7 +252,8 @@ test("battle feedback calls out pvp encounter identity and settlement state", ()
     "hero-1"
   );
   assert.equal(pvpEnter?.title, "PVP 对抗已展开");
-  assert.match(pvpEnter?.detail ?? "", /room-alpha\/battle-pvp/);
+  assert.match(pvpEnter?.detail ?? "", /房间 room-alpha\/battle-pvp 已锁定/);
+  assert.match(pvpEnter?.detail ?? "", /胜负会直接回写房间态/);
 
   const pvpSettlement = buildBattleTransitionFeedback(
     {
@@ -264,7 +265,7 @@ test("battle feedback calls out pvp encounter identity and settlement state", ()
   );
   assert.equal(pvpSettlement?.title, "PVP 结果回写中");
   assert.match(pvpSettlement?.detail ?? "", /PVP 结算：对手 hero-9/);
-  assert.match(pvpSettlement?.detail ?? "", /等待房间确认胜负并回写 PVP 世界态/);
+  assert.match(pvpSettlement?.detail ?? "", /等待房间回写胜负、名次与 hero-9 的位置/);
 });
 
 test("battle transition feedback summarizes settlement rewards and field state", () => {
