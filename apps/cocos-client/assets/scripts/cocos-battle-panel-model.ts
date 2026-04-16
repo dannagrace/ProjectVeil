@@ -405,10 +405,23 @@ function buildBattlePresentationContextLines(
 function buildBattleResultContextLines(presentationState: CocosBattlePresentationState): string[] {
   const battleId = presentationState.battleId ? `会话：${presentationState.battleId} · ${presentationState.badge}` : null;
   return [
+    `结果：${resolveBattleResultLabel(presentationState)}`,
     `流程：${formatBattleJourneyLine(presentationState)}`,
     battleId,
     `下一步：${resolveBattleResultNextStepLine(presentationState)}`
   ].filter((line): line is string => Boolean(line));
+}
+
+function resolveBattleResultLabel(presentationState: CocosBattlePresentationState): string {
+  if (presentationState.result === "victory") {
+    return "胜利";
+  }
+
+  if (presentationState.result === "defeat") {
+    return "失利";
+  }
+
+  return "等待确认";
 }
 
 function formatBattleJourneyLine(presentationState: CocosBattlePresentationState | null): string {

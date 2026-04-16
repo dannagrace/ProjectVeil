@@ -36,6 +36,7 @@ test("VeilBattleTransition uses pixel terrain frames for the formal battle overl
     subtitle: "切入战斗场景",
     tone: "enter",
     terrain: "sand",
+    summaryLines: [],
     detailChips: [
       { icon: "battle", label: "中立遭遇" },
       { icon: "hero", label: "Guard x12" }
@@ -50,6 +51,7 @@ test("VeilBattleTransition uses pixel terrain frames for the formal battle overl
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlayBadge")), "ENGAGE");
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlayTitle")), "遭遇中立守军");
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlaySubtitle")), "切入战斗场景");
+  assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlaySummary")), "");
   assert.equal(terrainNode?.active, true);
   assert.equal(terrainSprite?.spriteFrame?.name, "pixel/terrain/sand-tile");
   assert.equal(terrainOpacity?.opacity, 246);
@@ -62,13 +64,19 @@ test("VeilBattleTransition uses pixel terrain frames for the formal battle overl
     subtitle: "返回世界地图",
     tone: "victory",
     terrain: null,
-    detailChips: []
+    summaryLines: ["结果：胜利", "奖励：金币 +12", "下一步：返回世界地图继续推进当前回合"],
+    detailChips: [
+      { icon: "battle", label: "胜利" },
+      { icon: "gold", label: "金币 +12" },
+      { icon: "battle", label: "返回世界地图" }
+    ]
   });
 
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlayBadge")), "VICTORY");
   assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlayTitle")), "战斗胜利");
+  assert.equal(readLabelString(findNode(node, "ProjectVeilBattleOverlaySummary")), "结果：胜利\n奖励：金币 +12\n下一步：返回世界地图继续推进当前回合");
   assert.equal(terrainNode?.active, false);
   assert.equal(terrainSprite?.spriteFrame, null);
   assert.equal(terrainOpacity?.opacity, 0);
-  assert.equal(findNode(node, "ProjectVeilBattleOverlayChips")?.active, false);
+  assert.equal(findNode(node, "ProjectVeilBattleOverlayChips")?.active, true);
 });
