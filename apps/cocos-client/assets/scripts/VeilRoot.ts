@@ -1121,6 +1121,9 @@ export class VeilRoot extends Component {
       onOpenDailyDungeon: () => {
         void this.openLobbyPvePanel("daily-dungeon");
       },
+      onOpenBattlePass: () => {
+        void this.openLobbyPvePanel("battle-pass");
+      },
       onOpenConfigCenter: () => {
         this.openConfigCenter();
       },
@@ -1569,6 +1572,7 @@ export class VeilRoot extends Component {
         shopStatus: this.lobbyShopStatus,
         shopLoading: this.lobbyShopLoading,
         seasonProgress: this.seasonProgress,
+        activeSeasonalEvent: this.activeSeasonalEvent,
         dailyQuestClaimingId: this.dailyQuestClaimingId,
         mailboxClaimingMessageId: this.mailboxClaimingMessageId,
         mailboxClaimAllBusy: this.mailboxClaimAllInFlight
@@ -2285,9 +2289,13 @@ export class VeilRoot extends Component {
     await this.refreshDailyDungeonPanel();
   }
 
-  private async openLobbyPvePanel(target: "campaign" | "daily-dungeon"): Promise<void> {
+  private async openLobbyPvePanel(target: "campaign" | "daily-dungeon" | "battle-pass"): Promise<void> {
     if (this.authMode !== "account" || !this.authToken) {
-      this.lobbyStatus = target === "campaign" ? "主线章节需要正式账号会话。" : "每日地城需要正式账号会话。";
+      this.lobbyStatus = target === "campaign"
+        ? "主线章节需要正式账号会话。"
+        : target === "daily-dungeon"
+          ? "每日地城需要正式账号会话。"
+          : "赛季通行证需要正式账号会话。";
       this.renderView();
       return;
     }
@@ -2301,6 +2309,11 @@ export class VeilRoot extends Component {
 
     if (target === "campaign") {
       await this.toggleGameplayCampaignPanel(true);
+      return;
+    }
+
+    if (target === "battle-pass") {
+      await this.toggleGameplayBattlePassPanel(true);
       return;
     }
 
