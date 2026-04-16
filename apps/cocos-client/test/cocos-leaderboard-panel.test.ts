@@ -15,7 +15,10 @@ test("buildCocosLeaderboardPanelView marks the current player and exposes a tier
   assert.equal(view.myRankRow?.playerId, "player-2");
   assert.equal(view.myRankRow?.isCurrentPlayer, true);
   assert.equal(view.tierBadge, "铂金");
+  assert.match(view.rows[0]?.summary ?? "", /当前领跑/);
   assert.match(view.rows[1]?.summary ?? "", /Bravo/);
+  assert.match(view.rows[1]?.summary ?? "", /距前一名 170 ELO/);
+  assert.match(view.focusSummary, /继续逼近 Alpha/);
 });
 
 test("buildCocosLeaderboardPanelView falls back to the leading tier badge when the player is not ranked", () => {
@@ -26,6 +29,7 @@ test("buildCocosLeaderboardPanelView falls back to the leading tier badge when t
 
   assert.equal(view.myRankRow, null);
   assert.equal(view.tierBadge, "钻石");
+  assert.match(view.focusSummary, /先打一场排位进入榜单/);
 });
 
 test("buildCocosLeaderboardPanelView returns an unranked badge for an empty ladder", () => {
@@ -37,4 +41,5 @@ test("buildCocosLeaderboardPanelView returns an unranked badge for an empty ladd
   assert.deepEqual(view.rows, []);
   assert.equal(view.myRankRow, null);
   assert.equal(view.tierBadge, "UNRANKED");
+  assert.match(view.focusSummary, /先完成一场结算对局/);
 });
