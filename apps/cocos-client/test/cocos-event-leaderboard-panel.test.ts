@@ -71,9 +71,13 @@ test("buildCocosEventLeaderboardPanelView formats player standing and reward tie
   assert.equal(view.visible, true);
   assert.match(view.playerScoreLabel, /160/);
   assert.match(view.playerRankLabel, /#2/);
+  assert.match(view.playerRankLabel, /Frontier Defender/);
+  assert.match(view.leaderboardTitle, /Bridge Champion/);
+  assert.match(view.statusLabel, /距前一名 Lyra 还差 61 分/);
   assert.equal(view.topRows[1]?.isCurrentPlayer, true);
   assert.equal(view.rewardTiers[1]?.unlocked, true);
   assert.equal(view.rewardTiers[0]?.unlocked, false);
+  assert.match(view.rewardTiers[0]?.stateLabel ?? "", /还需冲进 #1/);
 });
 
 test("buildCocosEventLeaderboardPanelView hides itself without an active event", () => {
