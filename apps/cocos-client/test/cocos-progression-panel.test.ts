@@ -124,6 +124,9 @@ test("buildCocosBattlePassPanelView keeps earlier unlocked unclaimed tiers visib
   assert.equal(view.tiers[0]?.tier, 3);
   assert.equal(view.tiers[0]?.freeTrack.claimable, true);
   assert.match(view.nextRewardLabel, /下一奖励 T3/);
+  assert.match(view.subtitle, /本轮跑道 可立刻领 2 档免费奖励/);
+  assert.match(view.premiumStatusLabel, /现在开通可立即补领 2 档金色奖励/);
+  assert.match(view.statusLabel, /可领取历史段位奖励/);
 });
 
 test("resolveCocosBattlePassClaimableRewardSummary surfaces the first claimable tier reward", () => {
