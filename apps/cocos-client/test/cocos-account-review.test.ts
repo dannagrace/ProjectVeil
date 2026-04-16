@@ -178,12 +178,15 @@ test("buildCocosAccountReviewPage formats the progression surface from the lates
   assert.equal(review.section, "progression");
   assert.equal(review.title, "账号成长");
   assert.equal(review.pageLabel, "1/1");
-  assert.equal(review.items[0]?.title, "下一解锁目标 · 猎敌者");
-  assert.match(review.items[0]?.detail ?? "", /还差 1 点进度 · 当前 2\/3/);
-  assert.match(review.items[1]?.detail ?? "", /^成就 1\/5 已解锁 · 最新 初次交锋$/);
-  assert.equal(review.items[2]?.title, "最新解锁 · 初次交锋");
+  assert.equal(review.items[0]?.title, "回流摘要");
+  assert.match(review.items[0]?.detail ?? "", /最近刚解锁 初次交锋/);
+  assert.match(review.items[0]?.footnote ?? "", /现在最值得接回 猎敌者/);
+  assert.equal(review.items[1]?.title, "下一关键目标 · 猎敌者");
+  assert.match(review.items[1]?.detail ?? "", /再推进 1 点就能解锁 · 当前 2\/3/);
+  assert.match(review.items[2]?.detail ?? "", /^成就 1\/5 已解锁 · 最新 初次交锋 · 正在推进 1 条长期目标$/);
+  assert.equal(review.items[3]?.title, "最新解锁 · 初次交锋");
   assert.equal(review.items.at(-1)?.title, "最近事件");
-  assert.equal(review.tabs.map((tab) => `${tab.label}:${tab.count}`).join(" | "), "成长:4 | 战报:2 | 事件:3 | 成就:3");
+  assert.equal(review.tabs.map((tab) => `${tab.label}:${tab.count}`).join(" | "), "成长:5 | 战报:2 | 事件:3 | 成就:3");
 });
 
 test("transitionCocosAccountReviewState exposes loading and error banners for paged history sections", () => {
