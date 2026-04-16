@@ -369,16 +369,27 @@ function buildProgressionItems(snapshot: PlayerProgressionSnapshot): CocosAccoun
   const latestUnlocked = getLatestUnlockedAchievement(snapshot.achievements);
   const latestProgressed = getLatestProgressedAchievement(snapshot.achievements);
   const nextGoal = getNextProgressionGoalAchievement(snapshot.achievements);
+  const latestEvent = snapshot.recentEventLog[0] ?? null;
+  const unlockedLabel = latestUnlocked ? `最近刚解锁 ${latestUnlocked.title}` : "最近还没有新的长期解锁";
+  const eventLabel = latestEvent ? `上一笔关键记录是“${latestEvent.description}”` : "最近关键事件待同步";
 
   const items: CocosAccountReviewItem[] = [
     {
-      title: nextGoal ? `下一解锁目标 · ${nextGoal.title}` : "成长路线",
+      title: "回流摘要",
+      detail: `${unlockedLabel} · ${eventLabel}`,
+      footnote: nextGoal
+        ? `现在最值得接回 ${nextGoal.title} · 还差 ${Math.max(0, nextGoal.target - nextGoal.current)} 点进度`
+        : "当前长期成长路线已基本收满，下一步更适合回到活动、战报和高价值奖励。",
+      emphasis: "positive"
+    },
+    {
+      title: nextGoal ? `下一关键目标 · ${nextGoal.title}` : "成长路线",
       detail: nextGoal
-        ? `还差 ${Math.max(0, nextGoal.target - nextGoal.current)} 点进度 · 当前 ${nextGoal.current}/${nextGoal.target} · ${nextGoal.description}`
+        ? `再推进 ${Math.max(0, nextGoal.target - nextGoal.current)} 点就能解锁 · 当前 ${nextGoal.current}/${nextGoal.target} · ${nextGoal.description}`
         : "已解锁全部成就，接下来重点把战报、活动奖励和长期成长条线一起收满。",
       footnote: nextGoal
         ? latestUnlocked
-          ? `最近刚解锁 ${latestUnlocked.title} · 继续推进会更快滚起下一层成长目标`
+          ? `接着上一轮的 ${latestUnlocked.title} 往下推，会更容易滚起下一层成长目标`
           : nextGoal.progressUpdatedAt
             ? `最近推进 ${formatReviewTimestamp(nextGoal.progressUpdatedAt)}`
             : "继续完成主线、战斗和奖励领取可稳步推高长期成长"
@@ -388,8 +399,8 @@ function buildProgressionItems(snapshot: PlayerProgressionSnapshot): CocosAccoun
       emphasis: nextGoal ? "positive" : "neutral"
     },
     {
-      title: "成长概览",
-      detail: formatProgressionHeadline(snapshot),
+      title: "当前势头",
+      detail: `${formatProgressionHeadline(snapshot)} · 正在推进 ${summary.inProgressAchievements} 条长期目标`,
       footnote: summary.latestEventAt
         ? `最近事件 ${formatReviewTimestamp(summary.latestEventAt)} · 共 ${summary.recentEventCount} 条`
         : `最近事件 ${summary.recentEventCount} 条`,
@@ -417,12 +428,12 @@ function buildProgressionItems(snapshot: PlayerProgressionSnapshot): CocosAccoun
     });
   }
 
-  if (snapshot.recentEventLog[0]) {
+  if (latestEvent) {
     items.push({
       title: "最近事件",
-      detail: snapshot.recentEventLog[0].description,
-      footnote: formatReviewTimestamp(snapshot.recentEventLog[0].timestamp),
-      emphasis: snapshot.recentEventLog[0].category === "achievement" ? "positive" : "neutral"
+      detail: latestEvent.description,
+      footnote: formatReviewTimestamp(latestEvent.timestamp),
+      emphasis: latestEvent.category === "achievement" ? "positive" : "neutral"
     });
   }
 
