@@ -425,6 +425,58 @@ function resolveNextRewardLabel(config: ReturnType<typeof getBattlePassConfig>, 
   return `下一奖励 T${nextTier.tier} · 免费 ${formatRewardLabel(nextTier.freeReward)} · 高级 ${formatRewardLabel(nextTier.premiumReward)}`;
 }
 
+function countUnlockedUnclaimedTiers(
+  config: ReturnType<typeof getBattlePassConfig>,
+  progress: CocosSeasonProgress
+): number {
+  return config.tiers.filter(
+    (tier) => tier.tier <= progress.seasonPassTier && !progress.seasonPassClaimedTiers.includes(tier.tier)
+  ).length;
+}
+
+function resolveBattlePassRunwayLabel(
+  config: ReturnType<typeof getBattlePassConfig>,
+  progress: CocosSeasonProgress
+): string {
+  const unlockedUnclaimed = countUnlockedUnclaimedTiers(config, progress);
+  const nextTier = config.tiers.find((tier) => tier.tier === progress.seasonPassTier + 1) ?? null;
+  if (unlockedUnclaimed > 0) {
+    return progress.seasonPassPremium
+      ? `本轮跑道 可立刻清掉 ${unlockedUnclaimed} 档已解锁奖励。`
+      : `本轮跑道 可立刻领 ${unlockedUnclaimed} 档免费奖励，解锁高级后还能补领同档金色奖励。`;
+  }
+
+  if (!nextTier) {
+    return "本轮跑道 当前已到赛季顶点，重点改成把剩余奖励全部清干净。";
+  }
+
+  const xpGap = Math.max(0, nextTier.xpRequired - Math.max(0, progress.seasonXp));
+  return progress.seasonPassPremium
+    ? `本轮跑道 再拿 ${xpGap} XP 就能冲到 T${nextTier.tier}。`
+    : `本轮跑道 再拿 ${xpGap} XP 冲到 T${nextTier.tier}，该层还藏着高级金色奖励。`;
+}
+
+function resolvePremiumValueLabel(
+  config: ReturnType<typeof getBattlePassConfig>,
+  progress: CocosSeasonProgress
+): string {
+  if (progress.seasonPassPremium) {
+    return "高级通行证已激活，当前赛季的高级轨道奖励都可以持续滚进回流收益。";
+  }
+
+  const unlockedUnclaimed = countUnlockedUnclaimedTiers(config, progress);
+  if (unlockedUnclaimed > 0) {
+    return `未解锁高级轨道 · 现在开通可立即补领 ${unlockedUnclaimed} 档金色奖励。`;
+  }
+
+  const nextTier = config.tiers.find((tier) => tier.tier === progress.seasonPassTier + 1) ?? null;
+  if (!nextTier) {
+    return "未解锁高级轨道 · 当前已到赛季顶点，开通后主要补领历史高级奖励。";
+  }
+
+  return `未解锁高级轨道 · 冲到 T${nextTier.tier} 时可同时拿免费与金色双轨奖励。`;
+}
+
 export function buildCocosBattlePassPanelView(input: BuildCocosBattlePassPanelInput): CocosBattlePassPanelView {
   const progress = input.progress;
   if (!progress || !progress.battlePassEnabled) {
@@ -448,18 +500,18 @@ export function buildCocosBattlePassPanelView(input: BuildCocosBattlePassPanelIn
   return {
     visible: true,
     title: "赛季通行证",
-    subtitle: `当前等级 T${progress.seasonPassTier} · ${progress.seasonPassPremium ? "高级通行证已激活" : "免费通行证"}`,
+    subtitle: `当前等级 T${progress.seasonPassTier} · ${progress.seasonPassPremium ? "高级通行证已激活" : "免费通行证"} · ${resolveBattlePassRunwayLabel(config, progress)}`,
     progressLabel: progressMeter.label,
     progressRatio: progressMeter.ratio,
     nextRewardLabel: resolveNextRewardLabel(config, progress),
-    premiumStatusLabel: progress.seasonPassPremium ? "高级通行证已解锁全部高级轨道。" : "解锁高级轨道可领取金色奖励。", 
+    premiumStatusLabel: resolvePremiumValueLabel(config, progress),
     premiumActionLabel: input.pendingPremiumPurchase
       ? "购买中..."
       : progress.seasonPassPremium
         ? "已解锁"
         : "解锁高级通行证",
     premiumPurchaseEnabled: !input.pendingPremiumPurchase && !progress.seasonPassPremium,
-    statusLabel: input.statusLabel,
+    statusLabel: `${resolveBattlePassRunwayLabel(config, progress)}${input.statusLabel ? ` · ${input.statusLabel}` : ""}`,
     tiers: resolveVisibleTiers(config, progress).map((tier) => ({
       tier: tier.tier,
       tierLabel: `T${tier.tier}`,
