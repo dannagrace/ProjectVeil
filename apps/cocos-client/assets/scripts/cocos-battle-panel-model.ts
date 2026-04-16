@@ -217,6 +217,14 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
   const bossPhaseDescriptor = buildBossPhaseDescriptor(battle);
   const presentationLines = buildBattlePresentationContextLines(state.update, battle, state.presentationState, canAct, state.actionPending);
   const roomContextLines = buildBattleRoomContextLines(state, battle);
+  const tacticalSummaryLines = buildBattleTacticalSummaryLines({
+    canAct,
+    actionPending: state.actionPending,
+    activeUnit,
+    attackTarget,
+    selectedTargetId,
+    controlledCamp: state.controlledCamp
+  });
 
   return {
     title: resolveBattlePanelTitle(state.presentationState),
@@ -228,6 +236,7 @@ export function buildBattlePanelViewModel(state: BattlePanelInput): BattlePanelV
       `${battle.id} · 第 ${battle.round} 回合`,
       ...roomContextLines,
       ...presentationLines,
+      ...tacticalSummaryLines,
       ...(bossPhaseDescriptor
         ? [
             `首领阶段：${bossPhaseDescriptor.phaseLabel} · 阈值 ${bossPhaseDescriptor.thresholdPercent}% HP`,
@@ -399,6 +408,49 @@ function buildBattlePresentationContextLines(
     `会话：${roomId}/${battle.id} · ${formatEncounterLabel(battle)}`,
     `表现：${presentationState?.badge ?? "LIVE"} · ${presentationState?.label ?? "战斗进行中"}`,
     `下一步：${resolveBattleNextStepLine(presentationState, canAct, actionPending)}`
+  ];
+}
+
+function buildBattleTacticalSummaryLines(input: {
+  canAct: boolean;
+  actionPending: boolean;
+  activeUnit: BattleState["units"][string] | null;
+  attackTarget: BattleState["units"][string] | null;
+  selectedTargetId: string | null;
+  controlledCamp: BattleCamp | null;
+}): string[] {
+  if (input.actionPending) {
+    return [
+      "战术焦点：当前指令正在结算，优先确认伤害、状态与回合归属。",
+      "建议动作：等待权威回写后，再决定是否追击、转火或进入防御。"
+    ];
+  }
+
+  if (!input.activeUnit) {
+    return [
+      "战术焦点：当前没有行动单位，战场正在等待下一次接管。",
+      "建议动作：先观察阶段提示和行动顺序。"
+    ];
+  }
+
+  if (!input.canAct) {
+    const sideLabel = input.controlledCamp ? (input.controlledCamp === "attacker" ? "我方" : "守军方") : "当前视角";
+    return [
+      `战术焦点：当前是${input.activeUnit.camp === "attacker" ? "进攻方" : "防守方"}行动，${sideLabel}处于观察窗口。`,
+      "建议动作：优先看敌方换位与状态变化，准备下一轮集火。"
+    ];
+  }
+
+  if (!input.attackTarget) {
+    return [
+      "战术焦点：你已经拿到行动权，但还没有锁定目标。",
+      "建议动作：先在目标列表中选中敌方单位，再决定普通攻击还是技能。"
+    ];
+  }
+
+  return [
+    `战术焦点：优先处理 ${input.attackTarget.stackName} x${input.attackTarget.count}。`,
+    `建议动作：当前锁定 ${input.selectedTargetId ?? input.attackTarget.id} · ${buildTargetMeta(input.attackTarget)}`
   ];
 }
 
@@ -694,7 +746,9 @@ function buildActions(
     {
       key: "attack",
       label: attackTarget ? `攻击 ${attackTarget.stackName}` : "攻击 --",
-      subtitle: attackTarget ? `目标：${attackTarget.stackName} · ${buildTargetMeta(attackTarget)}` : "请选择一个目标",
+      subtitle: attackTarget
+        ? `立即压制 ${attackTarget.stackName} · ${buildTargetMeta(attackTarget)}`
+        : "先在上方目标列表中选定攻击对象",
       enabled: Boolean(canAct && activeUnitId && attackTarget),
       action:
         canAct && activeUnitId && attackTarget
@@ -708,7 +762,7 @@ function buildActions(
     {
       key: "wait",
       label: "等待",
-      subtitle: "延后到本轮稍后行动",
+      subtitle: "把本次行动后置，等敌方走位或状态变化后再出手",
       enabled: Boolean(canAct && activeUnitId),
       action:
         canAct && activeUnitId
@@ -721,7 +775,7 @@ function buildActions(
     {
       key: "defend",
       label: "防御",
-      subtitle: "本回合提升防御姿态",
+      subtitle: "本回合转入保守姿态，准备吃下敌方下一次交换",
       enabled: Boolean(canAct && activeUnitId),
       action:
         canAct && activeUnitId
@@ -745,7 +799,7 @@ function buildActions(
         subtitle: skillLocked
           ? "已被禁魔，无法施法"
           : attackTarget
-            ? `目标：${attackTarget.stackName} · ${compactBattleText(skill.description, 18)}`
+            ? `爆发 ${attackTarget.stackName} · ${compactBattleText(skill.description, 18)}`
             : "请选择一个敌方目标",
         enabled: Boolean(canAct && activeUnitId && attackTarget && skill.remainingCooldown === 0 && !skillLocked),
         action:
