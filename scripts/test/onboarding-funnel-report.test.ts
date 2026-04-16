@@ -19,10 +19,12 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
   const markdownOutputPath = path.join(workspace, "onboarding-funnel-report.md");
 
   const result = spawnSync(
-    "node",
+    "npm",
     [
-      "--import",
+      "exec",
+      "--yes",
       "tsx",
+      "--",
       "./scripts/onboarding-funnel-report.ts",
       "--input",
       eventsFixturePath,
@@ -58,6 +60,15 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
       reachedCount: number;
       dropOffCount: number;
     }>;
+    pmSummary: {
+      focusChainLabel: string;
+      focusStages: Array<{
+        id: string;
+        reachedCount: number;
+        dropOffCount: number;
+      }>;
+      narrative: string[];
+    };
     topFailureReasons: Array<{
       reason: string;
       count: number;
@@ -76,14 +87,49 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
     medianCompletionSeconds: 420,
     medianCompletionMinutes: 7
   });
-  assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_2_seen")?.reachedCount, 4);
-  assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_3_seen")?.dropOffCount, 1);
-  assert.equal(report.stageReports.find((stage) => stage.id === "onboarding_completed")?.dropOffCount, 1);
+  assert.equal(report.pmSummary.focusChainLabel, "Tutorial Completed -> First Campaign Mission Started -> First Battle Settled -> First Reward Claimed");
+  assert.deepEqual(report.pmSummary.focusStages, [
+    {
+      id: "onboarding_completed",
+      label: "Onboarding Completed",
+      reachedCount: 5,
+      dropOffCount: 0,
+      dropOffRateFromPrevious: 0
+    },
+    {
+      id: "first_campaign_mission_started",
+      label: "First Campaign Mission Started",
+      reachedCount: 4,
+      dropOffCount: 1,
+      dropOffRateFromPrevious: 0.2
+    },
+    {
+      id: "first_battle_settled",
+      label: "First Battle Settled",
+      reachedCount: 3,
+      dropOffCount: 1,
+      dropOffRateFromPrevious: 0.25
+    },
+    {
+      id: "first_reward_claimed",
+      label: "First Reward Claimed",
+      reachedCount: 2,
+      dropOffCount: 1,
+      dropOffRateFromPrevious: 0.3333
+    }
+  ]);
+  assert.match(report.pmSummary.narrative[0] ?? "", /2\/6 entrants reached the full post-tutorial chain/);
+  assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_2_seen")?.reachedCount, 5);
+  assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_3_seen")?.dropOffCount, 0);
+  assert.equal(report.stageReports.find((stage) => stage.id === "onboarding_completed")?.reachedCount, 5);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_campaign_mission_started")?.reachedCount, 4);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_battle_settled")?.dropOffCount, 1);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_reward_claimed")?.dropOffCount, 1);
   assert.deepEqual(
     report.topFailureReasons.map((failure) => [failure.reason, failure.count, failure.playerCount]),
     [
+      ["manual_exit", 2, 1],
       ["disconnect", 1, 1],
-      ["manual_exit", 1, 1],
       ["timeout", 1, 1],
       ["validation_failure", 1, 1]
     ]
@@ -94,7 +140,10 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
   assert.equal(report.regressions.some((item) => item.startsWith("median_completion_time_above_threshold:")), true);
 
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
+  assert.match(markdown, /## PM Summary/);
+  assert.match(markdown, /Focus chain: Tutorial Completed -> First Campaign Mission Started -> First Battle Settled -> First Reward Claimed/);
   assert.match(markdown, /## Canonical Stages/);
+  assert.match(markdown, /## Focus Chain/);
   assert.match(markdown, /Completion rate: 33\.3%/);
   assert.match(markdown, /`disconnect` count=1/);
   assert.match(markdown, /Failure reason coverage: 4\/6 entrants/);
