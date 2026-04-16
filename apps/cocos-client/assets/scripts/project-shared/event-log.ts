@@ -96,6 +96,12 @@ export interface PlayerProgressionSummary {
   latestUnlockedAchievementId?: AchievementId;
   latestUnlockedAchievementTitle?: string;
   latestUnlockedAt?: string;
+  nextGoalAchievementId?: AchievementId;
+  nextGoalAchievementTitle?: string;
+  nextGoalCurrent?: number;
+  nextGoalTarget?: number;
+  nextGoalRemaining?: number;
+  nextGoalUpdatedAt?: string;
   recentEventCount: number;
   latestEventAt?: string;
 }
@@ -139,6 +145,41 @@ export function getLatestProgressedAchievement(
     progressed.sort((left, right) => {
       const progressOrder = String(right.progressUpdatedAt).localeCompare(String(left.progressUpdatedAt));
       return progressOrder || left.id.localeCompare(right.id);
+    })[0] ?? null
+  );
+}
+
+export function getNextProgressionGoalAchievement(
+  progress?: Partial<PlayerAchievementProgress>[] | null
+): PlayerAchievementProgress | null {
+  const locked = normalizeAchievementProgress(progress).filter((entry) => !entry.unlocked);
+  if (locked.length === 0) {
+    return null;
+  }
+
+  return (
+    locked.sort((left, right) => {
+      const startedOrder = Number(right.current > 0) - Number(left.current > 0);
+      if (startedOrder !== 0) {
+        return startedOrder;
+      }
+
+      const remainingOrder = Math.max(0, left.target - left.current) - Math.max(0, right.target - right.current);
+      if (remainingOrder !== 0) {
+        return remainingOrder;
+      }
+
+      const progressOrder = String(right.progressUpdatedAt ?? "").localeCompare(String(left.progressUpdatedAt ?? ""));
+      if (progressOrder !== 0) {
+        return progressOrder;
+      }
+
+      const targetOrder = left.target - right.target;
+      if (targetOrder !== 0) {
+        return targetOrder;
+      }
+
+      return left.id.localeCompare(right.id);
     })[0] ?? null
   );
 }
@@ -805,6 +846,7 @@ export function buildPlayerProgressionSnapshot(
   const normalizedRecentEventLog = normalizeEventLogEntries(recentEventLog).slice(0, Math.max(1, Math.floor(eventLimit)));
   const latestProgressed = getLatestProgressedAchievement(normalizedAchievements);
   const latestUnlocked = getLatestUnlockedAchievement(normalizedAchievements);
+  const nextGoal = getNextProgressionGoalAchievement(normalizedAchievements);
   const unlockedAchievements = normalizedAchievements.filter((entry) => entry.unlocked).length;
 
   return {
@@ -824,6 +866,16 @@ export function buildPlayerProgressionSnapshot(
             latestUnlockedAchievementId: latestUnlocked.id,
             latestUnlockedAchievementTitle: latestUnlocked.title,
             latestUnlockedAt: latestUnlocked.unlockedAt
+          }
+        : {}),
+      ...(nextGoal
+        ? {
+            nextGoalAchievementId: nextGoal.id,
+            nextGoalAchievementTitle: nextGoal.title,
+            nextGoalCurrent: nextGoal.current,
+            nextGoalTarget: nextGoal.target,
+            nextGoalRemaining: Math.max(0, nextGoal.target - nextGoal.current),
+            ...(nextGoal.progressUpdatedAt ? { nextGoalUpdatedAt: nextGoal.progressUpdatedAt } : {})
           }
         : {}),
       recentEventCount: normalizedRecentEventLog.length,

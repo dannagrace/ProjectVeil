@@ -1373,6 +1373,12 @@ test("player progression snapshot summarizes unlocked achievements and recent ev
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T10:00:00.000Z",
+    nextGoalAchievementId: "enemy_slayer",
+    nextGoalAchievementTitle: "猎敌者",
+    nextGoalCurrent: 2,
+    nextGoalTarget: 3,
+    nextGoalRemaining: 1,
+    nextGoalUpdatedAt: "2026-03-27T10:04:00.000Z",
     recentEventCount: 1,
     latestEventAt: "2026-03-27T10:05:00.000Z"
   });
