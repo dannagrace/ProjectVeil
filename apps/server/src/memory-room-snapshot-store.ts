@@ -2417,36 +2417,10 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     for (const account of createPlayerAccountsFromWorldState(snapshot.state)) {
       const previous = this.accounts.get(account.playerId);
       this.accounts.set(account.playerId, {
-        ...cloneAccount(account),
+        ...(previous ? cloneAccount(previous) : cloneAccount(account)),
+        playerId: account.playerId,
         displayName: previous?.displayName ?? account.displayName,
-        ...(previous?.avatarUrl ? { avatarUrl: previous.avatarUrl } : {}),
-        eloRating: normalizeEloRating(previous?.eloRating ?? account.eloRating),
-        seasonXp: Math.max(0, Math.floor(previous?.seasonXp ?? account.seasonXp ?? 0)),
-        seasonPassTier: Math.max(1, Math.floor(previous?.seasonPassTier ?? account.seasonPassTier ?? 1)),
-        ...(previous?.seasonPassPremium ? { seasonPassPremium: true } : {}),
-        seasonPassClaimedTiers: structuredClone(previous?.seasonPassClaimedTiers ?? account.seasonPassClaimedTiers ?? []),
-        seasonBadges: structuredClone(previous?.seasonBadges ?? account.seasonBadges ?? []),
-        achievements: structuredClone(previous?.achievements ?? account.achievements),
-        recentEventLog: structuredClone(previous?.recentEventLog ?? account.recentEventLog),
-        recentBattleReplays: structuredClone(previous?.recentBattleReplays ?? account.recentBattleReplays ?? []),
-        ...(previous?.leaderboardAbuseState ? { leaderboardAbuseState: structuredClone(previous.leaderboardAbuseState) } : {}),
-        ...(previous?.leaderboardModerationState
-          ? { leaderboardModerationState: structuredClone(previous.leaderboardModerationState) }
-          : {}),
-        ...(previous?.ageVerified ? { ageVerified: previous.ageVerified } : {}),
-        ...(previous?.isMinor ? { isMinor: previous.isMinor } : {}),
-        ...(previous?.dailyPlayMinutes ? { dailyPlayMinutes: previous.dailyPlayMinutes } : {}),
-        ...(previous?.lastPlayDate ? { lastPlayDate: previous.lastPlayDate } : {}),
-        ...(previous?.loginId ? { loginId: previous.loginId } : {}),
-        ...(previous?.accountSessionVersion != null ? { accountSessionVersion: previous.accountSessionVersion } : {}),
-        ...(previous?.refreshSessionId ? { refreshSessionId: previous.refreshSessionId } : {}),
-        ...(previous?.refreshTokenExpiresAt ? { refreshTokenExpiresAt: previous.refreshTokenExpiresAt } : {}),
-        ...(previous?.wechatMiniGameOpenId ? { wechatMiniGameOpenId: previous.wechatMiniGameOpenId } : {}),
-        ...(previous?.wechatMiniGameUnionId ? { wechatMiniGameUnionId: previous.wechatMiniGameUnionId } : {}),
-        ...(previous?.wechatMiniGameBoundAt ? { wechatMiniGameBoundAt: previous.wechatMiniGameBoundAt } : {}),
-        ...(previous?.credentialBoundAt ? { credentialBoundAt: previous.credentialBoundAt } : {}),
-        ...(previous?.lastRoomId ? { lastRoomId: previous.lastRoomId } : {}),
-        ...(previous?.lastSeenAt ? { lastSeenAt: previous.lastSeenAt } : {}),
+        globalResources: structuredClone(account.globalResources),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });

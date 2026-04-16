@@ -130,6 +130,42 @@ test("memory room snapshot store persists room-derived accounts and later battle
   assert.equal(account?.lastRoomId, "room-memory");
 });
 
+test("memory room snapshot store preserves completed tutorial and account progression when room snapshots resync", async () => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-1",
+    displayName: "暮火侦骑"
+  });
+  await store.savePlayerAccountProgress("player-1", {
+    gems: 12,
+    tutorialStep: null,
+    campaignProgress: {
+      missions: [
+        {
+          missionId: "chapter1-ember-watch",
+          attempts: 1,
+          completedAt: "2026-04-16T08:00:00.000Z"
+        }
+      ]
+    },
+    lastRoomId: "room-memory"
+  });
+
+  await store.save("room-memory", createSnapshot());
+
+  const account = await store.loadPlayerAccount("player-1");
+  assert.equal(account?.tutorialStep ?? null, null);
+  assert.equal(account?.gems, 12);
+  assert.equal(account?.globalResources.gold, 300);
+  assert.deepEqual(account?.campaignProgress?.missions, [
+    {
+      missionId: "chapter1-ember-watch",
+      attempts: 1,
+      completedAt: "2026-04-16T08:00:00.000Z"
+    }
+  ]);
+});
+
 test("memory room snapshot store supports binding and resolving account credentials", async () => {
   const store = createMemoryRoomSnapshotStore();
   await store.ensurePlayerAccount({
