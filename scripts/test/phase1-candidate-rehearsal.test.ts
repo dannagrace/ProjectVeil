@@ -363,10 +363,7 @@ test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with e
     fs.writeFileSync(outputA, '{"stale":true}\n', "utf8");
     fs.writeFileSync(outputB, "# Stale\n", "utf8");
 
-    // Back-date the files to clearly beyond the COARSE_MTIME_TOLERANCE_MS (2 s)
-    // window so the wall-clock freshness check reliably classifies them as stale.
-    // Real stale artifacts from a prior run would have been written minutes or
-    // hours earlier; we use 5 s here to keep the test fast while staying safe.
+    // Back-date the files to simulate artifacts from an old prior run.
     const staleTime = new Date(Date.now() - 5000);
     fs.utimesSync(outputA, staleTime, staleTime);
     fs.utimesSync(outputB, staleTime, staleTime);
@@ -388,23 +385,68 @@ test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with e
   }
 });
 
-test("runOptionalFailingDiagnosticStage: freshly rewritten artifacts with same mtime are not misclassified as stale on coarse-mtime filesystems", () => {
-  // Regression: the original mtime-to-mtime comparison (`currentMtime <= priorMtime`)
-  // falsely classified a freshly rewritten file as stale when the write landed in the
-  // same coarse time-bucket as the pre-run snapshot (e.g. FAT32 at 2 s or NFS at 1 s).
-  // We simulate this by having the command rewrite the artifact and then restore its
-  // mtime to the original value via utimesSync, as a coarse filesystem would.
+test("runOptionalFailingDiagnosticStage: recent stale artifacts (within former 2s tolerance window) are not false-positive passed on quick rerun", () => {
+  // Regression: the wall-clock tolerance approach accepted stale artifacts from
+  // very recent prior runs whose mtimes fell inside the 2-second window, causing
+  // a false-positive pass when the subprocess exited with code 1 without writing.
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-quickrerun-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+    const outputB = path.join(workspace, "output-b.md");
+
+    // Pre-create artifacts with a current mtime, simulating a very recent prior run
+    // (e.g. a rerun triggered less than 2 seconds after the previous invocation).
+    // The mtime is intentionally left "recent" — no back-dating needed — because
+    // the bug was that the 2s tolerance window accepted even millisecond-old files.
+    fs.writeFileSync(outputA, '{"stale":true}\n', "utf8");
+    fs.writeFileSync(outputB, "# Stale\n", "utf8");
+    // Capture mtimes right after writing so the pre-run snapshot will match them.
+    // (No sleep needed: the subprocess will not touch these files.)
+
+    // Command exits with code 1 without refreshing the output files.
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", "process.exit(1)"],
+      [outputA, outputB]
+    );
+
+    assert.equal(result.status, "failed", "recent stale artifacts + exit 1 must be reported as failed, not passed (quick-rerun regression)");
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /not refreshed by this invocation/);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runOptionalFailingDiagnosticStage: artifact rewritten in same coarse-mtime bucket is reported as failed (conservative / safe direction)", () => {
+  // On coarse-grained filesystems (FAT32 2 s, NFS 1 s), a write that lands in the
+  // same mtime bucket as the prior write produces no mtime advancement.  This is
+  // indistinguishable — from mtime alone — from a stale artifact left by a quick
+  // rerun that did NOT refresh the file.
+  //
+  // The previous approach used a 2-second wall-clock tolerance to treat
+  // "mtime unchanged but recent" as "fresh", but that same window caused
+  // false-positive passes for stale artifacts from quick reruns (the blocking
+  // review finding for #1358).
+  //
+  // We now require a strict mtime increase as proof of freshness.  When the
+  // filesystem cannot provide that (coarse bucket collision), we err conservatively:
+  // the stage is reported as failed rather than granted a spurious pass.  This is
+  // the safe direction — a false negative (unnecessary failure) is preferable to a
+  // false positive (masked real failure).  In practice, diagnostic subprocesses that
+  // take more than a fraction of a second will always produce a measurable mtime
+  // advance on Linux/ext4/NTFS/APFS, so this trade-off rarely matters in CI.
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-coarse-mtime-"));
   try {
     const outputA = path.join(workspace, "output-a.json");
 
-    // Pre-create the artifact with a current mtime (recent, but pre-existing).
+    // Pre-create the artifact with a current mtime.
     fs.writeFileSync(outputA, '{"old":true}\n', "utf8");
     const existingMtimeMs = fs.statSync(outputA).mtimeMs;
 
     // The command rewrites outputA but then resets its mtime back to the original
-    // value, mimicking a coarse-grained filesystem that rounds the write timestamp
-    // into the same bucket as the prior write.
+    // value, mimicking a coarse-grained filesystem bucket collision.
     const writeScript = [
       "const fs = require('fs');",
       `fs.writeFileSync(${JSON.stringify(outputA)}, '{"new":true}\\n');`,
@@ -419,12 +461,14 @@ test("runOptionalFailingDiagnosticStage: freshly rewritten artifacts with same m
       [outputA]
     );
 
+    // Conservative: mtime did not advance → reported as failed (safe direction).
     assert.equal(
       result.status,
-      "passed",
-      "freshly rewritten artifact whose mtime was not advanced by a coarse filesystem must not be misclassified as stale"
+      "failed",
+      "artifact whose mtime was not advanced (coarse bucket or untouched) must be reported as failed for safety"
     );
     assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /not refreshed by this invocation/);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }

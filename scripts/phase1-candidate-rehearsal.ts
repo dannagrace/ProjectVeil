@@ -387,13 +387,6 @@ export function runOptionalFailingDiagnosticStage(id: string, title: string, com
     }
   }
 
-  // Wall-clock instant captured immediately before the subprocess starts.
-  // Used as the freshness reference instead of the pre-run mtime so that
-  // coarse-grained filesystems (FAT32 at 2 s, ext3/NFS at 1 s) cannot
-  // misclassify a freshly rewritten output as stale when the write lands in
-  // the same mtime time-bucket as the pre-run snapshot.
-  const preRunWallClockMs = Date.now();
-
   const result = spawnSync(command[0], command.slice(1), {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -444,23 +437,25 @@ export function runOptionalFailingDiagnosticStage(id: string, title: string, com
   // left over from a previous run on the same candidate/revision must not mask a
   // real current-run failure.
   //
-  // Staleness is judged against the wall-clock instant we captured before
-  // spawning, not against the file's prior mtime.  Comparing mtime-to-mtime
-  // would misclassify a freshly rewritten file as stale on coarse-grained
-  // filesystems (FAT32 2 s, ext3/NFS 1 s) where the new write falls inside
-  // the same time-bucket as the pre-run snapshot.  COARSE_MTIME_TOLERANCE_MS
-  // must be larger than the coarsest bucket we expect (2 s) to ensure a file
-  // written during this invocation is always considered fresh.
+  // Freshness is determined by mtime advancement: if a file's mtime did not
+  // increase from the pre-run snapshot, it was not written by this invocation.
+  // This is the only reliable signal — a wall-clock tolerance window (e.g. 2 s)
+  // was previously used to accommodate coarse-grained filesystems (FAT32, NFS),
+  // but that window also accepted stale artifacts from very recent prior runs
+  // whose mtimes happened to fall inside the tolerance, producing false-positive
+  // passes.  Requiring a strict mtime increase eliminates that class of false
+  // positive.  On coarse filesystems where a write lands in the same mtime bucket
+  // as the prior write, we err conservatively: the stage is reported as failed
+  // (safe direction) rather than granting a spurious pass.
   if (result.status !== 0) {
-    const COARSE_MTIME_TOLERANCE_MS = 2000;
     const staleOutputs = outputs.filter((filePath) => {
       try {
         const currentMtime = fs.statSync(filePath).mtimeMs;
         const priorMtime = preRunMtimes.get(filePath);
-        // File is stale only if it existed before the run AND its mtime is
-        // clearly older than the coarse-filesystem tolerance window.  Files
-        // absent before the run (priorMtime === undefined) are always fresh.
-        return priorMtime !== undefined && currentMtime < preRunWallClockMs - COARSE_MTIME_TOLERANCE_MS;
+        // A file absent before the run is always considered fresh (new output).
+        // A file that existed before is stale unless its mtime strictly advanced,
+        // proving it was written during this invocation.
+        return priorMtime !== undefined && currentMtime <= priorMtime;
       } catch {
         return true; // Cannot stat — treat as stale/missing.
       }
