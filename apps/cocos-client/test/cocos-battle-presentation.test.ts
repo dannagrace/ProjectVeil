@@ -267,7 +267,7 @@ test("battle presentation plan formalizes command, enter, impact, and resolution
   assert.equal(resolutionPlan.transition?.copy.badge, "VICTORY");
   assert.deepEqual(resolutionPlan.state.summaryLines.slice(0, 2), [
     "反馈层：动画 胜利 / 音效 胜利 / 转场 结算",
-    "播报：PVE 遭遇已关闭 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 奖励已确认，准备返回世界地图"
+    "播报：PVE 遭遇已关闭 · 结果：胜利 · 战线：我方剩余 1 队 / 对方剩余 0 队 · 下一步：返回世界地图继续推进当前回合"
   ]);
 
   const unsettledResolutionPlan = buildBattlePresentationPlan(

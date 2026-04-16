@@ -7,6 +7,7 @@ export interface BattleTransitionCopy {
   subtitle: string;
   tone: "enter" | "victory" | "defeat";
   terrain: TerrainType | null;
+  summaryLines: string[];
   detailChips: BattleTransitionChip[];
 }
 
@@ -31,6 +32,7 @@ export function buildBattleEnterCopy(update: SessionUpdate): BattleTransitionCop
       subtitle: joinParts([terrainLabel, encounterPosition ? formatEncounterPosition(encounterPosition) : null, "切入战斗场景"]),
       tone: "enter",
       terrain,
+      summaryLines: [],
       detailChips: []
     };
   }
@@ -47,6 +49,7 @@ export function buildBattleEnterCopy(update: SessionUpdate): BattleTransitionCop
       ]),
       tone: "enter",
       terrain,
+      summaryLines: [],
       detailChips: [
         {
           icon: "hero",
@@ -70,6 +73,7 @@ export function buildBattleEnterCopy(update: SessionUpdate): BattleTransitionCop
     ]),
     tone: "enter",
     terrain,
+    summaryLines: [],
     detailChips: []
   };
 }
@@ -78,8 +82,9 @@ export function buildBattleExitCopy(previousBattle: SessionUpdate["battle"], upd
   const terrain = resolveBattleTerrainFromBattle(update, previousBattle);
   const encounterPosition = previousBattle?.encounterPosition ?? null;
   const terrainLabel = terrain ? formatBattleTerrainLabel(terrain) : null;
-  const detailChips = buildBattleExitDetailChips(update.events);
   const isPvp = Boolean(previousBattle?.defenderHeroId);
+  const summaryLines = buildBattleExitSummaryLines(previousBattle, update, didWin);
+  const detailChips = buildBattleExitDetailChips(previousBattle, update.events, didWin);
 
   if (!didWin) {
     return {
@@ -92,7 +97,8 @@ export function buildBattleExitCopy(previousBattle: SessionUpdate["battle"], upd
       ]),
       tone: "defeat",
       terrain,
-      detailChips: detailChips.slice(0, 3)
+      summaryLines,
+      detailChips
     };
   }
 
@@ -106,7 +112,8 @@ export function buildBattleExitCopy(previousBattle: SessionUpdate["battle"], upd
     ]),
     tone: "victory",
     terrain,
-    detailChips: detailChips.slice(0, 3)
+    summaryLines,
+    detailChips
   };
 }
 
@@ -138,7 +145,50 @@ function resolveBattleTerrainFromBattle(update: SessionUpdate, battle: SessionUp
   return resolveEncounterTerrain(update, battle.encounterPosition ?? null);
 }
 
-function buildBattleExitDetailChips(events: WorldEvent[]): BattleTransitionChip[] {
+function buildBattleExitSummaryLines(
+  previousBattle: SessionUpdate["battle"],
+  update: SessionUpdate,
+  didWin: boolean
+): string[] {
+  const isPvp = Boolean(previousBattle?.defenderHeroId);
+  const rewardSummary = buildBattleExitRewardSummary(update.events);
+  return [
+    isPvp ? `结果：${didWin ? "PVP 胜利" : "PVP 失利"}` : `结果：${didWin ? "胜利" : "失利"}`,
+    rewardSummary ? `奖励：${rewardSummary}` : "奖励：暂无额外掉落",
+    buildBattleExitNextStepLine(previousBattle, didWin)
+  ];
+}
+
+function buildBattleExitDetailChips(
+  previousBattle: SessionUpdate["battle"],
+  events: WorldEvent[],
+  didWin: boolean
+): BattleTransitionChip[] {
+  const rewardSummary = collectBattleExitRewardSummary(events);
+  const isPvp = Boolean(previousBattle?.defenderHeroId);
+  const chips: BattleTransitionChip[] = [
+    {
+      icon: "battle",
+      label: isPvp ? (didWin ? "PVP 胜利" : "PVP 失利") : didWin ? "胜利" : "失利"
+    }
+  ];
+
+  if (rewardSummary.label) {
+    chips.push({
+      icon: rewardSummary.icon,
+      label: rewardSummary.label
+    });
+  }
+
+  chips.push({
+    icon: "battle",
+    label: buildBattleExitNextStepChipLabel(previousBattle, didWin)
+  });
+
+  return chips.slice(0, 3);
+}
+
+function collectBattleExitRewardSummary(events: WorldEvent[]): { label: string; icon: BattleTransitionChip["icon"] } {
   const resourceTotals: Record<"gold" | "wood" | "ore", number> = {
     gold: 0,
     wood: 0,
@@ -165,55 +215,71 @@ function buildBattleExitDetailChips(events: WorldEvent[]): BattleTransitionChip[
     }
   }
 
-  const resourceChips = (["gold", "wood", "ore"] as const)
-    .filter((kind) => resourceTotals[kind] > 0)
-    .map((kind) => ({
-      icon: kind,
-      label: `${formatResourceKindLabel(kind)} +${resourceTotals[kind]}`
-    }));
-  const equipmentChip = featuredEquipment
-    ? {
-        icon: "battle" as const,
-        label: featuredEquipment.overflowed
-          ? `未拾取 ${trimChipLabel(featuredEquipment.equipmentName, 8)}`
-          : `${formatEquipmentRarityLabel(featuredEquipment.rarity)} ${trimChipLabel(featuredEquipment.equipmentName, 10)}`
-      }
-    : null;
-  const progressionChip = progressionSummary
-    ? {
-        icon: "hero" as const,
-        label:
-          progressionSummary.levelsGained > 0
-            ? `Lv ${progressionSummary.level}`
-            : `XP +${progressionSummary.experienceGained}`
-      }
-    : null;
-
-  const naturalOrder: BattleTransitionChip[] = [...resourceChips];
-  if (equipmentChip) {
-    naturalOrder.push(equipmentChip);
+  const rewardParts: string[] = [];
+  const resourceKinds = (["gold", "wood", "ore"] as const).filter((kind) => resourceTotals[kind] > 0);
+  rewardParts.push(...resourceKinds.map((kind) => `${formatResourceKindLabel(kind)} +${resourceTotals[kind]}`));
+  if (progressionSummary) {
+    rewardParts.push(
+      progressionSummary.levelsGained > 0
+        ? `Lv ${progressionSummary.level}`
+        : `XP +${progressionSummary.experienceGained}`
+    );
   }
-  if (progressionChip) {
-    naturalOrder.push(progressionChip);
-  }
-  if (naturalOrder.length <= 3) {
-    return naturalOrder;
+  if (featuredEquipment) {
+    rewardParts.push(
+      featuredEquipment.overflowed
+        ? `未拾取 ${trimChipLabel(featuredEquipment.equipmentName, 8)}`
+        : `${formatEquipmentRarityLabel(featuredEquipment.rarity)} ${trimChipLabel(featuredEquipment.equipmentName, 10)}`
+    );
   }
 
-  const prioritized: BattleTransitionChip[] = [];
-  if (equipmentChip) {
-    prioritized.push(equipmentChip);
+  return {
+    label: rewardParts.length > 0 ? rewardParts.join(" / ") : "",
+    icon: resolveBattleExitRewardIcon(resourceTotals, Boolean(progressionSummary), Boolean(featuredEquipment))
+  };
+}
+
+function buildBattleExitRewardSummary(events: WorldEvent[]): string {
+  return collectBattleExitRewardSummary(events).label;
+}
+
+function buildBattleExitNextStepLine(previousBattle: SessionUpdate["battle"], didWin: boolean): string {
+  if (previousBattle?.defenderHeroId) {
+    return didWin ? "下一步：等待房间回写后返回世界地图" : "下一步：等待房间回写后再调整对抗";
   }
-  if (progressionChip) {
-    prioritized.push(progressionChip);
+
+  return didWin ? "下一步：返回世界地图继续推进当前回合" : "下一步：整顿部队后再尝试推进";
+}
+
+function buildBattleExitNextStepChipLabel(previousBattle: SessionUpdate["battle"], didWin: boolean): string {
+  if (previousBattle?.defenderHeroId) {
+    return didWin ? "等待回写后返回世界地图" : "等待回写后再调整对抗";
   }
-  for (const chip of resourceChips) {
-    if (prioritized.length >= 3) {
-      break;
-    }
-    prioritized.push(chip);
+
+  return didWin ? "返回世界地图" : "整顿部队后再战";
+}
+
+function resolveBattleExitRewardIcon(
+  resourceTotals: Record<"gold" | "wood" | "ore", number>,
+  hasProgression: boolean,
+  hasEquipment: boolean
+): BattleTransitionChip["icon"] {
+  if (resourceTotals.gold > 0) {
+    return "gold";
   }
-  return prioritized.slice(0, 3);
+  if (resourceTotals.wood > 0) {
+    return "wood";
+  }
+  if (resourceTotals.ore > 0) {
+    return "ore";
+  }
+  if (hasProgression) {
+    return "hero";
+  }
+  if (hasEquipment) {
+    return "battle";
+  }
+  return "battle";
 }
 
 function mergeProgressionSummary(

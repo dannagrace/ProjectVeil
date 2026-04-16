@@ -124,6 +124,7 @@ test("buildBattleEnterCopy distinguishes pve and pvp encounters", () => {
     subtitle: "荒地战场 · 目标 neutral-7 · 坐标 (5,4)",
     tone: "enter",
     terrain: "dirt",
+    summaryLines: [],
     detailChips: []
   });
 
@@ -147,6 +148,7 @@ test("buildBattleEnterCopy distinguishes pve and pvp encounters", () => {
     subtitle: "草野战场 · 坐标 (3,5) · room-alpha/battle-2 · 我方先手切入，多人对抗即将展开",
     tone: "enter",
     terrain: "grass",
+    summaryLines: [],
     detailChips: [
       { icon: "hero", label: "对手 hero-2" },
       { icon: "battle", label: "room-alpha/battle-2" }
@@ -176,7 +178,15 @@ test("buildBattleExitCopy distinguishes pvp settlement from pve settlement", () 
     subtitle: "草野战场 · 坐标 (3,2) · PVP 结算已回写，房间返回世界地图",
     tone: "victory",
     terrain: "grass",
-    detailChips: []
+    summaryLines: [
+      "结果：PVP 胜利",
+      "奖励：暂无额外掉落",
+      "下一步：等待房间回写后返回世界地图"
+    ],
+    detailChips: [
+      { icon: "battle", label: "PVP 胜利" },
+      { icon: "battle", label: "等待回写后返回世界地图" }
+    ]
   });
 
   assert.deepEqual(buildBattleExitCopy(update.battle, update, false), {
@@ -185,7 +195,15 @@ test("buildBattleExitCopy distinguishes pvp settlement from pve settlement", () 
     subtitle: "草野战场 · 坐标 (3,2) · 对手仍保留在房间地图上，等待世界态回写",
     tone: "defeat",
     terrain: "grass",
-    detailChips: []
+    summaryLines: [
+      "结果：PVP 失利",
+      "奖励：暂无额外掉落",
+      "下一步：等待房间回写后再调整对抗"
+    ],
+    detailChips: [
+      { icon: "battle", label: "PVP 失利" },
+      { icon: "battle", label: "等待回写后再调整对抗" }
+    ]
   });
 });
 
@@ -235,9 +253,15 @@ test("buildBattleExitCopy summarizes rewards and progression", () => {
     subtitle: "荒地战场 · 坐标 (5,4) · 返回世界地图，继续推进前线",
     tone: "victory",
     terrain: "dirt",
+    summaryLines: [
+      "结果：胜利",
+      "奖励：金币 +300 / Lv 2",
+      "下一步：返回世界地图继续推进当前回合"
+    ],
     detailChips: [
-      { icon: "gold", label: "金币 +300" },
-      { icon: "hero", label: "Lv 2" }
+      { icon: "battle", label: "胜利" },
+      { icon: "gold", label: "金币 +300 / Lv 2" },
+      { icon: "battle", label: "返回世界地图" }
     ]
   });
 
@@ -247,9 +271,15 @@ test("buildBattleExitCopy summarizes rewards and progression", () => {
     subtitle: "荒地战场 · 坐标 (5,4) · 部队需要整顿后再战",
     tone: "defeat",
     terrain: "dirt",
+    summaryLines: [
+      "结果：失利",
+      "奖励：金币 +300 / Lv 2",
+      "下一步：整顿部队后再尝试推进"
+    ],
     detailChips: [
-      { icon: "gold", label: "金币 +300" },
-      { icon: "hero", label: "Lv 2" }
+      { icon: "battle", label: "失利" },
+      { icon: "gold", label: "金币 +300 / Lv 2" },
+      { icon: "battle", label: "整顿部队后再战" }
     ]
   });
 });
@@ -323,10 +353,15 @@ test("buildBattleExitCopy prioritizes level and equipment chips when rewards ove
     subtitle: "沙原战场 · 坐标 (5,3) · 返回世界地图，继续推进前线",
     tone: "victory",
     terrain: "sand",
+    summaryLines: [
+      "结果：胜利",
+      "奖励：金币 +250 / 木材 +5 / 矿石 +3 / Lv 2 / 史诗 余烬王冠",
+      "下一步：返回世界地图继续推进当前回合"
+    ],
     detailChips: [
-      { icon: "battle", label: "史诗 余烬王冠" },
-      { icon: "hero", label: "Lv 2" },
-      { icon: "gold", label: "金币 +250" }
+      { icon: "battle", label: "胜利" },
+      { icon: "gold", label: "金币 +250 / 木材 +5 / 矿石 +3 / Lv 2 / 史诗 余烬王冠" },
+      { icon: "battle", label: "返回世界地图" }
     ]
   });
 });
@@ -365,8 +400,15 @@ test("buildBattleExitCopy marks overflowed equipment so failed pickups stay visi
     subtitle: "沙原战场 · 坐标 (5,3) · 返回世界地图，继续推进前线",
     tone: "victory",
     terrain: "sand",
+    summaryLines: [
+      "结果：胜利",
+      "奖励：未拾取 余烬王冠",
+      "下一步：返回世界地图继续推进当前回合"
+    ],
     detailChips: [
-      { icon: "battle", label: "未拾取 余烬王冠" }
+      { icon: "battle", label: "胜利" },
+      { icon: "battle", label: "未拾取 余烬王冠" },
+      { icon: "battle", label: "返回世界地图" }
     ]
   });
 });

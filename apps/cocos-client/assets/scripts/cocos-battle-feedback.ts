@@ -266,14 +266,18 @@ function buildBattleSettlementSummary(
 ): BattleSettlementSummary {
   const resolved = readBattleResolvedView(update);
   const rewards = collectSettlementRewardParts(update);
+  const didWin = didHeroWinResolution(resolved, heroId);
+  const resultStatus = describeSettlementResultState(previousBattle, didWin);
   const fieldStatus = describeSettlementFieldState(previousBattle, heroId, resolved);
   const encounterStatus = describeSettlementEncounterState(previousBattle, heroId, resolved);
-  const lines = [fieldStatus, ...rewards];
+  const handoffLabel = buildSettlementHandoffLabel(previousBattle, resolved, didWin);
+  const lines = [resultStatus, fieldStatus, ...rewards, handoffLabel];
   const detailParts = [
     encounterStatus,
+    resultStatus,
     fieldStatus,
     rewards.length > 0 ? rewards.join(" / ") : null,
-    buildSettlementHandoffLabel(previousBattle, resolved)
+    handoffLabel
   ].filter((part): part is string => Boolean(part));
 
   return {
@@ -423,13 +427,44 @@ function describeSettlementEncounterState(
 
 function buildSettlementHandoffLabel(
   previousBattle: BattleState | null,
-  resolved: BattleResolvedView | null
+  resolved: BattleResolvedView | null,
+  didWin: boolean | null
 ): string {
   if (previousBattle?.defenderHeroId) {
-    return resolved ? "房间胜负已确认，等待回写 PVP 世界态" : "等待房间确认胜负并回写 PVP 世界态";
+    if (didWin === true) {
+      return resolved ? "下一步：等待房间回写后返回世界地图" : "下一步：等待房间确认胜负并回写 PVP 世界态";
+    }
+    if (didWin === false) {
+      return resolved ? "下一步：等待房间回写后再调整对抗" : "下一步：等待房间确认胜负并回写 PVP 世界态";
+    }
+    return resolved ? "下一步：等待房间确认胜负并回写 PVP 世界态" : "下一步：等待房间确认胜负并回写 PVP 世界态";
   }
 
-  return resolved ? "奖励已确认，准备返回世界地图" : "等待世界地图确认奖励、占位与结算结果";
+  if (didWin === true) {
+    return resolved ? "下一步：返回世界地图继续推进当前回合" : "下一步：等待世界地图确认奖励、占位与结算结果";
+  }
+
+  if (didWin === false) {
+    return resolved ? "下一步：整顿部队后再尝试推进" : "下一步：等待世界地图确认奖励、占位与结算结果";
+  }
+
+  return resolved ? "下一步：返回世界地图确认奖励、占位与结算结果" : "下一步：等待世界地图确认奖励、占位与结算结果";
+}
+
+function describeSettlementResultState(previousBattle: BattleState | null, didWin: boolean | null): string {
+  if (!previousBattle) {
+    return "结果：未知";
+  }
+
+  if (didWin === true) {
+    return previousBattle.defenderHeroId ? "结果：PVP 胜利" : "结果：胜利";
+  }
+
+  if (didWin === false) {
+    return previousBattle.defenderHeroId ? "结果：PVP 失利" : "结果：失利";
+  }
+
+  return previousBattle.defenderHeroId ? "结果：PVP 结算回写中" : "结果：战果回写中";
 }
 
 function didHeroWinResolution(resolved: BattleResolvedView | null, heroId: string | null): boolean | null {

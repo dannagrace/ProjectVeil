@@ -11,6 +11,7 @@ const BADGE_NODE_NAME = "ProjectVeilBattleOverlayBadge";
 const TERRAIN_NODE_NAME = "ProjectVeilBattleOverlayTerrain";
 const TITLE_NODE_NAME = "ProjectVeilBattleOverlayTitle";
 const SUBTITLE_NODE_NAME = "ProjectVeilBattleOverlaySubtitle";
+const SUMMARY_NODE_NAME = "ProjectVeilBattleOverlaySummary";
 const CHIP_CONTAINER_NODE_NAME = "ProjectVeilBattleOverlayChips";
 const CHIP_NODE_PREFIX = "ProjectVeilBattleOverlayChip";
 const H_ALIGN_LEFT = 0;
@@ -36,6 +37,7 @@ export class VeilBattleTransition extends Component {
   private terrainOpacity: UIOpacity | null = null;
   private titleLabel: Label | null = null;
   private subtitleLabel: Label | null = null;
+  private summaryLabel: Label | null = null;
   private sequenceToken = 0;
 
   onLoad(): void {
@@ -53,6 +55,7 @@ export class VeilBattleTransition extends Component {
         subtitle: "切入战斗场景",
         tone: "enter",
         terrain: null,
+        summaryLines: [],
         detailChips: []
       },
       this.enterDuration
@@ -67,6 +70,7 @@ export class VeilBattleTransition extends Component {
         subtitle: "返回世界地图",
         tone: "victory",
         terrain: null,
+        summaryLines: [],
         detailChips: []
       },
       this.exitDuration
@@ -83,7 +87,8 @@ export class VeilBattleTransition extends Component {
       !this.terrainSprite ||
       !this.terrainOpacity ||
       !this.titleLabel ||
-      !this.subtitleLabel
+      !this.subtitleLabel ||
+      !this.summaryLabel
     ) {
       return;
     }
@@ -99,6 +104,7 @@ export class VeilBattleTransition extends Component {
     this.badgeLabel.string = copy.badge;
     this.titleLabel.string = copy.title;
     this.subtitleLabel.string = copy.subtitle;
+    this.syncSummaryLines(copy);
     this.syncTerrainPreview(copy);
     this.syncDetailChips(copy);
 
@@ -136,7 +142,8 @@ export class VeilBattleTransition extends Component {
       this.terrainSprite &&
       this.terrainOpacity &&
       this.titleLabel &&
-      this.subtitleLabel
+      this.subtitleLabel &&
+      this.summaryLabel
     ) {
       return;
     }
@@ -183,6 +190,21 @@ export class VeilBattleTransition extends Component {
       V_ALIGN_TOP
     );
     subtitleLabel.node.setPosition(0, -46, 1);
+    const summaryLabel = this.ensureLabelNode(
+      panelNode,
+      SUMMARY_NODE_NAME,
+      10,
+      12,
+      panelTransform.width - 52,
+      42,
+      0,
+      -68,
+      V_ALIGN_TOP
+    );
+    summaryLabel.horizontalAlign = H_ALIGN_LEFT;
+    summaryLabel.verticalAlign = V_ALIGN_TOP;
+    summaryLabel.enableWrapText = true;
+    summaryLabel.node.setPosition(0, -72, 1);
 
     this.overlayNode = overlayNode;
     this.overlayOpacity = opacity;
@@ -194,12 +216,14 @@ export class VeilBattleTransition extends Component {
     this.terrainOpacity = terrainOpacity;
     this.titleLabel = titleLabel;
     this.subtitleLabel = subtitleLabel;
+    this.summaryLabel = summaryLabel;
     this.syncOverlayChrome({
       badge: "ENCOUNTER",
       title: "遭遇战",
       subtitle: "切入战斗场景",
       tone: "enter",
       terrain: null,
+      summaryLines: [],
       detailChips: []
     });
   }
@@ -248,7 +272,14 @@ export class VeilBattleTransition extends Component {
   }
 
   private syncTerrainPreview(copy: BattleTransitionCopy): void {
-    if (!this.panelNode || !this.terrainSprite || !this.terrainOpacity || !this.titleLabel || !this.subtitleLabel) {
+    if (
+      !this.panelNode ||
+      !this.terrainSprite ||
+      !this.terrainOpacity ||
+      !this.titleLabel ||
+      !this.subtitleLabel ||
+      !this.summaryLabel
+    ) {
       return;
     }
 
@@ -266,13 +297,27 @@ export class VeilBattleTransition extends Component {
     const panelTransform = this.panelNode.getComponent(UITransform) ?? this.panelNode.addComponent(UITransform);
     const titleTransform = this.titleLabel.node.getComponent(UITransform) ?? this.titleLabel.node.addComponent(UITransform);
     const subtitleTransform = this.subtitleLabel.node.getComponent(UITransform) ?? this.subtitleLabel.node.addComponent(UITransform);
+    const summaryTransform = this.summaryLabel.node.getComponent(UITransform) ?? this.summaryLabel.node.addComponent(UITransform);
     const hasTerrain = Boolean(terrainFrame);
     const hasChips = copy.detailChips.length > 0;
+    const hasSummary = copy.summaryLines.length > 0;
 
     titleTransform.setContentSize(hasTerrain ? panelTransform.width - 176 : panelTransform.width - 36, 54);
-    subtitleTransform.setContentSize(hasTerrain ? panelTransform.width - 192 : panelTransform.width - 52, hasChips ? 40 : 48);
+    subtitleTransform.setContentSize(hasTerrain ? panelTransform.width - 192 : panelTransform.width - 52, hasSummary ? 30 : hasChips ? 40 : 48);
     this.titleLabel.node.setPosition(hasTerrain ? 38 : 0, 8, 1);
-    this.subtitleLabel.node.setPosition(hasTerrain ? 42 : 0, hasChips ? -28 : -46, 1);
+    this.subtitleLabel.node.setPosition(hasTerrain ? 42 : 0, hasSummary ? -18 : hasChips ? -28 : -46, 1);
+    summaryTransform.setContentSize(hasTerrain ? panelTransform.width - 190 : panelTransform.width - 52, hasSummary ? 42 : 0);
+    this.summaryLabel.node.setPosition(hasTerrain ? 42 : 0, hasSummary ? -62 : -72, 1);
+  }
+
+  private syncSummaryLines(copy: BattleTransitionCopy): void {
+    if (!this.panelNode || !this.summaryLabel) {
+      return;
+    }
+
+    const summaryLines = copy.summaryLines.slice(0, 3);
+    this.summaryLabel.node.active = summaryLines.length > 0;
+    this.summaryLabel.string = summaryLines.join("\n");
   }
 
   private syncDetailChips(copy: BattleTransitionCopy): void {
@@ -288,13 +333,14 @@ export class VeilBattleTransition extends Component {
     assignUiLayer(container);
 
     const hasTerrain = copy.terrain !== null;
+    const hasSummary = copy.summaryLines.length > 0;
     const chips = copy.detailChips.slice(0, 3);
     container.active = chips.length > 0;
     const panelTransform = this.panelNode.getComponent(UITransform) ?? this.panelNode.addComponent(UITransform);
     const containerTransform = container.getComponent(UITransform) ?? container.addComponent(UITransform);
     const containerWidth = hasTerrain ? panelTransform.width - 190 : panelTransform.width - 46;
     containerTransform.setContentSize(containerWidth, 26);
-    container.setPosition(hasTerrain ? 42 : 0, -74, 1);
+    container.setPosition(hasTerrain ? 42 : 0, hasSummary ? -116 : -74, 1);
 
     const childNodes = (container as unknown as { children?: Node[] }).children ?? [];
     for (const child of [...childNodes]) {
@@ -367,7 +413,10 @@ export class VeilBattleTransition extends Component {
     const overlayTransform = this.overlayNode.getComponent(UITransform) ?? this.overlayNode.addComponent(UITransform);
     overlayTransform.setContentSize(visibleSize.width, visibleSize.height);
     const panelTransform = this.panelNode.getComponent(UITransform) ?? this.panelNode.addComponent(UITransform);
-    panelTransform.setContentSize(Math.min(440, visibleSize.width * 0.74), copy.detailChips.length > 0 ? 220 : 188);
+    panelTransform.setContentSize(
+      Math.min(440, visibleSize.width * 0.74),
+      copy.summaryLines.length > 0 ? 268 : copy.detailChips.length > 0 ? 220 : 188
+    );
 
     const accent =
       copy.tone === "victory"

@@ -135,6 +135,7 @@ test("buildBattlePanelViewModel surfaces settlement and presentation layer summa
   assert.equal(view.title, "战斗结算");
   assert.deepEqual(view.summaryLines, [
     "战斗胜利",
+    "结果：胜利",
     "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 战果结算",
     "会话：battle-1 · WIN",
     "下一步：返回世界地图并继续推进当前回合",
@@ -182,9 +183,10 @@ test("buildBattlePanelViewModel keeps neutral settlement in the battle result sh
   assert.equal(view.idle, true);
   assert.equal(view.title, "战斗结算");
   assert.equal(view.summaryLines[0], "结果回写中");
-  assert.equal(view.summaryLines[1], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 战果结算");
-  assert.equal(view.summaryLines[2], "会话：battle-1 · SETTLE");
-  assert.equal(view.summaryLines[3], "下一步：等待世界地图确认奖励、占位与最终结算");
+  assert.equal(view.summaryLines[1], "结果：等待确认");
+  assert.equal(view.summaryLines[2], "流程：进场确认 -> 指令下达 -> 受击反馈 -> 战果结算 · 当前 战果结算");
+  assert.equal(view.summaryLines[3], "会话：battle-1 · SETTLE");
+  assert.equal(view.summaryLines[4], "下一步：等待世界地图确认奖励、占位与最终结算");
 });
 
 test("buildBattlePanelViewModel shows an explicit settlement recovery path while reconnecting", () => {
