@@ -206,6 +206,7 @@ test("PVE frontdoor view surfaces the next campaign mission and claimable daily 
   );
 
   assert.match(view.campaignSummary, /前哨侦察/);
+  assert.match(view.campaignSummary, /第 1 章/);
   assert.match(view.dailyDungeonSummary, /余烬熔炉/);
   assert.match(view.dailyDungeonSummary, /1 份奖励待领取/);
   assert.match(view.focusSummary, /先领取地城奖励/);
@@ -369,6 +370,7 @@ test("VeilLobbyPanel renders the PVE frontdoor and wires campaign plus daily dun
 
   assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /今日 PVE 路线/);
   assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /前哨侦察/);
+  assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /第 1 章/);
   assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /余烬熔炉/);
 
   pressNode(findNode(node, "LobbyPveCampaignAction"));

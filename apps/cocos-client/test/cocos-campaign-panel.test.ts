@@ -121,6 +121,9 @@ test("buildCocosCampaignPanelView exposes start action for an available mission 
   const view = buildCocosCampaignPanelView(createInput());
 
   assert.match(view.subtitle, /完成 0\/2/);
+  assert.match(view.progressLines.join("\n"), /第 1 章 · 已完成 0\/2/);
+  assert.match(view.progressLines.join("\n"), /路线下一步 第 1 章 \/ 余烬哨站/);
+  assert.match(view.progressLines.join("\n"), /后续解锁 荆墙驿路 · Complete 余烬哨站\./);
   assert.match(view.missionLines.join("\n"), /余烬哨站/);
   assert.deepEqual(
     view.actions.find((action) => action.id === "start"),
@@ -222,7 +225,7 @@ test("buildCocosCampaignPanelView resolves completed active missions and pending
 
   const view = buildCocosCampaignPanelView(input);
 
-  assert.match(view.progressLines.join("\n"), /下一任务 当前战役线已全部完成/);
+  assert.match(view.progressLines.join("\n"), /路线下一步 第 1 章 \/ 荆墙驿路/);
   assert.match(view.progressLines.join("\n"), /进行中 余烬哨站/);
   assert.match(view.missionLines.join("\n"), /完成于 2026-04-05T10:00:00.000Z/);
   assert.match(view.statusLines.join("\n"), /正在提交任务完成/);
