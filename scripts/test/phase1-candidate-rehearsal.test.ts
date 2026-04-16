@@ -177,6 +177,7 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.equal(report.stages.find((stage) => stage.id === "cocos-rc-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "cocos-main-journey-replay-gate")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "runtime-observability-bundle")?.status, "skipped");
+  assert.equal(report.stages.find((stage) => stage.id === "runtime-slo-summary")?.status, "skipped");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-same-revision-evidence-bundle")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "phase1-release-evidence-drift-gate")?.status, "passed");
   assert.equal(report.stages.find((stage) => stage.id === "candidate-evidence-audit")?.status, "passed");
@@ -235,6 +236,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.wechatCandidateMarkdownPath ?? "", /codex\.wechat\.release-candidate-summary\.md/);
   assert.match(report.artifacts.runtimeObservabilityEvidencePath ?? "", /runtime-observability-evidence-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGateMarkdownPath ?? "", /runtime-observability-gate-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryPath ?? "", /runtime-slo-summary-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryMarkdownPath ?? "", /runtime-slo-summary-phase1-mainline-/);
+  assert.match(report.artifacts.runtimeSloSummaryTextPath ?? "", /runtime-slo-summary-phase1-mainline-/);
 
   const markdown = fs.readFileSync(markdownPath, "utf8");
   assert.match(markdown, /# Phase 1 Candidate Rehearsal/);
@@ -269,6 +273,8 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /Release readiness snapshot:/);
   assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
   assert.match(markdown, /Runtime observability gate markdown:/);
+  assert.match(markdown, /Runtime SLO summary:/);
+  assert.match(markdown, /Runtime SLO summary markdown:/);
   assert.match(markdown, /H5 candidate smoke:/);
   assert.match(markdown, /Reconnect soak summary:/);
   assert.match(markdown, /WeChat candidate summary:/);
@@ -326,6 +332,9 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /runtimeObservabilityEvidencePath:/);
   assert.match(markdown, /runtimeObservabilityGatePath:/);
   assert.match(markdown, /runtimeObservabilityGateMarkdownPath:/);
+  assert.match(markdown, /runtimeSloSummaryPath:/);
+  assert.match(markdown, /runtimeSloSummaryMarkdownPath:/);
+  assert.match(markdown, /runtimeSloSummaryTextPath:/);
   assert.match(markdown, /sameRevisionEvidenceBundleManifestPath:/);
   assert.match(markdown, /phase1ReleaseEvidenceDriftGatePath:/);
   assert.match(markdown, /phase1ExitAuditPath:/);

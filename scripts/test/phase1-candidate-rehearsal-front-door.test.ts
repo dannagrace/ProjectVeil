@@ -33,7 +33,8 @@ test("phase1 candidate rehearsal reviewer front door foregrounds the same-candid
         "artifacts/release-readiness/candidate-evidence-manifest-phase1-mainline-1234567890ab.json",
       candidateEvidenceAuditPath: "artifacts/release-readiness/candidate-evidence-audit-phase1-mainline-1234567.json",
       releaseEvidenceIndexPath: "artifacts/release-readiness/current-release-evidence-index-phase1-mainline-1234567.json",
-      releaseGateSummaryPath: "artifacts/release-readiness/release-gate-summary-phase1-mainline-1234567.json"
+      releaseGateSummaryPath: "artifacts/release-readiness/release-gate-summary-phase1-mainline-1234567.json",
+      runtimeSloSummaryMarkdownPath: "artifacts/release-readiness/runtime-slo-summary-phase1-mainline-1234567.md"
     },
     stages: []
   });
@@ -53,15 +54,20 @@ test("phase1 candidate rehearsal reviewer front door foregrounds the same-candid
   const releaseEvidenceIndex = markdown.indexOf(
     "- Current release evidence index: `artifacts/release-readiness/current-release-evidence-index-phase1-mainline-1234567.json`"
   );
+  const runtimeSloSummaryMarkdownIndex = markdown.indexOf(
+    "- Runtime SLO summary markdown: `artifacts/release-readiness/runtime-slo-summary-phase1-mainline-1234567.md`"
+  );
 
   assert.notEqual(manifestMarkdownIndex, -1);
   assert.notEqual(sameCandidateAuditMarkdownIndex, -1);
   assert.notEqual(manifestJsonIndex, -1);
   assert.notEqual(candidateEvidenceAuditIndex, -1);
   assert.notEqual(releaseEvidenceIndex, -1);
+  assert.notEqual(runtimeSloSummaryMarkdownIndex, -1);
   assert.ok(manifestMarkdownIndex < manifestJsonIndex);
   assert.ok(manifestMarkdownIndex < sameCandidateAuditMarkdownIndex);
   assert.ok(sameCandidateAuditMarkdownIndex < manifestJsonIndex);
   assert.ok(sameCandidateAuditMarkdownIndex < candidateEvidenceAuditIndex);
   assert.ok(manifestJsonIndex < releaseEvidenceIndex);
+  assert.ok(releaseEvidenceIndex < runtimeSloSummaryMarkdownIndex);
 });

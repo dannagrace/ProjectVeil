@@ -24,6 +24,9 @@ export interface RehearsalArtifacts {
   runtimeObservabilityEvidenceMarkdownPath?: string;
   runtimeObservabilityGatePath?: string;
   runtimeObservabilityGateMarkdownPath?: string;
+  runtimeSloSummaryPath?: string;
+  runtimeSloSummaryMarkdownPath?: string;
+  runtimeSloSummaryTextPath?: string;
   stableWechatArtifactsDir?: string;
   releaseReadinessSnapshotPath?: string;
   wechatCandidateSummaryPath?: string;
@@ -180,6 +183,12 @@ export function renderMarkdown(report: RehearsalReport): string {
   }
   if (report.artifacts.runtimeObservabilityGateMarkdownPath) {
     lines.push(`- Runtime observability gate markdown: \`${report.artifacts.runtimeObservabilityGateMarkdownPath}\``);
+  }
+  if (report.artifacts.runtimeSloSummaryPath) {
+    lines.push(`- Runtime SLO summary: \`${report.artifacts.runtimeSloSummaryPath}\``);
+  }
+  if (report.artifacts.runtimeSloSummaryMarkdownPath) {
+    lines.push(`- Runtime SLO summary markdown: \`${report.artifacts.runtimeSloSummaryMarkdownPath}\``);
   }
   if (report.artifacts.stableH5SmokePath) {
     lines.push(`- H5 candidate smoke: \`${report.artifacts.stableH5SmokePath}\``);
