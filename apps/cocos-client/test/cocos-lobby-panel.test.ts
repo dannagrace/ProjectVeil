@@ -7,10 +7,12 @@ import {
   buildLobbyAccountIdentityView,
   buildLobbyGuestEntryView,
   buildLobbyPveFrontdoorView,
+  buildLobbyPvpFrontdoorView,
   buildLobbyRoomCards,
   createLobbyPanelTestAccount,
   summarizeLobbyShowcaseInventory
 } from "../assets/scripts/cocos-lobby-panel-model";
+import { buildMatchmakingStatusView } from "../assets/scripts/cocos-matchmaking-status.ts";
 import {
   buildLobbySkillPanelView,
   toLobbySkillPanelHeroState
@@ -257,6 +259,54 @@ test("PVE frontdoor view falls back to chapter preview when there are no daily d
   assert.match(view.focusSummary, /章节路线：完成 前哨侦察 后可解锁 灰脊突破口 · 完成前哨侦察。/);
 });
 
+test("PVP frontdoor view highlights rank chase and matchmaking call-to-action for account players", () => {
+  const view = buildLobbyPvpFrontdoorView(
+    createLobbyState({
+      authMode: "account",
+      playerId: "player-2",
+      shareHint: "好友战报已同步到共享存档",
+      leaderboardStatus: "ready",
+      leaderboardEntries: [
+        { playerId: "player-1", rank: 1, displayName: "Alpha", eloRating: 1688, tier: "platinum" },
+        { playerId: "player-2", rank: 2, displayName: "Bravo", eloRating: 1524, tier: "platinum" }
+      ],
+      matchmaking: buildMatchmakingStatusView({ status: "idle" })
+    })
+  );
+
+  assert.match(view.ladderSummary, /当前天梯 #2 · 铂金 · ELO 1524/);
+  assert.match(view.queueSummary, /暂未开始排位/);
+  assert.match(view.socialSummary, /好友战报已同步到共享存档/);
+  assert.match(view.focusSummary, /继续逼近 Alpha/);
+  assert.equal(view.primaryActionLabel, "开始 PVP 匹配");
+  assert.equal(view.primaryActionKind, "enter-matchmaking");
+  assert.equal(view.primaryActionEnabled, true);
+});
+
+test("PVP frontdoor view flips to cancel action while matchmaking is active", () => {
+  const view = buildLobbyPvpFrontdoorView(
+    createLobbyState({
+      authMode: "account",
+      playerId: "player-2",
+      leaderboardStatus: "ready",
+      leaderboardEntries: [
+        { playerId: "player-1", rank: 1, displayName: "Alpha", eloRating: 1688, tier: "platinum" },
+        { playerId: "player-2", rank: 2, displayName: "Bravo", eloRating: 1524, tier: "platinum" }
+      ],
+      matchmakingSearching: true,
+      matchmaking: buildMatchmakingStatusView({
+        status: "queued",
+        position: 2,
+        estimatedWaitSeconds: 18
+      })
+    })
+  );
+
+  assert.match(view.queueSummary, /正在排队/);
+  assert.equal(view.primaryActionLabel, "取消当前匹配");
+  assert.equal(view.primaryActionKind, "cancel-matchmaking");
+});
+
 test("showcase gallery inventory stays aligned with the configured hero, terrain, building and unit counts", () => {
   assert.deepEqual(summarizeLobbyShowcaseInventory(), {
     heroes: 4,
@@ -421,6 +471,40 @@ test("VeilLobbyPanel renders the PVE frontdoor and wires campaign plus daily dun
 
   assert.equal(campaignOpened, 1);
   assert.equal(dailyDungeonOpened, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel renders the PVP frontdoor and wires the queue CTA", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  let queued = 0;
+
+  component.configure({
+    onEnterMatchmaking: () => {
+      queued += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      authMode: "account",
+      playerId: "player-2",
+      shareHint: "好友战报已同步到共享存档",
+      leaderboardStatus: "ready",
+      leaderboardEntries: [
+        { playerId: "player-1", rank: 1, displayName: "Alpha", eloRating: 1688, tier: "platinum" },
+        { playerId: "player-2", rank: 2, displayName: "Bravo", eloRating: 1524, tier: "platinum" }
+      ],
+      matchmaking: buildMatchmakingStatusView({ status: "idle" })
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyPvpFrontdoor"), /今日 PVP 追逐/);
+  assert.match(readCardLabel(node, "LobbyPvpFrontdoor"), /当前天梯 #2/);
+  assert.match(readCardLabel(node, "LobbyPvpFrontdoor"), /继续逼近 Alpha/);
+
+  pressNode(findNode(node, "LobbyPvpFrontdoorAction"));
+
+  assert.equal(queued, 1);
   component.onDestroy();
 });
 

@@ -1,3 +1,25 @@
+## Issue #1500 - V0.9 Lobby PVP frontdoor - 2026-04-16
+
+- Defined `V0.9 PVP / 社交深化` in the roadmap:
+  - `docs/next-feature-plan.md`
+    - added the new version target after `V0.8`
+    - split `V0.9` into three parallel slices: `Lobby PVP 前台`、`排行榜/匹配文案`、`PVP 复盘与再战动机`
+- Added a dedicated Lobby-side `PVP` frontdoor model:
+  - `apps/cocos-client/assets/scripts/cocos-lobby-panel-model.ts`
+    - added `buildLobbyPvpFrontdoorView()`
+    - derives `ladderSummary / queueSummary / socialSummary / focusSummary`
+    - resolves a single CTA for `登录账号 / 开始匹配 / 取消匹配`
+- Wired the new frontdoor into the Cocos Lobby:
+  - `apps/cocos-client/assets/scripts/VeilLobbyPanel.ts`
+    - renders `LobbyPvpFrontdoor`
+    - foregrounds rank-chase context ahead of the raw leaderboard list
+    - provides a direct CTA from the frontdoor card
+- Added/updated targeted tests:
+  - `apps/cocos-client/test/cocos-lobby-panel.test.ts`
+    - covers account PVP focus copy
+    - covers queue-state CTA flipping
+    - covers frontdoor button wiring
+
 ## Issue #1495 - V0.8 HUD / world focus hierarchy - 2026-04-16
 
 - Added a dedicated world-focus helper for `Cocos 主客户端产品化`:

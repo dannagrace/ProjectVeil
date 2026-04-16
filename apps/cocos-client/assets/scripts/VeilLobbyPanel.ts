@@ -13,7 +13,7 @@ import type {
   CocosPlayerAccountProfile,
   CocosSeasonalEvent
 } from "./cocos-lobby.ts";
-import { buildLobbyPveFrontdoorView } from "./cocos-lobby-panel-model.ts";
+import { buildLobbyPveFrontdoorView, buildLobbyPvpFrontdoorView } from "./cocos-lobby-panel-model.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
@@ -902,6 +902,7 @@ export class VeilLobbyPanel extends Component {
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
       rightCursorY = this.renderPveFrontdoorSection(rightX, rightCursorY, rightWidth, state);
+      rightCursorY = this.renderPvpFrontdoorSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderDailyQuestSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderMailboxSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
@@ -1048,6 +1049,56 @@ export class VeilLobbyPanel extends Component {
         accent: new Color(220, 230, 244, 112)
       },
       view.dailyDungeonActionEnabled ? this.onOpenDailyDungeon ?? null : null
+    );
+
+    return nextY - 50;
+  }
+
+  private renderPvpFrontdoorSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const view = buildLobbyPvpFrontdoorView(state);
+    const accent = state.matchmaking?.isMatched
+      ? new Color(132, 186, 142, 204)
+      : state.matchmakingSearching
+        ? new Color(124, 176, 226, 204)
+        : new Color(238, 184, 94, 220);
+    const nextY = this.renderCard(
+      "LobbyPvpFrontdoor",
+      centerX,
+      topY,
+      width,
+      112,
+      [view.title, view.ladderSummary, view.queueSummary, view.focusSummary, view.socialSummary],
+      {
+        fill: new Color(52, 64, 92, 196),
+        stroke: new Color(232, 238, 248, 68),
+        accent
+      },
+      null,
+      13,
+      17
+    );
+
+    const primaryAction =
+      view.primaryActionKind === "login-account"
+        ? this.onLoginAccount ?? null
+        : view.primaryActionKind === "cancel-matchmaking"
+          ? this.onCancelMatchmaking ?? null
+          : view.primaryActionKind === "enter-matchmaking"
+            ? this.onEnterMatchmaking ?? null
+            : null;
+    this.renderActionButton(
+      "LobbyPvpFrontdoorAction",
+      centerX,
+      nextY - 16,
+      width,
+      28,
+      view.primaryActionLabel,
+      {
+        fill: state.matchmakingSearching ? ACTION_LOGOUT : ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      view.primaryActionEnabled ? primaryAction : null
     );
 
     return nextY - 50;
