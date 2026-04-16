@@ -25,8 +25,20 @@ test("getOnboardingFunnelStageIndex returns 4 for onboarding_completed", () => {
   assert.equal(getOnboardingFunnelStageIndex("onboarding_completed"), 4);
 });
 
-test("ONBOARDING_FUNNEL_STAGES has exactly 5 entries", () => {
-  assert.equal(ONBOARDING_FUNNEL_STAGES.length, 5);
+test("getOnboardingFunnelStageIndex returns 5 for first_campaign_mission_started", () => {
+  assert.equal(getOnboardingFunnelStageIndex("first_campaign_mission_started"), 5);
+});
+
+test("getOnboardingFunnelStageIndex returns 6 for first_battle_settled", () => {
+  assert.equal(getOnboardingFunnelStageIndex("first_battle_settled"), 6);
+});
+
+test("getOnboardingFunnelStageIndex returns 7 for first_reward_claimed", () => {
+  assert.equal(getOnboardingFunnelStageIndex("first_reward_claimed"), 7);
+});
+
+test("ONBOARDING_FUNNEL_STAGES has exactly 8 entries", () => {
+  assert.equal(ONBOARDING_FUNNEL_STAGES.length, 8);
 });
 
 test("all stage IDs are unique", () => {
@@ -35,7 +47,7 @@ test("all stage IDs are unique", () => {
   assert.equal(uniqueIds.size, ids.length);
 });
 
-test("stages are in ascending index order (0..4)", () => {
+test("stages are in ascending index order (0..7)", () => {
   for (let i = 0; i < ONBOARDING_FUNNEL_STAGES.length; i++) {
     const stageId = ONBOARDING_FUNNEL_STAGES[i].id as Parameters<typeof getOnboardingFunnelStageIndex>[0];
     assert.equal(getOnboardingFunnelStageIndex(stageId), i);

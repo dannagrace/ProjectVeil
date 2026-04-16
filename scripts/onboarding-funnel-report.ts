@@ -398,6 +398,21 @@ function collectParticipants(events: RawAnalyticsEvent[], diagnosticFailures: Di
       continue;
     }
 
+    if (event.name === "mission_started" || event.name === "mission_complete") {
+      markStage(participant, "first_campaign_mission_started", event.at, { inferPreviousStages: true });
+      continue;
+    }
+
+    if (event.name === "battle_end") {
+      markStage(participant, "first_battle_settled", event.at, { inferPreviousStages: true });
+      continue;
+    }
+
+    if (event.name === "quest_complete" || event.name === "seasonal_event_reward_claimed") {
+      markStage(participant, "first_reward_claimed", event.at, { inferPreviousStages: true });
+      continue;
+    }
+
     if (event.name !== "tutorial_step") {
       applyPostTutorialStageMarkers(participant, event.name, event.payload, event.at, explicitStageId);
       continue;
