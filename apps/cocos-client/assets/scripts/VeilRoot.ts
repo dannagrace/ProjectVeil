@@ -1737,6 +1737,7 @@ export class VeilRoot extends Component {
         dailyDungeon: buildCocosDailyDungeonPanelView({
           dailyDungeon: this.dailyDungeonSummary,
           activeEvent: null,
+          seasonProgress: this.seasonProgress,
           currentPlayerId: this.playerId,
           pendingFloor: this.pendingDailyDungeonFloor,
           pendingClaimRunId: this.pendingDailyDungeonClaimRunId,

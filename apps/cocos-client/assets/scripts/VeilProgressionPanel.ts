@@ -464,6 +464,22 @@ export class VeilProgressionPanel extends Component {
     );
 
     cursorY = this.renderCard(
+      "DailyDungeonRotation",
+      0,
+      cursorY,
+      contentWidth,
+      Math.max(78, 34 + (view.rotationLines.length + 1) * 15),
+      [view.rotationTitle, ...view.rotationLines],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    cursorY = this.renderCard(
       "DailyDungeonEvent",
       0,
       cursorY,
@@ -473,6 +489,22 @@ export class VeilProgressionPanel extends Component {
       {
         fill: CARD_FILL,
         stroke: new Color(220, 230, 244, 56)
+      },
+      null,
+      12,
+      15
+    );
+
+    cursorY = this.renderCard(
+      "DailyDungeonChase",
+      0,
+      cursorY,
+      contentWidth,
+      Math.max(78, 34 + (view.chaseLines.length + 1) * 15),
+      ["今日追逐", ...view.chaseLines],
+      {
+        fill: CARD_HIGHLIGHT_FILL,
+        stroke: new Color(244, 236, 208, 82)
       },
       null,
       12,
@@ -897,7 +929,17 @@ export class VeilProgressionPanel extends Component {
   }
 
   private hideDailyDungeonNodes(): void {
-    this.hideNodesByPrefix(["DailyDungeonHeader", "DailyDungeonEvent", "DailyDungeonRefresh", "DailyDungeonClose", "DailyDungeonFloor-", "DailyDungeonLeaderboard", "DailyDungeonMyRank"]);
+    this.hideNodesByPrefix([
+      "DailyDungeonHeader",
+      "DailyDungeonRotation",
+      "DailyDungeonEvent",
+      "DailyDungeonChase",
+      "DailyDungeonRefresh",
+      "DailyDungeonClose",
+      "DailyDungeonFloor-",
+      "DailyDungeonLeaderboard",
+      "DailyDungeonMyRank"
+    ]);
   }
 
   private hideEventLeaderboardNodes(): void {

@@ -149,6 +149,10 @@ test("buildCocosDailyDungeonPanelView surfaces claimable runs and leaderboard st
         name: "Shadow Archives",
         description: "A rotating solo dungeon.",
         attemptLimit: 3,
+        activeWindow: {
+          startDate: "2026-04-06",
+          endDate: "2026-04-12"
+        },
         floors: [
           {
             floor: 1,
@@ -217,6 +221,13 @@ test("buildCocosDailyDungeonPanelView surfaces claimable runs and leaderboard st
         topThree: []
       }
     },
+    seasonProgress: {
+      battlePassEnabled: true,
+      seasonXp: 1200,
+      seasonPassTier: 3,
+      seasonPassPremium: false,
+      seasonPassClaimedTiers: [1]
+    },
     currentPlayerId: "player-1",
     pendingFloor: null,
     pendingClaimRunId: null,
@@ -225,6 +236,10 @@ test("buildCocosDailyDungeonPanelView surfaces claimable runs and leaderboard st
 
   assert.equal(view.floors[1]?.actionKind, "claim");
   assert.equal(view.floors[1]?.runId, "run-2");
+  assert.match(view.rotationLines.join("\n"), /本周轮换 Shadow Archives · 2026-04-06 至 2026-04-12/);
+  assert.match(view.rotationLines.join("\n"), /下轮预告 Ember Forge · 2026-04-13 开启/);
+  assert.match(view.chaseLines.join("\n"), /活动追逐 Defend the Bridge · 当前 40 分 · 可领取 Ration Cache/);
+  assert.match(view.chaseLines.join("\n"), /战令追逐 T3 -> T4 · 还差 300 XP/);
   assert.match(view.eventSummaryLabel, /可领取/);
   assert.equal(view.leaderboardRows[1]?.isCurrentPlayer, true);
   assert.match(view.myRankSummary, /#2/);
@@ -260,6 +275,10 @@ test("VeilProgressionPanel renders daily dungeon actions and refresh control", (
           name: "Shadow Archives",
           description: "A rotating solo dungeon.",
           attemptLimit: 3,
+          activeWindow: {
+            startDate: "2026-04-06",
+            endDate: "2026-04-12"
+          },
           floors: [
             {
               floor: 1,
@@ -292,6 +311,13 @@ test("VeilProgressionPanel renders daily dungeon actions and refresh control", (
         ]
       },
       activeEvent: null,
+      seasonProgress: {
+        battlePassEnabled: true,
+        seasonXp: 900,
+        seasonPassTier: 2,
+        seasonPassPremium: false,
+        seasonPassClaimedTiers: [1]
+      },
       currentPlayerId: "player-1",
       pendingFloor: null,
       pendingClaimRunId: null,
@@ -300,6 +326,8 @@ test("VeilProgressionPanel renders daily dungeon actions and refresh control", (
   });
 
   assert.match(readCardLabel(node, "DailyDungeonHeader"), /每日地城/);
+  assert.match(readCardLabel(node, "DailyDungeonRotation"), /下轮预告 Ember Forge/);
+  assert.match(readCardLabel(node, "DailyDungeonChase"), /战令追逐 T2 -> T3/);
   assert.match(readCardLabel(node, "DailyDungeonFloor-0"), /开始挑战/);
   assert.match(readCardLabel(node, "DailyDungeonFloor-1"), /领取奖励/);
 
