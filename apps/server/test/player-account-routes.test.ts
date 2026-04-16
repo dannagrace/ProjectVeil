@@ -4415,7 +4415,7 @@ test("campaign mission completion unlocks the next chapter 1 mission and grants 
   };
 
   assert.equal(initialResponse.status, 200);
-  assert.equal(initialPayload.campaign.totalMissions, 27);
+  assert.equal(initialPayload.campaign.totalMissions, 41);
   assert.equal(initialPayload.campaign.nextMissionId, "chapter1-ember-watch");
   assert.equal(initialPayload.campaign.missions[0]?.status, "available");
   assert.equal(initialPayload.campaign.missions[1]?.status, "locked");
