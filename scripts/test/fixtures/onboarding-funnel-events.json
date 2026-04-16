@@ -20,7 +20,7 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T10:01:00.000Z",
+      "at": "2026-04-01T10:00:30.000Z",
       "playerId": "player-complete-fast",
       "source": "server",
       "payload": {
@@ -32,7 +32,7 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T10:02:00.000Z",
+      "at": "2026-04-01T10:01:00.000Z",
       "playerId": "player-complete-fast",
       "source": "server",
       "payload": {
@@ -44,12 +44,57 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T10:04:00.000Z",
+      "at": "2026-04-01T10:02:00.000Z",
       "playerId": "player-complete-fast",
       "source": "server",
       "payload": {
         "stepId": "tutorial_completed",
         "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T10:02:30.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "battle_end",
+      "version": 1,
+      "at": "2026-04-01T10:03:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "battleId": "battle-fast-1",
+        "result": "attacker_victory",
+        "heroId": "hero-1",
+        "battleKind": "neutral"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "quest_complete",
+      "version": 1,
+      "at": "2026-04-01T10:04:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "questId": "daily_explore_frontier",
+        "reward": {
+          "gems": 5,
+          "gold": 60
+        }
       }
     },
     {
@@ -82,7 +127,7 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T11:06:00.000Z",
+      "at": "2026-04-01T11:04:00.000Z",
       "playerId": "player-complete-slow",
       "source": "server",
       "payload": {
@@ -94,7 +139,7 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T11:10:00.000Z",
+      "at": "2026-04-01T11:05:00.000Z",
       "playerId": "player-complete-slow",
       "source": "server",
       "payload": {
@@ -104,10 +149,55 @@
     },
     {
       "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T11:06:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "battle_end",
+      "version": 1,
+      "at": "2026-04-01T11:08:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "battleId": "battle-slow-1",
+        "result": "attacker_victory",
+        "heroId": "hero-2",
+        "battleKind": "neutral"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "quest_complete",
+      "version": 1,
+      "at": "2026-04-01T11:10:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "questId": "daily_first_victory",
+        "reward": {
+          "gems": 6,
+          "gold": 80
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
       "name": "session_start",
       "version": 1,
       "at": "2026-04-01T12:00:00.000Z",
-      "playerId": "player-drop-step2",
+      "playerId": "player-drop-handoff",
       "source": "server",
       "payload": {
         "roomId": "lobby",
@@ -121,7 +211,7 @@
       "name": "tutorial_step",
       "version": 1,
       "at": "2026-04-01T12:01:00.000Z",
-      "playerId": "player-drop-step2",
+      "playerId": "player-drop-handoff",
       "source": "server",
       "payload": {
         "stepId": "step_2",
@@ -130,10 +220,34 @@
     },
     {
       "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T12:03:00.000Z",
+      "playerId": "player-drop-handoff",
+      "source": "server",
+      "payload": {
+        "stepId": "step_3",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T12:06:00.000Z",
+      "playerId": "player-drop-handoff",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_completed",
+        "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
       "name": "session_start",
       "version": 1,
       "at": "2026-04-01T13:00:00.000Z",
-      "playerId": "player-drop-step3",
+      "playerId": "player-drop-battle",
       "source": "server",
       "payload": {
         "roomId": "lobby",
@@ -146,8 +260,8 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T13:02:00.000Z",
-      "playerId": "player-drop-step3",
+      "at": "2026-04-01T13:01:00.000Z",
+      "playerId": "player-drop-battle",
       "source": "server",
       "payload": {
         "stepId": "step_2",
@@ -158,8 +272,8 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T13:05:00.000Z",
-      "playerId": "player-drop-step3",
+      "at": "2026-04-01T13:03:00.000Z",
+      "playerId": "player-drop-battle",
       "source": "server",
       "payload": {
         "stepId": "step_3",
@@ -168,9 +282,114 @@
     },
     {
       "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T13:04:00.000Z",
+      "playerId": "player-drop-battle",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_completed",
+        "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T13:06:00.000Z",
+      "playerId": "player-drop-battle",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
       "name": "session_start",
       "version": 1,
       "at": "2026-04-01T14:00:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "roomId": "lobby",
+        "authMode": "guest",
+        "platform": "colyseus",
+        "onboarding": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T14:01:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "stepId": "step_2",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T14:04:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "stepId": "step_3",
+        "status": "active"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "tutorial_step",
+      "version": 1,
+      "at": "2026-04-01T14:05:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "stepId": "tutorial_completed",
+        "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T14:06:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "battle_end",
+      "version": 1,
+      "at": "2026-04-01T14:08:00.000Z",
+      "playerId": "player-drop-reward",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "battleId": "battle-drop-reward-1",
+        "result": "attacker_victory",
+        "heroId": "hero-1",
+        "battleKind": "neutral"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "session_start",
+      "version": 1,
+      "at": "2026-04-01T15:00:00.000Z",
       "playerId": "player-skipped",
       "source": "server",
       "payload": {
@@ -184,7 +403,7 @@
       "schemaVersion": 1,
       "name": "tutorial_step",
       "version": 1,
-      "at": "2026-04-01T14:02:00.000Z",
+      "at": "2026-04-01T15:02:00.000Z",
       "playerId": "player-skipped",
       "source": "server",
       "payload": {

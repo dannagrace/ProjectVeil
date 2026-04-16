@@ -81,6 +81,17 @@ export const ANALYTICS_EVENT_CATALOG = {
       }
     }
   ),
+  mission_started: defineAnalyticsEvent(
+    "mission_started",
+    1,
+    "Campaign mission started by the player after the chapter handoff.",
+    {
+      campaignId: "chapter1",
+      missionId: "chapter1-ember-watch",
+      mapId: "veil-frontier",
+      chapterOrder: 1
+    }
+  ),
   daily_login: defineAnalyticsEvent("daily_login", 1, "Daily first-login reward was issued to the player.", {
     dateKey: "2026-04-11",
     streak: 3,

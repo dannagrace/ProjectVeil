@@ -2076,6 +2076,17 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
+      emitAnalyticsEvent("mission_started", {
+        playerId: account.playerId,
+        roomId: mission.mapId,
+        payload: {
+          campaignId: mission.chapterId,
+          missionId,
+          mapId: mission.mapId,
+          chapterOrder: Number.parseInt(mission.chapterId.replace(/^chapter/i, ""), 10) || 1
+        }
+      });
+
       sendJson(response, 200, {
         started: true,
         mission
