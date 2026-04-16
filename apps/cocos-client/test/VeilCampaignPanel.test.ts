@@ -117,6 +117,7 @@ test("VeilCampaignPanel renders campaign cards and routes enabled mission action
   component.render(state);
 
   assert.match(readCardLabel(node, "CampaignPanelHeader"), /战役任务/);
+  assert.match(readCardLabel(node, "CampaignPanelHeader"), /第 1 章 · 已完成 0\/2/);
   assert.match(readCardLabel(node, "CampaignPanelMission"), /余烬哨站 · 可进行/);
   assert.match(readCardLabel(node, "CampaignPanelObjectives"), /守住南门两回合/);
   assert.match(readCardLabel(node, "CampaignPanelReward"), /宝石 \+25/);
@@ -156,6 +157,7 @@ test("VeilCampaignPanel disables unavailable actions after mission start and kee
   component.render(state);
 
   assert.match(readCardLabel(node, "CampaignPanelDialogue"), /开场对话 1\/1/);
+  assert.match(readCardLabel(node, "CampaignPanelHeader"), /后续解锁 荆墙驿路/);
   assert.match(readCardLabel(node, "CampaignPanelStatus"), /任务序号 1\/2/);
 
   pressNode(findNode(node, "CampaignPanelAction-start"));
