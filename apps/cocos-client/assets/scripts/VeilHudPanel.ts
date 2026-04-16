@@ -27,6 +27,7 @@ import {
   formatPresentationReadinessSummary,
   type CocosPresentationReadiness
 } from "./cocos-presentation-readiness.ts";
+import type { CocosWorldFocusView } from "./cocos-world-focus.ts";
 import {
   buildCocosHudSkillPanelView,
   toHudHeroSkillState,
@@ -220,6 +221,7 @@ export interface VeilHudRenderState {
     pixelAssets: PixelSpriteLoadStatus;
     readiness: CocosPresentationReadiness;
   };
+  worldFocus: CocosWorldFocusView | null;
 }
 
 function getSessionIndicatorBadge(indicators: VeilHudSessionIndicator[]): string | null {
@@ -452,9 +454,14 @@ export class VeilHudPanel extends Component {
     const sessionStatusBadge = getSessionIndicatorBadge(state.sessionIndicators);
     const sessionIndicatorLines = state.sessionIndicators.map((indicator) => `会话 ${indicator.label} · ${indicator.detail}`);
     const interactionLines = state.interaction ? [`交互 ${state.interaction.title}`, state.interaction.detail] : [];
-    const statusTitle = state.levelUpNotice?.title ?? "状态";
+    const worldFocusLines = state.worldFocus
+      ? [`焦点 ${state.worldFocus.headline}`, state.worldFocus.detail, ...state.worldFocus.summaryLines]
+      : [];
+    const statusTitle = state.levelUpNotice?.title ?? state.worldFocus?.headline ?? "状态";
     const statusBadge = state.levelUpNotice
       ? "升级!"
+      : state.worldFocus?.badge
+        ? state.worldFocus.badge
       : sessionStatusBadge
         ? sessionStatusBadge
       : battle
@@ -463,6 +470,7 @@ export class VeilHudPanel extends Component {
           ? "体力耗尽"
           : "待命";
     const statusDetail = state.levelUpNotice?.detail
+      || state.worldFocus?.detail
       || state.sessionIndicators[0]?.detail
       || state.predictionStatus
       || (state.moveInFlight
@@ -473,6 +481,7 @@ export class VeilHudPanel extends Component {
     const statusLines = [
       statusTitle,
       statusDetail,
+      ...worldFocusLines,
       ...sessionIndicatorLines,
       state.runtimeHealth,
       ...interactionLines,
@@ -496,6 +505,7 @@ export class VeilHudPanel extends Component {
       [
         state.displayName ? `${state.displayName} · ${state.playerId}` : `玩家 ${state.playerId}`,
         `房间 ${state.roomId}`,
+        ...(state.worldFocus ? [`当前焦点 · ${state.worldFocus.headline}`] : []),
         world
           ? `第 ${world.meta.day} 天 · 可达 ${reachableAhead}${state.sessionSource === "remote" ? state.authMode === "account" ? ` · 账号 ${state.loginId || state.playerId}` : " · 云端游客" : state.sessionSource === "local" ? " · 本地会话" : ""}`
           : `等待房间状态...${state.sessionSource === "remote" ? state.authMode === "account" ? ` · 账号 ${state.loginId || state.playerId}` : " · 云端游客" : state.sessionSource === "local" ? " · 本地会话" : ""}`

@@ -1,3 +1,21 @@
+## Issue #1495 - V0.8 HUD / world focus hierarchy - 2026-04-16
+
+- Added a dedicated world-focus helper for `Cocos 主客户端产品化`:
+  - `apps/cocos-client/assets/scripts/cocos-world-focus.ts`
+    - derives `headline / detail / summaryLines` from hero position, current interaction, tile resource/building context, latest replay, and remaining movement.
+- Wired the HUD to foreground that world focus:
+  - `apps/cocos-client/assets/scripts/VeilHudPanel.ts`
+    - status card now surfaces current focus, current tile context, and suggested next action ahead of lower-priority diagnostics
+    - title card also mirrors the current focus so the first glance already answers “现在该干嘛”
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - injects the world-focus view directly into the gameplay HUD render state
+- Synced the roadmap:
+  - `docs/next-feature-plan.md`
+    - split `V0.8` into three concrete parallel slices: `地图/HUD`、`战斗页`、`主流程导航`
+- Verified with:
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-world-focus.test.ts ./apps/cocos-client/test/cocos-hud-panel.test.ts`
+  - `npm run typecheck:cocos`
+
 Original prompt: 你先学习下当前项目并给出开发的计划
 
 ## Planning review - game roadmap refresh - 2026-04-16

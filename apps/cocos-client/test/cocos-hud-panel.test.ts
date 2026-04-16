@@ -111,7 +111,8 @@ function createHudState(): VeilHudRenderState {
           }
         }
       }
-    }
+    },
+    worldFocus: null
   };
 }
 
@@ -299,4 +300,32 @@ test("VeilHudPanel renders a live turn timer label and flashes it red in the fin
   assert.match(readLabelString(timerNode), /^倒计时 0:(0\d|10)$/);
   assert.ok(timerLabel);
   assert.ok(timerLabel.color.r > timerLabel.color.g, "expected warning tint in the final 10 seconds");
+});
+
+test("VeilHudPanel surfaces the current world focus ahead of lower-priority diagnostics", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.worldFocus = {
+    headline: "继续推进本日探索",
+    detail: "你当前仍有 1 格可达，适合继续探索、靠近建筑或触发下一次遭遇。",
+    badge: "推进",
+    summaryLines: [
+      "当前位置：草地 · 木材 5",
+      "英雄状态：Katherine · 移动力 4/6 · 部队 11",
+      "最近战斗：首战胜利"
+    ]
+  };
+  state.triageSummaryLines = ["诊断摘要：这条信息应该排在焦点之后。"];
+
+  component.render(state);
+
+  const titleText = readLabelString(findNode(node, "HudTitle"));
+  const statusText = readLabelString(findNode(node, "HudStatus"));
+  const badgeText = readLabelString(findNode(node, "HudBadge-status"));
+
+  assert.match(titleText, /当前焦点 · 继续推进本日探索/);
+  assert.match(statusText, /焦点 继续推进本日探索/);
+  assert.match(statusText, /当前位置：草地 · 木材 5/);
+  assert.match(statusText, /诊断摘要：这条信息应该排在焦点之后。/);
+  assert.equal(badgeText, "推进");
 });

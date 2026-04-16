@@ -195,6 +195,7 @@ import {
   type CocosSettingsPanelView
 } from "./cocos-settings-panel.ts";
 import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
+import { buildCocosWorldFocusView } from "./cocos-world-focus.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
@@ -1644,7 +1645,14 @@ export class VeilRoot extends Component {
       battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
       seasonalEventAvailable: this.activeSeasonalEvent != null,
       interaction: this.buildHudInteractionState(),
-      presentation: this.buildHudPresentationState()
+      presentation: this.buildHudPresentationState(),
+      worldFocus: buildCocosWorldFocusView({
+        update: this.lastUpdate,
+        interaction: this.buildHudInteractionState(),
+        predictionStatus: this.predictionStatus,
+        levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
+        account: this.lobbyAccountProfile
+      })
     });
     const tutorialOverlayView = this.buildTutorialOverlayView();
     if (tutorialOverlayView) {
