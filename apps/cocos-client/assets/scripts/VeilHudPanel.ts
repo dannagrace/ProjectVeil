@@ -1680,24 +1680,25 @@ export class VeilHudPanel extends Component {
       label: action.label,
       callback: this.onInteractionAction ? () => this.onInteractionAction?.(action.id) : null
     }));
+    const primaryFlowLabels = this.buildPrimaryFlowButtonLabels();
     const buttons: HudActionButtonState[] = [
       ...interactionButtons,
       { name: "HudNewRun", label: "新开一局", callback: this.onNewRun ?? null },
       { name: "HudRefresh", label: "刷新状态", callback: this.onRefresh ?? null },
       { name: "HudSettings", label: "设置", callback: this.onToggleSettings ?? null },
-      { name: "HudCampaign", label: "战役任务", callback: this.onToggleCampaign ?? null },
-      { name: "HudInventory", label: "装备背包", callback: this.onToggleInventory ?? null },
-      { name: "HudAchievements", label: "战报中心", callback: this.onToggleAchievements ?? null },
-      { name: "HudDailyDungeon", label: "每日地城", callback: this.onToggleDailyDungeon ?? null },
+      { name: "HudCampaign", label: primaryFlowLabels.campaign, callback: this.onToggleCampaign ?? null },
+      { name: "HudDailyDungeon", label: primaryFlowLabels.dailyDungeon, callback: this.onToggleDailyDungeon ?? null },
       {
         name: "HudBattlePass",
-        label: "赛季通行证",
+        label: primaryFlowLabels.progression,
         callback: this.onToggleProgression ?? null,
         visible: this.currentState?.battlePassEnabled ?? false
       },
+      { name: "HudAchievements", label: primaryFlowLabels.report, callback: this.onToggleAchievements ?? null },
+      { name: "HudInventory", label: "整理装备背包", callback: this.onToggleInventory ?? null },
       {
         name: "HudSeasonalEvent",
-        label: "赛季活动",
+        label: primaryFlowLabels.seasonalEvent,
         callback: this.onToggleSeasonalEvent ?? null,
         visible: this.currentState?.seasonalEventAvailable ?? false
       },
@@ -1818,6 +1819,25 @@ export class VeilHudPanel extends Component {
         node.active = false;
       }
     }
+  }
+
+  private buildPrimaryFlowButtonLabels(): {
+    campaign: string;
+    dailyDungeon: string;
+    progression: string;
+    report: string;
+    seasonalEvent: string;
+  } {
+    const recentReplay = this.currentState?.account.recentBattleReplays[0] ?? null;
+    const inBattle = Boolean(this.currentState?.update?.battle);
+    const hasInteraction = Boolean(this.currentState?.interaction);
+    return {
+      campaign: hasInteraction ? "处理当前点位后看主线" : inBattle ? "战后继续主线" : "继续主线任务",
+      dailyDungeon: inBattle ? "战后查看今日地城" : "切到今日地城",
+      progression: this.currentState?.battlePassEnabled ? "查看成长目标" : "成长入口待开启",
+      report: recentReplay ? "回看上一战" : "打开战报中心",
+      seasonalEvent: this.currentState?.seasonalEventAvailable ? "查看赛季追逐" : "赛季活动"
+    };
   }
 
   private ensureActionButton(parent: Node, name: string, labelText: string): void {

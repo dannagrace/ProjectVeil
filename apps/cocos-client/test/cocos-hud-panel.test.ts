@@ -329,3 +329,50 @@ test("VeilHudPanel surfaces the current world focus ahead of lower-priority diag
   assert.match(statusText, /诊断摘要：这条信息应该排在焦点之后。/);
   assert.equal(badgeText, "推进");
 });
+
+test("VeilHudPanel renames primary flow buttons to match the current gameplay context", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.interaction = {
+    title: "矿井管理",
+    detail: "当前矿井可占领并开始按天结算收益。",
+    actions: []
+  };
+  state.account.recentBattleReplays = [
+    {
+      id: "replay-1",
+      roomId: "room-alpha",
+      playerId: "player-1",
+      battleId: "battle-1",
+      battleKind: "neutral",
+      playerCamp: "attacker",
+      heroId: "hero-1",
+      neutralArmyId: "neutral-1",
+      startedAt: "2026-04-16T09:00:00.000Z",
+      completedAt: "2026-04-16T09:01:00.000Z",
+      initialState: {
+        id: "battle-1",
+        round: 1,
+        lanes: 1,
+        activeUnitId: null,
+        turnOrder: [],
+        units: {},
+        environment: [],
+        log: [],
+        rng: {
+          seed: 1001,
+          cursor: 0
+        }
+      },
+      steps: [],
+      result: "attacker_victory"
+    }
+  ];
+
+  component.render(state);
+
+  assert.equal(readLabelString(findNode(node, "HudCampaign")), "处理当前点位后看主线");
+  assert.equal(readLabelString(findNode(node, "HudDailyDungeon")), "切到今日地城");
+  assert.equal(readLabelString(findNode(node, "HudBattlePass")), "查看成长目标");
+  assert.equal(readLabelString(findNode(node, "HudAchievements")), "回看上一战");
+});
