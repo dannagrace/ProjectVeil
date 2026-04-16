@@ -401,25 +401,34 @@ function buildBattleReplayMotivationLines(
   replay: PlayerBattleReplaySummary | null
 ): string[] {
   const controlProfile = summarizeReplayControlProfile(replay);
+  const opponentLabel = report.opponentHeroId?.trim() || "当前对手";
   const stepLabel = replay
     ? `手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步`
     : `${report.turnCount} 回合 / ${report.actionCount} 步`;
   const rewardRollup = report.rewards.map((reward) => formatBattleReportRewardChip(reward)).filter(Boolean);
   const reviewLine = report.result === "victory"
     ? controlProfile.playerSteps > 0
-      ? `复盘提示：本局 ${stepLabel}，开场节奏已经成型，下一局可以继续沿用这套先手。`
+      ? report.battleKind === "hero"
+        ? `复盘提示：本局 ${stepLabel}，你已经压住 ${opponentLabel} 的开场节奏，下一局可以继续沿用这套先手。`
+        : `复盘提示：本局 ${stepLabel}，开场节奏已经成型，下一局可以继续沿用这套先手。`
       : `复盘提示：本局主要靠自动结算收尾，下一局可以主动调一轮技能与集火顺序。`
     : controlProfile.playerSteps > 0
-      ? `复盘提示：本局 ${stepLabel}，建议先回看开场两步的站位和技能顺序。`
-      : `复盘提示：本局 ${stepLabel}，建议先回看敌方先手后的掉员节点。`;
+      ? report.battleKind === "hero"
+        ? `复盘提示：本局 ${stepLabel}，建议先回看 ${opponentLabel} 的开场压制点，再决定下一局怎么反打。`
+        : `复盘提示：本局 ${stepLabel}，建议先回看开场两步的站位和技能顺序。`
+      : report.battleKind === "hero"
+        ? `复盘提示：本局 ${stepLabel}，建议先回看 ${opponentLabel} 先手后的掉员节点。`
+        : `复盘提示：本局 ${stepLabel}，建议先回看敌方先手后的掉员节点。`;
   const nextRunLine = report.result === "victory"
     ? rewardRollup.length > 0
-      ? `下一局：把 ${rewardRollup.slice(0, 2).join(" / ")} 转成成长后，再开一局继续推进。`
+      ? report.battleKind === "hero"
+        ? `下一局：先把 ${rewardRollup.slice(0, 2).join(" / ")} 转成成长，再回到房间里继续向 ${opponentLabel} 抢分。`
+        : `下一局：把 ${rewardRollup.slice(0, 2).join(" / ")} 转成成长后，再开一局继续推进。`
       : report.battleKind === "hero"
-        ? "下一局：趁对局节奏还熟，再打一场 PVP 继续验证这套阵容。"
+        ? `下一局：趁 ${opponentLabel} 还在同房间，立刻再开一场 PVP 继续抢分。`
         : "下一局：趁胜继续推进下一场 PVE，把今天的收益链滚起来。"
     : report.battleKind === "hero"
-      ? "下一局：先补兵、换技能，再回到 PVP 复盘这场交锋。"
+      ? `下一局：先补兵、换技能，再回到房间里找 ${opponentLabel} 复仇。`
       : "下一局：先回主线或地城补强，再回来挑战这支守军。";
   return [reviewLine, nextRunLine];
 }
@@ -427,15 +436,20 @@ function buildBattleReplayMotivationLines(
 function buildReplayOnlyMotivationLines(replay: PlayerBattleReplaySummary): string[] {
   const controlProfile = summarizeReplayControlProfile(replay);
   const playerWon = formatReplayResultBadge(replay) === "胜利";
+  const opponentLabel = replay.opponentHeroId?.trim() || "当前对手";
   const reviewLine = controlProfile.playerSteps > 0
-    ? `复盘提示：本局手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步，可以回看第一轮操作确认节奏。`
-    : "复盘提示：本局以自动结算为主，下一局可以主动尝试技能与集火顺序。";
+    ? replay.battleKind === "hero"
+      ? `复盘提示：本局手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步，可以回看与 ${opponentLabel} 的第一轮换手。`
+      : `复盘提示：本局手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步，可以回看第一轮操作确认节奏。`
+    : replay.battleKind === "hero"
+      ? `复盘提示：本局以自动结算为主，下一局可以主动调整技能顺序去压 ${opponentLabel}。`
+      : "复盘提示：本局以自动结算为主，下一局可以主动尝试技能与集火顺序。";
   const nextRunLine = playerWon
     ? replay.battleKind === "hero"
-      ? "下一局：趁节奏还熟，再打一场 PVP 继续验证阵容。"
+      ? `下一局：趁 ${opponentLabel} 还在同房间，再打一场 PVP 继续验证阵容。`
       : "下一局：趁胜继续推进下一场 PVE，把这轮收益链滚起来。"
     : replay.battleKind === "hero"
-      ? "下一局：先补兵或调整技能，再回来打一场新的 PVP。"
+      ? `下一局：先补兵或调整技能，再回来向 ${opponentLabel} 复仇。`
       : "下一局：先回主线补强，再回来挑战这支守军。";
   return [reviewLine, nextRunLine];
 }

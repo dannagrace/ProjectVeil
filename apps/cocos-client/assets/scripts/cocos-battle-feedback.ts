@@ -90,7 +90,7 @@ export function buildBattleTransitionFeedback(
     return {
       title: isPvp ? "PVP 对抗已展开" : "PVE 遭遇已展开",
       detail: isPvp
-        ? `对手 ${battle.defenderHeroId ?? "未知"} · 遭遇会话 ${update.world.meta.roomId}/${battle.id} 已建立`
+        ? `对手 ${battle.defenderHeroId ?? "未知"} · 房间 ${update.world.meta.roomId}/${battle.id} 已锁定，胜负会直接回写房间态`
         : battle.log[battle.log.length - 1] ?? "战斗开始",
       badge: "ENGAGE",
       tone: "action"
@@ -407,10 +407,10 @@ function describeSettlementEncounterState(
 
   const didWin = didHeroWinResolution(resolved, heroId);
   if (didWin === true) {
-    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`;
+    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇，房间会保留这场对抗结果`;
   }
   if (didWin === false) {
-    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
+    return `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在当前房间，可回图后继续对抗`;
   }
 
   const heroCamp = resolveHeroCamp(previousBattle, heroId);
@@ -421,8 +421,8 @@ function describeSettlementEncounterState(
         ? countAliveUnits(previousBattle, "defender") >= countAliveUnits(previousBattle, "attacker")
         : true;
   return didHoldField
-    ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇`
-    : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在房间地图上`;
+    ? `PVP 结算：对手 ${previousBattle.defenderHeroId} 已退出当前遭遇，房间会保留这场对抗结果`
+    : `PVP 结算：对手 ${previousBattle.defenderHeroId} 仍保留在当前房间，可回图后继续对抗`;
 }
 
 function buildSettlementHandoffLabel(
@@ -431,13 +431,18 @@ function buildSettlementHandoffLabel(
   didWin: boolean | null
 ): string {
   if (previousBattle?.defenderHeroId) {
+    const opponentLabel = previousBattle.defenderHeroId;
     if (didWin === true) {
-      return resolved ? "下一步：等待房间回写后返回世界地图" : "下一步：等待房间确认胜负并回写 PVP 世界态";
+      return resolved
+        ? `下一步：返回世界地图，趁 ${opponentLabel} 还在同房间继续施压`
+        : `下一步：等待房间回写胜负、名次与 ${opponentLabel} 的位置`;
     }
     if (didWin === false) {
-      return resolved ? "下一步：等待房间回写后再调整对抗" : "下一步：等待房间确认胜负并回写 PVP 世界态";
+      return resolved
+        ? `下一步：回到世界地图补兵换技，再向 ${opponentLabel} 发起复仇`
+        : `下一步：等待房间回写胜负、名次与 ${opponentLabel} 的位置`;
     }
-    return resolved ? "下一步：等待房间确认胜负并回写 PVP 世界态" : "下一步：等待房间确认胜负并回写 PVP 世界态";
+    return `下一步：等待房间回写胜负、名次与 ${opponentLabel} 的位置`;
   }
 
   if (didWin === true) {
