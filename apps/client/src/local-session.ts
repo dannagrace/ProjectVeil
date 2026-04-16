@@ -270,6 +270,18 @@ function wait(ms: number): Promise<void> {
   });
 }
 
+function createRequestScopeId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // Ignore runtime environments without secure UUID support.
+  }
+
+  return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function isRecoverableSessionError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -527,6 +539,7 @@ class RemoteGameSession implements GameSession {
   private readonly getAuthToken: (() => string | null) | undefined;
   private latestWorld: PlayerWorldView | null = null;
   private requestCounter = 0;
+  private readonly requestScopeId = createRequestScopeId();
   private readonly pendingRequests = new Map<
     string,
     {
@@ -667,7 +680,7 @@ class RemoteGameSession implements GameSession {
 
   private nextRequestId(): string {
     this.requestCounter += 1;
-    return `req-${this.requestCounter}`;
+    return `${this.requestScopeId}-req-${this.requestCounter}`;
   }
 
   private send<T extends ServerMessage>(message: ClientMessage, expectedType: T["type"]): Promise<T> {
