@@ -469,6 +469,9 @@ async function main(): Promise<void> {
     runtimeObservabilityBundleDir,
     `runtime-observability-gate-${candidateSlug}-${revision.shortCommit}.md`
   );
+  const runtimeSloSummaryPath = path.join(outputDir, `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.json`);
+  const runtimeSloSummaryMarkdownPath = path.join(outputDir, `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.md`);
+  const runtimeSloSummaryTextPath = path.join(outputDir, `runtime-slo-summary-${candidateSlug}-${revision.shortCommit}.txt`);
   const stableWechatArtifactsDir = path.join(outputDir, `wechat-release-${candidateSlug}-${revision.shortCommit}`);
   const releaseReadinessSnapshotPath = path.join(outputDir, `release-readiness-${candidateSlug}-${revision.shortCommit}.json`);
   const persistencePath = path.join(outputDir, `phase1-release-persistence-regression-${candidateSlug}-${revision.shortCommit}.json`);
@@ -590,6 +593,9 @@ async function main(): Promise<void> {
   artifacts.runtimeObservabilityEvidenceMarkdownPath = toRelative(runtimeObservabilityEvidenceMarkdownPath);
   artifacts.runtimeObservabilityGatePath = toRelative(runtimeObservabilityGatePath);
   artifacts.runtimeObservabilityGateMarkdownPath = toRelative(runtimeObservabilityGateMarkdownPath);
+  artifacts.runtimeSloSummaryPath = toRelative(runtimeSloSummaryPath);
+  artifacts.runtimeSloSummaryMarkdownPath = toRelative(runtimeSloSummaryMarkdownPath);
+  artifacts.runtimeSloSummaryTextPath = toRelative(runtimeSloSummaryTextPath);
   artifacts.releaseGateSummaryPath = toRelative(releaseGateSummaryPath);
   artifacts.releaseGateMarkdownPath = toRelative(releaseGateMarkdownPath);
   artifacts.ciTrendSummaryPath = toRelative(ciTrendSummaryPath);
@@ -916,6 +922,37 @@ async function main(): Promise<void> {
           runtimeObservabilityGatePath,
           runtimeObservabilityGateMarkdownPath
         ]);
+      }
+    },
+    {
+      id: "runtime-slo-summary",
+      title: "Build runtime SLO summary",
+      run: () => {
+        if (!args.serverUrl) {
+          return {
+            id: "runtime-slo-summary",
+            title: "Build runtime SLO summary",
+            status: "skipped",
+            summary: "No --server-url was provided, so the runtime SLO summary was skipped."
+          };
+        }
+
+        return runCommandStage("runtime-slo-summary", "Build runtime SLO summary", [
+          nodeExec,
+          "--import",
+          "tsx",
+          "./scripts/runtime-slo-summary.ts",
+          "--server-url",
+          args.serverUrl,
+          "--profile",
+          "candidate_gate",
+          "--output",
+          runtimeSloSummaryPath,
+          "--markdown-output",
+          runtimeSloSummaryMarkdownPath,
+          "--text-output",
+          runtimeSloSummaryTextPath
+        ], [runtimeSloSummaryPath, runtimeSloSummaryMarkdownPath, runtimeSloSummaryTextPath]);
       }
     },
     {
@@ -1592,6 +1629,7 @@ async function main(): Promise<void> {
     requiredArtifacts.push(runtimeObservabilityBundlePath, runtimeObservabilityBundleMarkdownPath);
     requiredArtifacts.push(runtimeObservabilityEvidencePath, runtimeObservabilityEvidenceMarkdownPath);
     requiredArtifacts.push(runtimeObservabilityGatePath, runtimeObservabilityGateMarkdownPath);
+    requiredArtifacts.push(runtimeSloSummaryPath, runtimeSloSummaryMarkdownPath, runtimeSloSummaryTextPath);
   }
   if (artifacts.stableH5SmokePath) {
     requiredArtifacts.push(stableH5SmokePath);
