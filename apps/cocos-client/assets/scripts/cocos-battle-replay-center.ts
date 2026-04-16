@@ -76,6 +76,7 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
   }
 
   if (!input.replays.length && selectedReport) {
+    const motivationLines = buildBattleReplayMotivationLines(selectedReport, null);
     return {
       state: "ready",
       title: `战报回放中心 · ${selectedReport.result === "victory" ? "胜利" : "失利"}`,
@@ -90,6 +91,7 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
               .map((reward) => reward.amount != null ? `${reward.label}+${reward.amount}` : reward.label)
               .join(" / ")}`
           : `战后收益：${selectedReport.evidence.rewards === "available" ? "收益同步中" : "暂无额外奖励记录"}`,
+        ...motivationLines,
         input.errorMessage?.trim() || "当前仅同步到战报摘要，完整回放暂不可用。"
       ],
       controls: createDisabledControls()
@@ -129,6 +131,9 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
   const rewardSummaryLine = selectedReport ? formatBattleReportRewardLine(selectedReport) : null;
   const evidenceSummaryLine = selectedReport ? formatBattleReportEvidenceLine(selectedReport) : null;
   const reportHeadlineLine = selectedReport ? formatBattleReportHeadline(selectedReport) : null;
+  const motivationLines = selectedReport
+    ? buildBattleReplayMotivationLines(selectedReport, replay)
+    : buildReplayOnlyMotivationLines(replay);
   const timeline = buildCocosBattleReplayTimelineView(replay, { limit: 2 });
   const turnSummary = buildReplayTurnSummary(replay, playback);
   const battlePanel = buildBattlePanelViewModel({
@@ -160,6 +165,7 @@ export function buildCocosBattleReplayCenterView(input: CocosBattleReplayCenterI
       `我方编队：${battlePanel.friendlyItems.map((item) => item.title).join(" / ") || "暂无可视编队"}`,
       `目标摘要：${battlePanel.enemyTargets.map((item) => item.title).join(" / ") || "暂无敌方目标"}`,
       `时间线：${timeline.entries.map((entry) => `${entry.stepLabel} ${entry.actionLabel}`).join(" · ") || timeline.emptyMessage || "暂无时间线"}`,
+      ...motivationLines,
       ...(reportHeadlineLine ? [reportHeadlineLine] : []),
       ...(evidenceSummaryLine ? [evidenceSummaryLine] : []),
       ...(rewardSummaryLine ? [rewardSummaryLine] : [])
@@ -362,6 +368,76 @@ function formatReplayTimestamp(value: string): string {
   const hour = `${date.getUTCHours()}`.padStart(2, "0");
   const minute = `${date.getUTCMinutes()}`.padStart(2, "0");
   return `${month}-${day} ${hour}:${minute}`;
+}
+
+function summarizeReplayControlProfile(
+  replay: PlayerBattleReplaySummary | null
+): { playerSteps: number; automatedSteps: number } {
+  if (!replay) {
+    return {
+      playerSteps: 0,
+      automatedSteps: 0
+    };
+  }
+
+  let playerSteps = 0;
+  let automatedSteps = 0;
+  for (const step of replay.steps) {
+    if (step.source === "automated") {
+      automatedSteps += 1;
+      continue;
+    }
+    playerSteps += 1;
+  }
+
+  return {
+    playerSteps,
+    automatedSteps
+  };
+}
+
+function buildBattleReplayMotivationLines(
+  report: PlayerBattleReportSummary,
+  replay: PlayerBattleReplaySummary | null
+): string[] {
+  const controlProfile = summarizeReplayControlProfile(replay);
+  const stepLabel = replay
+    ? `手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步`
+    : `${report.turnCount} 回合 / ${report.actionCount} 步`;
+  const rewardRollup = report.rewards.map((reward) => formatBattleReportRewardChip(reward)).filter(Boolean);
+  const reviewLine = report.result === "victory"
+    ? controlProfile.playerSteps > 0
+      ? `复盘提示：本局 ${stepLabel}，开场节奏已经成型，下一局可以继续沿用这套先手。`
+      : `复盘提示：本局主要靠自动结算收尾，下一局可以主动调一轮技能与集火顺序。`
+    : controlProfile.playerSteps > 0
+      ? `复盘提示：本局 ${stepLabel}，建议先回看开场两步的站位和技能顺序。`
+      : `复盘提示：本局 ${stepLabel}，建议先回看敌方先手后的掉员节点。`;
+  const nextRunLine = report.result === "victory"
+    ? rewardRollup.length > 0
+      ? `下一局：把 ${rewardRollup.slice(0, 2).join(" / ")} 转成成长后，再开一局继续推进。`
+      : report.battleKind === "hero"
+        ? "下一局：趁对局节奏还熟，再打一场 PVP 继续验证这套阵容。"
+        : "下一局：趁胜继续推进下一场 PVE，把今天的收益链滚起来。"
+    : report.battleKind === "hero"
+      ? "下一局：先补兵、换技能，再回到 PVP 复盘这场交锋。"
+      : "下一局：先回主线或地城补强，再回来挑战这支守军。";
+  return [reviewLine, nextRunLine];
+}
+
+function buildReplayOnlyMotivationLines(replay: PlayerBattleReplaySummary): string[] {
+  const controlProfile = summarizeReplayControlProfile(replay);
+  const playerWon = formatReplayResultBadge(replay) === "胜利";
+  const reviewLine = controlProfile.playerSteps > 0
+    ? `复盘提示：本局手动 ${controlProfile.playerSteps} 步 / 自动 ${controlProfile.automatedSteps} 步，可以回看第一轮操作确认节奏。`
+    : "复盘提示：本局以自动结算为主，下一局可以主动尝试技能与集火顺序。";
+  const nextRunLine = playerWon
+    ? replay.battleKind === "hero"
+      ? "下一局：趁节奏还熟，再打一场 PVP 继续验证阵容。"
+      : "下一局：趁胜继续推进下一场 PVE，把这轮收益链滚起来。"
+    : replay.battleKind === "hero"
+      ? "下一局：先补兵或调整技能，再回来打一场新的 PVP。"
+      : "下一局：先回主线补强，再回来挑战这支守军。";
+  return [reviewLine, nextRunLine];
 }
 
 

@@ -136,9 +136,11 @@ test("buildCocosBattleReplayCenterView derives ready-state summary lines and tar
   assert.equal(view.detailLines[8], "我方编队：Guard x12");
   assert.equal(view.detailLines[9], "目标摘要：Wolf x8");
   assert.match(view.detailLines[10] ?? "", /1/);
-  assert.match(view.detailLines[11] ?? "", /战报摘要：胜利 · PVE · 守军 neutral-1 · 1T\/2A/);
-  assert.equal(view.detailLines[12], "证据：回放可用 · 奖励可用");
-  assert.equal(view.detailLines[13], "战后收益：金币 +40");
+  assert.match(view.detailLines[11] ?? "", /复盘提示：本局 手动 1 步 \/ 自动 1 步/);
+  assert.equal(view.detailLines[12], "下一局：把 金币 +40 转成成长后，再开一局继续推进。");
+  assert.match(view.detailLines[13] ?? "", /战报摘要：胜利 · PVE · 守军 neutral-1 · 1T\/2A/);
+  assert.equal(view.detailLines[14], "证据：回放可用 · 奖励可用");
+  assert.equal(view.detailLines[15], "战后收益：金币 +40");
   assert.deepEqual(
     view.controls.map((control) => [control.action, control.enabled]),
     [
@@ -185,10 +187,47 @@ test("buildCocosBattleReplayCenterView surfaces battle report evidence and rewar
     status: "ready"
   });
 
-  const [headline, evidence, rewards] = view.detailLines.slice(-3);
+  const [review, nextRun, headline, evidence, rewards] = view.detailLines.slice(-5);
+  assert.match(review ?? "", /复盘提示：/);
+  assert.match(nextRun ?? "", /下一局：/);
   assert.match(headline ?? "", /战报摘要：胜利 ·/);
   assert.equal(evidence, "证据：回放可用 · 奖励可用");
   assert.equal(rewards, "战后收益：金币 +20");
+});
+
+test("buildCocosBattleReplayCenterView adds next-run motivation when only summary evidence is available", () => {
+  const replay = createBattleReplaySummary();
+  const report: PlayerBattleReportSummary = {
+    id: replay.id,
+    replayId: replay.id,
+    roomId: replay.roomId,
+    playerId: replay.playerId,
+    battleId: replay.battleId,
+    battleKind: replay.battleKind,
+    playerCamp: replay.playerCamp,
+    heroId: replay.heroId,
+    opponentHeroId: replay.opponentHeroId,
+    neutralArmyId: replay.neutralArmyId,
+    startedAt: replay.startedAt,
+    completedAt: replay.completedAt,
+    result: "defeat",
+    turnCount: 3,
+    actionCount: 5,
+    rewards: [],
+    evidence: { replay: "missing", rewards: "missing" }
+  };
+
+  const view = buildCocosBattleReplayCenterView({
+    replays: [],
+    battleReports: { latestReportId: report.id, items: [report] },
+    selectedReplayId: report.id,
+    playback: null,
+    status: "ready"
+  });
+
+  assert.equal(view.state, "ready");
+  assert.match(view.detailLines.join("\n"), /复盘提示：本局 3 回合 \/ 5 步/);
+  assert.match(view.detailLines.join("\n"), /下一局：先回主线或地城补强，再回来挑战这支守军。/);
 });
 
 test("buildCocosBattleReplayCenterView updates controls across playing, stepped, completed and reset playback states", () => {
