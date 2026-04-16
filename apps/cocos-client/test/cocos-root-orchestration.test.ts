@@ -1055,6 +1055,96 @@ test("VeilRoot emits shop, tutorial, quest, and experiment analytics once per se
   assertCapturedAnalyticsEvent(events, "tutorial_step");
 });
 
+test("VeilRoot final tutorial handoff opens the first chapter campaign panel in world", async () => {
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "tutorial-player";
+  root.displayName = "雾幕新兵";
+  root.authMode = "account";
+  root.authToken = "tutorial.token";
+  root.sessionSource = "remote";
+  root.showLobby = false;
+  root.lobbyAccountProfile = {
+    ...root.lobbyAccountProfile,
+    playerId: "tutorial-player",
+    displayName: "雾幕新兵",
+    recentBattleReplays: [],
+    source: "remote",
+    tutorialStep: 3
+  };
+
+  const campaign = {
+    campaignId: "phase1-campaign",
+    name: "远征初章",
+    chapterId: "chapter1",
+    completedCount: 0,
+    totalMissions: 6,
+    completionPercent: 0,
+    nextMissionId: "chapter1-ember-watch",
+    missions: [
+      {
+        id: "chapter1-ember-watch",
+        missionId: "chapter1-ember-watch",
+        chapterId: "chapter1",
+        name: "余烬哨站",
+        description: "前往余烬哨站并清理桥头守军。",
+        order: 1,
+        mapId: "amber-fields",
+        enemyArmyTemplateId: "neutral_guard",
+        enemyArmyCount: 10,
+        recommendedHeroLevel: 1,
+        status: "available" as const,
+        attempts: 0,
+        introDialogue: [],
+        outroDialogue: [],
+        objectives: [
+          {
+            id: "reach-watch",
+            description: "抵达余烬哨站",
+            optional: false,
+            gate: "start" as const
+          }
+        ],
+        unlockRequirements: [],
+        reward: {
+          gems: 12,
+          resources: {
+            gold: 140
+          }
+        }
+      }
+    ]
+  };
+  root.gameplayCampaign = structuredClone(campaign);
+
+  const tutorialActions: Array<{ step: number | null; reason?: string }> = [];
+  let campaignLoads = 0;
+  installVeilRootRuntime({
+    updateTutorialProgress: async (_remoteUrl, _roomId, action) => {
+      tutorialActions.push(action);
+      return {
+        ...root.lobbyAccountProfile,
+        recentBattleReplays: [],
+        source: "remote",
+        tutorialStep: action.step
+      };
+    },
+    loadCampaignSummary: async () => {
+      campaignLoads += 1;
+      return structuredClone(campaign);
+    }
+  });
+
+  await (root as unknown as { handleTutorialPrimaryAction: () => Promise<void> }).handleTutorialPrimaryAction();
+
+  assert.deepEqual(tutorialActions, [{ step: null, reason: "complete" }]);
+  assert.equal(root.lobbyAccountProfile.tutorialStep ?? null, null);
+  assert.equal(root.gameplayCampaignPanelOpen, true);
+  assert.equal(root.gameplayCampaignSelectedMissionId, "chapter1-ember-watch");
+  assert.match(String(root.gameplayCampaignStatus), /引导已移交给首章主线/);
+  assert.equal(campaignLoads, 1);
+});
+
 test("VeilRoot emits throttled client_perf_degraded analytics when runtime performance stays degraded", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-analytics";

@@ -871,6 +871,81 @@ test("VeilRoot persists tutorial progression through the remote account profile 
   assert.equal(root.buildTutorialOverlayView(), null);
 });
 
+test("VeilRoot renders the final tutorial step with first-chapter mission guidance", () => {
+  const root = createVeilRootHarness();
+  root.sessionSource = "remote";
+  root.authMode = "account";
+  root.authToken = "tutorial.token";
+  root.playerId = "tutorial-player";
+  root.displayName = "雾幕新兵";
+  root.showLobby = false;
+  root.lobbyAccountProfile = {
+    ...root.lobbyAccountProfile,
+    playerId: "tutorial-player",
+    displayName: "雾幕新兵",
+    recentBattleReplays: [],
+    source: "remote",
+    tutorialStep: 3
+  };
+  root.gameplayCampaign = {
+    campaignId: "phase1-campaign",
+    name: "远征初章",
+    chapterId: "chapter1",
+    completedCount: 0,
+    totalMissions: 6,
+    completionPercent: 0,
+    nextMissionId: "chapter1-ember-watch",
+    missions: [
+      {
+        id: "chapter1-ember-watch",
+        missionId: "chapter1-ember-watch",
+        chapterId: "chapter1",
+        name: "余烬哨站",
+        description: "前往余烬哨站并清理桥头守军。",
+        order: 1,
+        mapId: "amber-fields",
+        enemyArmyTemplateId: "neutral_guard",
+        enemyArmyCount: 10,
+        recommendedHeroLevel: 1,
+        status: "available",
+        attempts: 0,
+        introDialogue: [],
+        outroDialogue: [],
+        objectives: [
+          {
+            id: "reach-watch",
+            description: "抵达余烬哨站",
+            optional: false,
+            gate: "start"
+          },
+          {
+            id: "defeat-guard",
+            description: "击败桥头守军",
+            optional: false,
+            gate: "end"
+          }
+        ],
+        unlockRequirements: [],
+        reward: {
+          gems: 12,
+          resources: {
+            gold: 140
+          }
+        }
+      }
+    ]
+  };
+
+  const view = root.buildTutorialOverlayView();
+
+  assert.ok(view);
+  assert.equal(view?.badge, "首章接管");
+  assert.match(String(view?.title), /余烬哨站/);
+  assert.match(String(view?.body), /首章任务/);
+  assert.match(view?.detailLines.join(" | ") ?? "", /抵达余烬哨站/);
+  assert.equal(view?.primaryLabel, "进入首章主线");
+});
+
 test("VeilRoot onDestroy stops matchmaking polling to avoid timer leaks", () => {
   const root = createVeilRootHarness();
   let pollStops = 0;
