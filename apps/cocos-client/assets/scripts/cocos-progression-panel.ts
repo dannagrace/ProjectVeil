@@ -1,4 +1,5 @@
 import { getBattlePassConfig, type BattlePassRewardConfig, type BattlePassTierConfig } from "./project-shared/world-config.ts";
+import dailyDungeonsConfigDocument from "../../../../configs/daily-dungeons.json";
 import type {
   DailyDungeonDefinition,
   DailyDungeonReward,
@@ -122,6 +123,9 @@ export interface CocosDailyDungeonPanelView {
   title: string;
   subtitle: string;
   attemptSummaryLabel: string;
+  rotationTitle: string;
+  rotationLines: string[];
+  chaseLines: string[];
   statusLabel: string;
   floors: CocosDailyDungeonFloorView[];
   eventTitle: string;
@@ -133,11 +137,14 @@ export interface CocosDailyDungeonPanelView {
 export interface BuildCocosDailyDungeonPanelInput {
   dailyDungeon: CocosDailyDungeonSummary | null;
   activeEvent: CocosDailyDungeonEvent | null;
+  seasonProgress?: CocosSeasonProgress | null;
   currentPlayerId: string;
   pendingFloor: number | null;
   pendingClaimRunId: string | null;
   statusLabel: string;
 }
+
+const DAILY_DUNGEON_ROTATIONS = (dailyDungeonsConfigDocument as { dungeons: DailyDungeonDefinition[] }).dungeons;
 
 function formatRewardLabel(reward: BattlePassRewardConfig): string {
   if ((reward.gems ?? 0) > 0) {
@@ -199,6 +206,34 @@ function formatDurationLabel(remainingMs: number): string {
   return `${hours} 小时`;
 }
 
+function formatActiveWindowLabel(dungeon: Partial<DailyDungeonDefinition>): string {
+  const startDate = dungeon.activeWindow?.startDate?.trim();
+  const endDate = dungeon.activeWindow?.endDate?.trim();
+  if (!startDate || !endDate) {
+    return "轮换窗口待同步";
+  }
+
+  return `${startDate} 至 ${endDate}`;
+}
+
+function resolveNextDungeonRotation(dungeonId: string): DailyDungeonDefinition | null {
+  const currentIndex = DAILY_DUNGEON_ROTATIONS.findIndex((entry) => entry.id === dungeonId);
+  if (currentIndex < 0) {
+    return DAILY_DUNGEON_ROTATIONS[0] ?? null;
+  }
+
+  return DAILY_DUNGEON_ROTATIONS[(currentIndex + 1) % DAILY_DUNGEON_ROTATIONS.length] ?? null;
+}
+
+function resolveDailyDungeonPeakRewardLabel(dungeon: DailyDungeonDefinition): string {
+  const finalFloor = dungeon.floors[dungeon.floors.length - 1] ?? dungeon.floors[0];
+  if (!finalFloor) {
+    return "奖励待同步";
+  }
+
+  return formatDailyDungeonRewardLabel(finalFloor.reward);
+}
+
 function resolveLatestRunByFloor(runs: DailyDungeonRunRecord[]): Map<number, DailyDungeonRunRecord> {
   const byFloor = new Map<number, DailyDungeonRunRecord>();
   for (const run of [...runs].sort((left, right) => right.startedAt.localeCompare(left.startedAt))) {
@@ -221,6 +256,69 @@ function resolveRewardProgressLabel(event: CocosDailyDungeonEvent): string {
   }
 
   return `下一奖励 ${formatSeasonalEventRewardLabel(nextReward)}`;
+}
+
+function resolveBattlePassChaseLabel(progress: CocosSeasonProgress | null | undefined): string {
+  if (!progress || !progress.battlePassEnabled) {
+    return "战令追逐 当前赛季通行证未开启。";
+  }
+
+  const config = getBattlePassConfig();
+  const nextTier = config.tiers.find((tier) => tier.tier === progress.seasonPassTier + 1) ?? null;
+  if (!nextTier) {
+    return `战令追逐 当前已达 T${progress.seasonPassTier} 顶点，后续重点改为清掉未领取奖励。`;
+  }
+
+  const xpGap = Math.max(0, nextTier.xpRequired - Math.max(0, progress.seasonXp));
+  return `战令追逐 T${progress.seasonPassTier} -> T${nextTier.tier} · 还差 ${xpGap} XP · ${resolveNextRewardLabel(config, progress)}`;
+}
+
+function buildDailyDungeonRotationLines(dailyDungeon: CocosDailyDungeonSummary): string[] {
+  const current = dailyDungeon.dungeon;
+  const nextRotation = resolveNextDungeonRotation(current.id);
+  const recommendedLevels = current.floors.map((floor) => floor.recommendedHeroLevel);
+  const minLevel = recommendedLevels.length > 0 ? Math.min(...recommendedLevels) : 1;
+  const maxLevel = recommendedLevels.length > 0 ? Math.max(...recommendedLevels) : minLevel;
+
+  return [
+    `本周轮换 ${current.name} · ${formatActiveWindowLabel(current)}`,
+    nextRotation
+      ? `下轮预告 ${nextRotation.name} · ${nextRotation.activeWindow?.startDate?.trim() || "时间待同步"} 开启`
+      : "下轮预告 后续轮换待同步",
+    `难度递进 Lv${minLevel} -> Lv${maxLevel} · 峰值奖励 ${resolveDailyDungeonPeakRewardLabel(current)}`
+  ];
+}
+
+function buildDailyDungeonChaseLines(
+  dailyDungeon: CocosDailyDungeonSummary,
+  activeEvent: CocosDailyDungeonEvent | null,
+  seasonProgress: CocosSeasonProgress | null | undefined
+): string[] {
+  const unclaimedRuns = dailyDungeon.runs.filter((run) => !run.rewardClaimedAt).length;
+  const highestAttemptedFloor = dailyDungeon.runs.reduce((highest, run) => Math.max(highest, run.floor), 0);
+  const recommendedNextFloor = Math.min(
+    dailyDungeon.dungeon.floors.length,
+    Math.max(1, highestAttemptedFloor + (unclaimedRuns > 0 ? 0 : 1))
+  );
+  const lines = [
+    unclaimedRuns > 0
+      ? `今日建议 先领取 ${unclaimedRuns} 份已完成层奖励，再继续冲击更高层。`
+      : `今日建议 继续推进到第 ${recommendedNextFloor} 层，把每日次数换成赛季收益。`
+  ];
+
+  if (activeEvent) {
+    const claimableRewards = activeEvent.rewards.filter((reward) => activeEvent.player.claimableRewardIds.includes(reward.id));
+    lines.push(
+      claimableRewards.length > 0
+        ? `活动追逐 ${activeEvent.name} · 当前 ${activeEvent.player.points} 分 · 可领取 ${claimableRewards.map((reward) => reward.name).join(" / ")}`
+        : `活动追逐 ${activeEvent.name} · 当前 ${activeEvent.player.points} 分 · ${resolveRewardProgressLabel(activeEvent)}`
+    );
+  } else {
+    lines.push("活动追逐 当前没有与每日地城联动的活动，先把本周轮换奖励清干净。");
+  }
+
+  lines.push(resolveBattlePassChaseLabel(seasonProgress ?? null));
+  return lines;
 }
 
 function buildLeaderboardRows(
@@ -419,6 +517,9 @@ export function buildCocosDailyDungeonPanelView(input: BuildCocosDailyDungeonPan
       title: "每日地城",
       subtitle: "需要先同步账号会话后才能查看当日地城。",
       attemptSummaryLabel: "暂无地城数据",
+      rotationTitle: "轮换与追逐",
+      rotationLines: ["轮换待同步", "登录后会展示本周地城与下一轮预告。"],
+      chaseLines: ["追逐待同步", "登录后会显示活动与战令推进建议。"],
       statusLabel: input.statusLabel,
       floors: [],
       eventTitle: "赛季活动",
@@ -471,6 +572,9 @@ export function buildCocosDailyDungeonPanelView(input: BuildCocosDailyDungeonPan
       title: "每日地城",
       subtitle: `${dailyDungeon.dungeon.name} · ${dailyDungeon.dungeon.description}`,
       attemptSummaryLabel: `今日 ${dailyDungeon.dateKey} · 已用 ${dailyDungeon.attemptsUsed}/${dailyDungeon.dungeon.attemptLimit} 次`,
+      rotationTitle: "轮换与追逐",
+      rotationLines: buildDailyDungeonRotationLines(dailyDungeon),
+      chaseLines: buildDailyDungeonChaseLines(dailyDungeon, null, input.seasonProgress ?? null),
       statusLabel: input.statusLabel,
       floors,
       eventTitle: "赛季活动",
@@ -486,6 +590,9 @@ export function buildCocosDailyDungeonPanelView(input: BuildCocosDailyDungeonPan
     title: "每日地城",
     subtitle: `${dailyDungeon.dungeon.name} · ${dailyDungeon.dungeon.description}`,
     attemptSummaryLabel: `今日 ${dailyDungeon.dateKey} · 已用 ${dailyDungeon.attemptsUsed}/${dailyDungeon.dungeon.attemptLimit} 次 · 剩余 ${dailyDungeon.attemptsRemaining} 次`,
+    rotationTitle: "轮换与追逐",
+    rotationLines: buildDailyDungeonRotationLines(dailyDungeon),
+    chaseLines: buildDailyDungeonChaseLines(dailyDungeon, input.activeEvent, input.seasonProgress ?? null),
     statusLabel: input.statusLabel,
     floors,
     eventTitle: `${input.activeEvent.name} · 剩余 ${formatDurationLabel(input.activeEvent.remainingMs)}`,
