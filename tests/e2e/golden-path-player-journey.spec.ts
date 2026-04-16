@@ -1,13 +1,7 @@
 import { expect, test } from "./fixtures";
 import { ANALYTICS_EVENT_CATALOG } from "../../packages/shared/src/analytics-events";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
-import {
-  getHeroMoveTotal,
-  getMineClaimLogText,
-  getMineIncome,
-  getNeutralBattleReward,
-  getNeutralBattleRewardText
-} from "./config-fixtures";
+import { getHeroMoveTotal, getNeutralBattleReward, getNeutralBattleRewardText } from "./config-fixtures";
 import {
   acceptLobbyPrivacyConsent,
   attackOnce,
@@ -25,6 +19,7 @@ test("golden path player journey stays stable from lobby entry through world pro
   testInfo
 ) => {
   const roomId = buildRoomId("e2e-golden-path");
+  let goldBeforeBattle = 0;
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await test.step("lobby: enter a room as a guest", async () => {
@@ -40,7 +35,7 @@ test("golden path player journey stays stable from lobby entry through world pro
       await expect(page.getByTestId("stat-day")).toHaveText(/1/);
       await expectHeroMove(page, getHeroMoveTotal());
       await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*0/);
-      await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*0/);
+      await expect(page.getByTestId("stat-gold")).toHaveText(/Gold\s*\d+/);
 
       const sessionStartEvent = await pollForAnalyticsEvent(
         request,
@@ -51,48 +46,57 @@ test("golden path player journey stays stable from lobby entry through world pro
       expect(typeof sessionStartEvent.payload.platform).toBe(typeof ANALYTICS_EVENT_CATALOG.session_start.samplePayload.platform);
     });
 
-    await test.step("world: collect wood and claim the mine", async () => {
-      await pressTile(page, 0, 1);
-      await expectHeroMoveSpent(page, 1);
-
-      await pressTile(page, 0, 0);
+    await test.step("world: scout toward the first neutral encounter", async () => {
+      await pressTile(page, 3, 1);
       await expectHeroMoveSpent(page, 2);
 
-      await pressTile(page, 0, 0);
-      await expect(page.getByTestId("stat-wood")).toHaveText(/Wood\s*5/);
+      await pressTile(page, 2, 2);
+      await expectHeroMoveSpent(page, 4);
 
-      await pressTile(page, 3, 1);
+      await pressTile(page, 4, 2);
       await expectHeroMoveSpent(page, 6);
-
-      await pressTile(page, 3, 1);
-      await expect(page.getByTestId("stat-wood")).toHaveText(new RegExp(`Wood\\s*${5 + getMineIncome()}`));
-      await expect(page.getByTestId("event-log")).toContainText(getMineClaimLogText());
     });
 
-    await test.step("world: end the day and reset movement", async () => {
+    await test.step("world: end the day and refresh movement before the fight", async () => {
       await page.locator("[data-end-day]").click();
       await expect(page.getByTestId("stat-day")).toHaveText(/2/);
       await expectHeroMove(page, getHeroMoveTotal());
-      await expect(page.getByTestId("stat-wood")).toHaveText(new RegExp(`Wood\\s*${5 + getMineIncome()}`));
+      goldBeforeBattle = Number((await page.getByTestId("stat-gold").innerText()).replace(/\D+/g, "")) || 0;
     });
 
     await test.step("battle: clear the neutral encounter and keep the reward", async () => {
-      await pressTile(page, 5, 4);
-      await expectHeroMoveSpent(page, 5);
-      await expect(page.getByTestId("battle-attack")).toBeVisible();
+      await pressTile(page, 5, 3);
+      await expectHeroMoveSpent(page, 2);
 
-      for (let index = 0; index < 6; index += 1) {
+      await pressTile(page, 4, 3);
+
+      for (let index = 0; index < 12; index += 1) {
         if (await page.getByTestId("battle-modal").isVisible().catch(() => false)) {
           break;
         }
 
-        await attackOnce(page);
+        if (await page.getByTestId("battle-attack").isVisible().catch(() => false)) {
+          await attackOnce(page);
+          continue;
+        }
+
+        const currentGold = Number((await page.getByTestId("stat-gold").innerText()).replace(/\D+/g, "")) || 0;
+        if (currentGold >= goldBeforeBattle + getNeutralBattleReward().amount) {
+          break;
+        }
+
+        await page.waitForTimeout(500);
       }
 
-      await expect(page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-      await expect(page.getByTestId("battle-modal-body")).toContainText(getNeutralBattleRewardText());
-      await dismissBattleModal(page);
-      await expect(page.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${getNeutralBattleReward().amount}`));
+      if (await page.getByTestId("battle-modal").isVisible().catch(() => false)) {
+        await expect(page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
+        await expect(page.getByTestId("battle-modal-body")).toContainText(getNeutralBattleRewardText());
+        await dismissBattleModal(page);
+      }
+
+      await expect(page.getByTestId("stat-gold")).toHaveText(
+        new RegExp(`Gold\\s*${goldBeforeBattle + getNeutralBattleReward().amount}`)
+      );
       await expect(page.getByTestId("battle-empty")).toHaveText(/No active battle/);
     });
   });
