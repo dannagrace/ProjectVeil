@@ -74,13 +74,18 @@ export default defineConfig({
       command: "npm run dev:server",
       env: {
         ...process.env,
-        ANALYTICS_ENDPOINT: "http://127.0.0.1:2567/api/analytics/events",
+        ANALYTICS_ENDPOINT: "http://127.0.0.1:2567/api/test/analytics/events",
+        ANALYTICS_SINK: "http",
         VEIL_ADMIN_TOKEN: process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token",
         VEIL_DAILY_QUESTS_ENABLED: "1",
-        VEIL_DAILY_QUEST_ROTATIONS_JSON: DAILY_QUEST_SMOKE_ROTATIONS
+        VEIL_DAILY_QUEST_ROTATIONS_JSON: DAILY_QUEST_SMOKE_ROTATIONS,
+        VEIL_RATE_LIMIT_AUTH_MAX: process.env.VEIL_RATE_LIMIT_AUTH_MAX ?? "120",
+        VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX: process.env.VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX ?? "2000",
+        VEIL_RATE_LIMIT_HTTP_ADMIN_MAX: process.env.VEIL_RATE_LIMIT_HTTP_ADMIN_MAX ?? "200",
+        VEIL_RATE_LIMIT_WS_ACTION_MAX: process.env.VEIL_RATE_LIMIT_WS_ACTION_MAX ?? "40"
       },
       port: 2567,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 30_000,
@@ -92,7 +97,7 @@ export default defineConfig({
     {
       command: "npm run dev:client",
       port: 4173,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 30_000,

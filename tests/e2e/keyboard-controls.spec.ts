@@ -101,11 +101,36 @@ test("keyboard shortcuts can enter battle, attack, and close the victory modal",
   await page.goto(`/?roomId=${roomId}&playerId=player-1`);
 
   await expectHeroMove(page, getHeroMoveTotal());
+  const goldBeforeBattle = Number((await page.getByTestId("stat-gold").innerText()).replace(/\D+/g, "")) || 0;
 
-  await pressKey(page, "ArrowRight", 4);
-  await pressKey(page, "ArrowDown", 3);
-  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 5, y: 4 });
+  await pressKey(page, "ArrowRight", 2);
+  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 3, y: 1 });
+  await page.keyboard.press("Enter");
+  await expectHeroMoveSpent(page, 2);
 
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 2, y: 2 });
+  await page.keyboard.press("Enter");
+  await expectHeroMoveSpent(page, 4);
+
+  await pressKey(page, "ArrowRight", 2);
+  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 4, y: 2 });
+  await page.keyboard.press("Enter");
+  await expectHeroMoveSpent(page, 6);
+
+  await page.keyboard.press("b");
+  await expect(page.getByTestId("stat-day")).toHaveText(/2/);
+  await expectHeroMove(page, getHeroMoveTotal());
+
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 5, y: 3 });
+  await page.keyboard.press("Enter");
+  await expectHeroMoveSpent(page, 2);
+
+  await pressKey(page, "ArrowLeft");
+  await expect.poll(async () => (await readAutomationState(page)).keyboardCursor).toEqual({ x: 4, y: 3 });
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("battle-attack")).toBeVisible();
 
@@ -116,5 +141,5 @@ test("keyboard shortcuts can enter battle, attack, and close the victory modal",
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("battle-modal")).toBeHidden();
-  await expect(page.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${getNeutralBattleReward().amount}`));
+  await expect(page.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${goldBeforeBattle + getNeutralBattleReward().amount}`));
 });

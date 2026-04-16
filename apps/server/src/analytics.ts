@@ -449,7 +449,7 @@ export function registerAnalyticsRoutes(
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (request.method === "OPTIONS") {
@@ -465,6 +465,31 @@ export function registerAnalyticsRoutes(
     sendJson(response, 200, {
       events: getCapturedAnalyticsEventsForTest()
     });
+  });
+
+  app.post("/api/test/analytics/events", async (request, response) => {
+    try {
+      const payload = await readJsonBody(request);
+      const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
+        ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
+        : [];
+      capturedAnalyticsEvents.push(...events);
+      analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into test capture`);
+      sendJson(response, 202, {
+        accepted: events.length
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, {
+          error: toErrorPayload(error)
+        });
+        return;
+      }
+
+      sendJson(response, 400, {
+        error: toErrorPayload(error)
+      });
+    }
   });
 
   app.post("/api/analytics/events", async (request, response) => {
