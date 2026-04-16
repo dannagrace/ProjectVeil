@@ -100,6 +100,30 @@ function resolveNextCampaignMission(campaign: CocosCampaignSummary | null) {
   );
 }
 
+function parseCampaignChapterOrder(chapterId: string | null | undefined): number | null {
+  const matched = /chapter-?(\d+)/i.exec(chapterId?.trim() ?? "");
+  if (!matched) {
+    return null;
+  }
+
+  const value = Number(matched[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatCampaignChapterLabel(chapterId: string | null | undefined): string {
+  const order = parseCampaignChapterOrder(chapterId);
+  return order ? `第 ${order} 章` : (chapterId?.trim() || "未知章节");
+}
+
+function formatUnlockRequirementSummary(mission: CocosCampaignSummary["missions"][number] | null): string | null {
+  const unmet = mission?.unlockRequirements?.filter((entry) => entry.satisfied !== true) ?? [];
+  if (unmet.length === 0) {
+    return null;
+  }
+
+  return unmet.map((entry) => entry.description).join(" / ");
+}
+
 function countUnclaimedDailyDungeonRuns(dailyDungeon: CocosDailyDungeonSummary | null): number {
   return dailyDungeon?.runs.filter((run) => !run.rewardClaimedAt).length ?? 0;
 }
@@ -124,9 +148,19 @@ export function buildLobbyPveFrontdoorView(
   }
 
   const nextMission = resolveNextCampaignMission(state.campaign ?? null);
+  const currentChapterMissions =
+    nextMission && state.campaign ? state.campaign.missions.filter((mission) => mission.chapterId === nextMission.chapterId) : [];
+  const completedInCurrentChapter = currentChapterMissions.filter((mission) => mission.status === "completed").length;
+  const lockedFollowupMission =
+    state.campaign?.missions.find(
+      (mission) =>
+        mission.status === "locked"
+        && parseCampaignChapterOrder(mission.chapterId) != null
+        && (parseCampaignChapterOrder(mission.chapterId) ?? 0) >= (parseCampaignChapterOrder(nextMission?.chapterId) ?? 0)
+    ) ?? null;
   const unclaimedDailyDungeonRuns = countUnclaimedDailyDungeonRuns(state.dailyDungeon ?? null);
   const campaignSummary = nextMission
-    ? `主线 ${nextMission.chapterId} · ${nextMission.name} · 推荐等级 ${nextMission.recommendedHeroLevel}`
+    ? `${formatCampaignChapterLabel(nextMission.chapterId)} · 已完成 ${completedInCurrentChapter}/${Math.max(1, currentChapterMissions.length)} · 下一任务 ${nextMission.name} · 推荐等级 ${nextMission.recommendedHeroLevel}`
     : state.campaign
       ? `主线已推进 ${state.campaign.completedCount}/${state.campaign.totalMissions}，当前章节暂时没有新的可用任务。`
       : `主线待同步 · ${state.campaignStatus || "正在读取章节进度..."}`;
@@ -137,6 +171,8 @@ export function buildLobbyPveFrontdoorView(
     : `每日地城待同步 · ${state.dailyDungeonStatus || "正在读取今日配置..."}`;
   const focusSummary = unclaimedDailyDungeonRuns > 0
     ? `今日焦点：先领取地城奖励，再推进 ${nextMission?.name ?? "当前主线"}。`
+    : lockedFollowupMission
+      ? `章节路线：完成 ${nextMission?.name ?? "当前任务"} 后可解锁 ${lockedFollowupMission.name}${formatUnlockRequirementSummary(lockedFollowupMission) ? ` · ${formatUnlockRequirementSummary(lockedFollowupMission)}` : ""}。`
     : nextMission && state.dailyDungeon
       ? `今日焦点：推进 ${nextMission.name}，顺手清掉 ${state.dailyDungeon.dungeon.name}。`
       : nextMission

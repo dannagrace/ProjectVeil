@@ -35,6 +35,98 @@ export interface CocosCampaignPanelView {
   actions: CocosCampaignPanelActionView[];
 }
 
+function parseCampaignChapterOrder(chapterId: string | null | undefined): number | null {
+  const matched = /chapter-?(\d+)/i.exec(chapterId?.trim() ?? "");
+  if (!matched) {
+    return null;
+  }
+
+  const value = Number(matched[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatCampaignChapterLabel(chapterId: string | null | undefined): string {
+  const order = parseCampaignChapterOrder(chapterId);
+  return order ? `第 ${order} 章` : (chapterId?.trim() || "未知章节");
+}
+
+function resolveCurrentChapterMissions(
+  campaign: CocosCampaignSummary | null,
+  mission: CampaignMissionState | null
+): CampaignMissionState[] {
+  const chapterId = mission?.chapterId ?? null;
+  if (!campaign || !chapterId) {
+    return [];
+  }
+  return campaign.missions.filter((entry) => entry.chapterId === chapterId);
+}
+
+function resolveNextRouteMission(
+  campaign: CocosCampaignSummary | null,
+  mission: CampaignMissionState | null
+): CampaignMissionState | null {
+  if (!campaign || !mission) {
+    return null;
+  }
+
+  const missions = campaign.missions;
+  const nextMission = campaign.nextMissionId
+    ? missions.find((entry) => entry.id === campaign.nextMissionId) ?? null
+    : null;
+  if (nextMission) {
+    return nextMission;
+  }
+
+  const currentIndex = missions.findIndex((entry) => entry.id === mission.id);
+  if (currentIndex >= 0) {
+    return missions.slice(currentIndex + 1).find((entry) => entry.status !== "completed") ?? null;
+  }
+
+  return missions.find((entry) => entry.status !== "completed") ?? null;
+}
+
+function formatUnlockRequirementSummary(mission: CampaignMissionState | null): string | null {
+  const unmet = mission?.unlockRequirements?.filter((entry) => entry.satisfied !== true) ?? [];
+  if (unmet.length === 0) {
+    return null;
+  }
+  return unmet.map((entry) => entry.description).join(" / ");
+}
+
+function buildCampaignRouteLines(
+  campaign: CocosCampaignSummary | null,
+  mission: CampaignMissionState | null,
+  activeMission: CampaignMissionState | null
+): string[] {
+  if (!campaign || !mission) {
+    return ["战役数据未加载", "请稍后重试。"];
+  }
+
+  const currentChapterMissions = resolveCurrentChapterMissions(campaign, mission);
+  const completedInChapter = currentChapterMissions.filter((entry) => entry.status === "completed").length;
+  const nextRouteMission = resolveNextRouteMission(campaign, mission);
+  const lockedFollowupMission =
+    currentChapterMissions.find((entry) => entry.order > mission.order && entry.status === "locked")
+    ?? campaign.missions.find(
+      (entry) =>
+        entry.status === "locked"
+        && parseCampaignChapterOrder(entry.chapterId) != null
+        && (parseCampaignChapterOrder(entry.chapterId) ?? 0) >= (parseCampaignChapterOrder(mission.chapterId) ?? 0)
+    )
+    ?? null;
+
+  return [
+    `${formatCampaignChapterLabel(mission.chapterId)} · 已完成 ${completedInChapter}/${Math.max(1, currentChapterMissions.length)}`,
+    nextRouteMission
+      ? `路线下一步 ${formatCampaignChapterLabel(nextRouteMission.chapterId)} / ${nextRouteMission.name}`
+      : "路线下一步 当前战役线已全部完成",
+    lockedFollowupMission
+      ? `后续解锁 ${lockedFollowupMission.name} · ${formatUnlockRequirementSummary(lockedFollowupMission) ?? "满足前置后开启"}`
+      : "后续解锁 当前章节之后暂无额外门槛",
+    activeMission ? `进行中 ${activeMission.name}` : "进行中 当前没有已启动任务"
+  ];
+}
+
 function formatMissionStatus(status: CampaignMissionState["status"]): string {
   switch (status) {
     case "completed":
@@ -109,11 +201,9 @@ export function buildCocosCampaignPanelView(input: CocosCampaignPanelInput): Coc
       : "需要正式账号会话才能读取战役进度。";
 
   const progressLines = input.campaign
-    ? [
-        input.campaign.nextMissionId ? `下一任务 ${input.campaign.nextMissionId}` : "下一任务 当前战役线已全部完成",
-        activeMission ? `进行中 ${activeMission.name}` : "进行中 当前没有已启动任务",
-        mission ? `聚焦 ${mission.chapterId} / ${mission.name}` : "聚焦 等待任务数据"
-      ]
+    ? mission
+      ? [...buildCampaignRouteLines(input.campaign, mission, activeMission), `聚焦 ${mission.chapterId} / ${mission.name}`]
+      : ["战役数据未加载", input.statusMessage || "请稍后重试。"]
     : ["战役数据未加载", input.statusMessage || "请稍后重试。"];
 
   const missionLines = mission
