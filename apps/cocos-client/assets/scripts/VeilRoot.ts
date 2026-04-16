@@ -2835,6 +2835,12 @@ export class VeilRoot extends Component {
         this.gameplayCampaignDialogue = null;
         this.gameplayCampaignPanelOpen = false;
       }
+      this.trackClientAnalyticsEvent("mission_started", {
+        campaignId: result.mission.chapterId,
+        missionId: result.mission.id,
+        mapId: result.mission.mapId,
+        chapterOrder: Number.parseInt(result.mission.chapterId.replace(/^chapter/i, ""), 10) || 1
+      });
       await this.refreshGameplayCampaign(result.mission.id);
       this.gameplayCampaignStatus =
         (result.mission.introDialogue?.length ?? 0) > 0
@@ -3529,6 +3535,7 @@ export class VeilRoot extends Component {
     | "session_start"
     | "battle_start"
     | "battle_end"
+    | "mission_started"
     | "quest_complete"
     | "tutorial_step"
     | "experiment_exposure"

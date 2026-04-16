@@ -246,6 +246,22 @@ test("createAnalyticsEvent: quest_complete event carries correct payload structu
   assert.equal(event.payload.reward.gems, 5);
 });
 
+test("createAnalyticsEvent: mission_started event carries campaign handoff payload", () => {
+  const event = createAnalyticsEvent("mission_started", {
+    playerId: "player-1",
+    payload: {
+      campaignId: "chapter1",
+      missionId: "chapter1-ember-watch",
+      mapId: "veil-frontier",
+      chapterOrder: 1
+    }
+  });
+  assert.equal(event.payload.campaignId, "chapter1");
+  assert.equal(event.payload.missionId, "chapter1-ember-watch");
+  assert.equal(event.payload.mapId, "veil-frontier");
+  assert.equal(event.payload.chapterOrder, 1);
+});
+
 test("createAnalyticsEvent: daily_login event carries streak and reward payload", () => {
   const event = createAnalyticsEvent("daily_login", {
     playerId: "player-1",

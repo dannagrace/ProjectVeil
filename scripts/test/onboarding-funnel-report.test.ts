@@ -79,6 +79,10 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
   assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_2_seen")?.reachedCount, 4);
   assert.equal(report.stageReports.find((stage) => stage.id === "tutorial_step_3_seen")?.dropOffCount, 1);
   assert.equal(report.stageReports.find((stage) => stage.id === "onboarding_completed")?.dropOffCount, 1);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_campaign_mission_started")?.reachedCount, 2);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_battle_settled")?.reachedCount, 2);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_reward_claimed")?.reachedCount, 1);
+  assert.equal(report.stageReports.find((stage) => stage.id === "first_reward_claimed")?.dropOffCount, 1);
   assert.deepEqual(
     report.topFailureReasons.map((failure) => [failure.reason, failure.count, failure.playerCount]),
     [
@@ -96,6 +100,8 @@ test("onboarding funnel report aggregates completion, timings, drop-off, and fai
   const markdown = fs.readFileSync(markdownOutputPath, "utf8");
   assert.match(markdown, /## Canonical Stages/);
   assert.match(markdown, /Completion rate: 33\.3%/);
+  assert.match(markdown, /First Campaign Mission Started/);
+  assert.match(markdown, /First Reward Claimed/);
   assert.match(markdown, /`disconnect` count=1/);
   assert.match(markdown, /Failure reason coverage: 4\/6 entrants/);
 });

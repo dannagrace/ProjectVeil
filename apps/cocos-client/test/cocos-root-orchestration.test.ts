@@ -342,6 +342,17 @@ test("VeilRoot loads campaign state and advances the manual campaign dialogue/st
   root.authMode = "account";
   root.authProvider = "account-password";
   root.authToken = "signed.token";
+  const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+  configureClientAnalyticsRuntimeDependencies({
+    getNodeEnv: () => "production",
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
+      return {
+        ok: true,
+        status: 202
+      };
+    }
+  });
   const dialogueAcks: Array<{ missionId: string; sequence: "intro" | "outro"; dialogueLineId: string }> = [];
   root.session = {
     async acknowledgeCampaignDialogue(missionId, sequence, dialogueLineId) {
@@ -490,12 +501,21 @@ test("VeilRoot loads campaign state and advances the manual campaign dialogue/st
   assert.equal(loadCalls, 1);
 
   await root.startGameplayCampaignMission();
+  await flushClientAnalyticsEventsForTest();
   assert.equal(root.gameplayCampaignActiveMissionId, "chapter1-ember-watch");
   assert.deepEqual(root.gameplayCampaignDialogue, {
     missionId: "chapter1-ember-watch",
     sequence: "intro",
     lineIndex: 0
   });
+  const events = parseCapturedAnalyticsEvents(fetchCalls);
+  const missionStartedEvent = assertCapturedAnalyticsEvent(
+    events,
+    "mission_started",
+    (event) => event.payload.missionId === "chapter1-ember-watch"
+  );
+  assert.equal(missionStartedEvent.payload.campaignId, "chapter1");
+  assert.equal(missionStartedEvent.payload.chapterOrder, 1);
 
   root.advanceGameplayCampaignDialogue();
   assert.equal(root.gameplayCampaignDialogue, null);

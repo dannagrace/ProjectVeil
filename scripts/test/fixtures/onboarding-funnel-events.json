@@ -54,6 +54,51 @@
     },
     {
       "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T10:05:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "battle_end",
+      "version": 1,
+      "at": "2026-04-01T10:08:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "battleId": "battle-fast-1",
+        "result": "attacker_victory",
+        "heroId": "hero-1",
+        "battleKind": "neutral"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "quest_complete",
+      "version": 1,
+      "at": "2026-04-01T10:10:00.000Z",
+      "playerId": "player-complete-fast",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "questId": "daily_explore_frontier",
+        "reward": {
+          "gems": 5,
+          "gold": 60
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
       "name": "session_start",
       "version": 1,
       "at": "2026-04-01T11:00:00.000Z",
@@ -100,6 +145,35 @@
       "payload": {
         "stepId": "tutorial_completed",
         "status": "completed"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "mission_started",
+      "version": 1,
+      "at": "2026-04-01T11:12:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "campaignId": "chapter1",
+        "missionId": "chapter1-ember-watch",
+        "mapId": "veil-frontier",
+        "chapterOrder": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "name": "battle_end",
+      "version": 1,
+      "at": "2026-04-01T11:20:00.000Z",
+      "playerId": "player-complete-slow",
+      "source": "server",
+      "payload": {
+        "roomId": "veil-frontier",
+        "battleId": "battle-slow-1",
+        "result": "attacker_victory",
+        "heroId": "hero-2",
+        "battleKind": "neutral"
       }
     },
     {
