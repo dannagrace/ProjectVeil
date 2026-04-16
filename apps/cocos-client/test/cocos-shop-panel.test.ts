@@ -47,6 +47,9 @@ test("buildCocosShopPanelView formats gem purchases, WeChat purchases, and pendi
 
   assert.equal(view.gemBalanceLabel, "宝石 30");
   assert.equal(view.emptyLabel, null);
+  assert.equal(view.featuredProductId, "gem-pack-premium");
+  assert.match(view.featuredTitle, /补给推荐 · Premium Gem Cache/);
+  assert.match(view.featuredSummary, /宝石 x120 · 微信 ¥6.00/);
   assert.deepEqual(view.rows, [
     {
       productId: "resource-bundle-starter",
@@ -114,5 +117,6 @@ test("buildCocosShopPanelView reports insufficient gems and empty states", () =>
   });
 
   assert.equal(empty.emptyLabel, "当前没有可购买商品。");
+  assert.equal(empty.featuredProductId, null);
   assert.deepEqual(empty.rows, []);
 });

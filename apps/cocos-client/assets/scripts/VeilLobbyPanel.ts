@@ -1240,6 +1240,27 @@ export class VeilLobbyPanel extends Component {
       18
     );
 
+    cursorY = this.renderCard(
+      "LobbyShopFeatured",
+      centerX,
+      cursorY,
+      width,
+      74,
+      [shop.featuredTitle, shop.featuredSummary, shop.featuredFootnote],
+      {
+        fill: new Color(58, 74, 96, 194),
+        stroke: new Color(236, 226, 184, 74),
+        accent: new Color(220, 182, 112, 204)
+      },
+      shop.featuredProductId && !state.entering
+        ? () => {
+            this.onPurchaseShopProduct?.(shop.featuredProductId!);
+          }
+        : null,
+      13,
+      18
+    );
+
     if (shop.emptyLabel) {
       this.hideExtraCards("LobbyShop-", 0);
       return this.renderCard(

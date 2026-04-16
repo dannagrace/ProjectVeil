@@ -2191,3 +2191,17 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 测试收口：
   - `scripts/test/phase1-candidate-rehearsal.test.ts`
     - 锁住 reviewer front door 对 `runtimeObservabilityBundlePath` 的展示
+
+## V1.0 Live-ops Kickoff - 2026-04-16
+
+- 在 [docs/next-feature-plan.md](/Users/grace/Documents/project/codex/ProjectVeil/docs/next-feature-plan.md) 里正式补上了 `V1.0` 路线，当前切成 4 条并行 issue：
+  - `赛季活动榜单与奖励追逐前台`
+  - `战令跑道与高级通行证价值前台`
+  - `商店推荐位与外观/高级通行证动机收口`
+  - `账号成长回顾加入回流摘要与下一目标`
+- 当前这轮实现重点会放在“回流玩家 / live-ops 产品化”，优先把已存在的 seasonal event、battle pass、shop、account review 数据整成更直接的前台动机，而不是再扩新系统。
+- `#1507` 当前已落地：
+  - `apps/cocos-client/assets/scripts/cocos-shop-panel.ts`
+    - 商店 view 现在会生成 featured offer / value summary
+  - `apps/cocos-client/assets/scripts/VeilLobbyPanel.ts`
+    - Lobby 商店区会前置渲染 `本期推荐` 卡片，直接把推荐位抬到商品列表前面
