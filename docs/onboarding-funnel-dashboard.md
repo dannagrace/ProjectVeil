@@ -10,13 +10,16 @@ The report is intentionally pragmatic:
 
 ## Canonical Funnel
 
-The funnel uses stable stage ids from [`packages/shared/src/onboarding-funnel.ts`](../packages/shared/src/onboarding-funnel.ts):
+The report keeps the shared onboarding stage contract from [`packages/shared/src/onboarding-funnel.ts`](../packages/shared/src/onboarding-funnel.ts) and merges in the post-tutorial focus stages used for V0.6 closeout:
 
 - `onboarding_session_started`
 - `tutorial_step_1_seen`
 - `tutorial_step_2_seen`
 - `tutorial_step_3_seen`
 - `onboarding_completed`
+- `first_campaign_mission_started`
+- `first_battle_settled`
+- `first_reward_claimed`
 
 Stage semantics:
 
@@ -30,6 +33,12 @@ Stage semantics:
   The player advanced to the final guided step before completion.
 - `onboarding_completed`
   The player finished onboarding and unlocked normal progression.
+- `first_campaign_mission_started`
+  The player was handed into the first campaign mission after tutorial completion.
+- `first_battle_settled`
+  The first chapter battle resolved and the settlement state became visible.
+- `first_reward_claimed`
+  The first post-battle reward was claimed and visible to review.
 
 ## Usage
 
@@ -65,11 +74,13 @@ npm run analytics:onboarding:funnel -- \
 The JSON report includes:
 
 - `summary`
-  entrant count, completion count, completion rate, and median completion time
+  entrant count, full-chain completion count, completion rate, and median time from onboarding start to first reward claim
+- `pmSummary`
+  a PM-facing narrative plus the post-tutorial focus chain with reach and drop-off counts
 - `canonicalStages`
   the stable stage contract with success criteria and evidence notes
 - `stageReports`
-  per-stage reach counts and drop-off counts/rates
+  per-stage reach counts and drop-off counts/rates across both the shared and supplemental funnel stages
 - `topFailureReasons`
   the most common explicit failure reasons when the source evidence contains them
 - `regressions`
@@ -85,8 +96,9 @@ Start in this order:
 
 1. Completion rate
 2. Median completion time
-3. The first stage with a large drop-off count
-4. Top failure reasons if present
+3. The PM summary focus chain
+4. The first stage with a large drop-off count
+5. Top failure reasons if present
 
 Pragmatic default thresholds are built into the script and emitted into the artifact:
 
@@ -99,5 +111,6 @@ Treat these as regression flags, not hard product truth. Tighten them once a hea
 ## Evidence Limitations
 
 - If the evidence only contains tutorial-step events, the report infers `tutorial_step_1_seen` from the onboarding session start.
+- The report accepts explicit `stageId` markers in fixtures for the post-tutorial focus chain, which is how we keep the dashboard deterministic while the shared telemetry contract is still expanding.
 - If no diagnostics or failure-coded events are supplied, abandonment still appears in stage drop-off counts but the failure reason section will stay empty.
 - The current report is player-level and de-duplicates by `playerId`. It is designed for onboarding health snapshots, not retry-cohort analysis.

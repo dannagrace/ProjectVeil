@@ -2,8 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   ONBOARDING_FUNNEL_STAGES,
-  type OnboardingFunnelStageDefinition,
-  type OnboardingFunnelStageId
+  type OnboardingFunnelStageDefinition
 } from "../packages/shared/src/index.ts";
 
 const DEFAULT_OUTPUT_DIR = path.resolve("artifacts", "analytics");
@@ -38,7 +37,7 @@ interface DiagnosticFailureRecord {
 interface OnboardingParticipant {
   playerId: string;
   firstObservedAt?: string;
-  stageTimes: Partial<Record<OnboardingFunnelStageId, string>>;
+  stageTimes: Partial<Record<ReportStageId, string>>;
   highestStageIndex: number;
   failureReasons: Array<{
     reason: string;
@@ -49,7 +48,7 @@ interface OnboardingParticipant {
 }
 
 interface StageReport {
-  id: OnboardingFunnelStageId;
+  id: ReportStageId;
   label: string;
   successCriteria: string;
   evidenceNotes: string;
@@ -94,15 +93,67 @@ interface OnboardingFunnelReport {
   };
   canonicalStages: OnboardingFunnelStageDefinition[];
   stageReports: StageReport[];
+  pmSummary: {
+    focusChainLabel: string;
+    focusStages: Array<{
+      id: ReportStageId;
+      label: string;
+      reachedCount: number;
+      dropOffCount: number;
+      dropOffRateFromPrevious: number | null;
+    }>;
+    narrative: string[];
+  };
   topFailureReasons: FailureReasonSummary[];
   participants: Array<{
     playerId: string;
     firstObservedAt?: string;
-    highestStageId?: OnboardingFunnelStageId;
+    highestStageId?: ReportStageId;
     completed: boolean;
     failureReasons: string[];
   }>;
 }
+
+interface StageDefinition {
+  id: string;
+  label: string;
+  successCriteria: string;
+  evidenceNotes: string;
+}
+
+const SUPPLEMENTAL_ONBOARDING_FUNNEL_STAGES = [
+  {
+    id: "first_campaign_mission_started",
+    label: "First Campaign Mission Started",
+    successCriteria: "The player is handed from tutorial completion into the first chapter path.",
+    evidenceNotes:
+      "Prefer an explicit `stageId` marker in fixtures. Otherwise the report infers this stage from the first chapter mission completion artifact after onboarding completion."
+  },
+  {
+    id: "first_battle_settled",
+    label: "First Battle Settled",
+    successCriteria: "The player's first chapter battle resolves and the settlement state is visible.",
+    evidenceNotes:
+      "Prefer an explicit `stageId` marker in fixtures. Otherwise the report infers this stage from the first `battle_end` artifact after chapter handoff."
+  },
+  {
+    id: "first_reward_claimed",
+    label: "First Reward Claimed",
+    successCriteria: "The player's first post-battle reward is claimed and visible to PM review.",
+    evidenceNotes:
+      "Prefer an explicit `stageId` marker in fixtures. Otherwise the report infers this stage from the first reward-claim artifact after first battle settlement."
+  }
+] as const satisfies readonly StageDefinition[];
+
+const REPORT_STAGE_DEFINITIONS = mergeStageDefinitions(ONBOARDING_FUNNEL_STAGES, SUPPLEMENTAL_ONBOARDING_FUNNEL_STAGES);
+const POST_TUTORIAL_FOCUS_STAGE_IDS = [
+  "onboarding_completed",
+  "first_campaign_mission_started",
+  "first_battle_settled",
+  "first_reward_claimed"
+] as const;
+
+type ReportStageId = (typeof REPORT_STAGE_DEFINITIONS)[number]["id"];
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -271,6 +322,22 @@ function toNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function mergeStageDefinitions(
+  sharedStages: readonly OnboardingFunnelStageDefinition[],
+  supplementalStages: readonly StageDefinition[]
+): readonly StageDefinition[] {
+  const merged: StageDefinition[] = [];
+  const seen = new Set<string>();
+  for (const stage of [...sharedStages, ...supplementalStages]) {
+    if (seen.has(stage.id)) {
+      continue;
+    }
+    merged.push(stage);
+    seen.add(stage.id);
+  }
+  return merged;
+}
+
 function getOrCreateParticipant(participants: Map<string, OnboardingParticipant>, playerId: string): OnboardingParticipant {
   const existing = participants.get(playerId);
   if (existing) {
@@ -287,13 +354,8 @@ function getOrCreateParticipant(participants: Map<string, OnboardingParticipant>
   return created;
 }
 
-function markStage(
-  participant: OnboardingParticipant,
-  stageId: OnboardingFunnelStageId,
-  at?: string,
-  options?: { inferPreviousStages?: boolean }
-): void {
-  const stageIndex = ONBOARDING_FUNNEL_STAGES.findIndex((stage) => stage.id === stageId);
+function markStage(participant: OnboardingParticipant, stageId: ReportStageId, at?: string, options?: { inferPreviousStages?: boolean }): void {
+  const stageIndex = REPORT_STAGE_DEFINITIONS.findIndex((stage) => stage.id === stageId);
   if (stageIndex < 0) {
     return;
   }
@@ -304,7 +366,7 @@ function markStage(
 
   if (options?.inferPreviousStages) {
     for (let index = 0; index < stageIndex; index += 1) {
-      const previousStageId = ONBOARDING_FUNNEL_STAGES[index].id;
+      const previousStageId = REPORT_STAGE_DEFINITIONS[index].id;
       participant.stageTimes[previousStageId] ??= at;
     }
   }
@@ -328,6 +390,7 @@ function collectParticipants(events: RawAnalyticsEvent[], diagnosticFailures: Di
 
   for (const event of sortedEvents) {
     const participant = getOrCreateParticipant(participants, event.playerId!);
+    const explicitStageId = resolveStageIdFromPayload(event.payload);
 
     if (event.name === "session_start" && looksLikeOnboardingSession(event.payload)) {
       markStage(participant, "onboarding_session_started", event.at);
@@ -351,6 +414,7 @@ function collectParticipants(events: RawAnalyticsEvent[], diagnosticFailures: Di
     }
 
     if (event.name !== "tutorial_step") {
+      applyPostTutorialStageMarkers(participant, event.name, event.payload, event.at, explicitStageId);
       continue;
     }
 
@@ -370,10 +434,12 @@ function collectParticipants(events: RawAnalyticsEvent[], diagnosticFailures: Di
       participant.failureReasons.push({
         reason: explicitFailureReason ?? "manual_exit",
         at: event.at,
-        stageId: resolveStageIdFromPayload(event.payload) ?? highestStageId(participant),
+        stageId: explicitStageId ?? highestStageId(participant),
         source: "analytics"
       });
     }
+
+    applyPostTutorialStageMarkers(participant, event.name, event.payload, event.at, explicitStageId);
   }
 
   for (const failure of diagnosticFailures) {
@@ -414,19 +480,59 @@ function looksLikeOnboardingSession(payload: Record<string, unknown>): boolean {
   return true;
 }
 
-function resolveStageIdFromPayload(payload: Record<string, unknown>): OnboardingFunnelStageId | undefined {
+function resolveStageIdFromPayload(payload: Record<string, unknown>): ReportStageId | undefined {
   return normalizeStageId(toNonEmptyString(payload.stageId));
 }
 
-function normalizeStageId(value?: string): OnboardingFunnelStageId | undefined {
+function normalizeStageId(value?: string): ReportStageId | undefined {
   if (!value) {
     return undefined;
   }
-  return ONBOARDING_FUNNEL_STAGES.find((stage) => stage.id === value)?.id;
+  return REPORT_STAGE_DEFINITIONS.find((stage) => stage.id === value)?.id;
 }
 
-function highestStageId(participant: OnboardingParticipant): OnboardingFunnelStageId | undefined {
-  return participant.highestStageIndex >= 0 ? ONBOARDING_FUNNEL_STAGES[participant.highestStageIndex].id : undefined;
+function highestStageId(participant: OnboardingParticipant): ReportStageId | undefined {
+  return participant.highestStageIndex >= 0 ? REPORT_STAGE_DEFINITIONS[participant.highestStageIndex].id : undefined;
+}
+
+function applyPostTutorialStageMarkers(
+  participant: OnboardingParticipant,
+  eventName: string | undefined,
+  payload: Record<string, unknown>,
+  at?: string,
+  explicitStageId?: ReportStageId
+): void {
+  const stageId = explicitStageId ?? resolveStageIdFromPayload(payload);
+  if (stageId) {
+    markStage(participant, stageId, at, stageId === "onboarding_completed" ? { inferPreviousStages: true } : undefined);
+  }
+
+  if (
+    eventName === "mission_complete" &&
+    participant.stageTimes.onboarding_completed &&
+    !participant.stageTimes.first_campaign_mission_started
+  ) {
+    const chapterId = toNonEmptyString(payload.chapterId);
+    if (chapterId === "chapter1") {
+      markStage(participant, "first_campaign_mission_started", at, { inferPreviousStages: true });
+    }
+  }
+
+  if (
+    eventName === "battle_end" &&
+    participant.stageTimes.first_campaign_mission_started &&
+    !participant.stageTimes.first_battle_settled
+  ) {
+    markStage(participant, "first_battle_settled", at, { inferPreviousStages: true });
+  }
+
+  if (
+    eventName === "quest_complete" &&
+    participant.stageTimes.first_battle_settled &&
+    !participant.stageTimes.first_reward_claimed
+  ) {
+    markStage(participant, "first_reward_claimed", at, { inferPreviousStages: true });
+  }
 }
 
 function roundRate(value: number): number {
@@ -437,7 +543,7 @@ function calculateMedianCompletionSeconds(participants: OnboardingParticipant[])
   const completedDurations = participants
     .map((participant) => {
       const startedAt = participant.stageTimes.onboarding_session_started ?? participant.firstObservedAt;
-      const completedAt = participant.stageTimes.onboarding_completed;
+      const completedAt = getFullChainCompletionAt(participant);
       if (!startedAt || !completedAt) {
         return null;
       }
@@ -491,10 +597,10 @@ function summarizeFailureReasons(participants: OnboardingParticipant[]): Failure
 function buildReport(args: Args, inputPaths: string[], diagnosticsPaths: string[], participantsMap: Map<string, OnboardingParticipant>): OnboardingFunnelReport {
   const participants = [...participantsMap.values()].sort((left, right) => left.playerId.localeCompare(right.playerId));
   const entrants = participants.length;
-  const completed = participants.filter((participant) => Boolean(participant.stageTimes.onboarding_completed)).length;
+  const completed = participants.filter((participant) => Boolean(getFullChainCompletionAt(participant))).length;
   const completionRate = entrants > 0 ? roundRate(completed / entrants) : 0;
   const medianCompletionSeconds = calculateMedianCompletionSeconds(participants);
-  const stageReports = ONBOARDING_FUNNEL_STAGES.map((stage, index) => {
+  const stageReports = REPORT_STAGE_DEFINITIONS.map((stage, index) => {
     const reachedCount = participants.filter((participant) => participant.highestStageIndex >= index).length;
     const previousReachedCount = index === 0 ? entrants : participants.filter((participant) => participant.highestStageIndex >= index - 1).length;
     const dropOffCount = index === 0 ? 0 : Math.max(0, previousReachedCount - reachedCount);
@@ -532,6 +638,14 @@ function buildReport(args: Args, inputPaths: string[], diagnosticsPaths: string[
 
   const topFailureReasons = summarizeFailureReasons(participants);
   const entrantsWithFailureEvidence = participants.filter((participant) => participant.failureReasons.length > 0).length;
+  const focusStages = POST_TUTORIAL_FOCUS_STAGE_IDS.map((stageId) => {
+    const stage = stageReports.find((entry) => entry.id === stageId);
+    if (!stage) {
+      throw new Error(`Missing focus stage definition: ${stageId}`);
+    }
+    return stage;
+  });
+  const focusNarrative = buildFocusNarrative(entrants, focusStages);
 
   return {
     schemaVersion: 1,
@@ -562,12 +676,23 @@ function buildReport(args: Args, inputPaths: string[], diagnosticsPaths: string[
     },
     canonicalStages: [...ONBOARDING_FUNNEL_STAGES],
     stageReports,
+    pmSummary: {
+      focusChainLabel: "Tutorial Completed -> First Campaign Mission Started -> First Battle Settled -> First Reward Claimed",
+      focusStages: focusStages.map((stage) => ({
+        id: stage.id,
+        label: stage.label,
+        reachedCount: stage.reachedCount,
+        dropOffCount: stage.dropOffCount,
+        dropOffRateFromPrevious: stage.dropOffRateFromPrevious
+      })),
+      narrative: focusNarrative
+    },
     topFailureReasons,
     participants: participants.map((participant) => ({
       playerId: participant.playerId,
       firstObservedAt: participant.firstObservedAt,
       highestStageId: highestStageId(participant),
-      completed: Boolean(participant.stageTimes.onboarding_completed),
+      completed: Boolean(getFullChainCompletionAt(participant)),
       failureReasons: [...new Set(participant.failureReasons.map((failure) => failure.reason))].sort()
     }))
   };
@@ -578,6 +703,13 @@ function renderMarkdown(report: OnboardingFunnelReport): string {
   lines.push("# Onboarding Funnel Dashboard");
   lines.push("");
   lines.push(`Generated at \`${report.generatedAt}\`.`);
+  lines.push("");
+  lines.push("## PM Summary");
+  lines.push("");
+  lines.push(`Focus chain: ${report.pmSummary.focusChainLabel}`);
+  for (const line of report.pmSummary.narrative) {
+    lines.push(`- ${line}`);
+  }
   lines.push("");
   lines.push("## Summary");
   lines.push("");
@@ -596,6 +728,16 @@ function renderMarkdown(report: OnboardingFunnelReport): string {
   for (const stage of report.canonicalStages) {
     lines.push(`- \`${stage.id}\` ${stage.label}: ${stage.successCriteria}`);
     lines.push(`  Evidence: ${stage.evidenceNotes}`);
+  }
+  lines.push("");
+  lines.push("## Focus Chain");
+  lines.push("");
+  for (const stage of report.pmSummary.focusStages) {
+    lines.push(
+      `- \`${stage.id}\` reached=${stage.reachedCount}, dropOff=${stage.dropOffCount}${
+        stage.dropOffRateFromPrevious == null ? "" : ` (${formatPercent(stage.dropOffRateFromPrevious)} from previous stage)`
+      }`
+    );
   }
   lines.push("");
   lines.push("## Stage Drop-Off");
@@ -635,13 +777,33 @@ function renderMarkdown(report: OnboardingFunnelReport): string {
   lines.push("## Reading Guide");
   lines.push("");
   lines.push("- Start with completion rate and median completion time for overall onboarding health.");
-  lines.push("- Then inspect the first stage with a large drop-off count or drop-off rate.");
+  lines.push("- Then inspect the PM summary focus chain to see where the tutorial-to-reward handoff leaks.");
+  lines.push("- After that, inspect the first stage with a large drop-off count or drop-off rate.");
   lines.push("- Use the failure reasons section only when explicit diagnostics were present; missing reasons mean the evidence did not explain abandonment.");
   return `${lines.join("\n")}\n`;
 }
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function getFullChainCompletionAt(participant: OnboardingParticipant): string | undefined {
+  return participant.stageTimes.first_reward_claimed;
+}
+
+function buildFocusNarrative(entrants: number, focusStages: Array<{ id: ReportStageId; label: string; reachedCount: number; dropOffCount: number }>): string[] {
+  if (focusStages.length === 0) {
+    return ["No post-tutorial focus stages were configured."];
+  }
+
+  const [tutorialCompleted, firstCampaignMissionStarted, firstBattleSettled, firstRewardClaimed] = focusStages;
+  const fullChainReached = firstRewardClaimed?.reachedCount ?? 0;
+
+  return [
+    `Tutorial completion to first reward claim: ${fullChainReached}/${entrants} entrants reached the full post-tutorial chain.`,
+    `Stage reach counts: ${tutorialCompleted.label} ${tutorialCompleted.reachedCount}, ${firstCampaignMissionStarted.label} ${firstCampaignMissionStarted.reachedCount}, ${firstBattleSettled.label} ${firstBattleSettled.reachedCount}, ${firstRewardClaimed.label} ${firstRewardClaimed.reachedCount}.`,
+    `Drop-off sequence: ${firstCampaignMissionStarted.dropOffCount} before ${firstCampaignMissionStarted.label}, ${firstBattleSettled.dropOffCount} before ${firstBattleSettled.label}, ${firstRewardClaimed.dropOffCount} before ${firstRewardClaimed.label}.`
+  ];
 }
 
 function ensureParentDir(filePath: string): void {
