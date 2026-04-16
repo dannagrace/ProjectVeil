@@ -472,6 +472,24 @@ export function runOptionalFailingDiagnosticStage(id: string, title: string, com
         outputs: outputs.map(toRelative)
       };
     }
+
+    // Distinguish expected candidate_gate diagnostic behavior (exits 1 cleanly with
+    // no stderr output after writing all artifacts) from real CLI failures that can
+    // still write artifacts before throwing.  A subprocess that crashes after writing
+    // outputs (e.g. missing profile, network error) will emit an error to stderr and
+    // exit 1 via its catch handler.  No stderr output means the exit code 1 was a
+    // deliberate gate-failure signal, not an unhandled exception.
+    if (stderr) {
+      return {
+        id,
+        title,
+        status: "failed",
+        summary: stderr,
+        command: formatCommand(command),
+        exitCode: result.status,
+        outputs: outputs.map(toRelative)
+      };
+    }
   }
 
   const outputLines = `${stdout ?? ""}\n${stderr ?? ""}`
@@ -707,9 +725,9 @@ async function main(): Promise<void> {
   artifacts.candidateRevisionTriageInputPath = toRelative(candidateRevisionTriageInputPath);
   artifacts.candidateRevisionTriageDigestPath = toRelative(candidateRevisionTriageDigestPath);
   artifacts.candidateRevisionTriageDigestMarkdownPath = toRelative(candidateRevisionTriageDigestMarkdownPath);
-  artifacts.runtimeSloSummaryPath = toRelative(runtimeSloSummaryPath);
-  artifacts.runtimeSloSummaryMarkdownPath = toRelative(runtimeSloSummaryMarkdownPath);
-  artifacts.runtimeSloSummaryTextPath = toRelative(runtimeSloSummaryTextPath);
+  // runtimeSloSummary paths are set lazily inside the runtime-slo-summary stage only
+  // when --server-url is provided and the stage actually runs and produces the files.
+  // Do NOT advertise nonexistent paths when the stage is skipped.
   artifacts.runtimeObservabilityBundlePath = toRelative(runtimeObservabilityBundlePath);
   artifacts.runtimeObservabilityBundleMarkdownPath = toRelative(runtimeObservabilityBundleMarkdownPath);
   artifacts.runtimeObservabilityEvidencePath = toRelative(runtimeObservabilityEvidencePath);
@@ -1013,7 +1031,7 @@ async function main(): Promise<void> {
           };
         }
 
-        return runOptionalFailingDiagnosticStage("runtime-slo-summary", "Capture runtime SLO summary", [
+        const sloResult = runOptionalFailingDiagnosticStage("runtime-slo-summary", "Capture runtime SLO summary", [
           nodeExec,
           "--import",
           "tsx",
@@ -1029,6 +1047,19 @@ async function main(): Promise<void> {
           "--text-output",
           runtimeSloSummaryTextPath
         ], [runtimeSloSummaryPath, runtimeSloSummaryMarkdownPath, runtimeSloSummaryTextPath]);
+
+        // Only advertise artifact paths that were actually produced by this invocation.
+        if (fs.existsSync(runtimeSloSummaryPath)) {
+          artifacts.runtimeSloSummaryPath = toRelative(runtimeSloSummaryPath);
+        }
+        if (fs.existsSync(runtimeSloSummaryMarkdownPath)) {
+          artifacts.runtimeSloSummaryMarkdownPath = toRelative(runtimeSloSummaryMarkdownPath);
+        }
+        if (fs.existsSync(runtimeSloSummaryTextPath)) {
+          artifacts.runtimeSloSummaryTextPath = toRelative(runtimeSloSummaryTextPath);
+        }
+
+        return sloResult;
       }
     },
     {

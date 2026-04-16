@@ -201,9 +201,10 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(report.artifacts.candidateRevisionTriageInputPath ?? "", /candidate-revision-triage-input-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
   assert.match(report.artifacts.candidateRevisionTriageDigestMarkdownPath ?? "", /candidate-revision-triage-digest-phase1-mainline-/);
-  assert.match(report.artifacts.runtimeSloSummaryPath ?? "", /runtime-slo-summary-phase1-mainline-/);
-  assert.match(report.artifacts.runtimeSloSummaryMarkdownPath ?? "", /runtime-slo-summary-phase1-mainline-/);
-  assert.match(report.artifacts.runtimeSloSummaryTextPath ?? "", /runtime-slo-summary-phase1-mainline-/);
+  // runtime-slo-summary stage is skipped when --server-url is absent; paths must not be advertised.
+  assert.equal(report.artifacts.runtimeSloSummaryPath, undefined);
+  assert.equal(report.artifacts.runtimeSloSummaryMarkdownPath, undefined);
+  assert.equal(report.artifacts.runtimeSloSummaryTextPath, undefined);
   assert.match(report.artifacts.cocosBundlePath ?? "", /cocos-rc-evidence-bundle-phase1-mainline-/);
   assert.match(report.artifacts.runtimeObservabilityGatePath ?? "", /runtime-observability-gate-phase1-mainline-/);
   assert.match(report.artifacts.sameRevisionEvidenceBundleManifestPath ?? "", /phase1-same-revision-evidence-bundle-phase1-mainline-/);
@@ -273,9 +274,10 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /CI trend summary:/);
   assert.match(markdown, /CI trend summary markdown:/);
   assert.match(markdown, /Release readiness snapshot:/);
-  assert.match(markdown, /Runtime SLO summary markdown:/);
-  assert.match(markdown, /Runtime SLO summary:/);
-  assert.match(markdown, /Runtime SLO summary text:/);
+  // Runtime SLO summary lines must NOT appear in the markdown when --server-url is absent.
+  assert.doesNotMatch(markdown, /Runtime SLO summary markdown:/);
+  assert.doesNotMatch(markdown, /Runtime SLO summary:/);
+  assert.doesNotMatch(markdown, /Runtime SLO summary text:/);
   assert.match(markdown, new RegExp(`- Runtime observability gate: \`${escapeRegex(report.artifacts.runtimeObservabilityGatePath ?? "")}\``));
   assert.match(markdown, /Runtime observability gate markdown:/);
   assert.match(markdown, /H5 candidate smoke:/);
@@ -312,9 +314,10 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /candidateRevisionTriageInputPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestPath:/);
   assert.match(markdown, /candidateRevisionTriageDigestMarkdownPath:/);
-  assert.match(markdown, /runtimeSloSummaryPath:/);
-  assert.match(markdown, /runtimeSloSummaryMarkdownPath:/);
-  assert.match(markdown, /runtimeSloSummaryTextPath:/);
+  // runtimeSloSummary keys must NOT appear in Generated Outputs when --server-url is absent.
+  assert.doesNotMatch(markdown, /runtimeSloSummaryPath:/);
+  assert.doesNotMatch(markdown, /runtimeSloSummaryMarkdownPath:/);
+  assert.doesNotMatch(markdown, /runtimeSloSummaryTextPath:/);
   assert.match(markdown, /cocosBundlePath:/);
   assert.match(markdown, /candidateEvidenceAuditPath:/);
   assert.match(markdown, /candidateEvidenceAuditMarkdownPath:/);
@@ -346,11 +349,11 @@ test("release:phase1:candidate-rehearsal assembles stable candidate-scoped rehea
   assert.match(markdown, /goNoGoPacketPath:/);
   assert.match(markdown, /releasePrCommentPath:/);
 
-  const runtimeSloMarkdownIndex = markdown.indexOf("Runtime SLO summary markdown:");
-  const runtimeObservabilityGateIndex = markdown.indexOf("Runtime observability gate:");
-  assert.notEqual(runtimeSloMarkdownIndex, -1);
-  assert.notEqual(runtimeObservabilityGateIndex, -1);
-  assert.ok(runtimeSloMarkdownIndex < runtimeObservabilityGateIndex);
+  // When --server-url is absent, "Runtime SLO summary markdown:" must not appear at all.
+  // "Runtime observability gate:" still appears because the observability paths are set
+  // unconditionally (the bundle dir path is always computed for use by downstream stages).
+  assert.equal(markdown.indexOf("Runtime SLO summary markdown:"), -1);
+  assert.notEqual(markdown.indexOf("Runtime observability gate:"), -1);
 });
 
 test("runOptionalFailingDiagnosticStage: stale artifacts from a prior run with exit code 1 are reported as failed", () => {
@@ -498,6 +501,40 @@ test("runOptionalFailingDiagnosticStage: freshly written artifacts with exit cod
 
     assert.equal(result.status, "passed", "freshly written artifacts + exit 1 must be reported as passed");
     assert.equal(result.exitCode, 1);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("runOptionalFailingDiagnosticStage: exit code 1 with fresh artifacts but stderr output is reported as failed (real CLI failure)", () => {
+  // Regression: a real CLI failure (e.g. unhandled exception after writing outputs) writes
+  // fresh artifacts AND emits an error to stderr before exiting 1.  The stage must be
+  // reported as failed, not silently passed, because the artifacts may be partial/invalid.
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-optional-stage-stderr-"));
+  try {
+    const outputA = path.join(workspace, "output-a.json");
+    const outputB = path.join(workspace, "output-b.md");
+
+    // Command writes both output files (fresh), emits an error to stderr, then exits 1 —
+    // simulating a script that crashed after producing its output (e.g. profile not found).
+    const writeScript = [
+      "const fs = require('fs');",
+      `fs.writeFileSync(${JSON.stringify(outputA)}, '{}\\n');`,
+      `fs.writeFileSync(${JSON.stringify(outputB)}, '#ok\\n');`,
+      "process.stderr.write('Error: Requested profile candidate_gate is missing from the runtime SLO summary.\\n');",
+      "process.exit(1);"
+    ].join(" ");
+
+    const result = runOptionalFailingDiagnosticStage(
+      "test-stage",
+      "Test Stage",
+      [process.execPath, "-e", writeScript],
+      [outputA, outputB]
+    );
+
+    assert.equal(result.status, "failed", "fresh artifacts + exit 1 + stderr must be reported as failed (real CLI failure)");
+    assert.equal(result.exitCode, 1);
+    assert.match(result.summary, /Requested profile candidate_gate/, "summary must surface the stderr error message");
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
