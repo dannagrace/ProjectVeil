@@ -100,6 +100,41 @@ function createDailyDungeonSummaryFixture() {
   };
 }
 
+function createSeasonalEventFixture() {
+  return {
+    id: "season-event-1",
+    name: "春季试炼",
+    description: "完成每日地城并领取奖励，冲击赛季榜单。",
+    bannerText: "今日挑战可获得额外积分。",
+    remainingMs: 6 * 60 * 60 * 1000,
+    rewards: [
+      {
+        id: "event-reward-1",
+        name: "试炼徽记",
+        pointsRequired: 80,
+        kind: "badge" as const,
+        badge: "spring-trial"
+      }
+    ],
+    objectives: [
+      {
+        id: "objective-1",
+        actionType: "daily_dungeon_reward_claimed",
+        dungeonId: "ember-forge"
+      }
+    ],
+    player: {
+      points: 64,
+      claimedRewardIds: [],
+      claimableRewardIds: ["event-reward-1"]
+    },
+    leaderboard: {
+      entries: [],
+      topThree: []
+    }
+  };
+}
+
 test("lobby panel room cards render active room summaries from the server response", () => {
   const cards = buildLobbyRoomCards([
     {
@@ -524,7 +559,8 @@ test("VeilLobbyPanel opens the daily quest board panel and wires quest claims", 
     })
   );
 
-  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /可领取 1 · 今日任务 3/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /今日奖励节奏/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /立刻可领 1 项 · 任务 1 \/ 地城 0 \/ 战令 0 \/ 活动 0/);
   pressNode(findNode(node, "LobbyDailyQuestOpen"));
   assert.match(readCardLabel(node, "LobbyDailyQuestHeader"), /每日任务板/);
   assert.match(readCardLabel(node, "LobbyDailyQuestQuest-0"), /巡视边境 · 进行中/);
@@ -574,7 +610,7 @@ test("VeilLobbyPanel keeps tutorial guidance ahead of rewards and auto-opens the
     })
   );
 
-  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /完成引导后，奖励会排在主线前面。/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /立刻可领 1 项 · 任务 0 \/ 地城 0 \/ 战令 1 \/ 活动 0/);
   assert.equal(findNode(node, "LobbyDailyQuestHeader"), null);
 
   component.render(
@@ -629,10 +665,92 @@ test("VeilLobbyPanel keeps tutorial guidance ahead of rewards and auto-opens the
     })
   );
 
-  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /赛季 T2/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /战令 T2/);
   assert.match(readCardLabel(node, "LobbyDailyQuestHeader"), /每日任务板/);
   pressNode(findNode(node, "LobbyDailyQuestClaim-1"));
   assert.deepEqual(claimedQuestIds, ["quest-claimable"]);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel routes reward cadence CTA to daily dungeon when dungeon or seasonal rewards are the next actionable step", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  let openedDailyDungeonCount = 0;
+
+  component.configure({
+    onOpenDailyDungeon: () => {
+      openedDailyDungeonCount += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        dailyQuestBoard: {
+          enabled: true,
+          cycleKey: "2026-04-16",
+          resetAt: "2026-04-16T23:59:59.999Z",
+          availableClaims: 0,
+          pendingRewards: {
+            gems: 0,
+            gold: 0
+          },
+          quests: []
+        }
+      }),
+      dailyDungeon: createDailyDungeonSummaryFixture(),
+      activeSeasonalEvent: createSeasonalEventFixture()
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /余烬熔炉 · 1 项待领取/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /春季试炼 · 可领取 试炼徽记/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestOpen"), /查看地城奖励 · 1 项待领取/);
+
+  pressNode(findNode(node, "LobbyDailyQuestOpen"));
+  assert.equal(openedDailyDungeonCount, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel routes reward cadence CTA to battle pass when only season pass rewards are claimable", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  let openedBattlePassCount = 0;
+
+  component.configure({
+    onOpenBattlePass: () => {
+      openedBattlePassCount += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        dailyQuestBoard: {
+          enabled: true,
+          cycleKey: "2026-04-16",
+          resetAt: "2026-04-16T23:59:59.999Z",
+          availableClaims: 0,
+          pendingRewards: {
+            gems: 0,
+            gold: 0
+          },
+          quests: []
+        }
+      }),
+      seasonProgress: {
+        battlePassEnabled: true,
+        seasonXp: 1200,
+        seasonPassTier: 3,
+        seasonPassPremium: false,
+        seasonPassClaimedTiers: [1]
+      }
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /战令 T2 ·/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestOpen"), /查看赛季通行证 · 当前有可领奖励/);
+
+  pressNode(findNode(node, "LobbyDailyQuestOpen"));
+  assert.equal(openedBattlePassCount, 1);
   component.onDestroy();
 });
 

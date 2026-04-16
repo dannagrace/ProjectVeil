@@ -7,7 +7,12 @@ import {
   type CocosAccountReviewSection,
   type CocosAccountReviewSectionStatus
 } from "./cocos-account-review.ts";
-import type { CocosCampaignSummary, CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import type {
+  CocosCampaignSummary,
+  CocosLobbyRoomSummary,
+  CocosPlayerAccountProfile,
+  CocosSeasonalEvent
+} from "./cocos-lobby.ts";
 import { buildLobbyPveFrontdoorView } from "./cocos-lobby-panel-model.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
@@ -125,6 +130,75 @@ function isRegistrationFlowView(
   return Array.isArray((flow as CocosAccountRegistrationPanelView).identities);
 }
 
+function countClaimableDailyDungeonRewards(summary: CocosDailyDungeonSummary | null | undefined): number {
+  return (summary?.runs ?? []).filter((run) => !run.rewardClaimedAt).length;
+}
+
+function formatLobbyDailyRewardLabel(state: VeilLobbyRenderState): string {
+  const pendingRewards = state.account.dailyQuestBoard?.pendingRewards ?? { gems: 0, gold: 0 };
+  const rewardParts = [
+    pendingRewards.gems > 0 ? `宝石 x${pendingRewards.gems}` : null,
+    pendingRewards.gold > 0 ? `金币 x${pendingRewards.gold}` : null
+  ].filter((entry): entry is string => Boolean(entry));
+  if (rewardParts.length === 0) {
+    return state.account.dailyQuestBoard?.enabled ? "任务板暂无待领取奖励" : "任务板将在完成引导后开放";
+  }
+  return `任务板待领取 ${rewardParts.join(" · ")}`;
+}
+
+function formatLobbyDailyDungeonRewardLabel(state: VeilLobbyRenderState): string {
+  if (!state.dailyDungeon) {
+    return "每日地城待同步";
+  }
+
+  const claimableCount = countClaimableDailyDungeonRewards(state.dailyDungeon);
+  if (claimableCount > 0) {
+    return `${state.dailyDungeon.dungeon.name} · ${claimableCount} 项待领取`;
+  }
+
+  return `${state.dailyDungeon.dungeon.name} · 剩余 ${state.dailyDungeon.attemptsRemaining} 次挑战`;
+}
+
+function formatLobbySeasonalRewardLabel(state: VeilLobbyRenderState): string {
+  const battlePassReward = resolveCocosBattlePassClaimableRewardSummary(state.seasonProgress ?? null);
+  const activeSeasonalEvent = state.activeSeasonalEvent ?? null;
+  const claimableEventRewards = activeSeasonalEvent
+    ? activeSeasonalEvent.rewards.filter((reward) => activeSeasonalEvent.player.claimableRewardIds.includes(reward.id))
+    : [];
+  if (battlePassReward) {
+    return `战令 ${battlePassReward.tierLabel} · ${battlePassReward.rewardLabel}`;
+  }
+  if (claimableEventRewards.length > 0 && activeSeasonalEvent) {
+    return `${activeSeasonalEvent.name} · 可领取 ${claimableEventRewards.map((reward) => reward.name).join(" / ")}`;
+  }
+  if (activeSeasonalEvent) {
+    const nextReward = activeSeasonalEvent.rewards.find(
+      (reward) => !activeSeasonalEvent.player.claimedRewardIds.includes(reward.id)
+    );
+    if (nextReward) {
+      return `${activeSeasonalEvent.name} · 当前积分 ${activeSeasonalEvent.player.points} · 下一奖励 ${nextReward.name}`;
+    }
+    return `${activeSeasonalEvent.name} · 当前积分 ${activeSeasonalEvent.player.points} · 奖励已领完`;
+  }
+  if (state.seasonProgress?.battlePassEnabled) {
+    return `战令等级 T${state.seasonProgress.seasonPassTier} · 已同步奖励轨道`;
+  }
+  return "赛季奖励待同步";
+}
+
+function formatImmediateClaimSummary(state: VeilLobbyRenderState): string {
+  const dailyQuestClaims = Math.max(0, state.account.dailyQuestBoard?.availableClaims ?? 0);
+  const dailyDungeonClaims = countClaimableDailyDungeonRewards(state.dailyDungeon);
+  const battlePassClaims = resolveCocosBattlePassClaimableRewardSummary(state.seasonProgress ?? null) ? 1 : 0;
+  const seasonalEventClaims = state.activeSeasonalEvent?.player.claimableRewardIds.length ?? 0;
+  const immediateClaims = dailyQuestClaims + dailyDungeonClaims + battlePassClaims + seasonalEventClaims;
+  if (immediateClaims === 0) {
+    return "立刻可领 0 项 · 继续主线、地城和赛季任务会更快滚起奖励节奏";
+  }
+
+  return `立刻可领 ${immediateClaims} 项 · 任务 ${dailyQuestClaims} / 地城 ${dailyDungeonClaims} / 战令 ${battlePassClaims} / 活动 ${seasonalEventClaims}`;
+}
+
 export interface VeilLobbyRenderState {
   playerId: string;
   displayName: string;
@@ -173,6 +247,7 @@ export interface VeilLobbyRenderState {
   shopStatus: string;
   shopLoading?: boolean;
   seasonProgress?: CocosSeasonProgress | null;
+  activeSeasonalEvent?: CocosSeasonalEvent | null;
   dailyQuestClaimingId?: string | null;
   mailboxClaimingMessageId?: string | null;
   mailboxClaimAllBusy?: boolean;
@@ -199,6 +274,7 @@ export interface VeilLobbyPanelOptions {
   onCancelAccountFlow?: () => void;
   onOpenCampaign?: () => void;
   onOpenDailyDungeon?: () => void;
+  onOpenBattlePass?: () => void;
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
@@ -249,6 +325,7 @@ export class VeilLobbyPanel extends Component {
   private onCancelAccountFlow: (() => void) | undefined;
   private onOpenCampaign: (() => void) | undefined;
   private onOpenDailyDungeon: (() => void) | undefined;
+  private onOpenBattlePass: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
@@ -298,6 +375,7 @@ export class VeilLobbyPanel extends Component {
     this.onCancelAccountFlow = options.onCancelAccountFlow;
     this.onOpenCampaign = options.onOpenCampaign;
     this.onOpenDailyDungeon = options.onOpenDailyDungeon;
+    this.onOpenBattlePass = options.onOpenBattlePass;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
@@ -978,38 +1056,76 @@ export class VeilLobbyPanel extends Component {
   private renderDailyQuestSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
     const board = state.account.dailyQuestBoard;
     const battlePassReward = resolveCocosBattlePassClaimableRewardSummary(state.seasonProgress ?? null);
-    const pendingRewards = board?.pendingRewards ?? { gems: 0, gold: 0 };
-    const pendingRewardLabel =
-      pendingRewards.gems > 0 || pendingRewards.gold > 0
-        ? [
-            pendingRewards.gems > 0 ? `宝石 x${pendingRewards.gems}` : null,
-            pendingRewards.gold > 0 ? `金币 x${pendingRewards.gold}` : null
-          ]
-            .filter((entry): entry is string => Boolean(entry))
-            .join(" · ")
-        : "暂无待领取奖励";
-    const seasonRewardLabel = battlePassReward
-      ? `赛季 ${battlePassReward.tierLabel} · ${battlePassReward.rewardLabel}`
-      : state.seasonProgress?.battlePassEnabled
-        ? `赛季等级 T${state.seasonProgress.seasonPassTier} · 已同步奖励轨道`
-        : "赛季奖励待同步";
+    const dailyQuestClaims = Math.max(0, board?.availableClaims ?? 0);
+    const dailyDungeonClaims = countClaimableDailyDungeonRewards(state.dailyDungeon);
+    const activeSeasonalEventClaims = state.activeSeasonalEvent?.player.claimableRewardIds.length ?? 0;
+    const primaryActionHandler = state.entering
+      ? null
+      : dailyQuestClaims > 0
+        ? () => {
+            this.showSkillPanel = false;
+            this.showDailyQuestPanel = true;
+            if (this.currentState) {
+              this.render(this.currentState);
+            }
+          }
+        : dailyDungeonClaims > 0 || (state.dailyDungeon?.attemptsRemaining ?? 0) > 0 || activeSeasonalEventClaims > 0
+          ? this.onOpenDailyDungeon ?? null
+          : battlePassReward
+            ? this.onOpenBattlePass ?? null
+            : () => {
+                this.showSkillPanel = false;
+                this.showDailyQuestPanel = true;
+                if (this.currentState) {
+                  this.render(this.currentState);
+                }
+              };
+    const actionLabel = dailyQuestClaims > 0
+      ? `打开任务板 · ${dailyQuestClaims} 项可领取`
+      : dailyDungeonClaims > 0
+        ? `查看地城奖励 · ${dailyDungeonClaims} 项待领取`
+        : activeSeasonalEventClaims > 0
+          ? "查看活动进度 · 当前有可领奖励"
+          : battlePassReward
+            ? "查看赛季通行证 · 当前有可领奖励"
+            : (state.dailyDungeon?.attemptsRemaining ?? 0) > 0
+              ? `查看每日地城 · 剩余 ${state.dailyDungeon?.attemptsRemaining ?? 0} 次挑战`
+              : "打开任务板";
+    const actionTone = dailyQuestClaims > 0
+      ? {
+          fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+          stroke: new Color(228, 236, 248, 120),
+          accent: new Color(220, 230, 244, 112)
+        }
+      : battlePassReward
+        ? {
+            fill: ACTION_ACCOUNT_REVIEW,
+            stroke: new Color(228, 236, 248, 120),
+            accent: new Color(220, 230, 244, 112)
+          }
+        : {
+            fill: ACTION_ACCOUNT,
+            stroke: new Color(228, 236, 248, 120),
+            accent: new Color(220, 230, 244, 112)
+          };
     const nextY = this.renderCard(
       "LobbyDailyQuestSummary",
       centerX,
       topY,
       width,
-      84,
+      104,
       [
-        "每日任务",
-        board?.enabled
-          ? `可领取 ${board.availableClaims} · 今日任务 ${board.quests.length}`
-          : "完成引导后，奖励会排在主线前面。",
-        board?.enabled ? `${pendingRewardLabel} · ${seasonRewardLabel}` : seasonRewardLabel
+        "今日奖励节奏",
+        formatImmediateClaimSummary(state),
+        `${formatLobbyDailyRewardLabel(state)} · ${formatLobbyDailyDungeonRewardLabel(state)}`,
+        formatLobbySeasonalRewardLabel(state)
       ],
       {
         fill: new Color(54, 72, 96, 190),
         stroke: new Color(230, 238, 252, 68),
-        accent: board?.availableClaims ? new Color(238, 184, 94, 220) : new Color(124, 176, 226, 204)
+        accent: dailyQuestClaims + dailyDungeonClaims + activeSeasonalEventClaims + (battlePassReward ? 1 : 0) > 0
+          ? new Color(238, 184, 94, 220)
+          : new Color(124, 176, 226, 204)
       },
       null,
       13,
@@ -1022,21 +1138,9 @@ export class VeilLobbyPanel extends Component {
       nextY - 16,
       width,
       28,
-      board?.availableClaims ? `打开任务板 · ${board.availableClaims} 项可领取` : "打开任务板",
-      {
-        fill: board?.availableClaims ? ACTION_ACCOUNT_REVIEW_ACTIVE : ACTION_ACCOUNT,
-        stroke: new Color(228, 236, 248, 120),
-        accent: new Color(220, 230, 244, 112)
-      },
-      state.entering
-        ? null
-        : () => {
-            this.showSkillPanel = false;
-            this.showDailyQuestPanel = true;
-            if (this.currentState) {
-              this.render(this.currentState);
-            }
-          }
+      actionLabel,
+      actionTone,
+      primaryActionHandler
     );
 
     return nextY - 50;
