@@ -27,6 +27,7 @@ export interface CocosCampaignPanelView {
   title: string;
   subtitle: string;
   progressLines: string[];
+  chapterAtlasLines: string[];
   missionLines: string[];
   objectiveLines: string[];
   rewardLines: string[];
@@ -91,6 +92,113 @@ function formatUnlockRequirementSummary(mission: CampaignMissionState | null): s
     return null;
   }
   return unmet.map((entry) => entry.description).join(" / ");
+}
+
+function formatObjectiveKindLabel(kind: CampaignMissionState["objectives"][number]["kind"]): string {
+  switch (kind) {
+    case "capture":
+      return "夺点";
+    case "defeat":
+      return "击破";
+    case "escort":
+      return "护送";
+    case "hold":
+      return "坚守";
+    default:
+      return kind;
+  }
+}
+
+function summarizeChapterObjectiveKinds(missions: CampaignMissionState[]): string {
+  const kinds = new Set<string>();
+  for (const mission of missions) {
+    for (const objective of mission.objectives) {
+      kinds.add(formatObjectiveKindLabel(objective.kind));
+    }
+  }
+
+  return kinds.size > 0 ? [...kinds].slice(0, 3).join(" / ") : "探索推进";
+}
+
+function summarizeChapterRewardFocus(missions: CampaignMissionState[]): string {
+  let gemCount = 0;
+  let goldCount = 0;
+  let woodCount = 0;
+  let oreCount = 0;
+  let cosmeticCount = 0;
+  for (const mission of missions) {
+    gemCount += mission.reward.gems ?? 0;
+    goldCount += mission.reward.resources?.gold ?? 0;
+    woodCount += mission.reward.resources?.wood ?? 0;
+    oreCount += mission.reward.resources?.ore ?? 0;
+    if (mission.reward.cosmeticId) {
+      cosmeticCount += 1;
+    }
+  }
+
+  const focus: string[] = [];
+  if (gemCount > 0) {
+    focus.push("宝石");
+  }
+  if (goldCount >= Math.max(woodCount, oreCount) && goldCount > 0) {
+    focus.push("金币");
+  }
+  if (woodCount > goldCount && woodCount >= oreCount) {
+    focus.push("木材");
+  }
+  if (oreCount > goldCount && oreCount > woodCount) {
+    focus.push("矿石");
+  }
+  if (cosmeticCount > 0) {
+    focus.push("外观");
+  }
+
+  return focus.length > 0 ? focus.join(" / ") : "章节奖励待同步";
+}
+
+function resolveNextChapterMission(
+  campaign: CocosCampaignSummary | null,
+  mission: CampaignMissionState | null
+): CampaignMissionState | null {
+  if (!campaign || !mission) {
+    return null;
+  }
+
+  const currentChapterOrder = parseCampaignChapterOrder(mission.chapterId) ?? 0;
+  return (
+    campaign.missions.find((entry) => (parseCampaignChapterOrder(entry.chapterId) ?? 0) > currentChapterOrder)
+    ?? null
+  );
+}
+
+function buildChapterAtlasLines(
+  campaign: CocosCampaignSummary | null,
+  mission: CampaignMissionState | null
+): string[] {
+  if (!campaign || !mission) {
+    return ["章节图谱待同步", "加载战役数据后会展示章节差异与路线密度。"];
+  }
+
+  const currentChapterMissions = resolveCurrentChapterMissions(campaign, mission);
+  const nextChapterMission = resolveNextChapterMission(campaign, mission);
+  const nextChapterMissions = nextChapterMission
+    ? campaign.missions.filter((entry) => entry.chapterId === nextChapterMission.chapterId)
+    : [];
+  const recommendedLevels = currentChapterMissions.map((entry) => entry.recommendedHeroLevel);
+  const currentMinLevel = recommendedLevels.length > 0 ? Math.min(...recommendedLevels) : mission.recommendedHeroLevel;
+  const currentMaxLevel = recommendedLevels.length > 0 ? Math.max(...recommendedLevels) : mission.recommendedHeroLevel;
+  const currentBossCount = currentChapterMissions.filter((entry) => Boolean(entry.bossEncounterName)).length;
+  const nextUnlockSummary = nextChapterMission ? formatUnlockRequirementSummary(nextChapterMission) : null;
+
+  return [
+    `${formatCampaignChapterLabel(mission.chapterId)} · ${currentChapterMissions.length} 个任务 · 推荐等级 ${currentMinLevel}-${currentMaxLevel}`,
+    `章节节奏 ${summarizeChapterObjectiveKinds(currentChapterMissions)} · ${currentBossCount > 0 ? `首领战 ${currentBossCount} 场` : "前线遭遇推进"}`,
+    `章节收益 ${summarizeChapterRewardFocus(currentChapterMissions)}`,
+    nextChapterMission
+      ? `下一章节 ${formatCampaignChapterLabel(nextChapterMission.chapterId)} · ${nextChapterMissions.length} 个任务 · 首站 ${nextChapterMission.name}`
+      : "下一章节 当前主线已推进到末端章节",
+    nextUnlockSummary ? `开启条件 ${nextUnlockSummary}` : "开启条件 当前已满足后续章节门槛"
+  ];
 }
 
 function buildCampaignRouteLines(
@@ -205,6 +313,7 @@ export function buildCocosCampaignPanelView(input: CocosCampaignPanelInput): Coc
       ? [...buildCampaignRouteLines(input.campaign, mission, activeMission), `聚焦 ${mission.chapterId} / ${mission.name}`]
       : ["战役数据未加载", input.statusMessage || "请稍后重试。"]
     : ["战役数据未加载", input.statusMessage || "请稍后重试。"];
+  const chapterAtlasLines = buildChapterAtlasLines(input.campaign, mission);
 
   const missionLines = mission
     ? [
@@ -271,6 +380,7 @@ export function buildCocosCampaignPanelView(input: CocosCampaignPanelInput): Coc
     title: "战役任务",
     subtitle,
     progressLines,
+    chapterAtlasLines,
     missionLines,
     objectiveLines,
     rewardLines: mission ? formatRewardLines(mission.reward) : ["等待任务奖励。"],

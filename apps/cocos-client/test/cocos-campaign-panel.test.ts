@@ -10,7 +10,7 @@ import type { CocosCampaignSummary } from "../assets/scripts/cocos-lobby.ts";
 function createCampaignSummary(): CocosCampaignSummary {
   return {
     completedCount: 0,
-    totalMissions: 2,
+    totalMissions: 3,
     nextMissionId: "chapter1-ember-watch",
     completionPercent: 0,
     missions: [
@@ -93,6 +93,44 @@ function createCampaignSummary(): CocosCampaignSummary {
             satisfied: false
           }
         ]
+      },
+      {
+        id: "chapter2-ashwake-line",
+        missionId: "chapter2-ashwake-line",
+        chapterId: "chapter2",
+        order: 1,
+        mapId: "ashwake-line",
+        name: "灰烬烽线",
+        description: "向北推进到第二道烽烟线。",
+        recommendedHeroLevel: 5,
+        enemyArmyTemplateId: "shadow_hexer",
+        enemyArmyCount: 3,
+        enemyStatMultiplier: 1.2,
+        objectives: [
+          {
+            id: "capture-spire",
+            description: "夺下烟烽塔",
+            kind: "capture",
+            gate: "end"
+          }
+        ],
+        reward: {
+          resources: {
+            gold: 180,
+            ore: 4
+          }
+        },
+        attempts: 0,
+        status: "locked",
+        unlockRequirements: [
+          {
+            type: "mission_complete",
+            description: "Complete 荆墙驿路.",
+            missionId: "chapter1-thornwall-road",
+            chapterId: "chapter1",
+            satisfied: false
+          }
+        ]
       }
     ]
   };
@@ -120,10 +158,13 @@ test("resolveCampaignPanelMission prefers selected mission and falls back to nex
 test("buildCocosCampaignPanelView exposes start action for an available mission before dialogue begins", () => {
   const view = buildCocosCampaignPanelView(createInput());
 
-  assert.match(view.subtitle, /完成 0\/2/);
+  assert.match(view.subtitle, /完成 0\/3/);
   assert.match(view.progressLines.join("\n"), /第 1 章 · 已完成 0\/2/);
   assert.match(view.progressLines.join("\n"), /路线下一步 第 1 章 \/ 余烬哨站/);
   assert.match(view.progressLines.join("\n"), /后续解锁 荆墙驿路 · Complete 余烬哨站\./);
+  assert.match(view.chapterAtlasLines.join("\n"), /第 1 章 · 2 个任务 · 推荐等级 3-4/);
+  assert.match(view.chapterAtlasLines.join("\n"), /章节节奏 坚守 \/ 护送/);
+  assert.match(view.chapterAtlasLines.join("\n"), /下一章节 第 2 章 · 1 个任务 · 首站 灰烬烽线/);
   assert.match(view.missionLines.join("\n"), /余烬哨站/);
   assert.deepEqual(
     view.actions.find((action) => action.id === "start"),
@@ -175,6 +216,7 @@ test("buildCocosCampaignPanelView surfaces loading fallback copy before campaign
 
   assert.equal(view.subtitle, "正在同步战役面板...");
   assert.deepEqual(view.progressLines, ["战役数据未加载", "请稍后重试。"]);
+  assert.deepEqual(view.chapterAtlasLines, ["章节图谱待同步", "加载战役数据后会展示章节差异与路线密度。"]);
   assert.deepEqual(view.objectiveLines, ["等待任务目标。"]);
   assert.deepEqual(view.rewardLines, ["等待任务奖励。"]);
   assert.deepEqual(view.dialogueLines, ["等待任务对话。"]);

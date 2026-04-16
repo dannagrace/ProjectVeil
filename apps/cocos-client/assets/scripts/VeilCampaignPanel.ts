@@ -101,6 +101,21 @@ export class VeilCampaignPanel extends Component {
     );
 
     cursorY = this.renderCard(
+      "CampaignPanelChapterAtlas",
+      0,
+      cursorY,
+      contentWidth,
+      Math.max(108, 34 + view.chapterAtlasLines.length * 16),
+      ["章节图谱", ...view.chapterAtlasLines],
+      {
+        fill: CARD_FILL,
+        stroke: new Color(220, 230, 244, 56)
+      },
+      13,
+      16
+    );
+
+    cursorY = this.renderCard(
       "CampaignPanelMission",
       0,
       cursorY,
