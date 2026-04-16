@@ -7,7 +7,8 @@ import {
   type CocosAccountReviewSection,
   type CocosAccountReviewSectionStatus
 } from "./cocos-account-review.ts";
-import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import type { CocosCampaignSummary, CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import { buildLobbyPveFrontdoorView } from "./cocos-lobby-panel-model.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
@@ -37,6 +38,7 @@ import { HUD_ACCENT } from "./VeilHudPanel.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
 import {
   resolveCocosBattlePassClaimableRewardSummary,
+  type CocosDailyDungeonSummary,
   type CocosSeasonProgress
 } from "./cocos-progression-panel.ts";
 import type {
@@ -135,6 +137,10 @@ export interface VeilLobbyRenderState {
   shareHint: string;
   vaultSummary: string;
   account: CocosPlayerAccountProfile;
+  campaign: CocosCampaignSummary | null;
+  campaignStatus: string;
+  dailyDungeon: CocosDailyDungeonSummary | null;
+  dailyDungeonStatus: string;
   accountReview: CocosAccountReviewPage;
   battleReplayItems: PlayerBattleReplaySummary[];
   battleReplaySectionStatus: CocosAccountReviewSectionStatus;
@@ -192,6 +198,7 @@ export interface VeilLobbyPanelOptions {
   onBindWechatAccount?: () => void;
   onCancelAccountFlow?: () => void;
   onOpenCampaign?: () => void;
+  onOpenDailyDungeon?: () => void;
   onOpenConfigCenter?: () => void;
   onLogout?: () => void;
   onJoinRoom?: (roomId: string) => void;
@@ -241,6 +248,7 @@ export class VeilLobbyPanel extends Component {
   private onBindWechatAccount: (() => void) | undefined;
   private onCancelAccountFlow: (() => void) | undefined;
   private onOpenCampaign: (() => void) | undefined;
+  private onOpenDailyDungeon: (() => void) | undefined;
   private onOpenConfigCenter: (() => void) | undefined;
   private onLogout: (() => void) | undefined;
   private onJoinRoom: ((roomId: string) => void) | undefined;
@@ -289,6 +297,7 @@ export class VeilLobbyPanel extends Component {
     this.onBindWechatAccount = options.onBindWechatAccount;
     this.onCancelAccountFlow = options.onCancelAccountFlow;
     this.onOpenCampaign = options.onOpenCampaign;
+    this.onOpenDailyDungeon = options.onOpenDailyDungeon;
     this.onOpenConfigCenter = options.onOpenConfigCenter;
     this.onLogout = options.onLogout;
     this.onJoinRoom = options.onJoinRoom;
@@ -814,6 +823,7 @@ export class VeilLobbyPanel extends Component {
       this.hideAccountReviewCards();
       this.hideBattleReplayTimelineCard();
       rightCursorY = this.renderHeroSection(rightX, rightCursorY, rightWidth, state, skillPanelBusy);
+      rightCursorY = this.renderPveFrontdoorSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderDailyQuestSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderMailboxSection(rightX, rightCursorY, rightWidth, state);
       rightCursorY = this.renderLeaderboardSection(rightX, rightCursorY, rightWidth, state);
@@ -910,6 +920,59 @@ export class VeilLobbyPanel extends Component {
     } else {
       this.hideDailyQuestPanelModal();
     }
+  }
+
+  private renderPveFrontdoorSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
+    const view = buildLobbyPveFrontdoorView(state);
+    const claimableDailyDungeonRewards = state.dailyDungeon?.runs.filter((run) => !run.rewardClaimedAt).length ?? 0;
+    const nextY = this.renderCard(
+      "LobbyPveFrontdoor",
+      centerX,
+      topY,
+      width,
+      98,
+      [view.title, view.campaignSummary, view.dailyDungeonSummary, view.focusSummary],
+      {
+        fill: new Color(58, 72, 88, 194),
+        stroke: new Color(232, 238, 248, 68),
+        accent: claimableDailyDungeonRewards > 0 ? new Color(238, 184, 94, 220) : new Color(132, 186, 142, 204)
+      },
+      null,
+      13,
+      17
+    );
+
+    const halfWidth = Math.floor((width - 6) / 2);
+    this.renderActionButton(
+      "LobbyPveCampaignAction",
+      centerX - width / 4 - 3,
+      nextY - 16,
+      halfWidth,
+      28,
+      view.campaignActionLabel,
+      {
+        fill: ACTION_ACCOUNT_REVIEW_ACTIVE,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      view.campaignActionEnabled ? this.onOpenCampaign ?? null : null
+    );
+    this.renderActionButton(
+      "LobbyPveDailyDungeonAction",
+      centerX + width / 4 + 3,
+      nextY - 16,
+      halfWidth,
+      28,
+      view.dailyDungeonActionLabel,
+      {
+        fill: claimableDailyDungeonRewards > 0 ? ACTION_ACCOUNT_REVIEW : ACTION_ACCOUNT,
+        stroke: new Color(228, 236, 248, 120),
+        accent: new Color(220, 230, 244, 112)
+      },
+      view.dailyDungeonActionEnabled ? this.onOpenDailyDungeon ?? null : null
+    );
+
+    return nextY - 50;
   }
 
   private renderDailyQuestSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {

@@ -456,6 +456,7 @@ export class VeilRoot extends Component {
   private seasonProgressStatus = "赛季进度待同步。";
   private dailyDungeonSummary: CocosDailyDungeonSummary | null = null;
   private dailyDungeonStatus = "每日地城待同步。";
+  private dailyDungeonLoading = false;
   private pendingDailyDungeonFloor: number | null = null;
   private pendingDailyDungeonClaimRunId: string | null = null;
   private activeSeasonalEvent: CocosSeasonalEvent | null = null;
@@ -1115,7 +1116,10 @@ export class VeilRoot extends Component {
         this.closeLobbyAccountFlow();
       },
       onOpenCampaign: () => {
-        void this.toggleGameplayCampaignPanel(true);
+        void this.openLobbyPvePanel("campaign");
+      },
+      onOpenDailyDungeon: () => {
+        void this.openLobbyPvePanel("daily-dungeon");
       },
       onOpenConfigCenter: () => {
         this.openConfigCenter();
@@ -1526,6 +1530,10 @@ export class VeilRoot extends Component {
         shareHint: this.describeLobbyShareHint(),
         vaultSummary: this.formatLobbyVaultSummary(),
         account: this.lobbyAccountProfile,
+        campaign: this.gameplayCampaign,
+        campaignStatus: this.gameplayCampaignStatus,
+        dailyDungeon: this.dailyDungeonSummary,
+        dailyDungeonStatus: this.dailyDungeonStatus,
         accountReview: buildCocosAccountReviewPage(this.lobbyAccountReviewState),
         battleReplayItems: this.lobbyAccountReviewState.battleReplays.items,
         battleReplaySectionStatus: this.lobbyAccountReviewState.battleReplays.status,
@@ -2277,6 +2285,28 @@ export class VeilRoot extends Component {
     await this.refreshDailyDungeonPanel();
   }
 
+  private async openLobbyPvePanel(target: "campaign" | "daily-dungeon"): Promise<void> {
+    if (this.authMode !== "account" || !this.authToken) {
+      this.lobbyStatus = target === "campaign" ? "主线章节需要正式账号会话。" : "每日地城需要正式账号会话。";
+      this.renderView();
+      return;
+    }
+
+    if (this.showLobby) {
+      await this.enterLobbyRoom();
+      if (this.showLobby) {
+        return;
+      }
+    }
+
+    if (target === "campaign") {
+      await this.toggleGameplayCampaignPanel(true);
+      return;
+    }
+
+    await this.toggleGameplayDailyDungeonPanel(true);
+  }
+
   private async refreshDailyDungeonPanel(successStatus?: string): Promise<void> {
     const storage = this.readWebStorage();
     const authSession = this.currentLobbyAuthSession();
@@ -2289,6 +2319,7 @@ export class VeilRoot extends Component {
     }
 
     this.dailyDungeonStatus = "正在同步每日地城...";
+    this.dailyDungeonLoading = true;
     this.renderView();
     let dailyDungeon: CocosDailyDungeonSummary | null = null;
     try {
@@ -2303,6 +2334,8 @@ export class VeilRoot extends Component {
       this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_unavailable";
       this.renderView();
       return;
+    } finally {
+      this.dailyDungeonLoading = false;
     }
 
     this.dailyDungeonSummary = dailyDungeon;
@@ -6577,6 +6610,16 @@ export class VeilRoot extends Component {
       && !this.gameplayCampaignLoading
     ) {
       void this.refreshGameplayCampaign();
+    }
+    if (
+      this.showLobby
+      && this.sessionSource === "remote"
+      && this.authMode === "account"
+      && this.authToken
+      && !this.dailyDungeonSummary
+      && !this.dailyDungeonLoading
+    ) {
+      void this.refreshDailyDungeonPanel();
     }
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "account.synced",

@@ -6,6 +6,7 @@ import { buildCocosBattleReplayCenterView } from "../assets/scripts/cocos-battle
 import {
   buildLobbyAccountIdentityView,
   buildLobbyGuestEntryView,
+  buildLobbyPveFrontdoorView,
   buildLobbyRoomCards,
   createLobbyPanelTestAccount,
   summarizeLobbyShowcaseInventory
@@ -27,6 +28,77 @@ import {
   createReplayReadyLobbyState,
   readCardLabel
 } from "./helpers/cocos-panel-harness.ts";
+
+function createCampaignSummaryFixture() {
+  return {
+    missions: [
+      {
+        id: "chapter-1-scout",
+        missionId: "chapter-1-scout",
+        chapterId: "chapter-1",
+        mapId: "frontier-map",
+        name: "前哨侦察",
+        description: "扫清迷雾并拿下前线补给点。",
+        enemyArmyTemplateId: "hero_guard_basic",
+        order: 1,
+        recommendedHeroLevel: 2,
+        enemyArmyCount: 12,
+        enemyStatMultiplier: 1,
+        attempts: 0,
+        objectives: [],
+        reward: { resources: { gold: 120 } },
+        status: "available" as const
+      }
+    ],
+    completedCount: 0,
+    totalMissions: 3,
+    nextMissionId: "chapter-1-scout",
+    completionPercent: 0
+  };
+}
+
+function createDailyDungeonSummaryFixture() {
+  return {
+    dungeon: {
+      id: "ember-forge",
+      name: "余烬熔炉",
+      description: "今日的锻炉正在喷吐失控的烈焰。",
+      attemptLimit: 3,
+      activeWindow: {
+        startDate: "2026-04-16",
+        endDate: "2026-04-16"
+      },
+      floors: [
+        {
+          floor: 1,
+          recommendedHeroLevel: 2,
+          enemyArmyTemplateId: "wolf_pack",
+          enemyArmyCount: 8,
+          enemyStatMultiplier: 1,
+          reward: {
+            gems: 20,
+            resources: {
+              gold: 120,
+              wood: 0,
+              ore: 0
+            }
+          }
+        }
+      ]
+    },
+    dateKey: "2026-04-16",
+    attemptsUsed: 1,
+    attemptsRemaining: 2,
+    runs: [
+      {
+        runId: "run-1",
+        dungeonId: "ember-forge",
+        floor: 1,
+        startedAt: "2026-04-16T09:00:00.000Z"
+      }
+    ]
+  };
+}
 
 test("lobby panel room cards render active room summaries from the server response", () => {
   const cards = buildLobbyRoomCards([
@@ -85,6 +157,25 @@ test("account identity view shows the loginId field only when credentials are bo
 
   const guest = buildLobbyAccountIdentityView(createLobbyState());
   assert.equal(guest.showLoginId, false);
+});
+
+test("PVE frontdoor view surfaces the next campaign mission and claimable daily dungeon rewards", () => {
+  const view = buildLobbyPveFrontdoorView(
+    createLobbyState({
+      authMode: "account",
+      campaign: createCampaignSummaryFixture(),
+      campaignStatus: "战役面板已就绪。",
+      dailyDungeon: createDailyDungeonSummaryFixture(),
+      dailyDungeonStatus: "剩余 2 次挑战。"
+    })
+  );
+
+  assert.match(view.campaignSummary, /前哨侦察/);
+  assert.match(view.dailyDungeonSummary, /余烬熔炉/);
+  assert.match(view.dailyDungeonSummary, /1 份奖励待领取/);
+  assert.match(view.focusSummary, /先领取地城奖励/);
+  assert.equal(view.campaignActionEnabled, true);
+  assert.equal(view.dailyDungeonActionEnabled, true);
 });
 
 test("showcase gallery inventory stays aligned with the configured hero, terrain, building and unit counts", () => {
@@ -214,6 +305,42 @@ test("VeilLobbyPanel renders and wires the lobby campaign action", () => {
   pressNode(findNode(node, "LobbyCampaign"));
 
   assert.equal(opened, 1);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel renders the PVE frontdoor and wires campaign plus daily dungeon actions", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  let campaignOpened = 0;
+  let dailyDungeonOpened = 0;
+
+  component.configure({
+    onOpenCampaign: () => {
+      campaignOpened += 1;
+    },
+    onOpenDailyDungeon: () => {
+      dailyDungeonOpened += 1;
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      authMode: "account",
+      campaign: createCampaignSummaryFixture(),
+      campaignStatus: "战役面板已就绪。",
+      dailyDungeon: createDailyDungeonSummaryFixture(),
+      dailyDungeonStatus: "剩余 2 次挑战。"
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /今日 PVE 路线/);
+  assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /前哨侦察/);
+  assert.match(readCardLabel(node, "LobbyPveFrontdoor"), /余烬熔炉/);
+
+  pressNode(findNode(node, "LobbyPveCampaignAction"));
+  pressNode(findNode(node, "LobbyPveDailyDungeonAction"));
+
+  assert.equal(campaignOpened, 1);
+  assert.equal(dailyDungeonOpened, 1);
   component.onDestroy();
 });
 

@@ -1,4 +1,5 @@
-import type { CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import type { CocosCampaignSummary, CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import type { CocosDailyDungeonSummary } from "./cocos-progression-panel.ts";
 import type { VeilLobbyRenderState } from "./VeilLobbyPanel.ts";
 import {
   getLobbyShowcaseUnitPageCount,
@@ -33,6 +34,17 @@ export interface LobbyShowcaseInventorySummary {
   buildings: number;
   units: number;
   rotatingUnitPages: number;
+}
+
+export interface LobbyPveFrontdoorView {
+  title: string;
+  campaignSummary: string;
+  dailyDungeonSummary: string;
+  focusSummary: string;
+  campaignActionLabel: string;
+  dailyDungeonActionLabel: string;
+  campaignActionEnabled: boolean;
+  dailyDungeonActionEnabled: boolean;
 }
 
 export function buildLobbyRoomCards(rooms: CocosLobbyRoomSummary[]): LobbyRoomCardView[] {
@@ -75,6 +87,78 @@ export function summarizeLobbyShowcaseInventory(): LobbyShowcaseInventorySummary
     buildings: lobbyBuildingShowcaseEntries.length,
     units: lobbyShowcaseUnitEntries.length,
     rotatingUnitPages: getLobbyShowcaseUnitPageCount()
+  };
+}
+
+function resolveNextCampaignMission(campaign: CocosCampaignSummary | null) {
+  const missions = campaign?.missions ?? [];
+  return (
+    missions.find((mission) => mission.id === campaign?.nextMissionId)
+    ?? missions.find((mission) => mission.status === "available")
+    ?? missions[0]
+    ?? null
+  );
+}
+
+function countUnclaimedDailyDungeonRuns(dailyDungeon: CocosDailyDungeonSummary | null): number {
+  return dailyDungeon?.runs.filter((run) => !run.rewardClaimedAt).length ?? 0;
+}
+
+export function buildLobbyPveFrontdoorView(
+  state: Pick<
+    VeilLobbyRenderState,
+    "authMode" | "entering" | "campaign" | "campaignStatus" | "dailyDungeon" | "dailyDungeonStatus"
+  >
+): LobbyPveFrontdoorView {
+  if (state.authMode !== "account") {
+    return {
+      title: "今日 PVE 路线",
+      campaignSummary: "主线章节需要正式账号会话，登录后才会同步首章与后续进度。",
+      dailyDungeonSummary: "每日地城与首领奖励会跟账号档一起保存，不会只停留在游客局里。",
+      focusSummary: "下一步：先完成账号登录，再进入主线与今日 PVE。",
+      campaignActionLabel: "主线需账号",
+      dailyDungeonActionLabel: "地城需账号",
+      campaignActionEnabled: false,
+      dailyDungeonActionEnabled: false
+    };
+  }
+
+  const nextMission = resolveNextCampaignMission(state.campaign ?? null);
+  const unclaimedDailyDungeonRuns = countUnclaimedDailyDungeonRuns(state.dailyDungeon ?? null);
+  const campaignSummary = nextMission
+    ? `主线 ${nextMission.chapterId} · ${nextMission.name} · 推荐等级 ${nextMission.recommendedHeroLevel}`
+    : state.campaign
+      ? `主线已推进 ${state.campaign.completedCount}/${state.campaign.totalMissions}，当前章节暂时没有新的可用任务。`
+      : `主线待同步 · ${state.campaignStatus || "正在读取章节进度..."}`;
+  const dailyDungeonSummary = state.dailyDungeon
+    ? unclaimedDailyDungeonRuns > 0
+      ? `每日地城 ${state.dailyDungeon.dungeon.name} · ${unclaimedDailyDungeonRuns} 份奖励待领取`
+      : `每日地城 ${state.dailyDungeon.dungeon.name} · 剩余 ${state.dailyDungeon.attemptsRemaining}/${state.dailyDungeon.dungeon.attemptLimit} 次`
+    : `每日地城待同步 · ${state.dailyDungeonStatus || "正在读取今日配置..."}`;
+  const focusSummary = unclaimedDailyDungeonRuns > 0
+    ? `今日焦点：先领取地城奖励，再推进 ${nextMission?.name ?? "当前主线"}。`
+    : nextMission && state.dailyDungeon
+      ? `今日焦点：推进 ${nextMission.name}，顺手清掉 ${state.dailyDungeon.dungeon.name}。`
+      : nextMission
+        ? `今日焦点：继续主线 ${nextMission.name}。`
+        : state.dailyDungeon
+          ? `今日焦点：先刷今日地城 ${state.dailyDungeon.dungeon.name}。`
+          : "今日焦点：等待 PVE 进度同步。";
+
+  return {
+    title: "今日 PVE 路线",
+    campaignSummary,
+    dailyDungeonSummary,
+    focusSummary,
+    campaignActionLabel: nextMission ? `继续主线 · ${nextMission.name}` : "打开主线",
+    dailyDungeonActionLabel:
+      unclaimedDailyDungeonRuns > 0
+        ? `领取地城奖励 · ${unclaimedDailyDungeonRuns} 项`
+        : state.dailyDungeon
+          ? "查看每日地城"
+          : "同步每日地城",
+    campaignActionEnabled: !state.entering,
+    dailyDungeonActionEnabled: !state.entering
   };
 }
 

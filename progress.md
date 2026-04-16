@@ -25,6 +25,20 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `node --import tsx --test ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
   - `npx playwright test tests/e2e/campaign-mission-flow.spec.ts --config=playwright.smoke.config.ts`
 
+## V0.7 first slice - lobby PVE front door - 2026-04-16
+
+- Started `V0.7 PVE 内容密度与长期成长` with the first player-facing slice instead of adding more hidden systems: a Cocos lobby PVE front door that surfaces the next campaign mission and the current daily dungeon directly in the lobby.
+- Extended `VeilLobbyRenderState` to carry `campaign` and `dailyDungeon` summaries plus their status text, then added a dedicated `LobbyPveFrontdoor` card and split CTA buttons for `继续主线` / `每日地城` in `apps/cocos-client/assets/scripts/VeilLobbyPanel.ts`.
+- Added `buildLobbyPveFrontdoorView()` in `apps/cocos-client/assets/scripts/cocos-lobby-panel-model.ts` so the lobby card prioritizes actionable summaries such as next mission guidance and unclaimed daily dungeon rewards, while falling back cleanly for guest sessions.
+- Fixed the old lobby campaign-entry dead end by routing both lobby-side PVE CTAs through `VeilRoot.openLobbyPvePanel()`: account users now enter the room first if needed and then land in the correct gameplay panel, instead of toggling an invisible in-world panel from lobby state.
+- Added background daily-dungeon summary sync for remote account sessions in lobby so the new PVE card is fed with real data without requiring players to open the dungeon panel first.
+- Updated `docs/next-feature-plan.md` so the roadmap now explicitly records `Cocos Lobby PVE 前台入口` as the first `V0.7` slice.
+- Verified with:
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-lobby-panel.test.ts`
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-root-orchestration.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts`
+  - `npm run typecheck:cocos`
+  - `npm run smoke:cocos:canonical-journey`
+
 ## Issue #1455 - WeChat summary markdown front door - 2026-04-13
 
 - Frontloaded the staged `wechatCandidateMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable WeChat candidate summary directly from `SUMMARY.md`.
