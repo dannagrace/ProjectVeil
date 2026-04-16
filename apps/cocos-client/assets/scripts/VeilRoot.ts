@@ -1560,6 +1560,7 @@ export class VeilRoot extends Component {
         }),
         shopStatus: this.lobbyShopStatus,
         shopLoading: this.lobbyShopLoading,
+        seasonProgress: this.seasonProgress,
         dailyQuestClaimingId: this.dailyQuestClaimingId,
         mailboxClaimingMessageId: this.mailboxClaimingMessageId,
         mailboxClaimAllBusy: this.mailboxClaimAllInFlight
@@ -6559,9 +6560,7 @@ export class VeilRoot extends Component {
     this.lobbyAccountProfile = profile;
     this.maybeEmitExperimentExposureAnalytics(profile);
     this.maybeEmitQuestCompleteAnalytics(previousProfile, profile);
-    if (this.gameplayBattlePassPanelOpen || this.seasonProgress) {
-      this.seasonProgress = this.snapshotSeasonProgressFromProfile();
-    }
+    this.seasonProgress = this.snapshotSeasonProgressFromProfile();
     if (
       this.sessionSource === "remote"
       && this.authMode === "account"

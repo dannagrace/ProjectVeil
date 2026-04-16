@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCocosBattlePassPanelView, buildCocosDailyDungeonPanelView } from "../assets/scripts/cocos-progression-panel.ts";
+import {
+  buildCocosBattlePassPanelView,
+  buildCocosDailyDungeonPanelView,
+  resolveCocosBattlePassClaimableRewardSummary
+} from "../assets/scripts/cocos-progression-panel.ts";
 import { VeilProgressionPanel } from "../assets/scripts/VeilProgressionPanel.ts";
 import { createComponentHarness, findNode, pressNode, readCardLabel, readLabelString } from "./helpers/cocos-panel-harness.ts";
 
@@ -120,6 +124,21 @@ test("buildCocosBattlePassPanelView keeps earlier unlocked unclaimed tiers visib
   assert.equal(view.tiers[0]?.tier, 3);
   assert.equal(view.tiers[0]?.freeTrack.claimable, true);
   assert.match(view.nextRewardLabel, /下一奖励 T3/);
+});
+
+test("resolveCocosBattlePassClaimableRewardSummary surfaces the first claimable tier reward", () => {
+  const summary = resolveCocosBattlePassClaimableRewardSummary({
+    battlePassEnabled: true,
+    seasonXp: 1200,
+    seasonPassTier: 3,
+    seasonPassPremium: false,
+    seasonPassClaimedTiers: [1]
+  });
+
+  assert.equal(summary?.tier, 2);
+  assert.equal(summary?.tierLabel, "T2");
+  assert.match(summary?.claimLabel ?? "", /点击领取/);
+  assert.ok((summary?.rewardLabel ?? "").length > 0);
 });
 
 test("buildCocosDailyDungeonPanelView surfaces claimable runs and leaderboard state", () => {

@@ -45,6 +45,14 @@ export interface CocosBattlePassPanelView {
   tiers: CocosBattlePassTierView[];
 }
 
+export interface CocosBattlePassClaimableRewardSummary {
+  tier: number;
+  tierLabel: string;
+  claimLabel: string;
+  rewardLabel: string;
+  premium: boolean;
+}
+
 export interface BuildCocosBattlePassPanelInput {
   progress: CocosSeasonProgress | null;
   pendingClaimTier: number | null;
@@ -373,6 +381,34 @@ export function buildCocosBattlePassPanelView(input: BuildCocosBattlePassPanelIn
         claimed: progress.seasonPassClaimedTiers.includes(tier.tier)
       }
     }))
+  };
+}
+
+export function resolveCocosBattlePassClaimableRewardSummary(
+  progress: CocosSeasonProgress | null
+): CocosBattlePassClaimableRewardSummary | null {
+  if (!progress || !progress.battlePassEnabled) {
+    return null;
+  }
+
+  const view = buildCocosBattlePassPanelView({
+    progress,
+    pendingClaimTier: null,
+    pendingPremiumPurchase: false,
+    statusLabel: ""
+  });
+  const tier = view.tiers.find((entry) => entry.freeTrack.claimable || entry.premiumTrack.claimable) ?? null;
+  if (!tier) {
+    return null;
+  }
+
+  const track = tier.freeTrack.claimable ? tier.freeTrack : tier.premiumTrack;
+  return {
+    tier: tier.tier,
+    tierLabel: tier.tierLabel,
+    claimLabel: track.claimLabel,
+    rewardLabel: track.detail,
+    premium: track === tier.premiumTrack
   };
 }
 

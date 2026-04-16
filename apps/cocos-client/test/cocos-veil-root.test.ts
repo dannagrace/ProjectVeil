@@ -946,6 +946,32 @@ test("VeilRoot renders the final tutorial step with first-chapter mission guidan
   assert.equal(view?.primaryLabel, "进入首章主线");
 });
 
+test("VeilRoot keeps season progress synced for lobby reward visibility", () => {
+  const root = createVeilRootHarness() as RootState;
+  root.lastUpdate = {
+    featureFlags: {
+      battle_pass_enabled: true
+    }
+  } as any;
+  root.lobbyAccountProfile = {
+    ...createFallbackCocosPlayerAccountProfile("account-player", "room-reward", "雾林司灯"),
+    seasonXp: 1200,
+    seasonPassTier: 3,
+    seasonPassPremium: false,
+    seasonPassClaimedTiers: [1]
+  } as never;
+
+  (root as any).commitAccountProfile(root.lobbyAccountProfile, false);
+
+  assert.deepEqual(root.seasonProgress, {
+    battlePassEnabled: true,
+    seasonXp: 1200,
+    seasonPassTier: 3,
+    seasonPassPremium: false,
+    seasonPassClaimedTiers: [1]
+  });
+});
+
 test("VeilRoot onDestroy stops matchmaking polling to avoid timer leaks", () => {
   const root = createVeilRootHarness();
   let pollStops = 0;
