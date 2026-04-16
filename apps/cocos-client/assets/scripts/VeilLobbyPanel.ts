@@ -35,6 +35,10 @@ import {
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { HUD_ACCENT } from "./VeilHudPanel.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
+import {
+  resolveCocosBattlePassClaimableRewardSummary,
+  type CocosSeasonProgress
+} from "./cocos-progression-panel.ts";
 import type {
   CocosAccountLifecycleFieldView,
   CocosAccountLifecyclePanelView,
@@ -162,6 +166,7 @@ export interface VeilLobbyRenderState {
   shop: CocosShopPanelView;
   shopStatus: string;
   shopLoading?: boolean;
+  seasonProgress?: CocosSeasonProgress | null;
   dailyQuestClaimingId?: string | null;
   mailboxClaimingMessageId?: string | null;
   mailboxClaimAllBusy?: boolean;
@@ -257,6 +262,7 @@ export class VeilLobbyPanel extends Component {
   private replayPlaybackTimer: ReturnType<typeof setInterval> | null = null;
   private showSkillPanel = false;
   private showDailyQuestPanel = false;
+  private rewardSpotlightAutoOpenedForPlayerId: string | null = null;
 
   onDestroy(): void {
     this.stopReplayPlaybackLoop();
@@ -302,6 +308,7 @@ export class VeilLobbyPanel extends Component {
 
   render(state: VeilLobbyRenderState): void {
     this.currentState = state;
+    this.maybeAutoOpenFirstSessionRewardPanel(state);
     this.syncReplayPlaybackState(state);
     this.ensureShowcaseTicker();
     const matchmaking = state.matchmaking ?? {
@@ -907,6 +914,7 @@ export class VeilLobbyPanel extends Component {
 
   private renderDailyQuestSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {
     const board = state.account.dailyQuestBoard;
+    const battlePassReward = resolveCocosBattlePassClaimableRewardSummary(state.seasonProgress ?? null);
     const pendingRewards = board?.pendingRewards ?? { gems: 0, gold: 0 };
     const pendingRewardLabel =
       pendingRewards.gems > 0 || pendingRewards.gold > 0
@@ -917,6 +925,11 @@ export class VeilLobbyPanel extends Component {
             .filter((entry): entry is string => Boolean(entry))
             .join(" · ")
         : "暂无待领取奖励";
+    const seasonRewardLabel = battlePassReward
+      ? `赛季 ${battlePassReward.tierLabel} · ${battlePassReward.rewardLabel}`
+      : state.seasonProgress?.battlePassEnabled
+        ? `赛季等级 T${state.seasonProgress.seasonPassTier} · 已同步奖励轨道`
+        : "赛季奖励待同步";
     const nextY = this.renderCard(
       "LobbyDailyQuestSummary",
       centerX,
@@ -925,8 +938,10 @@ export class VeilLobbyPanel extends Component {
       84,
       [
         "每日任务",
-        board?.enabled ? `可领取 ${board.availableClaims} · 今日任务 ${board.quests.length}` : "任务板暂未开启",
-        board?.enabled ? pendingRewardLabel : "完成或跳过引导后，这里会显示今日任务。"
+        board?.enabled
+          ? `可领取 ${board.availableClaims} · 今日任务 ${board.quests.length}`
+          : "完成引导后，奖励会排在主线前面。",
+        board?.enabled ? `${pendingRewardLabel} · ${seasonRewardLabel}` : seasonRewardLabel
       ],
       {
         fill: new Color(54, 72, 96, 190),
@@ -962,6 +977,22 @@ export class VeilLobbyPanel extends Component {
     );
 
     return nextY - 50;
+  }
+
+  private maybeAutoOpenFirstSessionRewardPanel(state: VeilLobbyRenderState): void {
+    if (this.showDailyQuestPanel || this.showSkillPanel || this.showAccountReview || state.entering) {
+      return;
+    }
+
+    if (this.rewardSpotlightAutoOpenedForPlayerId === state.playerId) {
+      return;
+    }
+
+    const board = state.account.dailyQuestBoard;
+    if (state.account.tutorialStep == null && board?.enabled === true && (board.availableClaims ?? 0) > 0) {
+      this.showDailyQuestPanel = true;
+      this.rewardSpotlightAutoOpenedForPlayerId = state.playerId;
+    }
   }
 
   private renderShopSection(centerX: number, topY: number, width: number, state: VeilLobbyRenderState): number {

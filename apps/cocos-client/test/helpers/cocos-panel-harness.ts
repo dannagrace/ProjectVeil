@@ -291,6 +291,7 @@ export function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}):
     lobbySkillPanel: null,
     battleActive: false,
     skillPanelBusy: false,
+    seasonProgress: null,
     ...overrides
   };
 }

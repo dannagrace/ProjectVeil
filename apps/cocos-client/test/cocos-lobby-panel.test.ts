@@ -408,6 +408,105 @@ test("VeilLobbyPanel opens the daily quest board panel and wires quest claims", 
   component.onDestroy();
 });
 
+test("VeilLobbyPanel keeps tutorial guidance ahead of rewards and auto-opens the first claimable quest board", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const claimedQuestIds: string[] = [];
+
+  component.configure({
+    onClaimDailyQuest: (questId) => {
+      claimedQuestIds.push(questId);
+    }
+  });
+  component.scheduleOnce = () => undefined;
+
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        tutorialStep: 1,
+        dailyQuestBoard: {
+          enabled: false,
+          cycleKey: "2026-04-08",
+          resetAt: "2026-04-08T23:59:59.999Z",
+          availableClaims: 0,
+          pendingRewards: {
+            gems: 0,
+            gold: 0
+          },
+          quests: []
+        }
+      }),
+      seasonProgress: {
+        battlePassEnabled: true,
+        seasonXp: 1200,
+        seasonPassTier: 3,
+        seasonPassPremium: false,
+        seasonPassClaimedTiers: [1]
+      }
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /完成引导后，奖励会排在主线前面。/);
+  assert.equal(findNode(node, "LobbyDailyQuestHeader"), null);
+
+  component.render(
+    createLobbyState({
+      account: createLobbyPanelTestAccount({
+        dailyQuestBoard: {
+          enabled: true,
+          cycleKey: "2026-04-08",
+          resetAt: "2026-04-08T23:59:59.999Z",
+          availableClaims: 1,
+          pendingRewards: {
+            gems: 8,
+            gold: 50
+          },
+          quests: [
+            {
+              id: "quest-progress",
+              title: "巡视边境",
+              description: "移动英雄 3 次。",
+              target: 3,
+              current: 1,
+              completed: false,
+              claimed: false,
+              reward: {
+                gems: 2,
+                gold: 0
+              }
+            },
+            {
+              id: "quest-claimable",
+              title: "补给征收",
+              description: "收集资源 2 次。",
+              target: 2,
+              current: 2,
+              completed: true,
+              claimed: false,
+              reward: {
+                gems: 8,
+                gold: 50
+              }
+            }
+          ]
+        }
+      }),
+      seasonProgress: {
+        battlePassEnabled: true,
+        seasonXp: 1200,
+        seasonPassTier: 3,
+        seasonPassPremium: false,
+        seasonPassClaimedTiers: [1]
+      }
+    })
+  );
+
+  assert.match(readCardLabel(node, "LobbyDailyQuestSummary"), /赛季 T2/);
+  assert.match(readCardLabel(node, "LobbyDailyQuestHeader"), /每日任务板/);
+  pressNode(findNode(node, "LobbyDailyQuestClaim-1"));
+  assert.deepEqual(claimedQuestIds, ["quest-claimable"]);
+  component.onDestroy();
+});
+
 test("VeilLobbyPanel renders the daily quest board empty state when no quests are available", () => {
   const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
 
