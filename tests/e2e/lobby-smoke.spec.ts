@@ -122,27 +122,29 @@ test("lobby supports password recovery and rotates the account password before e
   const originalPassword = "recovery-old-1";
   const nextPassword = "recovery-new-1";
 
-  const requestRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/request", {
-    data: {
-      loginId,
-      displayName
-    }
-  });
-  expect(requestRegistrationResponse.ok()).toBeTruthy();
-  const requestRegistrationPayload = (await requestRegistrationResponse.json()) as { registrationToken?: string };
-  expect(requestRegistrationPayload.registrationToken).toBeTruthy();
-
-  const confirmRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/confirm", {
-    data: {
-      loginId,
-      registrationToken: requestRegistrationPayload.registrationToken,
-      password: originalPassword
-    }
-  });
-  expect(confirmRegistrationResponse.ok()).toBeTruthy();
-
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await waitForLobbyReady(page);
+
+    const requestRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/request", {
+      data: {
+        loginId,
+        displayName
+      }
+    });
+    expect(requestRegistrationResponse.ok()).toBeTruthy();
+    const requestRegistrationPayload = (await requestRegistrationResponse.json()) as { registrationToken?: string };
+    expect(requestRegistrationPayload.registrationToken).toBeTruthy();
+
+    const confirmRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/confirm", {
+      data: {
+        loginId,
+        registrationToken: requestRegistrationPayload.registrationToken,
+        password: originalPassword,
+        privacyConsentAccepted: true
+      }
+    });
+    expect(confirmRegistrationResponse.ok()).toBeTruthy();
+
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-login-id]").fill(loginId);
     await acceptLobbyPrivacyConsent(page);
