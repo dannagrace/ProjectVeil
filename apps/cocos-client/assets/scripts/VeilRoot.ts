@@ -262,6 +262,12 @@ interface BattleSettlementSnapshot {
   summaryLines: string[];
 }
 
+interface TutorialCampaignGuidance {
+  mission: NonNullable<CocosCampaignSummary["missions"]>[number] | null;
+  objectivePreview: string[];
+  phaseLabel: string;
+}
+
 interface GlobalErrorBoundaryEvent {
   message?: string;
   error?: unknown;
@@ -1180,7 +1186,7 @@ export class VeilRoot extends Component {
       tutorialOverlayNode.getComponent(VeilTutorialOverlay) ?? tutorialOverlayNode.addComponent(VeilTutorialOverlay);
     this.tutorialOverlay.configure({
       onPrimaryAction: () => {
-        void this.advanceTutorialFlow();
+        void this.handleTutorialPrimaryAction();
       },
       onSecondaryAction: () => {
         void this.skipTutorialFlow();
@@ -5860,6 +5866,8 @@ export class VeilRoot extends Component {
       return null;
     }
 
+    const campaignGuidance = this.resolveTutorialCampaignGuidance();
+    const mission = campaignGuidance.mission;
     const inLobby = this.showLobby;
     const stepLabel = `引导 ${tutorialStep}/3`;
     const busy = this.tutorialProgressInFlight;
@@ -5883,18 +5891,26 @@ export class VeilRoot extends Component {
       return {
         badge: inLobby ? "出征准备" : "地图导览",
         stepLabel,
-        title: inLobby ? "先进入你的第一张地图" : "留意地图与 HUD 的反馈",
+        title: inLobby ? "先进入你的第一张地图" : "留意地图、HUD 与首章目标",
         body: inLobby
-          ? "选择一个房间进入世界，前几步只需要专注于移动、招募和第一场战斗。"
-          : "左侧地图、右侧 HUD 和底部时间线会给出下一步决策线索，这就是新手阶段最重要的三个面板。",
+          ? mission
+            ? `选择一个房间进入世界，下一步我们会把你正式交给首章任务 ${mission.name}。`
+            : "选择一个房间进入世界，前几步只需要专注于移动、招募和第一场战斗。"
+          : mission
+            ? `左侧地图、右侧 HUD 和底部时间线会一起指向首章任务 ${mission.name}，下一步就开始真正的主线推进。`
+            : "左侧地图、右侧 HUD 和底部时间线会给出下一步决策线索，这就是新手阶段最重要的三个面板。",
         detailLines: inLobby
           ? [
               "房间进入后会直接落在世界地图。",
               "优先观察可移动格子、附近资源点和可交互建筑。",
+              ...(mission ? [`首章目标会聚焦到 ${mission.name}。`] : []),
               "如果你已经熟悉流程，现在可以直接跳过剩余引导。"
             ]
           : [
               "先用安全操作熟悉移动反馈，再尝试资源采集或建筑互动。",
+              ...(campaignGuidance.objectivePreview.length > 0
+                ? [`首章任务：${campaignGuidance.objectivePreview.join(" / ")}`]
+                : []),
               "PVP 新手保护仍然生效，先把开局节奏跑顺。",
               "如果你是回流玩家，可以直接跳过剩余引导。"
             ],
@@ -5905,19 +5921,82 @@ export class VeilRoot extends Component {
     }
 
     return {
-      badge: "最终确认",
+      badge: mission ? "首章接管" : "最终确认",
       stepLabel,
-      title: "完成引导后解锁每日任务",
-      body: "最后一步会关闭引导遮罩，并按正常账户节奏开放每日任务板。",
-      detailLines: [
-        "每日任务会在账号快照里持续可见，不会因重连丢失。",
-        "如果你愿意，也可以现在跳过并直接开始正常游玩。",
-        "完成后重新进入大厅或刷新资料都会保持已完成状态。"
-      ],
-      primaryLabel: busy ? "同步中..." : "完成引导",
+      title: mission ? `把下一步交给 ${mission.name}` : "完成引导后解锁每日任务",
+      body: mission
+        ? inLobby
+          ? `完成引导后会直接进入房间，并把主提示切到首章任务 ${mission.name}。`
+          : `完成引导后会直接聚焦到首章任务 ${mission.name}，接下来就按主线面板推进第一场战斗与结算。`
+        : "最后一步会关闭引导遮罩，并按正常账户节奏开放每日任务板。",
+      detailLines: mission
+        ? [
+            `${campaignGuidance.phaseLabel}：${mission.description}`,
+            ...(campaignGuidance.objectivePreview.length > 0
+              ? [`优先目标：${campaignGuidance.objectivePreview.join(" / ")}`]
+              : []),
+            "引导结束后每日任务与活动奖励会恢复正常曝光。"
+          ]
+        : [
+            "每日任务会在账号快照里持续可见，不会因重连丢失。",
+            "如果你愿意，也可以现在跳过并直接开始正常游玩。",
+            "完成后重新进入大厅或刷新资料都会保持已完成状态。"
+          ],
+      primaryLabel:
+        busy
+          ? "同步中..."
+          : mission
+            ? "进入首章主线"
+            : "完成引导",
       ...(busy ? {} : { secondaryLabel: "跳过引导" }),
       busy
     };
+  }
+
+  private resolveTutorialCampaignGuidance(): TutorialCampaignGuidance {
+    const mission = this.resolveTutorialGuidanceMission();
+    if (!mission) {
+      return {
+        mission: null,
+        objectivePreview: [],
+        phaseLabel: "主线待同步"
+      };
+    }
+
+    const objectivePreview = mission.objectives
+      .slice(0, 2)
+      .map((objective) => objective.description.trim())
+      .filter((description) => description.length > 0);
+    const phaseLabel =
+      this.gameplayCampaignActiveMissionId === mission.id
+        ? "当前进行中"
+        : this.gameplayCampaign?.nextMissionId === mission.id
+          ? "下一主线"
+          : mission.status === "completed"
+            ? "已完成主线"
+            : "首章目标";
+    return {
+      mission,
+      objectivePreview,
+      phaseLabel
+    };
+  }
+
+  private resolveTutorialGuidanceMission(): NonNullable<CocosCampaignSummary["missions"]>[number] | null {
+    const missions = this.gameplayCampaign?.missions ?? [];
+    if (missions.length === 0) {
+      return null;
+    }
+
+    return (
+      resolveCampaignPanelMission(this.gameplayCampaign, this.gameplayCampaignSelectedMissionId, this.gameplayCampaignActiveMissionId)
+      ?? (this.gameplayCampaign?.nextMissionId
+        ? missions.find((entry) => entry.id === this.gameplayCampaign?.nextMissionId) ?? null
+        : null)
+      ?? missions.find((entry) => entry.status === "available")
+      ?? missions[0]
+      ?? null
+    );
   }
 
   private async submitTutorialProgress(action: TutorialProgressAction): Promise<void> {
@@ -5986,6 +6065,58 @@ export class VeilRoot extends Component {
       step: nextStep,
       reason: nextStep == null ? "complete" : "advance"
     });
+  }
+
+  private async handleTutorialPrimaryAction(): Promise<void> {
+    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
+    if (tutorialStep === null) {
+      return;
+    }
+
+    if (tutorialStep < 3) {
+      await this.advanceTutorialFlow();
+      return;
+    }
+
+    await this.completeTutorialAndFocusCampaign();
+  }
+
+  private async completeTutorialAndFocusCampaign(): Promise<void> {
+    const focusMissionId = this.resolveTutorialGuidanceMission()?.id ?? null;
+    await this.submitTutorialProgress({
+      step: null,
+      reason: "complete"
+    });
+
+    if (this.showLobby) {
+      await this.enterLobbyRoom();
+    }
+
+    if (!this.authToken || this.authMode !== "account") {
+      return;
+    }
+
+    if (!this.gameplayCampaign && !this.gameplayCampaignLoading) {
+      await this.refreshGameplayCampaign(focusMissionId);
+    } else if (focusMissionId) {
+      this.gameplayCampaignSelectedMissionId = focusMissionId;
+    }
+
+    if (this.showLobby) {
+      const mission = this.resolveTutorialGuidanceMission();
+      this.gameplayCampaignStatus = mission
+        ? `引导已结束，进入地图后优先推进 ${mission.name}。`
+        : "引导已结束，进入地图后优先打开战役主线。";
+      this.renderView();
+      return;
+    }
+
+    await this.toggleGameplayCampaignPanel(true);
+    const mission = this.resolveTutorialGuidanceMission();
+    this.gameplayCampaignStatus = mission
+      ? `引导已移交给首章主线：${mission.name}`
+      : "引导已结束，战役主线已就绪。";
+    this.renderView();
   }
 
   private async skipTutorialFlow(): Promise<void> {
@@ -6430,6 +6561,16 @@ export class VeilRoot extends Component {
     this.maybeEmitQuestCompleteAnalytics(previousProfile, profile);
     if (this.gameplayBattlePassPanelOpen || this.seasonProgress) {
       this.seasonProgress = this.snapshotSeasonProgressFromProfile();
+    }
+    if (
+      this.sessionSource === "remote"
+      && this.authMode === "account"
+      && this.authToken
+      && normalizeTutorialStep(profile.tutorialStep) !== null
+      && !this.gameplayCampaign
+      && !this.gameplayCampaignLoading
+    ) {
+      void this.refreshGameplayCampaign();
     }
     this.lobbyAccountReviewState = transitionCocosAccountReviewState(this.lobbyAccountReviewState, {
       type: "account.synced",

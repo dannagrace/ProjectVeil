@@ -1,5 +1,30 @@
 Original prompt: 你先学习下当前项目并给出开发的计划
 
+## Planning review - game roadmap refresh - 2026-04-16
+
+- Re-assessed the repo from a game-product angle instead of only release-hardening: current code/config surface already covers campaign, daily dungeon, battle pass, quests, season, shop, replay, progression, and multiple Phase 1/Phase 2 map packs.
+- Confirmed the current next-step bottleneck is no longer missing core systems; it is turning existing systems into a stronger player-facing loop with clearer goals, denser PVE content, and a more productized Cocos main client.
+- Recommended roadmap order: `新手/首日体验收口 -> PVE内容密度提升 -> 长期成长闭环整合 -> Cocos主客户端产品化体验 -> PVP/社交延后深化`.
+- Broke `V0.6` into issue-sized slices: `新手引导状态机接线 -> 首章主线落地 -> 首战结算页产品化 -> 首日任务奖励闭环 -> 新手漏斗埋点与平衡校准`.
+- Recommended the minimum retention-validation cut as `1 + 2 + 4`: guidance, first-chapter objective loop, and a clear first-battle settlement screen.
+- Synced the refreshed roadmap back into `docs/next-feature-plan.md`, keeping the old feature list as historical context while promoting the new `V0.6 -> V0.8` game-product version plan and the concrete `V0.6` backlog.
+- After a later repo sync, adjusted the `V0.6` call again: tutorial state machine, campaign mission flow, seasonal event lifecycle, and analytics are already materially implemented, so the new priority is integration/productization rather than building those systems from scratch.
+- Verified the synced repo with targeted checks:
+  - `npx playwright test tests/e2e/campaign-mission-flow.spec.ts --config=playwright.smoke.config.ts`
+  - `npx playwright test tests/e2e/seasonal-event-lifecycle.spec.ts --config=playwright.smoke.config.ts`
+  Both passed, confirming the updated plan should shift toward `教程与首章主线联动 -> 首战结算页产品化 -> 首日任务/活动奖励曝光收口`.
+
+## Issue #1469 - tutorial and chapter-one handoff - 2026-04-16
+
+- Created issue `#1469 V0.6: 教程与首章主线联动` and moved the current workspace onto branch `codex/issue-1469-v06-tutorial-campaign-linkage`.
+- Reworked the Cocos tutorial overlay so the final tutorial step now reads first-chapter campaign data, previews the next mission/objectives, and hands the player off into the chapter-one campaign panel instead of ending as a detached generic onboarding card.
+- Added campaign guidance helpers to `VeilRoot`, switched tutorial primary action handling from a blind step advance to a contextual handoff flow, and prefetched campaign data when tutorial-bound account snapshots arrive.
+- Added targeted tests covering the new final-step overlay copy and the tutorial-to-campaign handoff path.
+- Verified with:
+  - `npm run typecheck:cocos`
+  - `node --import tsx --test ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+  - `npx playwright test tests/e2e/campaign-mission-flow.spec.ts --config=playwright.smoke.config.ts`
+
 ## Issue #1455 - WeChat summary markdown front door - 2026-04-13
 
 - Frontloaded the staged `wechatCandidateMarkdownPath` into the `phase1-candidate-rehearsal` reviewer front door so reviewers can open the human-readable WeChat candidate summary directly from `SUMMARY.md`.
