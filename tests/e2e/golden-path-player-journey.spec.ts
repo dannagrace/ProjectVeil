@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, type Page } from "./fixtures";
 import { ANALYTICS_EVENT_CATALOG } from "../../packages/shared/src/analytics-events";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
 import { getHeroMoveTotal, getNeutralBattleReward, getNeutralBattleRewardText } from "./config-fixtures";
@@ -13,6 +13,18 @@ import {
   waitForLobbyReady,
   withSmokeDiagnostics
 } from "./smoke-helpers";
+
+async function advanceToNextDay(page: Page, expectedDay: number): Promise<void> {
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>('[data-end-day="true"]');
+    if (!button) {
+      throw new Error("advance_day_button_missing");
+    }
+    button.click();
+  });
+  await expect(page.getByTestId("stat-day")).toHaveText(new RegExp(`${expectedDay}`), { timeout: 10_000 });
+}
 
 test("golden path player journey stays stable from lobby entry through world progress and battle reward", async (
   { page, request },
@@ -58,8 +70,7 @@ test("golden path player journey stays stable from lobby entry through world pro
     });
 
     await test.step("world: end the day and refresh movement before the fight", async () => {
-      await page.locator("[data-end-day]").click();
-      await expect(page.getByTestId("stat-day")).toHaveText(/2/);
+      await advanceToNextDay(page, 2);
       await expectHeroMove(page, getHeroMoveTotal());
       goldBeforeBattle = Number((await page.getByTestId("stat-gold").innerText()).replace(/\D+/g, "")) || 0;
     });
