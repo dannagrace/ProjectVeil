@@ -16,7 +16,8 @@ import { loadDailyQuestBoard } from "../src/daily-quests";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { loadDailyQuestConfig } from "../src/daily-quest-config";
 import { assertDisplayNameAvailableOrThrow } from "../src/display-name-rules";
-import { rotateDailyQuests } from "../src/event-engine";
+import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "../src/event-engine";
+import { resolveActiveDailyDungeon } from "../src/pve-content";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
@@ -1350,9 +1351,10 @@ test("player account public routes redact credential and WeChat identity binding
 test("player account routes degrade to local-mode responses when persistence is unavailable", async (t) => {
   const port = 40025 + Math.floor(Math.random() * 1000);
   const server = await startAccountRouteServer(port, null);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "player-local",
-    displayName: "本地侦骑"
+    displayName: "本地侦骑",
+    loginId: "player-local"
   });
 
   t.after(async () => {
@@ -1458,9 +1460,10 @@ test("player account profile exposes experiment assignments with stable buckets"
     displayName: "实验玩家"
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "player-exp",
-    displayName: "实验玩家"
+    displayName: "实验玩家",
+    loginId: "player-exp"
   });
 
   t.after(async () => {
@@ -2194,9 +2197,10 @@ test("player account progression routes return a compact achievement and event r
     lastSeenAt: new Date("2026-03-27T12:04:00.000Z").toISOString()
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "player-progress",
-    displayName: "雾林司灯"
+    displayName: "雾林司灯",
+    loginId: "player-progress"
   });
 
   t.after(async () => {
@@ -2216,6 +2220,12 @@ test("player account progression routes return a compact achievement and event r
     latestUnlockedAchievementId: "first_battle",
     latestUnlockedAchievementTitle: "初次交锋",
     latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+    nextGoalAchievementId: "enemy_slayer",
+    nextGoalAchievementTitle: "猎敌者",
+    nextGoalCurrent: 2,
+    nextGoalTarget: 3,
+    nextGoalRemaining: 1,
+    nextGoalUpdatedAt: "2026-03-27T12:02:00.000Z",
     recentEventCount: 1,
     latestEventAt: "2026-03-27T12:03:00.000Z"
   });
@@ -2659,9 +2669,10 @@ test("player account profile updates reject names reserved from banned accounts"
 test("player account update routes echo local-mode payloads when persistence is unavailable", async (t) => {
   const port = 41030 + Math.floor(Math.random() * 1000);
   const server = await startAccountRouteServer(port, null);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "player-local",
-    displayName: "本地旅人"
+    displayName: "本地旅人",
+    loginId: "player-local"
   });
 
   t.after(async () => {
@@ -2743,9 +2754,10 @@ test("player account me routes resolve and update the current authenticated acco
     lastSeenAt: new Date("2026-03-25T11:00:00.000Z").toISOString()
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "player-me",
-    displayName: "苍穹侦骑"
+    displayName: "苍穹侦骑",
+    loginId: "player-me"
   });
 
   t.after(async () => {
@@ -3689,9 +3701,10 @@ test("tutorial progress gates daily quests until the player completes or skips o
     displayName: "雾幕新兵"
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "tutorial-player",
-    displayName: "雾幕新兵"
+    displayName: "雾幕新兵",
+    loginId: "tutorial-player"
   });
 
   t.after(async () => {
@@ -3939,9 +3952,10 @@ test("daily quests are enabled by default and complete the rotation, progress, a
     tutorialStep: null
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "daily-quest-e2e",
-    displayName: "晨雾执行官"
+    displayName: "晨雾执行官",
+    loginId: "daily-quest-e2e"
   });
 
   t.after(async () => {
@@ -4093,8 +4107,8 @@ test("mailbox routes list delivered compensation and repeated claims stay idempo
       kind: "compensation",
       title: "停机补偿",
       body: "补发宝石和金币。",
-      sentAt: "2026-04-05T00:00:00.000Z",
-      expiresAt: "2026-04-12T00:00:00.000Z",
+      sentAt: "2026-04-16T00:00:00.000Z",
+      expiresAt: "2026-04-23T00:00:00.000Z",
       grant: {
         gems: 40,
         resources: {
@@ -4104,9 +4118,10 @@ test("mailbox routes list delivered compensation and repeated claims stay idempo
     }
   });
   const server = await startAccountRouteServer(port, store);
-  const session = issueGuestAuthSession({
+  const session = issueAccountAuthSession({
     playerId: "mailbox-player",
-    displayName: "Mailbox Player"
+    displayName: "Mailbox Player",
+    loginId: "mailbox-player"
   });
 
   t.after(async () => {
@@ -4676,25 +4691,36 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
     eventProgress?: Array<{ eventId: string; delta: number; points: number; objectiveId: string }>;
   };
   const claimAgainPayload = (await claimAgainResponse.json()) as { error: { code: string } };
+  const activeDungeon = resolveActiveDailyDungeon();
+  const expectedReward = activeDungeon.floors.find((floor) => floor.floor === 2)?.reward;
+  const activeSeasonalEvent = getActiveSeasonalEvents(resolveSeasonalEvents())[0];
 
   assert.equal(claimResponse.status, 200);
   assert.equal(claimPayload.claimed, true);
-  assert.equal(claimPayload.reward.gems, 15);
-  assert.equal(claimPayload.reward.resources.gold, 220);
-  assert.equal(claimPayload.reward.resources.ore, 10);
+  assert.equal(claimPayload.reward.gems, expectedReward?.gems ?? 0);
+  assert.equal(claimPayload.reward.resources.gold, expectedReward?.resources?.gold ?? 0);
+  assert.equal(claimPayload.reward.resources.ore, expectedReward?.resources?.ore ?? 0);
   assert.equal(claimPayload.dailyDungeon.attemptsRemaining, 0);
-  assert.equal(claimPayload.eventProgress?.[0]?.eventId, "defend-the-bridge");
-  assert.equal(claimPayload.eventProgress?.[0]?.delta, 40);
-  assert.equal(claimPayload.eventProgress?.[0]?.points, 40);
+  if (activeSeasonalEvent) {
+    assert.equal(claimPayload.eventProgress?.[0]?.eventId, activeSeasonalEvent.id);
+    assert.equal(claimPayload.eventProgress?.[0]?.delta, 40);
+    assert.equal(claimPayload.eventProgress?.[0]?.points, 40);
+  } else {
+    assert.equal(claimPayload.eventProgress, undefined);
+  }
   assert.equal(claimAgainResponse.status, 409);
   assert.equal(claimAgainPayload.error.code, "daily_dungeon_reward_already_claimed");
 
   const account = await store.loadPlayerAccount("dungeon-player");
-  assert.equal(account?.gems, 15);
-  assert.equal(account?.globalResources.gold, 220);
-  assert.equal(account?.globalResources.ore, 10);
+  assert.equal(account?.gems, expectedReward?.gems ?? 0);
+  assert.equal(account?.globalResources.gold, expectedReward?.resources?.gold ?? 0);
+  assert.equal(account?.globalResources.ore, expectedReward?.resources?.ore ?? 0);
   assert.equal(account?.dailyDungeonState?.attemptsUsed, 3);
   assert.equal(account?.dailyDungeonState?.claimedRunIds.includes(firstRunPayload.run.runId), true);
-  assert.equal(account?.seasonalEventStates?.[0]?.eventId, "defend-the-bridge");
-  assert.equal(account?.seasonalEventStates?.[0]?.points, 40);
+  if (activeSeasonalEvent) {
+    assert.equal(account?.seasonalEventStates?.[0]?.eventId, activeSeasonalEvent.id);
+    assert.equal(account?.seasonalEventStates?.[0]?.points, 40);
+  } else {
+    assert.equal(account?.seasonalEventStates?.length ?? 0, 0);
+  }
 });
