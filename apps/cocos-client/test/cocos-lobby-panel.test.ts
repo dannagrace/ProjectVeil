@@ -48,10 +48,35 @@ function createCampaignSummaryFixture() {
         objectives: [],
         reward: { resources: { gold: 120 } },
         status: "available" as const
+      },
+      {
+        id: "chapter-2-breach",
+        missionId: "chapter-2-breach",
+        chapterId: "chapter-2",
+        mapId: "breach-map",
+        name: "灰脊突破口",
+        description: "撕开第二章防线。",
+        enemyArmyTemplateId: "shadow_hexer",
+        order: 1,
+        recommendedHeroLevel: 4,
+        enemyArmyCount: 14,
+        enemyStatMultiplier: 1.15,
+        objectives: [],
+        reward: { resources: { gold: 180, ore: 8 } },
+        status: "locked" as const,
+        unlockRequirements: [
+          {
+            type: "mission_complete",
+            description: "完成前哨侦察",
+            missionId: "chapter-1-scout",
+            chapterId: "chapter-1",
+            satisfied: false
+          }
+        ]
       }
     ],
     completedCount: 0,
-    totalMissions: 3,
+    totalMissions: 2,
     nextMissionId: "chapter-1-scout",
     completionPercent: 0
   };
@@ -207,11 +232,29 @@ test("PVE frontdoor view surfaces the next campaign mission and claimable daily 
 
   assert.match(view.campaignSummary, /前哨侦察/);
   assert.match(view.campaignSummary, /第 1 章/);
+  assert.match(view.campaignSummary, /下章预告 第 2 章/);
   assert.match(view.dailyDungeonSummary, /余烬熔炉/);
   assert.match(view.dailyDungeonSummary, /1 份奖励待领取/);
   assert.match(view.focusSummary, /先领取地城奖励/);
   assert.equal(view.campaignActionEnabled, true);
   assert.equal(view.dailyDungeonActionEnabled, true);
+});
+
+test("PVE frontdoor view falls back to chapter preview when there are no daily dungeon claims waiting", () => {
+  const view = buildLobbyPveFrontdoorView(
+    createLobbyState({
+      authMode: "account",
+      campaign: createCampaignSummaryFixture(),
+      campaignStatus: "战役面板已就绪。",
+      dailyDungeon: {
+        ...createDailyDungeonSummaryFixture(),
+        runs: []
+      },
+      dailyDungeonStatus: "剩余 3 次挑战。"
+    })
+  );
+
+  assert.match(view.focusSummary, /章节路线：完成 前哨侦察 后可解锁 灰脊突破口 · 完成前哨侦察。/);
 });
 
 test("showcase gallery inventory stays aligned with the configured hero, terrain, building and unit counts", () => {

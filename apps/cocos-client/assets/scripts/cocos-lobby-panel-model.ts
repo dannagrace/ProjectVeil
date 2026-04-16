@@ -158,9 +158,15 @@ export function buildLobbyPveFrontdoorView(
         && parseCampaignChapterOrder(mission.chapterId) != null
         && (parseCampaignChapterOrder(mission.chapterId) ?? 0) >= (parseCampaignChapterOrder(nextMission?.chapterId) ?? 0)
     ) ?? null;
+  const nextChapterMission =
+    state.campaign?.missions.find(
+      (mission) =>
+        mission !== nextMission
+        && (parseCampaignChapterOrder(mission.chapterId) ?? 0) > (parseCampaignChapterOrder(nextMission?.chapterId) ?? 0)
+    ) ?? null;
   const unclaimedDailyDungeonRuns = countUnclaimedDailyDungeonRuns(state.dailyDungeon ?? null);
   const campaignSummary = nextMission
-    ? `${formatCampaignChapterLabel(nextMission.chapterId)} · 已完成 ${completedInCurrentChapter}/${Math.max(1, currentChapterMissions.length)} · 下一任务 ${nextMission.name} · 推荐等级 ${nextMission.recommendedHeroLevel}`
+    ? `${formatCampaignChapterLabel(nextMission.chapterId)} · 已完成 ${completedInCurrentChapter}/${Math.max(1, currentChapterMissions.length)} · 下一任务 ${nextMission.name} · 推荐等级 ${nextMission.recommendedHeroLevel}${nextChapterMission ? ` · 下章预告 ${formatCampaignChapterLabel(nextChapterMission.chapterId)}` : ""}`
     : state.campaign
       ? `主线已推进 ${state.campaign.completedCount}/${state.campaign.totalMissions}，当前章节暂时没有新的可用任务。`
       : `主线待同步 · ${state.campaignStatus || "正在读取章节进度..."}`;
@@ -173,6 +179,8 @@ export function buildLobbyPveFrontdoorView(
     ? `今日焦点：先领取地城奖励，再推进 ${nextMission?.name ?? "当前主线"}。`
     : lockedFollowupMission
       ? `章节路线：完成 ${nextMission?.name ?? "当前任务"} 后可解锁 ${lockedFollowupMission.name}${formatUnlockRequirementSummary(lockedFollowupMission) ? ` · ${formatUnlockRequirementSummary(lockedFollowupMission)}` : ""}。`
+    : nextChapterMission
+      ? `章节预告：${formatCampaignChapterLabel(nextMission?.chapterId)} 之后会进入 ${formatCampaignChapterLabel(nextChapterMission.chapterId)} · ${nextChapterMission.name}。`
     : nextMission && state.dailyDungeon
       ? `今日焦点：推进 ${nextMission.name}，顺手清掉 ${state.dailyDungeon.dungeon.name}。`
       : nextMission
