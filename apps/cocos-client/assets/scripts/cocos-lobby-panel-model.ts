@@ -1,4 +1,6 @@
 import type { CocosCampaignSummary, CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import { buildCocosLeaderboardPanelView } from "./cocos-leaderboard-panel.ts";
+import type { MatchmakingStatusView } from "./cocos-matchmaking-status.ts";
 import type { CocosDailyDungeonSummary } from "./cocos-progression-panel.ts";
 import type { VeilLobbyRenderState } from "./VeilLobbyPanel.ts";
 import {
@@ -45,6 +47,23 @@ export interface LobbyPveFrontdoorView {
   dailyDungeonActionLabel: string;
   campaignActionEnabled: boolean;
   dailyDungeonActionEnabled: boolean;
+}
+
+export type LobbyPvpFrontdoorActionKind =
+  | "login-account"
+  | "enter-matchmaking"
+  | "cancel-matchmaking"
+  | "none";
+
+export interface LobbyPvpFrontdoorView {
+  title: string;
+  ladderSummary: string;
+  queueSummary: string;
+  socialSummary: string;
+  focusSummary: string;
+  primaryActionLabel: string;
+  primaryActionEnabled: boolean;
+  primaryActionKind: LobbyPvpFrontdoorActionKind;
 }
 
 export function buildLobbyRoomCards(rooms: CocosLobbyRoomSummary[]): LobbyRoomCardView[] {
@@ -128,6 +147,13 @@ function countUnclaimedDailyDungeonRuns(dailyDungeon: CocosDailyDungeonSummary |
   return dailyDungeon?.runs.filter((run) => !run.rewardClaimedAt).length ?? 0;
 }
 
+function formatIdleMatchmakingSummary(status: MatchmakingStatusView | null | undefined): string {
+  if (!status) {
+    return "暂未开始排位 · 现在发起一局就能刷新今天的对抗节奏。";
+  }
+  return `暂未开始排位 · ${status.matchedLabel || "现在发起一局就能刷新今天的对抗节奏。"}`;
+}
+
 export function buildLobbyPveFrontdoorView(
   state: Pick<
     VeilLobbyRenderState,
@@ -203,6 +229,100 @@ export function buildLobbyPveFrontdoorView(
           : "同步每日地城",
     campaignActionEnabled: !state.entering,
     dailyDungeonActionEnabled: !state.entering
+  };
+}
+
+export function buildLobbyPvpFrontdoorView(
+  state: Pick<
+    VeilLobbyRenderState,
+    | "authMode"
+    | "entering"
+    | "playerId"
+    | "shareHint"
+    | "leaderboardEntries"
+    | "leaderboardStatus"
+    | "leaderboardError"
+    | "matchmaking"
+    | "matchmakingSearching"
+    | "matchmakingBusy"
+  >
+): LobbyPvpFrontdoorView {
+  if (state.authMode !== "account") {
+    return {
+      title: "今日 PVP 追逐",
+      ladderSummary: "PVP 排位与同房间对抗需要正式账号会话，登录后才会同步天梯名次与对局战报。",
+      queueSummary: "游客模式不会保留排位房间与名次变化。",
+      socialSummary: state.shareHint.trim() || "共享存档未启用",
+      focusSummary: "下一步：先登录账号，再去打一局排位并开始冲榜。",
+      primaryActionLabel: "登录账号后排位",
+      primaryActionEnabled: !state.entering,
+      primaryActionKind: "login-account"
+    };
+  }
+
+  const leaderboardEntries = state.leaderboardEntries ?? [];
+  const leaderboardView = buildCocosLeaderboardPanelView({
+    entries: leaderboardEntries,
+    myPlayerId: state.playerId
+  });
+  const leaderRow = leaderboardView.rows[0] ?? null;
+  const myRankRow = leaderboardView.myRankRow;
+  const leaderboardStatus = state.leaderboardStatus ?? "idle";
+  const matchmaking = state.matchmaking ?? null;
+  const matchmakingSearching = state.matchmakingSearching ?? false;
+  const matchmakingBusy = state.matchmakingBusy ?? false;
+
+  const ladderSummary =
+    leaderboardStatus === "loading"
+      ? "天梯同步中 · 正在读取前列排名与当前账号的冲榜位置。"
+      : leaderboardStatus === "error"
+        ? `天梯读取失败 · ${state.leaderboardError?.trim() || "稍后重试即可恢复当前榜单。"}`
+        : myRankRow
+          ? `当前天梯 ${myRankRow.rankLabel} · ${myRankRow.tierLabel} · ${myRankRow.ratingLabel}`
+          : leaderRow
+            ? `当前未进榜 · 领跑者 ${leaderRow.displayName} ${leaderRow.rankLabel} · ${leaderRow.tierLabel}`
+            : "当前还没有已结算的排位数据，先打一局把今天的对抗节奏滚起来。";
+
+  const queueSummary = matchmaking?.isMatched
+    ? `房间已锁定 · ${matchmaking.matchedLabel || "匹配成功后会直接拉起这一局对抗。"}`
+    : matchmakingSearching
+      ? `正在排队 · ${matchmaking?.queuePositionLabel || "等待分配对手"} · ${matchmaking?.waitEstimateLabel || "预计很快开赛"}`
+      : formatIdleMatchmakingSummary(matchmaking);
+
+  const socialSummary = state.shareHint.trim()
+    ? `共享战果：${state.shareHint.trim()}`
+    : "共享战果：当前还没有额外的社交同步提示。";
+
+  const focusSummary = matchmaking?.isMatched
+    ? "今日焦点：房间已经锁定，现在进入就会直接结算这一局的名次变化。"
+    : matchmakingSearching
+      ? "今日焦点：保持当前阵容，匹配成功后就能直接开战。"
+      : myRankRow && leaderRow && myRankRow.playerId !== leaderRow.playerId
+        ? `今日焦点：再赢一局，继续逼近 ${leaderRow.displayName} 的榜首节奏。`
+        : myRankRow
+          ? "今日焦点：你已经站在榜首附近，再打一局把领先优势拉开。"
+          : "今日焦点：先打一局进入榜单，再决定今天要追谁。";
+
+  const primaryActionKind = matchmaking?.isMatched
+    ? "none"
+    : matchmakingSearching
+      ? "cancel-matchmaking"
+      : "enter-matchmaking";
+
+  return {
+    title: "今日 PVP 追逐",
+    ladderSummary,
+    queueSummary,
+    socialSummary,
+    focusSummary,
+    primaryActionLabel:
+      primaryActionKind === "cancel-matchmaking"
+        ? (matchmakingBusy ? "匹配处理中..." : "取消当前匹配")
+        : primaryActionKind === "enter-matchmaking"
+          ? (matchmakingBusy ? "匹配处理中..." : "开始 PVP 匹配")
+          : "房间锁定中",
+    primaryActionEnabled: !state.entering && !matchmakingBusy && primaryActionKind !== "none",
+    primaryActionKind
   };
 }
 
