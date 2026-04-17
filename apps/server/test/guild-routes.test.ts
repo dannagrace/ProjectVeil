@@ -1,17 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Server, WebSocketTransport } from "colyseus";
+import { WebSocketTransport } from "colyseus";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
 import { registerGuildRoutes } from "../src/guilds";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { RoomSnapshotStore } from "../src/persistence";
 
-async function startGuildRouteServer(store: RoomSnapshotStore, port: number): Promise<Server> {
+interface GuildRouteTestServer {
+  shutdown(): Promise<void>;
+}
+
+async function startGuildRouteServer(store: RoomSnapshotStore | null, port: number): Promise<GuildRouteTestServer> {
   const transport = new WebSocketTransport();
   registerGuildRoutes(transport.getExpressApp() as never, store);
-  const server = new Server({ transport });
-  await server.listen(port, "127.0.0.1");
-  return server;
+  await new Promise<void>((resolve, reject) => {
+    transport.listen(port, "127.0.0.1", undefined, (error?: Error | null) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  return {
+    async shutdown(): Promise<void> {
+      await new Promise<void>((resolve) => {
+        if (!transport.server.listening) {
+          resolve();
+          return;
+        }
+
+        transport.server.once("close", resolve);
+        transport.shutdown();
+      });
+    }
+  };
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readSseEvent(
@@ -24,10 +53,17 @@ async function readSseEvent(
 
   while (Date.now() < deadline) {
     const remainingMs = Math.max(1, deadline - Date.now());
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const chunk = await Promise.race([
       reader.read(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("sse_timeout")), remainingMs))
-    ]);
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error("sse_timeout")), remainingMs);
+      })
+    ]).finally(() => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+    });
     if (chunk.done) {
       throw new Error("sse_stream_closed");
     }
@@ -66,7 +102,7 @@ test("guild routes create, list, fetch, and expose rosters", async (t) => {
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -130,7 +166,7 @@ test("guild routes keep the guild alive and surface owner transfer events when t
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -215,7 +251,7 @@ test("guild routes support join and leave, including disband on last member leav
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -291,7 +327,7 @@ test("guild routes transfer ownership when the owner leaves a guild with remaini
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -366,7 +402,7 @@ test("guild routes reject joins when the guild is at its member limit", async (t
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -444,7 +480,7 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const unauthorized = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -489,7 +525,7 @@ test("guild routes reject blocked guild names and tags", async (t) => {
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const blockedName = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -537,7 +573,7 @@ test("guild routes rate limit repeated guild creation per player over 24 hours",
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   for (const [name, tag] of [
@@ -589,7 +625,7 @@ test("hidden guilds disappear from public list/detail/join routes", async (t) =>
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -645,8 +681,8 @@ test("guild routes map malformed payloads and store outages to actionable errors
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
-    await unavailableServer.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
+    await unavailableServer.shutdown().catch(() => undefined);
   });
 
   const malformed = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -698,7 +734,7 @@ test("guild routes reject duplicate tags, invalid joins, and invalid leaves", as
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const createdOne = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -781,7 +817,7 @@ test("guild chat routes send messages, page history, and enforce delete authoriz
   t.after(async () => {
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -815,6 +851,7 @@ test("guild chat routes send messages, page history, and enforce delete authoriz
   assert.equal(founderMessageResponse.status, 201);
   assert.equal(founderMessagePayload.message.content, "Hold the west gate.");
 
+  await wait(2);
   const recruitMessageResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
     method: "POST",
     headers: {
@@ -826,6 +863,7 @@ test("guild chat routes send messages, page history, and enforce delete authoriz
   const recruitMessagePayload = (await recruitMessageResponse.json()) as { message: { messageId: string } };
   assert.equal(recruitMessageResponse.status, 201);
 
+  await wait(2);
   const latestMessageResponse = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
     method: "POST",
     headers: {
@@ -925,7 +963,7 @@ test("guild chat routes validate messages and rate limit bursts", async (t) => {
     }
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -1006,12 +1044,21 @@ test("guild chat stream pushes live message and delete events to online guild me
   const founderSession = issueGuestAuthSession({ playerId: "chat-stream-founder", displayName: "Stream Founder" });
   const recruitSession = issueGuestAuthSession({ playerId: "chat-stream-recruit", displayName: "Stream Recruit" });
   const controller = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   t.after(async () => {
     controller.abort();
+    if (reader) {
+      void reader.cancel().catch(() => undefined);
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore reader cleanup races after aborting the stream
+      }
+    }
     resetGuestAuthSessions();
     await store.close();
-    await server.gracefullyShutdown(false).catch(() => undefined);
+    await server.shutdown().catch(() => undefined);
   });
 
   const created = await fetch(`http://127.0.0.1:${port}/api/guilds`, {
@@ -1045,10 +1092,7 @@ test("guild chat stream pushes live message and delete events to online guild me
   );
   assert.equal(streamResponse.status, 200);
   assert.ok(streamResponse.body);
-  const reader = streamResponse.body.getReader();
-  t.after(async () => {
-    await reader.cancel().catch(() => undefined);
-  });
+  reader = streamResponse.body.getReader();
 
   const createdMessage = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/chat`, {
     method: "POST",
