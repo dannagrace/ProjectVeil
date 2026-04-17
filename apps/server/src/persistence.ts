@@ -241,10 +241,12 @@ export interface RoomSnapshotStore {
     playerId: string,
     input: PlayerCompensationCreateInput
   ): Promise<PlayerCompensationRecord>;
+  appendAdminAuditLog?(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord>;
   listPlayerCompensationHistory?(
     playerId: string,
     options?: PlayerCompensationListOptions
   ): Promise<PlayerCompensationRecord[]>;
+  listAdminAuditLogs?(options?: AdminAuditLogListOptions): Promise<AdminAuditLogRecord[]>;
   listPlayerPurchaseHistory?(
     playerId: string,
     query?: PlayerPurchaseHistoryQuery
@@ -606,6 +608,20 @@ interface GuildAuditLogRow extends RowDataPacket {
   name: string;
   tag: string;
   reason: string | null;
+}
+
+interface AdminAuditLogRow extends RowDataPacket {
+  audit_id: string;
+  actor_player_id: string;
+  actor_role: string;
+  action: string;
+  target_player_id: string | null;
+  target_scope: string | null;
+  summary: string;
+  before_json: string | null;
+  after_json: string | null;
+  metadata_json: string | null;
+  occurred_at: Date | string;
 }
 
 interface GuildChatMessageRow extends RowDataPacket {
@@ -1208,6 +1224,55 @@ export interface PlayerCompensationListOptions {
   limit?: number;
 }
 
+export type AdminAuditActorRole = "admin" | "support-moderator" | "support-supervisor";
+export type AdminAuditAction =
+  | "player_overview_viewed"
+  | "compensation_granted"
+  | "compensation_batch_previewed"
+  | "compensation_batch_granted"
+  | "resources_modified"
+  | "player_banned"
+  | "player_unbanned"
+  | "report_resolved"
+  | "support_ticket_resolved";
+
+export interface AdminAuditLogRecord {
+  auditId: string;
+  actorPlayerId: string;
+  actorRole: AdminAuditActorRole;
+  action: AdminAuditAction;
+  targetPlayerId?: string;
+  targetScope?: string;
+  summary: string;
+  beforeJson?: string;
+  afterJson?: string;
+  metadataJson?: string;
+  occurredAt: string;
+}
+
+export interface AdminAuditLogCreateInput {
+  actorPlayerId: string;
+  actorRole: AdminAuditActorRole;
+  action: AdminAuditAction;
+  targetPlayerId?: string;
+  targetScope?: string;
+  summary: string;
+  beforeJson?: string;
+  afterJson?: string;
+  metadataJson?: string;
+  occurredAt?: string;
+}
+
+export interface AdminAuditLogListOptions {
+  actorPlayerId?: string;
+  actorRole?: AdminAuditActorRole;
+  action?: AdminAuditAction;
+  targetPlayerId?: string;
+  targetScope?: string;
+  since?: string;
+  limit?: number;
+}
+
 export interface PlayerPurchaseHistoryRecord {
   purchaseId: string;
   itemId: string;
@@ -1268,6 +1333,9 @@ export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
 export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
 export const MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE = "player_compensation_history";
 export const MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX = "idx_player_compensation_history_player_created";
+export const MYSQL_ADMIN_AUDIT_LOG_TABLE = "admin_audit_logs";
+export const MYSQL_ADMIN_AUDIT_LOG_OCCURRED_INDEX = "idx_admin_audit_logs_occurred";
+export const MYSQL_ADMIN_AUDIT_LOG_TARGET_OCCURRED_INDEX = "idx_admin_audit_logs_target_occurred";
 export const MYSQL_PLAYER_NAME_HISTORY_TABLE = "player_name_history";
 export const MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX = "idx_player_name_history_player_changed";
 export const MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX = "idx_player_name_history_normalized_changed";
@@ -1604,6 +1672,51 @@ function toGuildAuditLogRecord(row: GuildAuditLogRow): GuildAuditLogRecord {
     name: row.name.trim().slice(0, 40),
     tag: row.tag.trim().toUpperCase().slice(0, 4),
     ...(row.reason?.trim() ? { reason: row.reason.trim() } : {})
+  };
+}
+
+function normalizeAdminAuditActorRole(value: string): AdminAuditActorRole {
+  if (value === "support-moderator" || value === "support-supervisor") {
+    return value;
+  }
+  return "admin";
+}
+
+function normalizeAdminAuditAction(value: string): AdminAuditAction {
+  switch (value) {
+    case "player_overview_viewed":
+    case "compensation_granted":
+    case "compensation_batch_previewed":
+    case "compensation_batch_granted":
+    case "resources_modified":
+    case "player_banned":
+    case "player_unbanned":
+    case "report_resolved":
+    case "support_ticket_resolved":
+      return value;
+    default:
+      throw new Error("admin audit action is not supported");
+  }
+}
+
+function toAdminAuditLogRecord(row: AdminAuditLogRow): AdminAuditLogRecord {
+  const occurredAt = formatTimestamp(row.occurred_at);
+  if (!occurredAt) {
+    throw new Error("admin audit log occurred_at must be present");
+  }
+
+  return {
+    auditId: row.audit_id,
+    actorPlayerId: normalizePlayerId(row.actor_player_id),
+    actorRole: normalizeAdminAuditActorRole(row.actor_role),
+    action: normalizeAdminAuditAction(row.action),
+    ...(row.target_player_id ? { targetPlayerId: normalizePlayerId(row.target_player_id) } : {}),
+    ...(row.target_scope ? { targetScope: row.target_scope.trim() } : {}),
+    summary: row.summary.trim(),
+    ...(row.before_json ? { beforeJson: row.before_json } : {}),
+    ...(row.after_json ? { afterJson: row.after_json } : {}),
+    ...(row.metadata_json ? { metadataJson: row.metadata_json } : {}),
+    occurredAt
   };
 }
 
@@ -3078,6 +3191,22 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE}\` (
   PRIMARY KEY (audit_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_ADMIN_AUDIT_LOG_TABLE}\` (
+  audit_id VARCHAR(191) NOT NULL,
+  actor_player_id VARCHAR(191) NOT NULL,
+  actor_role VARCHAR(32) NOT NULL,
+  action VARCHAR(64) NOT NULL,
+  target_player_id VARCHAR(191) NULL,
+  target_scope VARCHAR(191) NULL,
+  summary VARCHAR(255) NOT NULL,
+  before_json LONGTEXT NULL,
+  after_json LONGTEXT NULL,
+  metadata_json LONGTEXT NULL,
+  occurred_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (audit_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_EVENT_HISTORY_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
   event_id VARCHAR(191) NOT NULL,
@@ -4344,6 +4473,42 @@ SET @veil_player_compensation_history_idx_sql := IF(
 PREPARE veil_player_compensation_history_idx_stmt FROM @veil_player_compensation_history_idx_sql;
 EXECUTE veil_player_compensation_history_idx_stmt;
 DEALLOCATE PREPARE veil_player_compensation_history_idx_stmt;
+
+SET @veil_admin_audit_logs_occurred_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_ADMIN_AUDIT_LOG_TABLE}'
+    AND INDEX_NAME = '${MYSQL_ADMIN_AUDIT_LOG_OCCURRED_INDEX}'
+);
+
+SET @veil_admin_audit_logs_occurred_idx_sql := IF(
+  @veil_admin_audit_logs_occurred_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_ADMIN_AUDIT_LOG_OCCURRED_INDEX}\` ON \`${MYSQL_ADMIN_AUDIT_LOG_TABLE}\` (occurred_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_admin_audit_logs_occurred_idx_stmt FROM @veil_admin_audit_logs_occurred_idx_sql;
+EXECUTE veil_admin_audit_logs_occurred_idx_stmt;
+DEALLOCATE PREPARE veil_admin_audit_logs_occurred_idx_stmt;
+
+SET @veil_admin_audit_logs_target_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_ADMIN_AUDIT_LOG_TABLE}'
+    AND INDEX_NAME = '${MYSQL_ADMIN_AUDIT_LOG_TARGET_OCCURRED_INDEX}'
+);
+
+SET @veil_admin_audit_logs_target_idx_sql := IF(
+  @veil_admin_audit_logs_target_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_ADMIN_AUDIT_LOG_TARGET_OCCURRED_INDEX}\` ON \`${MYSQL_ADMIN_AUDIT_LOG_TABLE}\` (target_player_id, occurred_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_admin_audit_logs_target_idx_stmt FROM @veil_admin_audit_logs_target_idx_sql;
+EXECUTE veil_admin_audit_logs_target_idx_stmt;
+DEALLOCATE PREPARE veil_admin_audit_logs_target_idx_stmt;
 
 CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_HERO_ARCHIVE_TABLE}\` (
   player_id VARCHAR(191) NOT NULL,
@@ -6888,6 +7053,117 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerCompensationRecord(row));
+  }
+
+  async appendAdminAuditLog(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord> {
+    const auditId = randomUUID();
+    const occurredAt = new Date(input.occurredAt ?? Date.now());
+    if (Number.isNaN(occurredAt.getTime())) {
+      throw new Error("occurredAt must be a valid ISO timestamp");
+    }
+
+    const record: AdminAuditLogRecord = {
+      auditId,
+      actorPlayerId: normalizePlayerId(input.actorPlayerId),
+      actorRole: input.actorRole,
+      action: input.action,
+      ...(input.targetPlayerId?.trim() ? { targetPlayerId: normalizePlayerId(input.targetPlayerId) } : {}),
+      ...(input.targetScope?.trim() ? { targetScope: input.targetScope.trim().slice(0, 191) } : {}),
+      summary: input.summary.trim().slice(0, 255),
+      ...(input.beforeJson?.trim() ? { beforeJson: input.beforeJson.trim() } : {}),
+      ...(input.afterJson?.trim() ? { afterJson: input.afterJson.trim() } : {}),
+      ...(input.metadataJson?.trim() ? { metadataJson: input.metadataJson.trim() } : {}),
+      occurredAt: occurredAt.toISOString()
+    };
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_ADMIN_AUDIT_LOG_TABLE}\` (
+         audit_id,
+         actor_player_id,
+         actor_role,
+         action,
+         target_player_id,
+         target_scope,
+         summary,
+         before_json,
+         after_json,
+         metadata_json,
+         occurred_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.auditId,
+        record.actorPlayerId,
+        record.actorRole,
+        record.action,
+        record.targetPlayerId ?? null,
+        record.targetScope ?? null,
+        record.summary,
+        record.beforeJson ?? null,
+        record.afterJson ?? null,
+        record.metadataJson ?? null,
+        occurredAt
+      ]
+    );
+
+    return record;
+  }
+
+  async listAdminAuditLogs(options: AdminAuditLogListOptions = {}): Promise<AdminAuditLogRecord[]> {
+    const clauses: string[] = [];
+    const params: Array<string | Date | number> = [];
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+
+    if (options.actorPlayerId?.trim()) {
+      clauses.push("actor_player_id = ?");
+      params.push(normalizePlayerId(options.actorPlayerId));
+    }
+    if (options.actorRole) {
+      clauses.push("actor_role = ?");
+      params.push(options.actorRole);
+    }
+    if (options.action) {
+      clauses.push("action = ?");
+      params.push(options.action);
+    }
+    if (options.targetPlayerId?.trim()) {
+      clauses.push("target_player_id = ?");
+      params.push(normalizePlayerId(options.targetPlayerId));
+    }
+    if (options.targetScope?.trim()) {
+      clauses.push("target_scope = ?");
+      params.push(options.targetScope.trim());
+    }
+    if (options.since?.trim()) {
+      const since = new Date(options.since);
+      if (Number.isNaN(since.getTime())) {
+        throw new Error("since must be a valid ISO timestamp");
+      }
+      clauses.push("occurred_at >= ?");
+      params.push(since);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<AdminAuditLogRow[]>(
+      `SELECT
+         audit_id,
+         actor_player_id,
+         actor_role,
+         action,
+         target_player_id,
+         target_scope,
+         summary,
+         before_json,
+         after_json,
+         metadata_json,
+         occurred_at
+       FROM \`${MYSQL_ADMIN_AUDIT_LOG_TABLE}\`
+       ${whereClause}
+       ORDER BY occurred_at DESC, audit_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toAdminAuditLogRecord(row));
   }
 
   async listPlayerPurchaseHistory(
