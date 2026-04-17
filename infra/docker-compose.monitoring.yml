@@ -16,8 +16,11 @@ services:
     image: prom/alertmanager:v0.28.1
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
+      - --config.expand-env
     ports:
       - "9093:9093"
+    environment:
+      PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY:-local-dev-routing-key}
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - ./secrets:/etc/alertmanager/secrets:ro
@@ -35,3 +38,6 @@ services:
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./grafana/dashboard-overview.json:/var/lib/grafana/dashboards/project-veil-overview.json:ro
+      - ./grafana/dashboard-live-ops-overview.json:/var/lib/grafana/dashboards/project-veil-live-ops-overview.json:ro
+      - ./grafana/dashboard-customer-service.json:/var/lib/grafana/dashboards/project-veil-customer-service.json:ro
+      - ./grafana/dashboard-payment-health.json:/var/lib/grafana/dashboards/project-veil-payment-health.json:ro
