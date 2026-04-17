@@ -80,6 +80,7 @@
     "release:runtime-observability:gate": "node --import tsx ./scripts/runtime-observability-gate.ts",
     "release:runtime:slo-summary": "node --import tsx ./scripts/runtime-slo-summary.ts",
     "release:launch-compliance:gate": "node --import tsx ./scripts/release-launch-compliance-gate.ts",
+    "release:production:rollback-drill": "node --import tsx ./scripts/release-production-rollback-drill.ts",
     "release:gate:summary": "node --import tsx ./scripts/release-gate-summary.ts",
     "release:go-no-go-packet": "node --import tsx ./scripts/release-go-no-go-decision-packet.ts",
     "release:pr-summary": "node --import tsx ./scripts/release-pr-comment.ts",

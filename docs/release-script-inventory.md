@@ -38,6 +38,7 @@ Relevant scripts: 56
 | `release:phase1:exit-dossier-freshness-gate` | release | `artifacts/release-readiness/phase1-exit-dossier-freshness-gate-<candidate>-<short-sha>.json` |
 | `release:phase1:same-revision-evidence-bundle` | release | Output directory under `artifacts/release-readiness/phase1-same-revision-evidence-bundle-<candidate>-<short-sha>/` containing `phase1-same-revision-evidence-bundle-manifest.json`, `phase1-same-revision-evidence-bundle.md`, and staged evidence artifacts. |
 | `release:pr-summary` | release | `artifacts/release-readiness/release-pr-comment.md` |
+| `release:production:rollback-drill` | release | `artifacts/release-readiness/production-rollback-drill-<candidate>.json` |
 | `release:readiness:dashboard` | release | `artifacts/release-readiness/release-readiness-dashboard.json` |
 | `release:readiness:snapshot` | release | `artifacts/release-readiness/release-readiness-<timestamp>.json` |
 | `release:reconnect-soak` | release | `artifacts/release-readiness/colyseus-reconnect-soak-summary-<candidate-or-short-sha>.json` |
@@ -200,7 +201,7 @@ Relevant scripts: 56
 - Command: `node --import tsx ./scripts/release-gate-summary.ts`
 - Purpose: Aggregate readiness, H5, reconnect soak, Cocos reconnect replay, WeChat, and config-change evidence into one top-level release gate decision.
 - Required inputs:
-  - Release evidence artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`, or explicit CLI paths such as `--snapshot`, `--cocos-rc-reconnect-replay`, and `--wechat-artifacts-dir`.
+  - Release evidence artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`, or explicit CLI paths such as `--snapshot`, `--cocos-rc-reconnect-replay`, `--production-rollback-drill`, and `--wechat-artifacts-dir`; production promotion also accepts `--stage production`.
 - Produced artifacts:
   - `artifacts/release-readiness/release-gate-summary-<short-sha>.json`
   - `artifacts/release-readiness/release-gate-summary-<short-sha>.md`
@@ -332,6 +333,17 @@ Relevant scripts: 56
   - Release gate summary plus release health summary JSON inputs, passed explicitly or discovered from the release-readiness artifact directory.
 - Produced artifacts:
   - `artifacts/release-readiness/release-pr-comment.md`
+
+## `release:production:rollback-drill`
+
+- Family: `release`
+- Command: `node --import tsx ./scripts/release-production-rollback-drill.ts`
+- Purpose: Rehearse the production canary failure path, capture whether smoke triggered rollback, and emit the reviewer-facing rollback drill evidence used by production release gates.
+- Required inputs:
+  - Pass `--candidate`; optionally switch to `--mode execute`, set `--image-tag`, override the namespace/canary manifest paths, and provide the smoke command that should fail over to rollback.
+- Produced artifacts:
+  - `artifacts/release-readiness/production-rollback-drill-<candidate>.json`
+  - `artifacts/release-readiness/production-rollback-drill-<candidate>.md`
 
 ## `release:readiness:dashboard`
 

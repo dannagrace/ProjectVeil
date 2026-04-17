@@ -8,6 +8,7 @@ This directory provides a production-oriented baseline for the Project Veil serv
 - `Service` and `Ingress` for HTTP plus long-lived WebSocket traffic on the same backend
 - `ConfigMap` for the non-secret env contract from `ops/env/production.env.example`
 - `HorizontalPodAutoscaler` keyed to the thresholds published in `docs/ops/capacity-planning.md`
+- `canary/` subdirectory with stable/canary Deployments, Services, and an NGINX weighted Ingress baseline for rollback drills
 
 ## CI placeholder gate
 
