@@ -63,6 +63,9 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
   let getHandler:
     | ((request: never, response: TestResponse) => void | Promise<void>)
     | undefined;
+  let testCaptureHandler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
   let handler:
     | ((request: never, response: TestResponse) => void | Promise<void>)
     | undefined;
@@ -83,6 +86,10 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
       getHandler = nextHandler as never;
     },
     post(path, nextHandler) {
+      if (path === "/api/test/analytics/events") {
+        testCaptureHandler = nextHandler as never;
+        return;
+      }
       assert.equal(path, "/api/analytics/events");
       handler = nextHandler as never;
     }
@@ -90,6 +97,7 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
 
   assert(middleware);
   assert(getHandler);
+  assert(testCaptureHandler);
   assert(handler);
 
   const requestBody = JSON.stringify({
