@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { readMySqlPersistenceConfig } from "../apps/server/src/persistence";
-import { rollbackLastSchemaMigration } from "../apps/server/src/schema-migrations";
+import { rollbackLastSchemaMigration } from "../apps/server/src/infra/schema-migrations";
 
 loadEnv();
 

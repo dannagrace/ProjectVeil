@@ -17,7 +17,7 @@ import {
   registerWechatPayRoutes,
   signWechatCallbackForTest,
   type WechatPayRuntimeConfig
-} from "../src/wechat-pay";
+} from "../src/adapters/wechat-pay";
 import type { ShopProduct } from "../src/shop";
 
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [

@@ -18,7 +18,7 @@ import { loadDailyQuestConfig } from "../src/daily-quest-config";
 import { assertDisplayNameAvailableOrThrow } from "../src/display-name-rules";
 import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "../src/event-engine";
 import { resolveActiveDailyDungeon } from "../src/pve-content";
-import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/wechat-session-key";
+import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/adapters/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,

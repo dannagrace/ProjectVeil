@@ -9,7 +9,7 @@ import {
   deliverAccountToken,
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode
-} from "./account-token-delivery";
+} from "./adapters/account-token-delivery";
 import {
   recordAuthAccountBinding,
   recordAuthAccountLogin,
@@ -42,7 +42,7 @@ import {
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
 import { readRuntimeSecret } from "./runtime-secrets";
-import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./wechat-session-key";
+import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./adapters/wechat-session-key";
 
 export type AuthMode = "guest" | "account";
 export type AuthProvider = "guest" | "account-password" | "wechat-mini-game";

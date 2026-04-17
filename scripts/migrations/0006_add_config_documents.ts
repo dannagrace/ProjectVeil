@@ -3,7 +3,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_CONFIG_DOCUMENT_TABLE,
   MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX

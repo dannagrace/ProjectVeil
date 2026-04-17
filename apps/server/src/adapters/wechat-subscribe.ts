@@ -1,5 +1,5 @@
-import type { RoomSnapshotStore } from "./persistence";
-import { readRuntimeSecret } from "./runtime-secrets";
+import type { RoomSnapshotStore } from "../persistence";
+import { readRuntimeSecret } from "../runtime-secrets";
 import { getNotificationPreferenceValue } from "./wechat-social";
 
 export type WechatSubscribeTemplateKey = "match_found" | "turn_reminder";

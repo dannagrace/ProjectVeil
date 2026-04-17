@@ -57,7 +57,7 @@ import {
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
   type MySqlPoolConfig
-} from "./mysql-pool";
+} from "./infra/mysql-pool";
 import type { RoomPersistenceSnapshot } from "./index";
 import {
   claimAllPlayerMailboxMessages,

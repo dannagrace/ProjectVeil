@@ -63,14 +63,14 @@ import {
   resolveActiveDailyDungeon,
   startDailyDungeonRun
 } from "./pve-content";
-import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
+import { decryptWechatPhoneNumber, validateWechatSignature } from "./adapters/wechat-session-key";
 import {
   buildFriendLeaderboard,
   createGroupChallenge,
   encodeGroupChallengeToken,
   normalizeNotificationPreferences,
   validateGroupChallengeToken
-} from "./wechat-social";
+} from "./adapters/wechat-social";
 import { removeMobilePushToken, upsertMobilePushToken } from "./mobile-push-tokens";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
