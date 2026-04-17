@@ -1,0 +1,33 @@
+{
+  "policies": [
+    {
+      "id": "returning-24h",
+      "name": "Returning After 24 Hours",
+      "inactiveHours": 24,
+      "maxLookbackHours": 72,
+      "channels": ["mailbox", "wechat_subscribe", "mobile_push"],
+      "mailbox": {
+        "title": "前线重新集结",
+        "body": "你的主线与每日追逐还在继续。现在回归即可接上最近目标与奖励。"
+      },
+      "subscribe": {
+        "headline": "前线正在等你",
+        "chapterName": "今日战役与地城"
+      }
+    },
+    {
+      "id": "returning-168h",
+      "name": "Returning After 7 Days",
+      "inactiveHours": 168,
+      "channels": ["mailbox", "wechat_subscribe", "mobile_push"],
+      "mailbox": {
+        "title": "战线回归奖励",
+        "body": "你离开的这段时间里，赛季追逐和每日地城都更新了。现在回来继续推进。"
+      },
+      "subscribe": {
+        "headline": "战线已经刷新",
+        "chapterName": "赛季追逐与每日地城"
+      }
+    }
+  ]
+}

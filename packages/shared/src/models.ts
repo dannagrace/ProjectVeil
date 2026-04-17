@@ -311,6 +311,7 @@ export interface NotificationPreferences {
   turnReminder: boolean;
   groupChallenge: boolean;
   friendLeaderboard: boolean;
+  reengagement: boolean;
   updatedAt?: string;
 }
 

@@ -5,8 +5,8 @@ import type { RoomSnapshotStore } from "../persistence";
 import { removeMobilePushToken } from "../mobile-push-tokens";
 import { getNotificationPreferenceValue } from "./wechat-social";
 
-export type MobilePushTemplateKey = "match_found" | "turn_reminder";
-type MobilePushPreferenceKey = "matchFound" | "turnReminder";
+export type MobilePushTemplateKey = "match_found" | "turn_reminder" | "reengagement";
+type MobilePushPreferenceKey = "matchFound" | "turnReminder" | "reengagement";
 type MobilePushDeliveryResult = "sent" | "failed" | "invalid_token" | "skipped";
 
 interface MobilePushLoggerLike {
@@ -93,7 +93,13 @@ function readFcmRuntimeConfig(env: NodeJS.ProcessEnv = process.env): FcmRuntimeC
 }
 
 function toPreferenceKey(templateKey: MobilePushTemplateKey): MobilePushPreferenceKey {
-  return templateKey === "match_found" ? "matchFound" : "turnReminder";
+  if (templateKey === "match_found") {
+    return "matchFound";
+  }
+  if (templateKey === "reengagement") {
+    return "reengagement";
+  }
+  return "turnReminder";
 }
 
 function stringifyDataValue(value: unknown): string {
@@ -110,6 +116,15 @@ function buildNotificationMessage(
   templateKey: MobilePushTemplateKey,
   data: Record<string, unknown>
 ): MobilePushNotificationMessage {
+  if (templateKey === "reengagement") {
+    const headline = typeof data.headline === "string" && data.headline.trim() ? data.headline.trim() : "Frontier needs you again";
+    const chapter = typeof data.chapterName === "string" && data.chapterName.trim() ? data.chapterName.trim() : "today's frontier";
+    return {
+      title: headline,
+      body: `Return now and pick up where you left off in ${chapter}.`,
+      data: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, stringifyDataValue(value)]))
+    };
+  }
   if (templateKey === "match_found") {
     const opponentName = typeof data.opponentName === "string" && data.opponentName.trim() ? data.opponentName.trim() : "Opponent";
     const mapName = typeof data.mapName === "string" && data.mapName.trim() ? data.mapName.trim() : "the arena";
