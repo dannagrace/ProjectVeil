@@ -73,6 +73,8 @@ Experiments and rollout operations live beside `flags` in the same config docume
 Rules:
 
 - `allocation` is a stable 0-100 bucket share per variant.
+- `trafficAllocation` caps the overall share of traffic admitted into the experiment before variant allocation is applied.
+- `stickyBucketKey` chooses the stable hash identity (`player_id`, `login_id`, or `wechat_open_id`).
 - The remaining unallocated percentage falls back to `fallbackVariant`.
 - `whitelist` overrides hashing and is the fastest way to QA a treatment.
 - `startAt` and `endAt` gate rollout without code changes.
@@ -144,3 +146,5 @@ All three paths fall back to `fallbackVariant` without requiring client redeploy
 - The H5 account card renders the active experiment summary for quick spot checks.
 - Exposure and conversion analytics reuse the shared schema catalog, so downstream reporting stays versioned and explicit.
 - Flag rollout audit evidence now also lives in `configs/feature-flags.json` under `operations.auditHistory[]`, and the live server view is available at `/api/runtime/feature-flags`.
+- Admin console now exposes `/api/admin/experiments` for live exposure / conversion / ARPU spot checks.
+- `npm run experiment:metrics-rollup -- --input <analytics-events.json>` exports JSON, CSV, and Markdown rollups with chi-square / Welch t first-pass significance markers.

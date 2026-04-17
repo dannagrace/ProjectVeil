@@ -354,6 +354,14 @@ export function getCapturedAnalyticsEventsForTest(): AnalyticsEvent[] {
   return capturedAnalyticsEvents.map((event) => structuredClone(event));
 }
 
+export function getCapturedAnalyticsEventsSnapshot(): AnalyticsEvent[] {
+  return getCapturedAnalyticsEventsForTest();
+}
+
+export function captureAnalyticsEventsForTest(events: AnalyticsEvent[]): void {
+  capturedAnalyticsEvents.push(...events.map((event) => structuredClone(event)));
+}
+
 async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (pendingEvents.length === 0) {
     return;

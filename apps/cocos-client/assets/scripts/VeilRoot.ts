@@ -1595,6 +1595,7 @@ export class VeilRoot extends Component {
           products: this.lobbyShopProducts,
           gemBalance: this.lobbyAccountProfile.gems ?? 0,
           pendingProductId: this.pendingShopProductId,
+          experiments: this.lobbyAccountProfile.experiments ?? [],
           ownedCosmeticIds: this.lobbyAccountProfile.cosmeticInventory?.ownedIds ?? [],
           seasonPassPremiumOwned: this.lobbyAccountProfile.seasonPassPremium === true,
           ...(this.lobbyAccountProfile.equippedCosmetics ? { equippedCosmetics: this.lobbyAccountProfile.equippedCosmetics } : {})

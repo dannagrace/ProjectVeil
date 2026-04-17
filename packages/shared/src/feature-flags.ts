@@ -124,6 +124,8 @@ export interface ExperimentDefinition {
   enabled?: boolean;
   startAt?: string;
   endAt?: string;
+  trafficAllocation?: number;
+  stickyBucketKey?: string;
   fallbackVariant: string;
   whitelist?: Record<string, string>;
   variants: ExperimentVariantDefinition[];
@@ -137,12 +139,14 @@ export interface ExperimentAssignment {
   experimentName: string;
   owner: string;
   bucket: number;
+  trafficAllocation?: number;
+  stickyBucketKey?: string;
   variant: string;
   fallbackVariant: string;
   startAt?: string;
   endAt?: string;
   assigned: boolean;
-  reason: "whitelist" | "bucket" | "inactive" | "before_start" | "after_end" | "fallback";
+  reason: "whitelist" | "bucket" | "inactive" | "before_start" | "after_end" | "fallback" | "traffic_cap";
 }
 
 export interface ResolvedFeatureEntitlements {
@@ -229,10 +233,26 @@ export const DEFAULT_FEATURE_FLAG_CONFIG: FeatureFlagConfigDocument = {
       owner: "growth",
       enabled: true,
       startAt: "2026-04-05T00:00:00.000Z",
+      trafficAllocation: 100,
+      stickyBucketKey: "player_id",
       fallbackVariant: "control",
       variants: [
         { key: "control", allocation: 50 },
         { key: "upgrade", allocation: 50 }
+      ]
+    },
+    shop_headline_2026_05: {
+      name: "Shop Headline May 2026",
+      owner: "monetization",
+      enabled: true,
+      startAt: "2026-05-01T00:00:00.000Z",
+      endAt: "2026-05-31T23:59:59.999Z",
+      trafficAllocation: 100,
+      stickyBucketKey: "player_id",
+      fallbackVariant: "control",
+      variants: [
+        { key: "control", allocation: 50 },
+        { key: "value", allocation: 50 }
       ]
     }
   }
@@ -272,6 +292,14 @@ function normalizeExperimentAllocation(value: number | undefined): number {
   }
 
   return Math.min(DEFAULT_EXPERIMENT_BUCKETS, Math.max(0, Math.floor(value ?? 0)));
+}
+
+function normalizeExperimentTrafficAllocation(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_EXPERIMENT_BUCKETS;
+  }
+
+  return Math.min(DEFAULT_EXPERIMENT_BUCKETS, Math.max(0, Math.floor(value ?? DEFAULT_EXPERIMENT_BUCKETS)));
 }
 
 function normalizeTimestamp(value: string | undefined): string | undefined {
@@ -544,6 +572,8 @@ export function normalizeExperimentDefinition(
     name: definition.name?.trim() || fallback.name,
     owner: definition.owner?.trim() || fallback.owner,
     enabled: definition.enabled ?? true,
+    trafficAllocation: normalizeExperimentTrafficAllocation(definition.trafficAllocation ?? fallback.trafficAllocation),
+    stickyBucketKey: definition.stickyBucketKey?.trim() || fallback.stickyBucketKey || "player_id",
     fallbackVariant,
     variants: normalizedVariants
   };
@@ -613,6 +643,12 @@ export function normalizeFeatureFlagConfigDocument(
 ): FeatureFlagConfigDocument {
   const flags = (input?.flags ?? {}) as Partial<Record<FeatureFlagKey, Partial<FeatureFlagDefinition>>>;
   const experiments = isPlainRecord(input?.experiments) ? input?.experiments : {};
+  const experimentKeys = Array.from(
+    new Set([
+      ...Object.keys(DEFAULT_FEATURE_FLAG_CONFIG.experiments ?? {}),
+      ...Object.keys(experiments)
+    ])
+  ).sort((left, right) => left.localeCompare(right));
   return {
     schemaVersion: 1,
     flags: {
@@ -636,21 +672,24 @@ export function normalizeFeatureFlagConfigDocument(
     runtimeGates: normalizeFeatureFlagRuntimeGateConfig(
       isPlainRecord(input?.runtimeGates) ? (input.runtimeGates as Partial<FeatureFlagRuntimeGateConfig>) : undefined
     ),
-    experiments: {
-      account_portal_copy: normalizeExperimentDefinition(
-        isPlainRecord(experiments?.account_portal_copy) ? (experiments.account_portal_copy as Partial<ExperimentDefinition>) : undefined,
-        "account_portal_copy",
-        DEFAULT_FEATURE_FLAG_CONFIG.experiments?.account_portal_copy ?? {
-          name: "Account Portal Upgrade Copy",
-          owner: "growth",
-          enabled: true,
-          fallbackVariant: "control",
-          variants: [
-            { key: "control", allocation: 100 }
-          ]
-        }
-      )
-    }
+    experiments: Object.fromEntries(
+      experimentKeys.map((experimentKey) => [
+        experimentKey,
+        normalizeExperimentDefinition(
+          isPlainRecord(experiments?.[experimentKey]) ? (experiments[experimentKey] as Partial<ExperimentDefinition>) : undefined,
+          experimentKey,
+          DEFAULT_FEATURE_FLAG_CONFIG.experiments?.[experimentKey] ?? {
+            name: experimentKey,
+            owner: "growth",
+            enabled: true,
+            trafficAllocation: 100,
+            stickyBucketKey: "player_id",
+            fallbackVariant: "control",
+            variants: [{ key: "control", allocation: 100 }]
+          }
+        )
+      ])
+    )
   };
 }
 
@@ -742,6 +781,8 @@ function resolveExperimentAssignment(
     experimentName: definition.name,
     owner: definition.owner,
     bucket,
+    trafficAllocation: normalizeExperimentTrafficAllocation(definition.trafficAllocation),
+    stickyBucketKey: definition.stickyBucketKey?.trim() || "player_id",
     fallbackVariant: definition.fallbackVariant,
     ...(definition.startAt ? { startAt: definition.startAt } : {}),
     ...(definition.endAt ? { endAt: definition.endAt } : {})
@@ -780,6 +821,15 @@ function resolveExperimentAssignment(
       variant: definition.fallbackVariant,
       assigned: false,
       reason: "after_end"
+    };
+  }
+
+  if (bucket >= normalizeExperimentTrafficAllocation(definition.trafficAllocation)) {
+    return {
+      ...baseAssignment,
+      variant: definition.fallbackVariant,
+      assigned: false,
+      reason: "traffic_cap"
     };
   }
 
@@ -828,26 +878,28 @@ export function evaluateFeatureEntitlements(
 
 export function normalizeExperimentAssignments(input?: Partial<ExperimentAssignment>[] | null): ExperimentAssignment[] {
   return (input ?? [])
-    .map((assignment) => {
+    .map<ExperimentAssignment | null>((assignment) => {
       const experimentKey = assignment.experimentKey?.trim();
       const experimentName = assignment.experimentName?.trim();
       const owner = assignment.owner?.trim();
       const variant = assignment.variant?.trim();
       const fallbackVariant = assignment.fallbackVariant?.trim();
       const bucket = Math.floor(assignment.bucket ?? Number.NaN);
+      const startAt = normalizeTimestamp(assignment.startAt);
+      const endAt = normalizeTimestamp(assignment.endAt);
       if (!experimentKey || !experimentName || !owner || !variant || !fallbackVariant || !Number.isFinite(bucket)) {
         return null;
       }
 
-      return {
+      const normalizedAssignment: ExperimentAssignment = {
         experimentKey,
         experimentName,
         owner,
         bucket: Math.min(DEFAULT_EXPERIMENT_BUCKETS - 1, Math.max(0, bucket)),
+        trafficAllocation: normalizeExperimentTrafficAllocation(assignment.trafficAllocation),
+        stickyBucketKey: assignment.stickyBucketKey?.trim() || "player_id",
         variant,
         fallbackVariant,
-        ...(normalizeTimestamp(assignment.startAt) ? { startAt: normalizeTimestamp(assignment.startAt) } : {}),
-        ...(normalizeTimestamp(assignment.endAt) ? { endAt: normalizeTimestamp(assignment.endAt) } : {}),
         assigned: assignment.assigned === true,
         reason:
           assignment.reason === "whitelist" ||
@@ -855,11 +907,21 @@ export function normalizeExperimentAssignments(input?: Partial<ExperimentAssignm
           assignment.reason === "inactive" ||
           assignment.reason === "before_start" ||
           assignment.reason === "after_end" ||
-          assignment.reason === "fallback"
+          assignment.reason === "fallback" ||
+          assignment.reason === "traffic_cap"
             ? assignment.reason
             : "fallback"
       };
+
+      if (startAt) {
+        normalizedAssignment.startAt = startAt;
+      }
+      if (endAt) {
+        normalizedAssignment.endAt = endAt;
+      }
+
+      return normalizedAssignment;
     })
-    .filter((assignment): assignment is ExperimentAssignment => Boolean(assignment))
+    .filter((assignment): assignment is ExperimentAssignment => assignment !== null)
     .sort((left, right) => left.experimentKey.localeCompare(right.experimentKey));
 }

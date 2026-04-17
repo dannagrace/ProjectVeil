@@ -124,6 +124,8 @@
       "owner": "growth",
       "enabled": true,
       "startAt": "2026-04-05T00:00:00.000Z",
+      "trafficAllocation": 100,
+      "stickyBucketKey": "player_id",
       "fallbackVariant": "control",
       "variants": [
         {
@@ -138,6 +140,26 @@
       "whitelist": {
         "pm-demo-player": "upgrade"
       }
+    },
+    "shop_headline_2026_05": {
+      "name": "Shop Headline May 2026",
+      "owner": "monetization",
+      "enabled": true,
+      "startAt": "2026-05-01T00:00:00.000Z",
+      "endAt": "2026-05-31T23:59:59.999Z",
+      "trafficAllocation": 100,
+      "stickyBucketKey": "player_id",
+      "fallbackVariant": "control",
+      "variants": [
+        {
+          "key": "control",
+          "allocation": 50
+        },
+        {
+          "key": "value",
+          "allocation": 50
+        }
+      ]
     }
   }
 }

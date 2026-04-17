@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEventLogEntries, type EventLogEntry, type ResourceLedger, type ServerMessage, type WorldState } from "../../../packages/shared/src/index";
+import { getCapturedAnalyticsEventsSnapshot } from "./analytics";
 import { GuildService } from "./guilds";
-import { getRuntimeKillSwitchSnapshot } from "./feature-flags";
+import { loadFeatureFlagConfig, getRuntimeKillSwitchSnapshot } from "./feature-flags";
+import { buildAdminExperimentSummaries } from "./experiment-assignment";
 import type {
   AdminAuditAction,
   AdminAuditLogCreateInput,
@@ -1191,6 +1193,17 @@ export function registerAdminRoutes(
       activePlayers: lobbyRooms.reduce((sum, r) => sum + r.connectedPlayers, 0),
       nodeVersion: process.version,
       memoryUsage: process.memoryUsage()
+    });
+  });
+
+  app.get("/api/admin/experiments", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    const config = loadFeatureFlagConfig();
+    const experiments = buildAdminExperimentSummaries(config, getCapturedAnalyticsEventsSnapshot(), new Date().toISOString());
+    sendJson(response, 200, {
+      serverTime: new Date().toISOString(),
+      experiments
     });
   });
 
