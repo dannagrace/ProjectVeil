@@ -26,7 +26,7 @@ export * from "./guilds.ts";
 export * from "./guild-chat.ts";
 export * from "./hero-skills.ts";
 export * from "./hero-progression.ts";
-export * from "./map.ts";
+export * from "./world/index.ts";
 export * from "./map-sync.ts";
 export * from "./matchmaking.ts";
 export * from "./models.ts";
