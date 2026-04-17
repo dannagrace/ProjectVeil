@@ -275,8 +275,9 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.equal(report.summary.status, "passed");
   assert.deepEqual(report.summary.failedGateIds, []);
   assert.equal(report.triage.blockers.length, 0);
-  assert.equal(report.triage.warnings.length, 1);
-  assert.match(report.triage.warnings[0]?.summary ?? "", /HIGH risk/);
+  assert.equal(report.triage.warnings.length, 2);
+  assert.ok(report.triage.warnings.some((entry) => /HIGH risk/.test(entry.summary)));
+  assert.ok(report.triage.warnings.some((entry) => entry.id === "launch-compliance:warning"));
   assert.equal(report.summary.totalGates, 6);
   assert.equal(report.gates.every((gate) => gate.status === "passed"), true);
   assert.equal(report.gates.find((gate) => gate.id === "multiplayer-reconnect-soak")?.status, "passed");
@@ -288,7 +289,7 @@ test("buildReleaseGateSummaryReport marks all gates passed when snapshot, H5 smo
   assert.match(renderMarkdown(report), /Overall status: \*\*PASSED\*\*/);
   assert.match(renderMarkdown(report), /## Selected Inputs/);
   assert.match(renderMarkdown(report), /## Triage Summary/);
-  assert.match(renderMarkdown(report), /### Warnings \(1\)/);
+  assert.match(renderMarkdown(report), /### Warnings \(2\)/);
   assert.match(renderMarkdown(report), /Config changes are HIGH risk for wechat/);
   assert.match(renderMarkdown(report), /release-readiness-pass\.json/);
   assert.match(renderMarkdown(report), /colyseus-reconnect-soak-summary-pass\.json/);
@@ -625,6 +626,91 @@ test("buildReleaseGateSummaryReport discovers nested candidate rehearsal evidenc
       report.inputs.wechatSmokeReportPath && fs.realpathSync(report.inputs.wechatSmokeReportPath),
       fs.realpathSync(wechatSmokeReportPath)
     );
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
+test("buildReleaseGateSummaryReport surfaces launch compliance as a wechat warning", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
+  const wechatRcValidationPath = path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json");
+  const wechatCandidateSummaryPath = path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json");
+  const compliancePath = path.join(workspace, "configs", "launch-compliance.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: { commit: "abc123", shortCommit: "abc123" },
+    summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
+    checks: [{ id: "e2e-smoke", required: true, status: "passed" }]
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(1),
+    revision: { commit: "abc123", shortCommit: "abc123" },
+    execution: { status: "passed", exitCode: 0 },
+    summary: { total: 1, passed: 1, failed: 0 }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: { commit: "abc123", shortCommit: "abc123" },
+    status: "passed",
+    summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] }
+  });
+  writeJson(wechatRcValidationPath, {
+    generatedAt: isoHoursAgo(1),
+    commit: "abc123",
+    summary: { status: "passed", failedChecks: 0, failureSummary: [] },
+    checks: [{ id: "wechat-build", required: true, status: "passed" }]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: isoHoursAgo(1),
+    candidate: { revision: "abc123", status: "ready" },
+    evidence: {
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+  writeJson(compliancePath, {
+    license: {
+      value: "国新出审〔2026〕001 号",
+      version: "2026Q2",
+      reviewedAt: isoHoursAgo(1)
+    }
+  });
+
+  const previousCwd = process.cwd();
+  process.chdir(workspace);
+  try {
+    const report = buildReleaseGateSummaryReport(
+      {
+        snapshotPath,
+        h5SmokePath,
+        reconnectSoakPath,
+        wechatArtifactsDir,
+        targetSurface: "wechat"
+      },
+      {
+        commit: "abc123",
+        shortCommit: "abc123",
+        branch: "test-branch",
+        dirty: false
+      }
+    );
+
+    assert.equal(report.launchCompliance.status, "warn");
+    assert.equal(report.inputs.launchComplianceConfigPath, fs.realpathSync(compliancePath));
+    assert.ok(report.triage.warnings.some((entry) => entry.id === "launch-compliance:warning"));
+    assert.match(renderMarkdown(report), /Launch compliance dossier:/);
+    assert.match(renderMarkdown(report), /## Launch Compliance/);
   } finally {
     process.chdir(previousCwd);
   }
