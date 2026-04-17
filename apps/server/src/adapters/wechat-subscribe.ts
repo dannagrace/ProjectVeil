@@ -2,13 +2,14 @@ import type { RoomSnapshotStore } from "../persistence";
 import { readRuntimeSecret } from "../runtime-secrets";
 import { getNotificationPreferenceValue } from "./wechat-social";
 
-export type WechatSubscribeTemplateKey = "match_found" | "turn_reminder";
+export type WechatSubscribeTemplateKey = "match_found" | "turn_reminder" | "reengagement";
 
 interface WechatSubscribeRuntimeConfig {
   appId: string;
   appSecret: string;
   matchFoundTemplateId: string;
   turnReminderTemplateId: string;
+  reengagementTemplateId: string;
   tokenUrl: string;
   sendUrl: string;
 }
@@ -49,7 +50,8 @@ function readWechatSubscribeRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
   const appSecret = normalizeConfigValue(readRuntimeSecret("WECHAT_APP_SECRET", env));
   const matchFoundTemplateId = normalizeConfigValue(env.VEIL_WECHAT_MATCH_FOUND_TMPL_ID);
   const turnReminderTemplateId = normalizeConfigValue(env.VEIL_WECHAT_TURN_REMINDER_TMPL_ID);
-  if (!appId || !appSecret || !matchFoundTemplateId || !turnReminderTemplateId) {
+  const reengagementTemplateId = normalizeConfigValue(env.VEIL_WECHAT_REENGAGEMENT_TMPL_ID) ?? turnReminderTemplateId;
+  if (!appId || !appSecret || !matchFoundTemplateId || !turnReminderTemplateId || !reengagementTemplateId) {
     return null;
   }
 
@@ -58,13 +60,20 @@ function readWechatSubscribeRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
     appSecret,
     matchFoundTemplateId,
     turnReminderTemplateId,
+    reengagementTemplateId,
     tokenUrl: normalizeConfigValue(env.VEIL_WECHAT_SUBSCRIBE_ACCESS_TOKEN_URL) ?? "https://api.weixin.qq.com/cgi-bin/token",
     sendUrl: normalizeConfigValue(env.VEIL_WECHAT_SUBSCRIBE_SEND_URL) ?? "https://api.weixin.qq.com/cgi-bin/message/subscribe/send"
   };
 }
 
 function getTemplateId(config: WechatSubscribeRuntimeConfig, templateKey: WechatSubscribeTemplateKey): string {
-  return templateKey === "match_found" ? config.matchFoundTemplateId : config.turnReminderTemplateId;
+  if (templateKey === "match_found") {
+    return config.matchFoundTemplateId;
+  }
+  if (templateKey === "reengagement") {
+    return config.reengagementTemplateId;
+  }
+  return config.turnReminderTemplateId;
 }
 
 function normalizeSubscribeMessageData(data: Record<string, unknown>): Record<string, { value: string }> {
@@ -144,7 +153,7 @@ export async function sendWechatSubscribeMessage(
     return false;
   }
 
-  const preferenceKey = templateKey === "match_found" ? "matchFound" : "turnReminder";
+  const preferenceKey = templateKey === "match_found" ? "matchFound" : templateKey === "reengagement" ? "reengagement" : "turnReminder";
   if (!getNotificationPreferenceValue(account.notificationPreferences, preferenceKey)) {
     return false;
   }

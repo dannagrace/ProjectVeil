@@ -6,6 +6,13 @@ test("buildCocosShopPanelView formats gem purchases, WeChat purchases, and pendi
   const view = buildCocosShopPanelView({
     gemBalance: 30,
     pendingProductId: "equipment-sunforged-kit",
+    experiments: [
+      {
+        experimentKey: "shop_headline_2026_05",
+        variant: "value",
+        assigned: true
+      }
+    ],
     products: [
       {
         productId: "resource-bundle-starter",
@@ -48,8 +55,8 @@ test("buildCocosShopPanelView formats gem purchases, WeChat purchases, and pendi
   assert.equal(view.gemBalanceLabel, "宝石 30");
   assert.equal(view.emptyLabel, null);
   assert.equal(view.featuredProductId, "gem-pack-premium");
-  assert.match(view.featuredTitle, /补给推荐 · Premium Gem Cache/);
-  assert.match(view.featuredSummary, /宝石 x120 · 微信 ¥6.00/);
+  assert.match(view.featuredTitle, /超值补给 · Premium Gem Cache/);
+  assert.match(view.featuredSummary, /宝石 x120 · 微信 ¥6.00 · 本期更适合连续推进主线与活动追逐/);
   assert.deepEqual(view.rows, [
     {
       productId: "resource-bundle-starter",

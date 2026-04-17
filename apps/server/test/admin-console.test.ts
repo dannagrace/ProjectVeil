@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
+import { captureAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "../src/analytics";
 import { registerAdminRoutes } from "../src/admin-console";
 import { getActiveRoomInstances } from "../src/colyseus-room";
 import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "../src/persistence";
@@ -89,7 +90,9 @@ function withAdminSecret(t: TestContext, secret = "test-admin-secret"): string {
   const originalAdminSecret = process.env.ADMIN_SECRET;
   process.env.ADMIN_SECRET = secret;
   getActiveRoomInstances().clear();
+  resetAnalyticsRuntimeDependencies();
   t.after(() => {
+    resetAnalyticsRuntimeDependencies();
     getActiveRoomInstances().clear();
     if (originalAdminSecret === undefined) {
       delete process.env.ADMIN_SECRET;
@@ -759,6 +762,108 @@ test("GET /api/admin/overview returns server overview payload with a valid admin
   assert.equal(payload.nodeVersion, process.version);
   assert.ok(Number.isFinite(Date.parse(payload.serverTime)));
   assert.equal(typeof payload.memoryUsage.rss, "number");
+});
+
+test("GET /api/admin/experiments returns live experiment summaries with metrics", async (t) => {
+  const secret = withAdminSecret(t);
+  const { gets } = registerRoutes();
+  const handler = gets.get("/api/admin/experiments");
+  assert.ok(handler);
+
+  captureAnalyticsEventsForTest([
+    {
+      schemaVersion: 1,
+      name: "experiment_exposure",
+      version: 1,
+      at: "2026-05-10T00:00:00.000Z",
+      playerId: "player-a",
+      source: "server",
+      payload: {
+        experimentKey: "shop_headline_2026_05",
+        experimentName: "Shop Headline May 2026",
+        variant: "control",
+        bucket: 10,
+        surface: "shop_panel",
+        owner: "monetization"
+      }
+    },
+    {
+      schemaVersion: 1,
+      name: "experiment_exposure",
+      version: 1,
+      at: "2026-05-10T00:00:00.000Z",
+      playerId: "player-b",
+      source: "server",
+      payload: {
+        experimentKey: "shop_headline_2026_05",
+        experimentName: "Shop Headline May 2026",
+        variant: "value",
+        bucket: 60,
+        surface: "shop_panel",
+        owner: "monetization"
+      }
+    },
+    {
+      schemaVersion: 1,
+      name: "experiment_conversion",
+      version: 1,
+      at: "2026-05-10T01:00:00.000Z",
+      playerId: "player-b",
+      source: "server",
+      payload: {
+        experimentKey: "shop_headline_2026_05",
+        experimentName: "Shop Headline May 2026",
+        variant: "value",
+        bucket: 60,
+        conversion: "shop_purchase",
+        owner: "monetization"
+      }
+    },
+    {
+      schemaVersion: 1,
+      name: "purchase_completed",
+      version: 1,
+      at: "2026-05-10T01:05:00.000Z",
+      playerId: "player-b",
+      source: "server",
+      payload: {
+        purchaseId: "purchase-b",
+        productId: "gem_pack_small",
+        totalPrice: 30,
+        paymentMethod: "wechat_pay",
+        orderStatus: "completed"
+      }
+    }
+  ]);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      url: "/api/admin/experiments",
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    experiments: Array<{
+      experimentKey: string;
+      metrics: {
+        variants: Array<{
+          variant: string;
+          conversions: number;
+          revenue: number;
+        }>;
+      } | null;
+    }>;
+  };
+  const summary = payload.experiments.find((entry) => entry.experimentKey === "shop_headline_2026_05");
+  assert.ok(summary);
+  assert.equal(summary.metrics?.variants.find((entry) => entry.variant === "value")?.conversions, 1);
+  assert.equal(summary.metrics?.variants.find((entry) => entry.variant === "value")?.revenue, 30);
 });
 
 test("GET /api/admin/runtime/kill-switches returns minimum versions and kill-switch matrix", async (t) => {

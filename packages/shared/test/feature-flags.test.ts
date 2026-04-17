@@ -91,6 +91,38 @@ test("experiments assign stable buckets, respect whitelist, and fall back outsid
   assert.equal(first[0]?.bucket != null && first[0].bucket >= 20, first[0]?.assigned === false || first[0]?.variant === "control");
 });
 
+test("feature flag config normalizes dynamic experiments with traffic allocation metadata", () => {
+  const config = normalizeFeatureFlagConfigDocument({
+    schemaVersion: 1,
+    flags: DEFAULT_FEATURE_FLAG_CONFIG.flags,
+    experiments: {
+      shop_headline_2026_05: {
+        name: "Shop Headline May 2026",
+        owner: "monetization",
+        enabled: true,
+        trafficAllocation: 25,
+        stickyBucketKey: "wechat_open_id",
+        fallbackVariant: "control",
+        variants: [
+          { key: "control", allocation: 10 },
+          { key: "value", allocation: 15 }
+        ]
+      }
+    }
+  });
+
+  assert.equal(config.experiments?.shop_headline_2026_05?.trafficAllocation, 25);
+  assert.equal(config.experiments?.shop_headline_2026_05?.stickyBucketKey, "wechat_open_id");
+
+  const assignment = evaluateExperiments("player-42", config, new Date("2026-05-10T12:00:00.000Z")).find(
+    (entry) => entry.experimentKey === "shop_headline_2026_05"
+  );
+  assert.ok(assignment);
+  assert.equal(assignment?.trafficAllocation, 25);
+  assert.equal(assignment?.stickyBucketKey, "wechat_open_id");
+  assert.ok(["bucket", "traffic_cap", "fallback"].includes(assignment?.reason ?? ""));
+});
+
 test("normalize experiment assignments drops malformed records", () => {
   assert.deepEqual(
     normalizeExperimentAssignments([
@@ -99,6 +131,8 @@ test("normalize experiment assignments drops malformed records", () => {
         experimentName: "Account Portal Upgrade Copy",
         owner: "growth",
         bucket: 12,
+        trafficAllocation: 100,
+        stickyBucketKey: "player_id",
         variant: "upgrade",
         fallbackVariant: "control",
         assigned: true,
@@ -115,6 +149,8 @@ test("normalize experiment assignments drops malformed records", () => {
         experimentName: "Account Portal Upgrade Copy",
         owner: "growth",
         bucket: 12,
+        trafficAllocation: 100,
+        stickyBucketKey: "player_id",
         variant: "upgrade",
         fallbackVariant: "control",
         assigned: true,

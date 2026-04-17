@@ -1236,7 +1236,10 @@ export type AdminAuditAction =
   | "report_resolved"
   | "support_ticket_resolved"
   | "ugc_review_approved"
-  | "ugc_review_rejected";
+  | "ugc_review_rejected"
+  | "reengagement_sent"
+  | "reengagement_opened"
+  | "reengagement_returned";
 
 export interface AdminAuditLogRecord {
   auditId: string;
