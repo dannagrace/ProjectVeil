@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createSign, createVerify, randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { emitAnalyticsEvent } from "./analytics";
-import { validateAuthSessionFromRequest } from "./auth";
+import { emitAnalyticsEvent } from "../analytics";
+import { validateAuthSessionFromRequest } from "../auth";
 import {
   recordPaymentDeadLetter,
   recordPaymentGrantRetry,
@@ -9,10 +9,10 @@ import {
   setPaymentGrantDeadLetterCount,
   setPaymentGrantQueueCount,
   setPaymentGrantQueueLatency
-} from "./observability";
-import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
-import { readRuntimeSecret } from "./runtime-secrets";
-import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
+} from "../observability";
+import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
+import { readRuntimeSecret } from "../runtime-secrets";
+import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
 
 interface HttpApp {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;

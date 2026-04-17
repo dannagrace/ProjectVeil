@@ -9,7 +9,9 @@ import {
   createCocosLobbyPreferences,
   getCocosLobbyPreferencesStorageKey,
   getCocosPlayerAccountStorageKey,
+  loadCocosAnnouncements,
   loadCocosBattleReplayHistoryPage,
+  loadCocosMaintenanceMode,
   loadCocosPlayerAchievementProgress,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
@@ -24,6 +26,7 @@ import {
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
   resolveCocosConfigCenterUrl,
+  submitCocosSupportTicket,
   syncCurrentCocosAuthSession
 } from "../assets/scripts/cocos-lobby.ts";
 
@@ -126,6 +129,76 @@ test("loadCocosLobbyRooms queries the lobby api from the resolved remote host", 
 
   assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/lobby/rooms?limit=3");
   assert.equal(rooms[0]?.roomId, "room-alpha");
+});
+
+test("loadCocosAnnouncements returns the active server-side announcement banner list", async () => {
+  const requestedUrls: string[] = [];
+  const items = await loadCocosAnnouncements("ws://127.0.0.1:2567/ws", {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "maintenance-preview",
+              title: "停服预告",
+              message: "10 分钟后进入维护。",
+              tone: "warning",
+              startsAt: "2026-04-17T08:00:00.000Z"
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/announcements/current");
+  assert.deepEqual(items, [
+    {
+      id: "maintenance-preview",
+      title: "停服预告",
+      message: "10 分钟后进入维护。",
+      tone: "warning",
+      startsAt: "2026-04-17T08:00:00.000Z"
+    }
+  ]);
+});
+
+test("loadCocosMaintenanceMode normalizes the current maintenance snapshot", async () => {
+  const requestedUrls: string[] = [];
+  const snapshot = await loadCocosMaintenanceMode("http://127.0.0.1:2567", {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          active: true,
+          title: "停服维护中",
+          message: "预计 10:00 恢复。",
+          nextOpenAt: "2026-04-17T10:00:00.000Z"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/runtime/maintenance-mode");
+  assert.deepEqual(snapshot, {
+    active: true,
+    title: "停服维护中",
+    message: "预计 10:00 恢复。",
+    nextOpenAt: "2026-04-17T10:00:00.000Z"
+  });
 });
 
 test("loadCocosPlayerEventHistory returns normalized paging metadata from the event-history route", async () => {
@@ -1005,6 +1078,58 @@ test("mailbox claim helpers target the authenticated /me endpoints", async () =>
   assert.deepEqual(requestedUrls, [
     "http://127.0.0.1:2567/api/player-accounts/me/mailbox/comp-1/claim",
     "http://127.0.0.1:2567/api/player-accounts/me/mailbox/claim-all"
+  ]);
+});
+
+test("submitCocosSupportTicket targets the authenticated player support route", async () => {
+  const requestedUrls: string[] = [];
+  const authSession = {
+    token: "account.token",
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    source: "remote" as const
+  };
+
+  const payload = await submitCocosSupportTicket(
+    "http://127.0.0.1:2567",
+    {
+      category: "bug",
+      message: "设置页按钮重叠。",
+      priority: "high"
+    },
+    {
+      authSession,
+      fetchImpl: async (input) => {
+        requestedUrls.push(String(input));
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            ticket: {
+              ticketId: "ticket-1",
+              playerId: "account-player",
+              category: "bug",
+              message: "设置页按钮重叠。",
+              priority: "high",
+              status: "open",
+              createdAt: "2026-04-17T12:00:00.000Z",
+              updatedAt: "2026-04-17T12:00:00.000Z"
+            }
+          }),
+          {
+            status: 202,
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+      }
+    }
+  );
+
+  assert.equal(payload.accepted, true);
+  assert.equal(payload.ticket.ticketId, "ticket-1");
+  assert.equal(payload.ticket.priority, "high");
+  assert.deepEqual(requestedUrls, [
+    "http://127.0.0.1:2567/api/player-accounts/me/support-tickets"
   ]);
 });
 

@@ -12,11 +12,11 @@ import {
   type MatchmakingRequest
 } from "../../../packages/shared/src/index";
 import { validateAuthSessionFromRequest } from "./auth";
-import { sendMobilePushNotification } from "./mobile-push";
+import { sendMobilePushNotification } from "./adapters/mobile-push";
 import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "./observability";
 import type { RoomSnapshotStore } from "./persistence";
-import { createRedisClient, readRedisUrl, type RedisClientLike } from "./redis";
-import { sendWechatSubscribeMessage } from "./wechat-subscribe";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "./infra/redis";
+import { sendWechatSubscribeMessage } from "./adapters/wechat-subscribe";
 
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
 const DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS = 60_000;

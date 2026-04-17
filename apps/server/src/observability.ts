@@ -17,7 +17,7 @@ import {
   renderAnalyticsPipelineSnapshotText,
   resetCapturedAnalyticsEventsForTest
 } from "./analytics";
-import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./mysql-pool";
+import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "./infra/mysql-pool";
 import { resetGuestAuthSessions } from "./auth";
 import { configureAuthoritativeRoomTelemetry } from "./index";
 import { readRuntimeSecret } from "./runtime-secrets";

@@ -36,6 +36,7 @@ export interface CocosSettingsPanelView extends CocosStoredSettings {
   statusMessage: string | null;
   deleteAccountPending: boolean;
   withdrawConsentPending: boolean;
+  supportSubmittingCategory: "bug" | "payment" | "account" | null;
   privacyPolicyUrl: string;
 }
 
@@ -51,6 +52,7 @@ export interface CocosSettingsPanelUpdate {
   statusMessage?: string | null;
   deleteAccountPending?: boolean;
   withdrawConsentPending?: boolean;
+  supportSubmittingCategory?: "bug" | "payment" | "account" | null;
   privacyPolicyUrl?: string;
 }
 
@@ -84,6 +86,7 @@ export interface CocosSettingsPanelOptions {
   onDeleteAccount?: () => void;
   onWithdrawConsent?: () => void;
   onOpenPrivacyPolicy?: () => void;
+  onSubmitSupportTicket?: (category: "bug" | "payment" | "account") => void;
 }
 
 export function createDefaultCocosSettingsView(
@@ -102,6 +105,7 @@ export function createDefaultCocosSettingsView(
       statusMessage: null,
       deleteAccountPending: false,
       withdrawConsentPending: false,
+      supportSubmittingCategory: null,
       privacyPolicyUrl: resolveCocosPrivacyPolicyUrl()
     },
     update
@@ -381,6 +385,7 @@ export class CocosSettingsPanel extends Component {
   private onDeleteAccount: (() => void) | undefined;
   private onWithdrawConsent: (() => void) | undefined;
   private onOpenPrivacyPolicy: (() => void) | undefined;
+  private onSubmitSupportTicket: ((category: "bug" | "payment" | "account") => void) | undefined;
 
   configure(options: CocosSettingsPanelOptions): void {
     this.onClose = options.onClose;
@@ -389,6 +394,7 @@ export class CocosSettingsPanel extends Component {
     this.onDeleteAccount = options.onDeleteAccount;
     this.onWithdrawConsent = options.onWithdrawConsent;
     this.onOpenPrivacyPolicy = options.onOpenPrivacyPolicy;
+    this.onSubmitSupportTicket = options.onSubmitSupportTicket;
   }
 
   render(state: CocosSettingsPanelView): void {
@@ -460,9 +466,9 @@ export class CocosSettingsPanel extends Component {
       new Color(245, 228, 182, state.frameRateCap === 60 ? 146 : 72)
     );
 
-    const accountCard = renderCard(this.node, "SettingsAccount", -126, width - 36, 108);
+    const accountCard = renderCard(this.node, "SettingsAccount", -126, width - 36, 164);
     const accountLabel = ensureLabel(accountCard, "AccountLabel", width - 64, 44, 13, 16, H_ALIGN_LEFT, V_ALIGN_TOP);
-    accountLabel.node.setPosition(0, 18, 1);
+    accountLabel.node.setPosition(0, 44, 1);
     accountLabel.string = `账号 ${state.displayName || "未命名玩家"}\n${state.authMode === "account" ? `登录 ${state.loginId || state.displayName}` : "游客会话"}`;
     renderActionButton(accountCard, "SettingsLogout", "退出登录", -76, -22, 118, 30, SETTINGS_BUTTON, new Color(221, 232, 246, 88));
     renderActionButton(
@@ -475,6 +481,39 @@ export class CocosSettingsPanel extends Component {
       30,
       state.deleteAccountPending ? SETTINGS_CONFIRM : SETTINGS_DANGER,
       new Color(246, 224, 208, 104)
+    );
+    renderActionButton(
+      accountCard,
+      "SettingsSupportBug",
+      state.supportSubmittingCategory === "bug" ? "提交中..." : "BUG 反馈",
+      -110,
+      4,
+      92,
+      28,
+      SETTINGS_BUTTON,
+      new Color(221, 232, 246, 88)
+    );
+    renderActionButton(
+      accountCard,
+      "SettingsSupportPayment",
+      state.supportSubmittingCategory === "payment" ? "提交中..." : "支付问题",
+      0,
+      4,
+      92,
+      28,
+      SETTINGS_BUTTON,
+      new Color(221, 232, 246, 88)
+    );
+    renderActionButton(
+      accountCard,
+      "SettingsSupportAccount",
+      state.supportSubmittingCategory === "account" ? "提交中..." : "账号客服",
+      110,
+      4,
+      92,
+      28,
+      SETTINGS_BUTTON,
+      new Color(221, 232, 246, 88)
     );
 
     const privacyCard = renderCard(this.node, "SettingsPrivacy", -244, width - 36, 118);
@@ -544,7 +583,10 @@ export class CocosSettingsPanel extends Component {
       { name: "SettingsLogout", result: "settings-logout", callback: this.onLogout },
       { name: "SettingsDelete", result: "settings-delete", callback: this.onDeleteAccount },
       { name: "SettingsPrivacyLink", result: "settings-privacy-link", callback: this.onOpenPrivacyPolicy },
-      { name: "SettingsWithdraw", result: "settings-withdraw", callback: this.onWithdrawConsent }
+      { name: "SettingsWithdraw", result: "settings-withdraw", callback: this.onWithdrawConsent },
+      { name: "SettingsSupportBug", result: "settings-support-bug", callback: () => this.onSubmitSupportTicket?.("bug") },
+      { name: "SettingsSupportPayment", result: "settings-support-payment", callback: () => this.onSubmitSupportTicket?.("payment") },
+      { name: "SettingsSupportAccount", result: "settings-support-account", callback: () => this.onSubmitSupportTicket?.("account") }
     ];
 
     for (const action of clickableActions) {

@@ -89,6 +89,40 @@ export interface CocosCampaignMissionCompleteResult {
   campaign: CocosCampaignSummary;
 }
 
+export interface CocosLaunchAnnouncement {
+  id: string;
+  title: string;
+  message: string;
+  tone: "info" | "warning" | "critical";
+  startsAt: string;
+  endsAt?: string;
+}
+
+export interface CocosMaintenanceModeSnapshot {
+  active: boolean;
+  title: string;
+  message: string;
+  nextOpenAt?: string;
+}
+
+export type CocosSupportTicketCategory = "bug" | "payment" | "account" | "other";
+export type CocosSupportTicketPriority = "normal" | "high" | "urgent";
+
+export interface CocosSupportTicketRecord {
+  ticketId: string;
+  playerId: string;
+  category: CocosSupportTicketCategory;
+  message: string;
+  attachmentsRef?: string;
+  priority: CocosSupportTicketPriority;
+  status: "open" | "resolved" | "dismissed";
+  handlerId?: string;
+  resolution?: string;
+  createdAt: string;
+  resolvedAt?: string;
+  updatedAt: string;
+}
+
 export interface CocosCampaignMissionLockedError extends Error {
   unlockRequirements?: CampaignUnlockRequirement[];
 }
@@ -154,6 +188,12 @@ interface PlayerMailboxApiPayload {
   reason?: string;
 }
 
+interface PlayerSupportTicketApiPayload {
+  accepted?: boolean;
+  ticket?: Partial<CocosSupportTicketRecord>;
+  items?: Partial<CocosSupportTicketRecord>[];
+}
+
 interface DailyQuestClaimApiPayload {
   claimed?: boolean;
   reason?: string;
@@ -184,6 +224,17 @@ interface PlayerReferralApiPayload {
 
 interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
+}
+
+interface LaunchAnnouncementsApiPayload {
+  items?: Array<Partial<CocosLaunchAnnouncement>>;
+}
+
+interface MaintenanceModeApiPayload {
+  active?: boolean;
+  title?: string;
+  message?: string;
+  nextOpenAt?: string;
 }
 
 interface CampaignApiPayload {
@@ -1120,6 +1171,58 @@ export async function claimAllCocosMailboxMessages(
   )) as PlayerMailboxApiPayload;
 }
 
+export async function submitCocosSupportTicket(
+  remoteUrl: string,
+  input: {
+    category: CocosSupportTicketCategory;
+    message: string;
+    attachmentsRef?: string;
+    priority?: CocosSupportTicketPriority;
+  },
+  options: {
+    authSession: CocosStoredAuthSession;
+    fetchImpl?: FetchLike;
+    storage?: Pick<Storage, "removeItem"> | null;
+  }
+): Promise<{ accepted: boolean; ticket: CocosSupportTicketRecord }> {
+  const payload = (await fetchCocosAuthJson(
+    remoteUrl,
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/player-accounts/me/support-tickets`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    },
+    options.authSession,
+    {
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.storage !== undefined ? { storage: options.storage } : {})
+    }
+  )) as PlayerSupportTicketApiPayload;
+
+  return {
+    accepted: payload.accepted !== false,
+    ticket: {
+      ticketId: payload.ticket?.ticketId?.trim() || "",
+      playerId: payload.ticket?.playerId?.trim() || options.authSession.playerId,
+      category: payload.ticket?.category === "payment" || payload.ticket?.category === "account" || payload.ticket?.category === "other"
+        ? payload.ticket.category
+        : "bug",
+      message: payload.ticket?.message?.trim() || input.message.trim(),
+      ...(payload.ticket?.attachmentsRef?.trim() ? { attachmentsRef: payload.ticket.attachmentsRef.trim() } : {}),
+      priority: payload.ticket?.priority === "high" || payload.ticket?.priority === "urgent" ? payload.ticket.priority : "normal",
+      status: payload.ticket?.status === "resolved" || payload.ticket?.status === "dismissed" ? payload.ticket.status : "open",
+      ...(payload.ticket?.handlerId?.trim() ? { handlerId: payload.ticket.handlerId.trim() } : {}),
+      ...(payload.ticket?.resolution?.trim() ? { resolution: payload.ticket.resolution.trim() } : {}),
+      createdAt: payload.ticket?.createdAt?.trim() || new Date().toISOString(),
+      ...(payload.ticket?.resolvedAt?.trim() ? { resolvedAt: payload.ticket.resolvedAt.trim() } : {}),
+      updatedAt: payload.ticket?.updatedAt?.trim() || payload.ticket?.createdAt?.trim() || new Date().toISOString()
+    }
+  };
+}
+
 export async function updateCocosTutorialProgress(
   remoteUrl: string,
   roomId: string,
@@ -1789,6 +1892,56 @@ export async function loadCocosLobbyRooms(
     options?.fetchImpl
   )) as LobbyRoomsApiPayload;
   return Array.isArray(payload.items) ? payload.items : [];
+}
+
+export async function loadCocosAnnouncements(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosLaunchAnnouncement[]> {
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/announcements/current`,
+    undefined,
+    options?.fetchImpl
+  )) as LaunchAnnouncementsApiPayload;
+
+  return (payload.items ?? [])
+    .filter((entry): entry is NonNullable<LaunchAnnouncementsApiPayload["items"]>[number] => Boolean(entry?.id && entry?.title && entry?.message))
+    .map((entry) => ({
+      id: String(entry.id).trim(),
+      title: String(entry.title).trim(),
+      message: String(entry.message).trim(),
+      tone: entry.tone === "warning" || entry.tone === "critical" ? entry.tone : "info",
+      startsAt: String(entry.startsAt ?? new Date().toISOString()).trim(),
+      ...(entry.endsAt ? { endsAt: String(entry.endsAt).trim() } : {})
+    }));
+}
+
+export async function loadCocosMaintenanceMode(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosMaintenanceModeSnapshot | null> {
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/runtime/maintenance-mode`,
+    undefined,
+    options?.fetchImpl
+  )) as MaintenanceModeApiPayload;
+
+  const title = payload.title?.trim();
+  const message = payload.message?.trim();
+  if (!title || !message) {
+    return null;
+  }
+
+  return {
+    active: payload.active === true,
+    title,
+    message,
+    ...(payload.nextOpenAt?.trim() ? { nextOpenAt: payload.nextOpenAt.trim() } : {})
+  };
 }
 
 export async function loginCocosGuestAuthSession(

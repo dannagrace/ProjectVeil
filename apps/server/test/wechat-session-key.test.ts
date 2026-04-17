@@ -6,7 +6,7 @@ import {
   getCachedWechatSessionKey,
   readWechatSessionKeyTtlSeconds,
   resetWechatSessionKeyCache,
-} from "../src/wechat-session-key";
+} from "../src/adapters/wechat-session-key";
 
 function withCleanCache(t: TestContext): void {
   resetWechatSessionKeyCache();

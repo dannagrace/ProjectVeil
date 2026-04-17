@@ -2,7 +2,7 @@ import {
   ensureColumnExists,
   dropColumnIfExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import { MYSQL_PLAYER_ACCOUNT_TABLE } from "../../apps/server/src/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {

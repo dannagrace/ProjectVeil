@@ -7,7 +7,7 @@ import {
   type MatchmakingRequest
 } from "../packages/shared/src/index";
 import { RedisMatchmakingService } from "../apps/server/src/matchmaking";
-import { readRedisUrl } from "../apps/server/src/redis";
+import { readRedisUrl } from "../apps/server/src/infra/redis";
 
 function createHero(playerId: string): HeroState {
   return {
