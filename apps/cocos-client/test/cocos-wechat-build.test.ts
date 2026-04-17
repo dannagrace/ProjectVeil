@@ -12,6 +12,10 @@ import {
   normalizeWechatMinigameBuildConfig
 } from "../tooling/cocos-wechat-build.ts";
 
+function resolveMainRepoTsxLoaderPath(): string {
+  return path.resolve(__dirname, "../../../../../ProjectVeil/node_modules/tsx/dist/loader.mjs");
+}
+
 function createPackagedWechatReleaseArtifact(): {
   tempDir: string;
   artifactsDir: string;
@@ -58,7 +62,7 @@ function createPackagedWechatReleaseArtifact(): {
     "node",
     [
       "--import",
-      "tsx",
+      resolveMainRepoTsxLoaderPath(),
       "./scripts/package-wechat-minigame-release.ts",
       "--config",
       configPath,
@@ -160,7 +164,13 @@ test("buildWechatMinigameTemplateArtifacts emits merge-friendly template files a
       connectSocket: 10000,
       uploadFile: 10000,
       downloadFile: 10000
-    }
+    },
+    subpackages: [
+      {
+        root: "subpackages/battle",
+        name: "battle-fx"
+      }
+    ]
   });
   assert.deepEqual(artifacts.projectConfigJson, {
     projectname: "Project Veil",
@@ -185,6 +195,7 @@ test("buildWechatMinigameTemplateArtifacts emits merge-friendly template files a
   assert.match(artifacts.releaseChecklistMarkdown, /wss:\/\/socket\.example\.com/);
   assert.match(artifacts.releaseChecklistMarkdown, /当前配置已覆盖已知/);
   assert.match(artifacts.releaseChecklistMarkdown, /validate:wechat-build/);
+  assert.match(artifacts.releaseChecklistMarkdown, /release:wechat:assets-hotfix/);
 });
 
 test("buildWechatMinigameDomainCoverage derives runtime request and socket origins from remoteUrl", () => {
@@ -228,7 +239,7 @@ test("analyzeWechatMinigameBuildOutput measures main package and subpackage budg
     path.join(tempDir, "game.json"),
     JSON.stringify({
       ...artifacts.gameJson,
-      subpackages: [{ root: "subpackages/battle" }]
+      subpackages: [{ root: "subpackages/battle", name: "battle" }]
     })
   );
   fs.writeFileSync(path.join(tempDir, "game.js"), Buffer.alloc(140));
@@ -405,13 +416,13 @@ test("verify-wechat-release validates a downloaded artifact bundle", () => {
   const { artifactsDir } = createPackagedWechatReleaseArtifact();
 
   const output = execFileSync(
-    "node",
-    [
-      "--import",
-      "tsx",
-      "./scripts/verify-wechat-minigame-artifact.ts",
-      "--artifacts-dir",
-      artifactsDir,
+      "node",
+      [
+        "--import",
+        resolveMainRepoTsxLoaderPath(),
+        "./scripts/verify-wechat-minigame-artifact.ts",
+        "--artifacts-dir",
+        artifactsDir,
       "--expected-revision",
       "abc1234"
     ],
@@ -436,7 +447,7 @@ test("verify-wechat-release fails when the requested rollback revision does not 
         "node",
         [
           "--import",
-          "tsx",
+          resolveMainRepoTsxLoaderPath(),
           "./scripts/verify-wechat-minigame-artifact.ts",
           "--artifacts-dir",
           artifactsDir,

@@ -37,6 +37,7 @@
 - 验收已下载 artifact：`npm run verify:wechat-release -- --artifacts-dir <downloaded-artifact-dir> [--expected-revision <git-sha>]`
 - 生成 / 校验真机冒烟报告：`npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> [--report <report-path>] [--runtime-evidence <runtime-evidence.json>] [--check --expected-revision <git-sha>]`
 - 导入自动化设备/runtime 证据：`npm run ingest:wechat-smoke-evidence -- --metadata <release-sidecar.package.json> --report <release-artifacts-dir>/codex.wechat.smoke-report.json --runtime-evidence <runtime-evidence.json>`
+- 生成资源热更新 diff：`npm run release:wechat:assets-hotfix -- --build-dir <wechatgame-build-dir> --baseline-manifest <previous-codex.wechat.release.json> --output-dir <hotfix-artifacts-dir> [--version <hotfix-version>] [--source-revision <git-sha>]`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - 统一 Cocos RC candidate bundle：`npm run release:cocos-rc:bundle`（会自动先跑 `npm run release:cocos:primary-journey-evidence`）
 - Primary client delivery checklist：`docs/cocos-primary-client-delivery.md`
@@ -107,10 +108,14 @@ WeChat checklist / blockers 至少要覆盖以下证据面：
 4. 对真实导出目录执行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`。
 5. 运行 `npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`，生成包含 `codex.wechat.release.json` 的归档包与 sidecar 元数据。
 6. 运行 `npm run verify:wechat-release -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>]`，在上传前先做一次本地 artifact 级冒烟验收。
-7. 运行 `npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`，把 candidate、revision、environment、operator、timestamp 与 install/import + first-launch 的 pass/fail 结论写入 `codex.wechat.install-launch-evidence.json` 和 `.md`。
+7. 若本次只改了 Banner / 活动资源 / 远程贴图等可 CDN 热更内容，运行 `npm run release:wechat:assets-hotfix -- --build-dir <wechatgame-build-dir> --baseline-manifest <previous-codex.wechat.release.json> --output-dir <hotfix-artifacts-dir> [--version <hotfix-version>]`，生成 `codex.wechat.hotfix-manifest.json/.md` 供 CDN 上传与回滚记录。
+   - JSON 会列出变更文件的 CDN URL、按分包聚合的变更摘要、`baselineRevision` 与 `rollbackVersion`
+   - Markdown 可直接附到 PR / 运营变更记录，说明这次热更影响了哪些分包
+   - 运行时可通过 `__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame.hotfixManifestUrl` 或 `remoteAssetRoot + hotfixVersion` 让客户端拉取同一份 manifest
+8. 运行 `npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`，把 candidate、revision、environment、operator、timestamp 与 install/import + first-launch 的 pass/fail 结论写入 `codex.wechat.install-launch-evidence.json` 和 `.md`。
    - 当证据尚未生成时，让 `wechat-devtools-export-review` 保持 `pending`，这样 gate/report 会显示“缺失 install/launch 证据”。
    - 当导入或首启已经验证但结果失败时，把这条 manual review 标记为 `failed` 并引用同一个 install/launch artifact，这样 gate/report 会显示“install/launch verification failed”而不是单纯缺失。
-8. 如需把 sidecar、归档、smoke、manual review 与可选 upload receipt 收口成同一条 candidate-level 证据，运行 `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`。
+9. 如需把 sidecar、归档、smoke、manual review 与可选 upload receipt 收口成同一条 candidate-level 证据，运行 `npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--require-smoke-report] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`。
    - 该命令会稳定输出 `codex.wechat.rc-validation-report.json`
    - 同目录还会输出 `codex.wechat.release-candidate-summary.json` 与 `.md`，把 package、validation、smoke、upload、manual review 汇总到同一个 revision
    - summary 中缺失 smoke 证据或待完成 manual review 会直接列为 `blockers`，而不是分散在多个文件里
