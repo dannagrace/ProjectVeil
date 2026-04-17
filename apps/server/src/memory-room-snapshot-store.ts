@@ -57,6 +57,9 @@ import {
   type PlayerAccountUnbanInput,
   type PlayerBanHistoryRecord,
   type PlayerCompensationCreateInput,
+  type AdminAuditLogCreateInput,
+  type AdminAuditLogListOptions,
+  type AdminAuditLogRecord,
   type PlayerCompensationListOptions,
   type PlayerCompensationRecord,
   type PlayerPurchaseHistoryQuery,
@@ -248,6 +251,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly paymentReceiptOrderIdByTransactionId = new Map<string, string>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
   private readonly compensationHistoryByPlayerId = new Map<string, PlayerCompensationRecord[]>();
+  private readonly adminAuditLogs: AdminAuditLogRecord[] = [];
   private readonly authByLoginId = new Map<string, PlayerAccountAuthSnapshot>();
   private readonly authSessionsByPlayerId = new Map<string, Map<string, PlayerAccountDeviceSessionSnapshot>>();
   private readonly playerIdByWechatOpenId = new Map<string, string>();
@@ -1645,6 +1649,40 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const safeLimit = Math.max(1, Math.floor(options.limit ?? 20));
     return structuredClone((this.compensationHistoryByPlayerId.get(normalizedPlayerId) ?? []).slice(0, safeLimit));
+  }
+
+  async appendAdminAuditLog(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord> {
+    const record: AdminAuditLogRecord = {
+      auditId: randomUUID(),
+      actorPlayerId: normalizePlayerId(input.actorPlayerId),
+      actorRole: input.actorRole,
+      action: input.action,
+      ...(input.targetPlayerId?.trim() ? { targetPlayerId: normalizePlayerId(input.targetPlayerId) } : {}),
+      ...(input.targetScope?.trim() ? { targetScope: input.targetScope.trim().slice(0, 191) } : {}),
+      summary: input.summary.trim().slice(0, 255),
+      ...(input.beforeJson?.trim() ? { beforeJson: input.beforeJson.trim() } : {}),
+      ...(input.afterJson?.trim() ? { afterJson: input.afterJson.trim() } : {}),
+      ...(input.metadataJson?.trim() ? { metadataJson: input.metadataJson.trim() } : {}),
+      occurredAt: new Date(input.occurredAt ?? Date.now()).toISOString()
+    };
+    this.adminAuditLogs.push(record);
+    return structuredClone(record);
+  }
+
+  async listAdminAuditLogs(options: AdminAuditLogListOptions = {}): Promise<AdminAuditLogRecord[]> {
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+    const sinceMs =
+      options.since && !Number.isNaN(new Date(options.since).getTime()) ? new Date(options.since).getTime() : null;
+    return this.adminAuditLogs
+      .filter((entry) => !options.actorPlayerId || entry.actorPlayerId === normalizePlayerId(options.actorPlayerId))
+      .filter((entry) => !options.actorRole || entry.actorRole === options.actorRole)
+      .filter((entry) => !options.action || entry.action === options.action)
+      .filter((entry) => !options.targetPlayerId || entry.targetPlayerId === normalizePlayerId(options.targetPlayerId))
+      .filter((entry) => !options.targetScope || entry.targetScope === options.targetScope.trim())
+      .filter((entry) => sinceMs === null || new Date(entry.occurredAt).getTime() >= sinceMs)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.auditId.localeCompare(left.auditId))
+      .slice(0, safeLimit)
+      .map((entry) => structuredClone(entry));
   }
 
   async savePlayerBan(playerId: string, input: PlayerAccountBanInput): Promise<PlayerAccountSnapshot> {

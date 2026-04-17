@@ -5,11 +5,16 @@ This repository now ships a minimal Prometheus + Alertmanager + Grafana stack un
 ## Files
 
 - `infra/prometheus.yml`: Prometheus scrape and alerting configuration.
-- `infra/alertmanager.yml`: Alertmanager routing and Slack notification receiver.
+- `infra/alertmanager.yml`: Alertmanager routing, PagerDuty receiver, and Slack fallback receiver.
 - `infra/docker-compose.monitoring.yml`: local monitoring stack for Prometheus, Alertmanager, and Grafana.
 - `infra/grafana/dashboard-overview.json`: overview dashboard covering DAU proxy, active rooms, battle duration P95, and error rate.
+- `infra/grafana/dashboard-live-ops-overview.json`: live-ops overview for DAU proxy, active rooms, matchmaking pressure, and server analytics flush.
+- `infra/grafana/dashboard-customer-service.json`: support / moderation board for tickets, reports, and social moderation signals.
+- `infra/grafana/dashboard-payment-health.json`: payment health board for completed / failed purchases plus runtime payment errors.
 - `infra/grafana/provisioning/...`: Grafana datasource and dashboard provisioning.
 - `docs/alerting-rules.yml`: alert rules evaluated by Prometheus.
+- `docs/oncall-roster.md`: on-call rotation template for LAUNCH-P2.
+- `scripts/oncall-ack-audit.ts`: MTTA / MTTR audit helper for latest alert export.
 
 ## Prerequisites
 
@@ -19,6 +24,12 @@ This repository now ships a minimal Prometheus + Alertmanager + Grafana stack un
 ```bash
 mkdir -p infra/secrets
 printf '%s' 'https://hooks.slack.com/services/REPLACE/ME' > infra/secrets/slack-webhook-url
+```
+
+3. Export the PagerDuty routing key before booting Alertmanager:
+
+```bash
+export PAGERDUTY_ROUTING_KEY=replace-me
 ```
 
 3. If the server is not running on the Docker host at port `2567`, update `infra/prometheus.yml` target `host.docker.internal:2567`.
@@ -35,7 +46,12 @@ After startup:
 - Alertmanager: `http://127.0.0.1:9093`
 - Grafana: `http://127.0.0.1:3000` (`admin` / `admin`)
 
-Grafana auto-provisions the Prometheus datasource and imports `Project Veil Monitoring Overview`.
+Grafana auto-provisions the Prometheus datasource and imports:
+
+- `Project Veil Monitoring Overview`
+- `Project Veil Live Ops Overview`
+- `Project Veil Customer Service`
+- `Project Veil Payment Health`
 
 ## What The Dashboard Shows
 
@@ -61,7 +77,7 @@ histogram_quantile(0.95, sum(rate(veil_battle_duration_seconds_bucket[30m])) by 
 
 ## Validate Notification Delivery
 
-The `ops-slack` receiver is selected when an alert carries `notify="ops-slack"`. Critical Project Veil alerts in `docs/alerting-rules.yml` now include that label.
+The `ops-slack` receiver is selected when an alert carries `notify="ops-slack"`. Critical Project Veil alerts can instead carry `notify="ops-pagerduty"`, which routes to PagerDuty and mirrors the alert to Slack as fallback context.
 
 To verify end-to-end delivery without waiting for a real incident, post a synthetic alert directly to Alertmanager:
 
@@ -90,6 +106,7 @@ Expected result:
 
 - Alert appears in `http://127.0.0.1:9093/#/alerts`
 - Slack channel receives a formatted alert message
+- PagerDuty receives a new incident when `notify="ops-pagerduty"` is used
 - Alert resolves automatically when the posted alert expires or is withdrawn
 
 Record the drill in your deployment log with timestamp, receiver channel, and screenshot or copied Alertmanager event JSON.
@@ -98,5 +115,19 @@ Record the drill in your deployment log with timestamp, receiver channel, and sc
 
 - Set `SENTRY_DSN` on the server runtime if you want uncaught exceptions and structured server error events forwarded to Sentry. Leaving `SENTRY_DSN` empty keeps runtime diagnostics and Prometheus metrics active without external delivery.
 - Replace the Slack webhook secret with a production-managed secret mount.
+- Inject `PAGERDUTY_ROUTING_KEY` through your deployment environment and keep the Slack fallback enabled for human context.
 - For Kubernetes or a VM-based deployment, keep `infra/prometheus.yml` and `infra/alertmanager.yml` unchanged and translate only the runtime wrapper from Docker Compose into your platform manifests.
 - If the organization prefers PagerDuty, DingTalk, or WeCom robots, keep the same Prometheus rule labels and swap the Alertmanager receiver to a webhook bridge that transforms Alertmanager payloads into the provider-specific target.
+
+## On-call audit
+
+Export the latest incident sample into JSON and run:
+
+```bash
+node --import ./node_modules/tsx/dist/loader.mjs ./scripts/oncall-ack-audit.ts \
+  --input artifacts/ops/incidents.json \
+  --output artifacts/ops/oncall-ack-audit.json \
+  --markdown-output artifacts/ops/oncall-ack-audit.md
+```
+
+Review median MTTA / MTTR and any breach rows during weekly launch handoff.

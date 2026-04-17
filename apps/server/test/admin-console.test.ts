@@ -207,6 +207,19 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     tag: string;
     reason?: string;
   }> = [];
+  const adminAuditLogs: Array<{
+    auditId: string;
+    actorPlayerId: string;
+    actorRole: "admin" | "support-moderator" | "support-supervisor";
+    action: string;
+    targetPlayerId?: string;
+    targetScope?: string;
+    summary: string;
+    beforeJson?: string;
+    afterJson?: string;
+    metadataJson?: string;
+    occurredAt: string;
+  }> = [];
   const saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }> = [];
   let nextReportId = 1;
   let nextSupportTicketId = 1;
@@ -509,10 +522,14 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     },
     async listPlayerReports(options: {
       status?: "pending" | "dismissed" | "warned" | "banned";
+      reporterId?: string;
+      targetId?: string;
       limit?: number;
     } = {}) {
       return Array.from(reports.values())
         .filter((report) => !options.status || report.status === options.status)
+        .filter((report) => !options.reporterId || report.reporterId === options.reporterId)
+        .filter((report) => !options.targetId || report.targetId === options.targetId)
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.reportId.localeCompare(right.reportId))
         .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     },
@@ -561,7 +578,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       supportTickets.set(ticketId, next);
       return next;
     },
-    async deliverPlayerMailbox(input: { playerIds: string[]; message: { id: string; title: string; body: string } }) {
+    async deliverPlayerMailbox(input: { playerIds: string[]; message: { id: string; title: string; body: string; kind?: string; grant?: unknown } }) {
       const deliveredPlayerIds: string[] = [];
       const skippedPlayerIds: string[] = [];
       for (const playerId of input.playerIds) {
@@ -576,6 +593,20 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
           body: input.message.body
         });
         mailboxByPlayerId.set(playerId, mailbox);
+        const account = accounts.get(playerId);
+        if (account) {
+          account.mailbox = [
+            {
+              id: input.message.id,
+              title: input.message.title,
+              body: input.message.body,
+              kind: input.message.kind === "compensation" || input.message.kind === "announcement" ? input.message.kind : "system",
+              sentAt: new Date().toISOString(),
+              ...(typeof input.message.grant === "object" && input.message.grant ? { grant: input.message.grant as never } : {})
+            },
+            ...(account.mailbox ?? [])
+          ];
+        }
         deliveredPlayerIds.push(playerId);
       }
       return {
@@ -583,6 +614,51 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         skippedPlayerIds,
         message: input.message
       };
+    },
+    async appendAdminAuditLog(input: {
+      actorPlayerId: string;
+      actorRole: "admin" | "support-moderator" | "support-supervisor";
+      action: string;
+      targetPlayerId?: string;
+      targetScope?: string;
+      summary: string;
+      beforeJson?: string;
+      afterJson?: string;
+      metadataJson?: string;
+      occurredAt?: string;
+    }) {
+      const record = {
+        auditId: `admin-audit-${adminAuditLogs.length + 1}`,
+        actorPlayerId: input.actorPlayerId,
+        actorRole: input.actorRole,
+        action: input.action,
+        ...(input.targetPlayerId ? { targetPlayerId: input.targetPlayerId } : {}),
+        ...(input.targetScope ? { targetScope: input.targetScope } : {}),
+        summary: input.summary,
+        ...(input.beforeJson ? { beforeJson: input.beforeJson } : {}),
+        ...(input.afterJson ? { afterJson: input.afterJson } : {}),
+        ...(input.metadataJson ? { metadataJson: input.metadataJson } : {}),
+        occurredAt: input.occurredAt ?? new Date().toISOString()
+      };
+      adminAuditLogs.unshift(record);
+      return record;
+    },
+    async listAdminAuditLogs(options: {
+      actorPlayerId?: string;
+      action?: string;
+      targetPlayerId?: string;
+      targetScope?: string;
+      since?: string;
+      limit?: number;
+    } = {}) {
+      const since = options.since ? new Date(options.since).getTime() : Number.NEGATIVE_INFINITY;
+      return adminAuditLogs
+        .filter((entry) => !options.actorPlayerId || entry.actorPlayerId === options.actorPlayerId)
+        .filter((entry) => !options.action || entry.action === options.action)
+        .filter((entry) => !options.targetPlayerId || entry.targetPlayerId === options.targetPlayerId)
+        .filter((entry) => !options.targetScope || entry.targetScope === options.targetScope)
+        .filter((entry) => new Date(entry.occurredAt).getTime() >= since)
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     }
   };
 
@@ -614,6 +690,8 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "listSupportTickets"
     | "resolveSupportTicket"
     | "deliverPlayerMailbox"
+    | "appendAdminAuditLog"
+    | "listAdminAuditLogs"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
     mailboxByPlayerId: Map<string, Array<{ id: string; title: string; body: string }>>;
@@ -1190,6 +1268,237 @@ test("GET /api/admin/players/:id/purchase-history returns filtered purchase audi
   assert.equal(payload.items.length, 1);
   assert.equal(payload.items[0]?.purchaseId, "purchase-2");
   assert.equal(payload.items[0]?.itemId, "starter-bundle");
+});
+
+test("GET /api/admin/players/:id/overview aggregates GM 360 data and records an audit entry", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore({
+    "player-gm": { gold: 120, wood: 30, ore: 12 }
+  });
+  const account = await store.ensurePlayerAccount({ playerId: "player-gm", displayName: "GM Target" });
+  account.rankDivision = "D";
+  account.seasonPassPremium = true;
+  account.seasonPassTier = 9;
+  account.gems = 55;
+  account.mailbox = [
+    {
+      id: "mail-1",
+      kind: "compensation",
+      title: "补偿已发放",
+      body: "请查收奖励",
+      sentAt: "2026-04-10T10:00:00.000Z"
+    }
+  ];
+  await store.createPlayerReport({
+    reporterId: "player-2",
+    targetId: "player-gm",
+    reason: "harassment",
+    roomId: "room-gm"
+  });
+  await store.createSupportTicket({
+    playerId: "player-gm",
+    category: "payment",
+    message: "Missing bundle"
+  });
+  await store.appendPlayerCompensationRecord("player-gm", {
+    type: "add",
+    currency: "gems",
+    amount: 20,
+    reason: "Outage compensation",
+    previousBalance: 35,
+    balanceAfter: 55
+  });
+  await store.savePlayerBan("player-gm", {
+    banStatus: "temporary",
+    banReason: "Appeal pending",
+    banExpiry: "2026-05-01T00:00:00.000Z"
+  });
+  store.seedPurchaseHistory("player-gm", [
+    {
+      purchaseId: "purchase-1",
+      itemId: "starter-pack",
+      quantity: 1,
+      currency: "gems",
+      amount: 60,
+      paymentMethod: "gems",
+      grantedAt: "2026-04-08T12:00:00.000Z",
+      status: "completed"
+    }
+  ]);
+  store.seedBattleHistory("player-gm", [
+    {
+      roomId: "room-gm",
+      battleId: "battle-1",
+      status: "resolved",
+      encounterKind: "neutral",
+      startedAt: "2026-04-09T09:00:00.000Z"
+    }
+  ]);
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/players/:id/overview");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      params: { id: "player-gm" },
+      headers: { "x-veil-admin-secret": moderator }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    account: { playerId: string; rankDivision?: string };
+    moderation: { currentBan: { banStatus: string } };
+    reports: { againstPlayer: Array<{ targetId: string }> };
+    supportTickets: Array<{ playerId: string }>;
+    compensationHistory: Array<{ reason: string }>;
+    purchaseHistory: { items: Array<{ purchaseId: string }> };
+    mailbox: Array<{ id: string }>;
+    battleHistory: Array<{ battleId: string }>;
+  };
+  assert.equal(payload.account.playerId, "player-gm");
+  assert.equal(payload.account.rankDivision, "D");
+  assert.equal(payload.moderation.currentBan.banStatus, "temporary");
+  assert.equal(payload.reports.againstPlayer[0]?.targetId, "player-gm");
+  assert.equal(payload.supportTickets[0]?.playerId, "player-gm");
+  assert.equal(payload.compensationHistory[0]?.reason, "Outage compensation");
+  assert.equal(payload.purchaseHistory.items[0]?.purchaseId, "purchase-1");
+  assert.equal(payload.mailbox[0]?.id, "mail-1");
+  assert.equal(payload.battleHistory[0]?.battleId, "battle-1");
+
+  const audit = await store.listAdminAuditLogs({ targetPlayerId: "player-gm" });
+  assert.equal(audit[0]?.action, "player_overview_viewed");
+});
+
+test("POST /api/admin/compensation/batch supports preview and delivery", async (t) => {
+  withAdminSecret(t);
+  const { supervisor } = withSupportSecrets(t);
+  const store = createStore({
+    "player-d1": { gold: 120, wood: 0, ore: 0 },
+    "player-e1": { gold: 80, wood: 0, ore: 0 }
+  });
+  const d1 = await store.ensurePlayerAccount({ playerId: "player-d1", displayName: "Frontier D1" });
+  d1.rankDivision = "D";
+  d1.seasonPassPremium = true;
+  const e1 = await store.ensurePlayerAccount({ playerId: "player-e1", displayName: "Frontier E1" });
+  e1.rankDivision = "E";
+
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/compensation/batch");
+  assert.ok(handler);
+
+  const previewResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": supervisor,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        type: "add",
+        currency: "gems",
+        amount: 25,
+        reason: "Weekend compensation",
+        previewOnly: true,
+        segment: {
+          rankDivision: "D"
+        },
+        message: {
+          title: "周末补偿",
+          body: "请查收 25 gems。"
+        }
+      })
+    }),
+    previewResponse
+  );
+
+  assert.equal(previewResponse.statusCode, 200);
+  const previewPayload = JSON.parse(previewResponse.body) as {
+    matchedCount: number;
+    targets: Array<{ playerId: string }>;
+  };
+  assert.equal(previewPayload.matchedCount, 1);
+  assert.equal(previewPayload.targets[0]?.playerId, "player-d1");
+
+  const executeResponse = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": supervisor,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        type: "add",
+        currency: "gems",
+        amount: 25,
+        reason: "Weekend compensation",
+        segment: {
+          rankDivision: "D"
+        },
+        message: {
+          title: "周末补偿",
+          body: "请查收 25 gems。"
+        }
+      })
+    }),
+    executeResponse
+  );
+
+  assert.equal(executeResponse.statusCode, 200);
+  const executePayload = JSON.parse(executeResponse.body) as {
+    delivery: { deliveredPlayerIds: string[]; skippedPlayerIds: string[] };
+  };
+  assert.deepEqual(executePayload.delivery.deliveredPlayerIds, ["player-d1"]);
+  assert.deepEqual(executePayload.delivery.skippedPlayerIds, []);
+  assert.equal(store.mailboxByPlayerId.get("player-d1")?.[0]?.title, "周末补偿");
+
+  const audit = await store.listAdminAuditLogs({ targetScope: "player-segment" });
+  assert.equal(audit[0]?.action, "compensation_batch_granted");
+});
+
+test("GET /api/admin/audit-log returns filtered GM audit entries", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  await store.appendAdminAuditLog({
+    actorPlayerId: "support-moderator:admin-console",
+    actorRole: "support-moderator",
+    action: "player_overview_viewed",
+    targetPlayerId: "player-1",
+    summary: "Viewed player-1"
+  });
+  await store.appendAdminAuditLog({
+    actorPlayerId: "support-moderator:admin-console",
+    actorRole: "support-moderator",
+    action: "support_ticket_resolved",
+    targetPlayerId: "player-2",
+    summary: "Resolved ticket"
+  });
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/audit-log");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      headers: { "x-veil-admin-secret": moderator },
+      url: "/api/admin/audit-log?targetPlayerId=player-1"
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as { items: Array<{ targetPlayerId?: string; action: string }> };
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0]?.targetPlayerId, "player-1");
+  assert.equal(payload.items[0]?.action, "player_overview_viewed");
 });
 
 test("admin console html includes compensation form and history table", async () => {

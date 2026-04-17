@@ -54,7 +54,7 @@ interface RuntimeSeasonalEventDefinition extends SeasonalEventDefinition {
   rewardDistributionAt?: string;
 }
 
-interface SeasonalEventRuntimeOverride {
+export interface SeasonalEventRuntimeOverride {
   startsAt?: string;
   endsAt?: string;
   isActive?: boolean;
@@ -236,7 +236,7 @@ function applySeasonalEventRuntimeOverride(event: SeasonalEventDefinition): Runt
   };
 }
 
-function resolveSeasonalEventStatus(
+export function resolveSeasonalEventStatus(
   event: SeasonalEventDefinition,
   now = new Date()
 ): "scheduled" | "active" | "ended" {
@@ -381,7 +381,7 @@ function normalizeAdminEventPatch(
   return patch;
 }
 
-function applySeasonalEventAdminPatch(eventId: string, patch: SeasonalEventRuntimeOverride): void {
+export function applySeasonalEventAdminPatch(eventId: string, patch: SeasonalEventRuntimeOverride): void {
   const current = seasonalEventRuntimeOverrides.get(eventId) ?? {};
   seasonalEventRuntimeOverrides.set(eventId, {
     ...current,

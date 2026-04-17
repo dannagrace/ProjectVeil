@@ -3,7 +3,7 @@ global:
   slack_api_url_file: /etc/alertmanager/secrets/slack-webhook-url
 
 route:
-  receiver: null
+  receiver: ops-slack
   group_by:
     - alertname
     - service
@@ -13,13 +13,15 @@ route:
   repeat_interval: 3h
   routes:
     - matchers:
+        - notify="ops-pagerduty"
+      receiver: ops-pagerduty
+      continue: false
+    - matchers:
         - notify="ops-slack"
       receiver: ops-slack
       continue: false
 
 receivers:
-  - name: null
-
   - name: ops-slack
     slack_configs:
       - channel: '#ops-alerts'
@@ -30,6 +32,26 @@ receivers:
         text: >-
           {{ range .Alerts -}}
           *service:* {{ .Labels.service }}
+          *summary:* {{ .Annotations.summary }}
+          *description:* {{ .Annotations.description }}
+          *runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+
+  - name: ops-pagerduty
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        severity: '{{ .CommonLabels.severity }}'
+        description: '{{ .CommonLabels.alertname }}'
+        send_resolved: true
+    slack_configs:
+      - channel: '#ops-alerts'
+        send_resolved: true
+        title: >-
+          [PAGERDUTY FALLBACK][{{ .CommonLabels.severity | toUpper }}]
+          {{ .CommonLabels.alertname }}
+        text: >-
+          PagerDuty route triggered for {{ .CommonLabels.service }}.
+          {{ range .Alerts -}}
           *summary:* {{ .Annotations.summary }}
           *description:* {{ .Annotations.description }}
           *runbook:* {{ .Annotations.runbook_url }}

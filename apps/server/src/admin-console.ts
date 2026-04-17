@@ -6,6 +6,10 @@ import { appendEventLogEntries, type EventLogEntry, type ResourceLedger, type Se
 import { GuildService } from "./guilds";
 import { getRuntimeKillSwitchSnapshot } from "./feature-flags";
 import type {
+  AdminAuditAction,
+  AdminAuditLogCreateInput,
+  AdminAuditLogListOptions,
+  AdminAuditLogRecord,
   PlayerCompensationCreateInput,
   PlayerCompensationRecord,
   PlayerPurchaseHistorySnapshot,
@@ -207,6 +211,21 @@ type PlayerCompensationRequest = {
   amount: number;
   reason: string;
 };
+type BatchCompensationSegment = {
+  playerIds?: string[];
+  minimumEloRating?: number;
+  rankDivision?: string;
+  seasonPassPremium?: boolean;
+  minimumSeasonPassTier?: number;
+};
+type BatchCompensationRequest = PlayerCompensationRequest & {
+  previewOnly: boolean;
+  segment: BatchCompensationSegment;
+  message: {
+    title: string;
+    body: string;
+  };
+};
 type PlayerBalanceSnapshot = {
   gems: number;
   resources: ResourceLedger;
@@ -242,6 +261,13 @@ function hasBattleSnapshotHistoryStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listBattleSnapshotsForPlayer">> {
   return Boolean(store?.listBattleSnapshotsForPlayer);
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "appendAdminAuditLog" | "listAdminAuditLogs">> {
+  return Boolean(store?.appendAdminAuditLog && store.listAdminAuditLogs);
 }
 
 function sendInvalidJson(response: ServerResponse): void {
@@ -618,6 +644,134 @@ function parseCompensationBody(value: unknown): PlayerCompensationRequest {
     amount,
     reason
   };
+}
+
+function parseBatchCompensationBody(value: unknown): BatchCompensationRequest {
+  const payload = readRequiredObjectBody(value);
+  const compensation = parseCompensationBody(payload);
+  const segmentPayload = payload.segment === undefined ? {} : readRequiredObjectBody(payload.segment);
+  const playerIds = Array.isArray(segmentPayload.playerIds)
+    ? Array.from(
+        new Set(
+          segmentPayload.playerIds
+            .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+            .filter((entry) => entry.length > 0)
+        )
+      )
+    : undefined;
+  const minimumEloRatingValue = segmentPayload.minimumEloRating;
+  const minimumSeasonPassTierValue = segmentPayload.minimumSeasonPassTier;
+  const rankDivision = readOptionalTrimmedString(segmentPayload, "rankDivision");
+  const seasonPassPremium = segmentPayload.seasonPassPremium;
+  if (
+    minimumEloRatingValue !== undefined &&
+    (typeof minimumEloRatingValue !== "number" || !Number.isFinite(minimumEloRatingValue))
+  ) {
+    throw new InvalidAdminPayloadError('"segment.minimumEloRating" must be a finite number');
+  }
+  if (
+    minimumSeasonPassTierValue !== undefined &&
+    (typeof minimumSeasonPassTierValue !== "number" ||
+      !Number.isFinite(minimumSeasonPassTierValue) ||
+      !Number.isInteger(minimumSeasonPassTierValue))
+  ) {
+    throw new InvalidAdminPayloadError('"segment.minimumSeasonPassTier" must be an integer');
+  }
+  if (seasonPassPremium !== undefined && typeof seasonPassPremium !== "boolean") {
+    throw new InvalidAdminPayloadError('"segment.seasonPassPremium" must be a boolean');
+  }
+
+  const messagePayload = payload.message === undefined ? {} : readRequiredObjectBody(payload.message);
+  const title = readOptionalTrimmedString(messagePayload, "title");
+  const body = readOptionalTrimmedString(messagePayload, "body");
+  if (!title || !body) {
+    throw new InvalidAdminPayloadError('"message.title" and "message.body" must be non-empty strings');
+  }
+
+  return {
+    ...compensation,
+    previewOnly: payload.previewOnly === true,
+    segment: {
+      ...(playerIds && playerIds.length > 0 ? { playerIds } : {}),
+      ...(minimumEloRatingValue !== undefined ? { minimumEloRating: minimumEloRatingValue } : {}),
+      ...(rankDivision ? { rankDivision } : {}),
+      ...(seasonPassPremium !== undefined ? { seasonPassPremium } : {}),
+      ...(minimumSeasonPassTierValue !== undefined ? { minimumSeasonPassTier: minimumSeasonPassTierValue } : {})
+    },
+    message: {
+      title,
+      body
+    }
+  };
+}
+
+function matchesBatchSegment(account: {
+  playerId: string;
+  eloRating?: number;
+  rankDivision?: string;
+  seasonPassPremium?: boolean;
+  seasonPassTier?: number;
+}, segment: BatchCompensationSegment): boolean {
+  if (segment.playerIds?.length && !segment.playerIds.includes(account.playerId)) {
+    return false;
+  }
+  if (segment.minimumEloRating !== undefined && Math.floor(account.eloRating ?? 0) < Math.floor(segment.minimumEloRating)) {
+    return false;
+  }
+  if (segment.rankDivision && (account.rankDivision ?? "").trim().toUpperCase() !== segment.rankDivision.trim().toUpperCase()) {
+    return false;
+  }
+  if (segment.seasonPassPremium !== undefined && account.seasonPassPremium !== segment.seasonPassPremium) {
+    return false;
+  }
+  if (segment.minimumSeasonPassTier !== undefined && Math.floor(account.seasonPassTier ?? 0) < segment.minimumSeasonPassTier) {
+    return false;
+  }
+  return true;
+}
+
+function toBatchTargetPreview(account: {
+  playerId: string;
+  displayName?: string;
+  eloRating?: number;
+  rankDivision?: string;
+  seasonPassPremium?: boolean;
+  seasonPassTier?: number;
+  gems?: number;
+  globalResources?: Partial<ResourceLedger>;
+}): Record<string, unknown> {
+  return {
+    playerId: account.playerId,
+    displayName: account.displayName ?? account.playerId,
+    eloRating: account.eloRating ?? 0,
+    rankDivision: account.rankDivision ?? null,
+    seasonPassPremium: account.seasonPassPremium === true,
+    seasonPassTier: account.seasonPassTier ?? 0,
+    gems: account.gems ?? 0,
+    resources: {
+      gold: account.globalResources?.gold ?? 0,
+      wood: account.globalResources?.wood ?? 0,
+      ore: account.globalResources?.ore ?? 0
+    }
+  };
+}
+
+function safeSerialize(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function describeAuditActor(role: AdminRole): string {
+  return `${role}:admin-console`;
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
 }
 
 function parseBroadcastBody(value: unknown): { message: string; type: string } {
@@ -1076,6 +1230,16 @@ export function registerAdminRoutes(
 
       if (store) await store.savePlayerAccountProgress(playerId, { globalResources: nextResources });
       const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, nextResources);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: "resources_modified",
+        targetPlayerId: playerId,
+        summary: `Modified resources for ${playerId}`,
+        beforeJson: safeSerialize(currentResources),
+        afterJson: safeSerialize(nextResources),
+        metadataJson: safeSerialize({ syncedToRoom })
+      });
 
       sendJson(response, 200, { ok: true, resources: nextResources, syncedToRoom });
     } catch (error) {
@@ -1123,6 +1287,16 @@ export function registerAdminRoutes(
       });
       const balances = snapshotPlayerBalances(updatedAccount);
       const syncedToRoom = syncPlayerBalancesToActiveRooms(playerId, balances.resources);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: "compensation_granted",
+        targetPlayerId: playerId,
+        summary: `Granted ${record.type} ${record.currency} compensation to ${playerId}`,
+        beforeJson: safeSerialize(currentBalances),
+        afterJson: safeSerialize(balances),
+        metadataJson: safeSerialize({ compensation: record, syncedToRoom })
+      });
 
       sendJson(response, 200, {
         ok: true,
@@ -1205,6 +1379,198 @@ export function registerAdminRoutes(
     }
   });
 
+  app.get("/api/admin/players/:id/overview", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!store?.loadPlayerAccount) return sendStoreUnavailable(response);
+
+    try {
+      const playerId = readRequiredParam(request, "id");
+      const account = await store.loadPlayerAccount(playerId);
+      if (!account) {
+        sendJson(response, 404, { error: "Player account not found" });
+        return;
+      }
+
+      const [currentBan, banHistory, reportsAgainstPlayer, reportsByPlayer, supportTickets, compensationHistory, purchaseHistory, battleHistory, audit] =
+        await Promise.all([
+          hasBanModerationStore(store) ? store.loadPlayerBan(playerId) : Promise.resolve(null),
+          hasBanModerationStore(store) ? store.listPlayerBanHistory(playerId, { limit: 20 }) : Promise.resolve([]),
+          hasPlayerReportStore(store) ? store.listPlayerReports({ targetId: playerId, limit: 20 }) : Promise.resolve([]),
+          hasPlayerReportStore(store) ? store.listPlayerReports({ reporterId: playerId, limit: 20 }) : Promise.resolve([]),
+          hasSupportTicketStore(store) ? store.listSupportTickets({ playerId, limit: 20 }) : Promise.resolve([]),
+          hasPlayerCompensationStore(store) ? store.listPlayerCompensationHistory(playerId, { limit: 20 }) : Promise.resolve([]),
+          hasPlayerPurchaseHistoryStore(store)
+            ? store.listPlayerPurchaseHistory(playerId, {
+                from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+                limit: 20,
+                offset: 0
+              })
+            : Promise.resolve({ items: [], total: 0, limit: 20, offset: 0 }),
+          hasBattleSnapshotHistoryStore(store) ? store.listBattleSnapshotsForPlayer(playerId, { limit: 20 }) : Promise.resolve([]),
+          hasAdminAuditStore(store) ? store.listAdminAuditLogs({ targetPlayerId: playerId, limit: 30 }) : Promise.resolve([])
+        ]);
+
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "player_overview_viewed",
+        targetPlayerId: playerId,
+        summary: `Viewed GM overview for ${playerId}`,
+        afterJson: safeSerialize({
+          reportsAgainstCount: reportsAgainstPlayer.length,
+          supportTicketCount: supportTickets.length,
+          mailboxCount: account.mailbox?.length ?? 0
+        })
+      });
+
+      sendJson(response, 200, {
+        playerId,
+        generatedAt: new Date().toISOString(),
+        account,
+        moderation: {
+          currentBan,
+          banHistory
+        },
+        reports: {
+          againstPlayer: reportsAgainstPlayer,
+          filedByPlayer: reportsByPlayer
+        },
+        supportTickets,
+        compensationHistory,
+        purchaseHistory,
+        mailbox: (account.mailbox ?? []).slice(0, 20),
+        battleHistory,
+        audit
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/compensation/batch", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-supervisor"]);
+    if (!role) return;
+    if (!store?.listPlayerAccounts || !store.deliverPlayerMailbox) return sendStoreUnavailable(response);
+
+    try {
+      const input = parseBatchCompensationBody(await readJsonBody(request));
+      if (input.type !== "add") {
+        throw new InvalidAdminPayloadError('batch compensation only supports "add" grants');
+      }
+
+      const accounts = await store.listPlayerAccounts({ limit: 10_000, offset: 0 });
+      const targets = accounts.filter((account) => matchesBatchSegment(account, input.segment));
+      const targetPreview = targets.map((account) => toBatchTargetPreview(account));
+
+      const auditBase: AdminAuditLogCreateInput = {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: input.previewOnly ? "compensation_batch_previewed" : "compensation_batch_granted",
+        targetScope: "player-segment",
+        summary: `${input.previewOnly ? "Previewed" : "Granted"} batch compensation to ${targets.length} players`,
+        metadataJson: safeSerialize({
+          segment: input.segment,
+          compensation: {
+            type: input.type,
+            currency: input.currency,
+            amount: input.amount,
+            reason: input.reason
+          },
+          matchedPlayerIds: targets.map((account) => account.playerId)
+        })
+      };
+
+      if (input.previewOnly) {
+        const audit = await appendAdminAuditLogIfAvailable(store, auditBase);
+        sendJson(response, 200, {
+          previewOnly: true,
+          matchedCount: targets.length,
+          targets: targetPreview,
+          audit
+        });
+        return;
+      }
+
+      const grant =
+        input.currency === "gems"
+          ? { gems: input.amount }
+          : {
+              resources: {
+                gold: input.currency === "gold" ? input.amount : 0,
+                wood: input.currency === "wood" ? input.amount : 0,
+                ore: input.currency === "ore" ? input.amount : 0
+              }
+            };
+      const delivery = await store.deliverPlayerMailbox({
+        playerIds: targets.map((account) => account.playerId),
+        message: {
+          id: `batch-compensation:${Date.now()}`,
+          kind: "compensation",
+          title: input.message.title,
+          body: input.message.body,
+          grant
+        }
+      });
+      const audit = await appendAdminAuditLogIfAvailable(store, {
+        ...auditBase,
+        afterJson: safeSerialize({
+          deliveredPlayerIds: delivery.deliveredPlayerIds,
+          skippedPlayerIds: delivery.skippedPlayerIds
+        })
+      });
+
+      sendJson(response, 200, {
+        previewOnly: false,
+        matchedCount: targets.length,
+        targets: targetPreview,
+        delivery,
+        audit
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/audit-log", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasAdminAuditStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const items = await store.listAdminAuditLogs({
+        ...(readOptionalQueryString(request, "actorPlayerId") ? { actorPlayerId: readOptionalQueryString(request, "actorPlayerId") } : {}),
+        ...(readOptionalQueryString(request, "targetPlayerId") ? { targetPlayerId: readOptionalQueryString(request, "targetPlayerId") } : {}),
+        ...(readOptionalQueryString(request, "targetScope") ? { targetScope: readOptionalQueryString(request, "targetScope") } : {}),
+        ...(readOptionalQueryString(request, "since") ? { since: readOptionalQueryString(request, "since") } : {}),
+        limit: readLimit(request, 50)
+      } satisfies AdminAuditLogListOptions);
+      sendJson(response, 200, { items });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
   app.post("/api/admin/broadcast", async (request, response) => {
     if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
@@ -1249,6 +1615,19 @@ export function registerAdminRoutes(
       for (const room of getActiveRoomInstances().values()) {
         disconnectedClients += room.disconnectPlayer(playerId, "account_banned");
       }
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "player_banned",
+        targetPlayerId: playerId,
+        summary: `Banned ${playerId}`,
+        afterJson: safeSerialize({
+          banStatus: account.banStatus,
+          banExpiry: account.banExpiry,
+          banReason: account.banReason,
+          disconnectedClients
+        })
+      });
       sendJson(response, 200, { ok: true, account, disconnectedClients });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1281,6 +1660,14 @@ export function registerAdminRoutes(
       }
       const input = parseUnbanBody(await readJsonBody(request));
       const account = await store.clearPlayerBan(playerId, input);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "player_unbanned",
+        targetPlayerId: playerId,
+        summary: `Unbanned ${playerId}`,
+        metadataJson: safeSerialize({ reason: input.reason ?? null })
+      });
       sendJson(response, 200, { ok: true, account });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1491,6 +1878,20 @@ export function registerAdminRoutes(
         }
       }
 
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "report_resolved",
+        targetPlayerId: report.targetId,
+        summary: `Resolved report ${report.reportId} as ${report.status}`,
+        metadataJson: safeSerialize({
+          reportId: report.reportId,
+          reporterId: report.reporterId,
+          status: report.status,
+          disconnectedClients
+        })
+      });
+
       sendJson(response, 200, { ok: true, report, disconnectedClients });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1565,6 +1966,19 @@ export function registerAdminRoutes(
         });
         mailboxDelivered = delivery.deliveredPlayerIds.includes(ticket.playerId);
       }
+
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "support_ticket_resolved",
+        targetPlayerId: ticket.playerId,
+        summary: `Resolved support ticket ${ticket.ticketId} as ${ticket.status}`,
+        metadataJson: safeSerialize({
+          ticketId: ticket.ticketId,
+          category: ticket.category,
+          mailboxDelivered
+        })
+      });
 
       sendJson(response, 200, { ok: true, ticket, mailboxDelivered });
     } catch (error) {
