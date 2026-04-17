@@ -1237,6 +1237,9 @@ export type AdminAuditAction =
   | "support_ticket_resolved"
   | "ugc_review_approved"
   | "ugc_review_rejected"
+  | "risk_review_warned"
+  | "risk_review_cleared"
+  | "risk_review_banned"
   | "reengagement_sent"
   | "reengagement_opened"
   | "reengagement_returned";
