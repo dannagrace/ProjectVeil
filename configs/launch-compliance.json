@@ -1,0 +1,63 @@
+{
+  "gameTitle": "Project Veil",
+  "ownerEntity": "待补充主体名称",
+  "reviewedAt": "",
+  "license": {
+    "label": "版号",
+    "value": "",
+    "version": "",
+    "reviewedAt": "",
+    "expiresAt": ""
+  },
+  "icp": {
+    "label": "ICP 备案",
+    "value": "",
+    "version": "",
+    "reviewedAt": "",
+    "expiresAt": ""
+  },
+  "policies": {
+    "privacyPolicy": {
+      "label": "隐私政策",
+      "value": "",
+      "version": "",
+      "reviewedAt": "",
+      "expiresAt": ""
+    },
+    "termsOfService": {
+      "label": "用户协议",
+      "value": "",
+      "version": "",
+      "reviewedAt": "",
+      "expiresAt": ""
+    },
+    "minorProtection": {
+      "label": "未成年人保护说明",
+      "value": "",
+      "version": "",
+      "reviewedAt": "",
+      "expiresAt": ""
+    },
+    "dataExportNotice": {
+      "label": "数据出境公示",
+      "value": "",
+      "version": "",
+      "reviewedAt": "",
+      "expiresAt": ""
+    }
+  },
+  "identityVerification": {
+    "vendorName": "",
+    "sandboxCredential": "",
+    "productionCredential": "",
+    "reviewedAt": "",
+    "expiresAt": ""
+  },
+  "paymentChannels": {
+    "wechatPayMerchantId": "",
+    "appleAppStoreAccount": "",
+    "googlePlayDeveloperId": "",
+    "reviewedAt": "",
+    "expiresAt": ""
+  }
+}
