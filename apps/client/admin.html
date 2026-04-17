@@ -133,6 +133,95 @@
         </div>
 
         <div class="card">
+            <h2>GM 玩家 360 视图</h2>
+            <p class="empty-state">输入玩家 ID，一次拉齐账号、工单、举报、封禁、邮件、补偿和近战斗记录。</p>
+            <div class="report-actions">
+                <button onclick="fetchPlayerOverview()">加载玩家概览</button>
+            </div>
+            <div class="table-wrap" style="margin-top: 16px;">
+                <table>
+                    <tbody id="playerOverviewBody">
+                        <tr><td class="empty-state">尚未加载玩家概览。</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>批量补偿工具</h2>
+            <div class="grid">
+                <div class="form-group">
+                    <label>段位筛选</label>
+                    <input type="text" id="batchRankDivision" placeholder="例如 D" />
+                </div>
+                <div class="form-group">
+                    <label>最低 Elo</label>
+                    <input type="number" id="batchMinElo" placeholder="1200" />
+                </div>
+                <div class="form-group">
+                    <label>战令高级通行证</label>
+                    <select id="batchPremiumFilter">
+                        <option value="">不限</option>
+                        <option value="true">仅高级通行证</option>
+                        <option value="false">仅普通玩家</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label>奖励币种</label>
+                    <select id="batchCurrency">
+                        <option value="gems">Gems</option>
+                        <option value="gold">Gold</option>
+                        <option value="wood">Wood</option>
+                        <option value="ore">Ore</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>奖励数量</label>
+                    <input type="number" id="batchAmount" value="25" min="1" />
+                </div>
+                <div class="form-group">
+                    <label>工单摘要</label>
+                    <input type="text" id="batchReason" value="Weekend compensation" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>邮件标题</label>
+                <input type="text" id="batchMessageTitle" value="周末补偿" />
+            </div>
+            <div class="form-group">
+                <label>邮件正文</label>
+                <input type="text" id="batchMessageBody" value="请查收本次活动补偿。" />
+            </div>
+            <div class="report-actions">
+                <button onclick="previewBatchCompensation()">预览命中玩家</button>
+                <button onclick="submitBatchCompensation()">确认发放</button>
+            </div>
+            <div class="table-wrap" style="margin-top: 16px;">
+                <table>
+                    <tbody id="batchCompensationBody">
+                        <tr><td class="empty-state">尚未预览批量补偿。</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>GM 操作审计日志</h2>
+            <div class="report-actions">
+                <button onclick="fetchAuditLog()">刷新审计日志</button>
+            </div>
+            <div class="table-wrap" style="margin-top: 16px;">
+                <table>
+                    <tbody id="auditLogBody">
+                        <tr><td class="empty-state">尚未加载审计日志。</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>举报审核队列</h2>
             <div class="grid">
                 <div class="form-group">
@@ -155,6 +244,9 @@
         const reportFilter = document.getElementById('reportStatusFilter');
         const reportList = document.getElementById('reportList');
         const compensationHistoryBody = document.getElementById('compensationHistoryBody');
+        const playerOverviewBody = document.getElementById('playerOverviewBody');
+        const batchCompensationBody = document.getElementById('batchCompensationBody');
+        const auditLogBody = document.getElementById('auditLogBody');
 
         function showStatus(msg, type) {
             statusDiv.textContent = msg;
@@ -283,6 +375,137 @@
             }
         }
 
+        function renderPlayerOverview(data) {
+            playerOverviewBody.innerHTML = `
+                <tr><td><strong>${data.account.displayName || data.playerId}</strong> · ${data.playerId}</td></tr>
+                <tr><td>段位：${data.account.rankDivision || '-'} · Elo：${data.account.eloRating || 0} · 战令：${data.account.seasonPassTier || 0}</td></tr>
+                <tr><td>封禁状态：${data.moderation.currentBan?.banStatus || 'none'} · 工单 ${data.supportTickets.length} · 举报 ${data.reports.againstPlayer.length} · 邮件 ${(data.mailbox || []).length}</td></tr>
+                <tr><td>最近补偿：${data.compensationHistory[0] ? `${data.compensationHistory[0].currency} ${data.compensationHistory[0].amount} (${data.compensationHistory[0].reason})` : '无'}</td></tr>
+                <tr><td>最近消费：${data.purchaseHistory.items[0] ? `${data.purchaseHistory.items[0].itemId} / ${data.purchaseHistory.items[0].amount}` : '无'}</td></tr>
+                <tr><td>最近战斗：${data.battleHistory[0] ? `${data.battleHistory[0].battleId} / ${data.battleHistory[0].status}` : '无'}</td></tr>
+            `;
+        }
+
+        async function fetchPlayerOverview() {
+            const pid = document.getElementById('targetPlayerId').value.trim();
+            if (!pid) {
+                playerOverviewBody.innerHTML = '<tr><td class="empty-state">请先输入 Player ID。</td></tr>';
+                return;
+            }
+            try {
+                const res = await fetch(`/api/admin/players/${pid}/overview`, {
+                    headers: { 'x-veil-admin-secret': secretInput.value }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    playerOverviewBody.innerHTML = `<tr><td class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    return;
+                }
+                renderPlayerOverview(data);
+            } catch (e) {
+                playerOverviewBody.innerHTML = `<tr><td class="empty-state">网络错误：${e.message}</td></tr>`;
+            }
+        }
+
+        function readBatchSegment() {
+            const premiumValue = document.getElementById('batchPremiumFilter').value;
+            const minEloRaw = document.getElementById('batchMinElo').value.trim();
+            const segment = {};
+            const rankDivision = document.getElementById('batchRankDivision').value.trim();
+            if (rankDivision) {
+                segment.rankDivision = rankDivision;
+            }
+            if (minEloRaw) {
+                segment.minimumEloRating = parseInt(minEloRaw, 10);
+            }
+            if (premiumValue === 'true') {
+                segment.seasonPassPremium = true;
+            } else if (premiumValue === 'false') {
+                segment.seasonPassPremium = false;
+            }
+            return segment;
+        }
+
+        function renderBatchPreview(data) {
+            if (!data.targets.length) {
+                batchCompensationBody.innerHTML = '<tr><td class="empty-state">当前筛选没有命中玩家。</td></tr>';
+                return;
+            }
+            batchCompensationBody.innerHTML = data.targets.map((target) => `
+                <tr>
+                    <td><strong>${target.displayName}</strong> · ${target.playerId} · 段位 ${target.rankDivision || '-'} · Elo ${target.eloRating || 0}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function postBatchCompensation(previewOnly) {
+            const payload = {
+                type: 'add',
+                currency: document.getElementById('batchCurrency').value,
+                amount: parseInt(document.getElementById('batchAmount').value, 10),
+                reason: document.getElementById('batchReason').value,
+                previewOnly,
+                segment: readBatchSegment(),
+                message: {
+                    title: document.getElementById('batchMessageTitle').value,
+                    body: document.getElementById('batchMessageBody').value
+                }
+            };
+
+            const res = await fetch('/api/admin/compensation/batch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-veil-admin-secret': secretInput.value
+                },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            renderBatchPreview(data);
+            showStatus(previewOnly ? `预览完成，命中 ${data.matchedCount} 名玩家。` : `批量补偿已发放，送达 ${data.delivery.deliveredPlayerIds.length} 名玩家。`, 'success');
+        }
+
+        async function previewBatchCompensation() {
+            try {
+                await postBatchCompensation(true);
+            } catch (e) {
+                showStatus(`批量补偿预览失败：${e.message}`, 'error');
+            }
+        }
+
+        async function submitBatchCompensation() {
+            try {
+                await postBatchCompensation(false);
+            } catch (e) {
+                showStatus(`批量补偿发放失败：${e.message}`, 'error');
+            }
+        }
+
+        async function fetchAuditLog() {
+            try {
+                const res = await fetch('/api/admin/audit-log?limit=20', {
+                    headers: { 'x-veil-admin-secret': secretInput.value }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    auditLogBody.innerHTML = `<tr><td class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    return;
+                }
+                if (!(data.items || []).length) {
+                    auditLogBody.innerHTML = '<tr><td class="empty-state">当前还没有 GM 操作审计记录。</td></tr>';
+                    return;
+                }
+                auditLogBody.innerHTML = (data.items || []).map((item) => `
+                    <tr><td><strong>${item.action}</strong> · ${item.actorPlayerId} · ${item.targetPlayerId || item.targetScope || '-'} · ${item.occurredAt}<br/>${item.summary}</td></tr>
+                `).join('');
+            } catch (e) {
+                auditLogBody.innerHTML = `<tr><td class="empty-state">网络错误：${e.message}</td></tr>`;
+            }
+        }
+
         function renderReports(items) {
             if (!items.length) {
                 reportList.innerHTML = '<div class="empty-state">当前筛选下没有举报记录。</div>';
@@ -358,6 +581,7 @@
         fetchOverview();
         fetchReports();
         fetchCompensationHistory();
+        fetchAuditLog();
     </script>
 </body>
 </html>
