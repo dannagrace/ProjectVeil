@@ -284,6 +284,8 @@ export function createLobbyState(overrides: Partial<VeilLobbyRenderState> = {}):
     loading: false,
     entering: false,
     status: "等待操作...",
+    announcements: [],
+    maintenanceMode: null,
     rooms: [],
     accountFlow: null,
     presentationReadiness: {

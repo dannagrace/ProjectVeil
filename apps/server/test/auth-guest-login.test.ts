@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createCipheriv } from "node:crypto";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
@@ -683,6 +686,23 @@ async function startAuthServer(port: number, store: RoomSnapshotStore | null = n
   return server;
 }
 
+async function withAnnouncementConfig(
+  payload: unknown
+): Promise<() => void> {
+  const dir = await mkdtemp(join(tmpdir(), "veil-announcements-auth-"));
+  const filePath = join(dir, "announcements.json");
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const originalPath = process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+  process.env.VEIL_ANNOUNCEMENTS_CONFIG = filePath;
+  return () => {
+    if (originalPath === undefined) {
+      delete process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+    } else {
+      process.env.VEIL_ANNOUNCEMENTS_CONFIG = originalPath;
+    }
+  };
+}
+
 function createWechatPhonePayload(input: {
   sessionKey: string;
   appId: string;
@@ -971,6 +991,68 @@ test("guest auth route issues a signed session token", async (t) => {
   assert.equal(payload.session.displayName, "访客骑士");
   assert.equal(payload.session.provider, "guest");
   assert.match(payload.session.token, /\./);
+});
+
+test("guest auth route respects launch maintenance mode and whitelist bypass", async (t) => {
+  const restoreAnnouncements = await withAnnouncementConfig({
+    announcements: [],
+    maintenanceMode: {
+      enabled: true,
+      title: "停服维护中",
+      message: "服务器正在维护，请稍后再试。",
+      nextOpenAt: "2026-04-18T02:00:00.000Z",
+      whitelistPlayerIds: ["vip-player"],
+      whitelistLoginIds: []
+    },
+    updatedAt: "2026-04-17T08:00:00.000Z"
+  });
+  const port = 43100 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port);
+
+  t.after(async () => {
+    restoreAnnouncements();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const rejectedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "blocked-player",
+      displayName: "维护访客",
+      privacyConsentAccepted: true
+    })
+  });
+  const rejectedPayload = (await rejectedResponse.json()) as {
+    error: { code: string; message: string };
+    maintenanceMode?: { active: boolean; title: string; message: string; nextOpenAt?: string };
+  };
+
+  assert.equal(rejectedResponse.status, 503);
+  assert.equal(rejectedPayload.error.code, "maintenance_mode_active");
+  assert.equal(rejectedPayload.maintenanceMode?.active, true);
+  assert.equal(rejectedPayload.maintenanceMode?.title, "停服维护中");
+  assert.equal(rejectedPayload.maintenanceMode?.nextOpenAt, "2026-04-18T02:00:00.000Z");
+
+  const whitelistedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "vip-player",
+      displayName: "白名单访客",
+      privacyConsentAccepted: true
+    })
+  });
+  const whitelistedPayload = (await whitelistedResponse.json()) as { session: GuestAuthSession };
+
+  assert.equal(whitelistedResponse.status, 200);
+  assert.equal(whitelistedPayload.session.playerId, "vip-player");
+  assert.equal(whitelistedPayload.session.provider, "guest");
 });
 
 test("auth session route resolves a bearer token into the current guest session", async (t) => {

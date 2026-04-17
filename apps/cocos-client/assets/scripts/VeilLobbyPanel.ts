@@ -9,11 +9,17 @@ import {
 } from "./cocos-account-review.ts";
 import type {
   CocosCampaignSummary,
+  CocosLaunchAnnouncement,
   CocosLobbyRoomSummary,
+  CocosMaintenanceModeSnapshot,
   CocosPlayerAccountProfile,
   CocosSeasonalEvent
 } from "./cocos-lobby.ts";
-import { buildLobbyPveFrontdoorView, buildLobbyPvpFrontdoorView } from "./cocos-lobby-panel-model.ts";
+import {
+  buildLobbyAnnouncementBannerView,
+  buildLobbyPveFrontdoorView,
+  buildLobbyPvpFrontdoorView
+} from "./cocos-lobby-panel-model.ts";
 import { getPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 import { buildCocosBattleReplayTimelineView } from "./cocos-battle-replay-timeline.ts";
@@ -233,6 +239,8 @@ export interface VeilLobbyRenderState {
   loading: boolean;
   entering: boolean;
   status: string;
+  announcements: CocosLaunchAnnouncement[];
+  maintenanceMode: CocosMaintenanceModeSnapshot | null;
   matchmaking?: MatchmakingStatusView;
   matchmakingSearching?: boolean;
   matchmakingBusy?: boolean;
@@ -409,6 +417,7 @@ export class VeilLobbyPanel extends Component {
     const matchmakingSearching = state.matchmakingSearching ?? false;
     const matchmakingBusy = state.matchmakingBusy ?? false;
     const skillPanelBusy = state.skillPanelBusy ?? false;
+    const announcementBanner = buildLobbyAnnouncementBannerView(state);
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const width = transform.width || 760;
     const height = transform.height || 620;
@@ -421,6 +430,40 @@ export class VeilLobbyPanel extends Component {
     let rightCursorY = height / 2 - 66;
 
     this.syncChrome(width, height);
+
+    if (announcementBanner) {
+      const bannerTone =
+        announcementBanner.tone === "critical"
+          ? {
+              fill: new Color(110, 62, 60, 210),
+              stroke: new Color(245, 210, 206, 110),
+              accent: new Color(232, 162, 148, 220)
+            }
+          : announcementBanner.tone === "warning"
+            ? {
+                fill: new Color(104, 82, 46, 206),
+                stroke: new Color(244, 224, 172, 96),
+                accent: new Color(232, 194, 112, 214)
+              }
+            : {
+                fill: new Color(46, 74, 110, 204),
+                stroke: new Color(210, 228, 244, 92),
+                accent: new Color(146, 194, 236, 210)
+              };
+      const bannerHeight = 74 + Math.max(0, announcementBanner.detailLines.length - 1) * 16;
+      leftCursorY = this.renderCard(
+        "LobbyAnnouncementBanner",
+        leftX,
+        leftCursorY,
+        leftWidth,
+        bannerHeight,
+        [announcementBanner.title, ...announcementBanner.detailLines],
+        bannerTone,
+        null,
+        13,
+        16
+      );
+    }
 
     leftCursorY = this.renderCard(
       "LobbyIntro",

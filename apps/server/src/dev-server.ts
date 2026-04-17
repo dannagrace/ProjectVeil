@@ -20,6 +20,7 @@ import { registerHttpRateLimitMiddleware } from "./http-rate-limit";
 import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
+import { registerLaunchRuntimeRoutes } from "./launch-runtime-routes";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 import { registerMinorProtectionRoutes } from "./minor-protection-routes";
@@ -149,6 +150,7 @@ export interface DevServerBootstrapDependencies {
   registerGooglePlayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
+  registerLaunchRuntimeRoutes(app: unknown): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(
@@ -237,6 +239,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerGooglePlayRoutes: (app, store) => registerGooglePlayRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
+    registerLaunchRuntimeRoutes: (app) => registerLaunchRuntimeRoutes(app as never),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerMinorProtectionRoutes: (app, store) =>
@@ -395,6 +398,7 @@ export async function startDevServer(
   deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
+  deps.registerLaunchRuntimeRoutes(expressApp);
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore, configCenterStore);

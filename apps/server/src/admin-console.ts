@@ -12,6 +12,14 @@ import type {
   RoomSnapshotStore
 } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
+import {
+  loadLaunchRuntimeState,
+  resolveActiveLaunchAnnouncements,
+  resolveLaunchMaintenanceAccess,
+  saveLaunchRuntimeState,
+  type LaunchAnnouncementRecord,
+  type LaunchMaintenanceModeRecord
+} from "./launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "./observability";
 import { readRuntimeSecret } from "./runtime-secrets";
 
@@ -618,6 +626,67 @@ function parseBroadcastBody(value: unknown): { message: string; type: string } {
   };
 }
 
+function parseAnnouncementRecord(value: unknown): LaunchAnnouncementRecord {
+  const payload = readRequiredObjectBody(value);
+  const id = String(payload.id ?? randomUUID()).trim();
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  const startsAt = typeof payload.startsAt === "string" ? payload.startsAt.trim() : "";
+  const tone = payload.tone;
+  const endsAt = typeof payload.endsAt === "string" ? payload.endsAt.trim() : "";
+
+  if (!id || !title || !message || !startsAt) {
+    throw new InvalidAdminPayloadError('"announcement" requires id, title, message, and startsAt');
+  }
+  if (tone !== undefined && tone !== "info" && tone !== "warning" && tone !== "critical") {
+    throw new InvalidAdminPayloadError('"announcement.tone" must be info, warning, or critical');
+  }
+
+  return {
+    id,
+    title,
+    message,
+    tone: tone === "warning" || tone === "critical" ? tone : "info",
+    startsAt,
+    ...(endsAt ? { endsAt } : {})
+  };
+}
+
+function parseMaintenanceModeBody(value: unknown): LaunchMaintenanceModeRecord {
+  const payload = readRequiredObjectBody(value);
+  if (typeof payload.enabled !== "boolean") {
+    throw new InvalidAdminPayloadError('"enabled" must be a boolean');
+  }
+
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "停服维护中";
+  const message =
+    typeof payload.message === "string" && payload.message.trim()
+      ? payload.message.trim()
+      : "服务器正在维护，请稍后再试。";
+  const nextOpenAt = typeof payload.nextOpenAt === "string" && payload.nextOpenAt.trim() ? payload.nextOpenAt.trim() : "";
+  const whitelistPlayerIds = Array.isArray(payload.whitelistPlayerIds)
+    ? payload.whitelistPlayerIds.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+  const whitelistLoginIds = Array.isArray(payload.whitelistLoginIds)
+    ? payload.whitelistLoginIds.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  return {
+    enabled: payload.enabled,
+    title,
+    message,
+    ...(nextOpenAt ? { nextOpenAt } : {}),
+    whitelistPlayerIds: Array.from(new Set(whitelistPlayerIds)).sort((left, right) => left.localeCompare(right)),
+    whitelistLoginIds: Array.from(new Set(whitelistLoginIds)).sort((left, right) => left.localeCompare(right))
+  };
+}
+
+function broadcastGlobalAnnouncement(message: string, type = "info"): void {
+  for (const room of getActiveRoomInstances().values()) {
+    room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
+  }
+}
+
 function parseReportStatus(value: string | null | undefined, fallback: PlayerReportStatus = "pending"): PlayerReportStatus {
   if (!value || value.trim() === "") {
     return fallback;
@@ -1058,10 +1127,7 @@ export function registerAdminRoutes(
     if (!isAuthorized(request)) return sendUnauthorized(response);
     try {
       const { message, type } = parseBroadcastBody(await readJsonBody(request));
-      const activeRooms = getActiveRoomInstances();
-      for (const [_, room] of activeRooms) {
-        room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
-      }
+      broadcastGlobalAnnouncement(message, type);
       sendJson(response, 200, { ok: true });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1182,6 +1248,134 @@ export function registerAdminRoutes(
         return;
       }
       sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/announcements", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const state = await loadLaunchRuntimeState();
+      sendJson(response, 200, {
+        announcements: state.announcements,
+        active: resolveActiveLaunchAnnouncements(state),
+        maintenanceMode: resolveLaunchMaintenanceAccess(state),
+        updatedAt: state.updatedAt
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/announcements", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const body = readRequiredObjectBody(await readJsonBody(request));
+      const announcement = parseAnnouncementRecord(body.announcement ?? body);
+      const state = await loadLaunchRuntimeState();
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        announcements: [
+          ...state.announcements.filter((entry) => entry.id !== announcement.id),
+          announcement
+        ],
+        updatedAt: new Date().toISOString()
+      });
+      broadcastGlobalAnnouncement(`${announcement.title}：${announcement.message}`, announcement.tone);
+      sendJson(response, 200, {
+        ok: true,
+        announcement,
+        active: resolveActiveLaunchAnnouncements(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.delete("/api/admin/announcements/:id", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const id = readRequiredParam(request, "id");
+      const state = await loadLaunchRuntimeState();
+      const existing = state.announcements.find((entry) => entry.id === id) ?? null;
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        announcements: state.announcements.filter((entry) => entry.id !== id),
+        updatedAt: new Date().toISOString()
+      });
+      sendJson(response, 200, {
+        ok: true,
+        removed: Boolean(existing),
+        ...(existing ? { announcement: existing } : {}),
+        active: resolveActiveLaunchAnnouncements(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/maintenance-mode", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const maintenanceMode = parseMaintenanceModeBody(await readJsonBody(request));
+      const state = await loadLaunchRuntimeState();
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        maintenanceMode,
+        updatedAt: new Date().toISOString()
+      });
+
+      if (maintenanceMode.enabled) {
+        broadcastGlobalAnnouncement(
+          `${maintenanceMode.title}：${maintenanceMode.message}${maintenanceMode.nextOpenAt ? ` · 预计恢复 ${maintenanceMode.nextOpenAt}` : ""}`,
+          "critical"
+        );
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        maintenanceMode: resolveLaunchMaintenanceAccess(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
     }
   });
 
