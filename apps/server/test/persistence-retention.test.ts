@@ -16,7 +16,7 @@ import {
   DEFAULT_MYSQL_POOL_MAX_IDLE,
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS
-} from "../src/mysql-pool";
+} from "../src/infra/mysql-pool";
 
 test("mysql persistence config uses default snapshot retention policy", () => {
   const config = readMySqlPersistenceConfig({

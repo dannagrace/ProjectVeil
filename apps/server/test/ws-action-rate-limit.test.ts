@@ -5,7 +5,7 @@ import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
-import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
+import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
 
 interface FakeClient {
   sessionId: string;

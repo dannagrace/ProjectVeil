@@ -3,7 +3,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_TABLE,
   MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX,

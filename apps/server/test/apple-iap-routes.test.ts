@@ -10,7 +10,7 @@ import {
   registerApplePaymentRoutes,
   type AppleIapRuntimeConfig,
   type AppleVerifiedTransaction
-} from "../src/apple-iap";
+} from "../src/adapters/apple-iap";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { ShopProduct } from "../src/shop";
 

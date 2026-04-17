@@ -4,7 +4,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { getAnalyticsPipelineSnapshot, registerAnalyticsRoutes } from "./analytics";
-import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
+import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./infra/backup-storage";
 import { registerClientErrorRoutes } from "./client-error";
 import {
   FileSystemConfigCenterStore,
@@ -20,6 +20,7 @@ import { registerHttpRateLimitMiddleware } from "./http-rate-limit";
 import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
+import { registerLaunchRuntimeRoutes } from "./launch-runtime-routes";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 import { registerMinorProtectionRoutes } from "./minor-protection-routes";
@@ -40,16 +41,16 @@ import {
   type SnapshotRetentionPolicy
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
-import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
+import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./infra/redis";
 import { registerRetentionSummaryRoute } from "./retention-summary";
 import { loadRuntimeSecrets } from "./runtime-secrets";
-import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
+import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./infra/schema-migrations";
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
 import { registerShopRoutes } from "./shop";
-import { registerApplePaymentRoutes } from "./apple-iap";
-import { registerGooglePlayRoutes } from "./google-play";
-import { registerWechatPayRoutes } from "./wechat-pay";
+import { registerApplePaymentRoutes } from "./adapters/apple-iap";
+import { registerGooglePlayRoutes } from "./adapters/google-play";
+import { registerWechatPayRoutes } from "./adapters/wechat-pay";
 import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
 import { recordRuntimeErrorEvent } from "./observability";
 import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "./battle-replay-retention";
@@ -149,6 +150,7 @@ export interface DevServerBootstrapDependencies {
   registerGooglePlayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
+  registerLaunchRuntimeRoutes(app: unknown): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(
@@ -237,6 +239,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerGooglePlayRoutes: (app, store) => registerGooglePlayRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
+    registerLaunchRuntimeRoutes: (app) => registerLaunchRuntimeRoutes(app as never),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerMinorProtectionRoutes: (app, store) =>
@@ -395,6 +398,7 @@ export async function startDevServer(
   deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
+  deps.registerLaunchRuntimeRoutes(expressApp);
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore, configCenterStore);

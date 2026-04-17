@@ -57,7 +57,7 @@ import {
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
   type MySqlPoolConfig
-} from "./mysql-pool";
+} from "./infra/mysql-pool";
 import type { RoomPersistenceSnapshot } from "./index";
 import {
   claimAllPlayerMailboxMessages,
@@ -219,6 +219,7 @@ export interface RoomSnapshotStore {
   loadPaymentReceiptByOrderId?(orderId: string): Promise<PaymentReceiptSnapshot | null>;
   countVerifiedPaymentReceiptsSince?(playerId: string, since: string): Promise<number>;
   loadPlayerReport?(reportId: string): Promise<PlayerReportRecord | null>;
+  loadSupportTicket?(ticketId: string): Promise<SupportTicketRecord | null>;
   loadPlayerBan?(playerId: string): Promise<PlayerAccountBanSnapshot | null>;
   listPlayerNameHistory?(playerId: string, options?: PlayerNameHistoryListOptions): Promise<PlayerNameHistoryRecord[]>;
   findPlayerNameHistoryByDisplayName?(
@@ -227,12 +228,14 @@ export interface RoomSnapshotStore {
   ): Promise<PlayerNameHistoryRecord[]>;
   findActivePlayerNameReservation?(displayName: string): Promise<PlayerNameReservationRecord | null>;
   createPlayerReport?(input: PlayerReportCreateInput): Promise<PlayerReportRecord>;
+  createSupportTicket?(input: SupportTicketCreateInput): Promise<SupportTicketRecord>;
   loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerAccountByWechatMiniGameOpenId(openId: string): Promise<PlayerAccountSnapshot | null>;
   loadPlayerEventHistory(playerId: string, query?: PlayerEventHistoryQuery): Promise<PlayerEventHistorySnapshot>;
   loadPlayerQuestState?(playerId: string): Promise<PlayerQuestState | null>;
   loadPlayerAccounts(playerIds: string[]): Promise<PlayerAccountSnapshot[]>;
   listPlayerReports?(options?: PlayerReportListOptions): Promise<PlayerReportRecord[]>;
+  listSupportTickets?(options?: SupportTicketListOptions): Promise<SupportTicketRecord[]>;
   listPlayerBanHistory?(playerId: string, options?: PlayerAccountBanHistoryListOptions): Promise<PlayerBanHistoryRecord[]>;
   appendPlayerCompensationRecord?(
     playerId: string,
@@ -301,6 +304,7 @@ export interface RoomSnapshotStore {
     input?: PlayerAccountDeleteInput
   ): Promise<PlayerAccountSnapshot | null>;
   resolvePlayerReport?(reportId: string, input: PlayerReportResolveInput): Promise<PlayerReportRecord | null>;
+  resolveSupportTicket?(ticketId: string, input: SupportTicketResolveInput): Promise<SupportTicketRecord | null>;
   savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot>;
   savePlayerAccountProgress(playerId: string, patch: PlayerAccountProgressPatch): Promise<PlayerAccountSnapshot>;
   saveBattleSnapshotStart?(input: BattleSnapshotStartInput): Promise<BattleSnapshotRecord>;
@@ -626,6 +630,21 @@ interface PlayerReportRow extends RowDataPacket {
   resolved_at: Date | string | null;
 }
 
+interface SupportTicketRow extends RowDataPacket {
+  ticket_id: string;
+  player_id: string;
+  category: string;
+  message: string;
+  attachments_ref: string | null;
+  priority: string;
+  status: string;
+  handler_id: string | null;
+  resolution: string | null;
+  created_at: Date | string;
+  resolved_at: Date | string | null;
+  updated_at: Date | string;
+}
+
 interface BattleSnapshotRow extends RowDataPacket {
   room_id: string;
   battle_id: string;
@@ -940,6 +959,46 @@ export interface PlayerReportResolveInput {
   status: Exclude<PlayerReportStatus, "pending">;
 }
 
+export type SupportTicketCategory = "bug" | "payment" | "account" | "other";
+export type SupportTicketPriority = "normal" | "high" | "urgent";
+export type SupportTicketStatus = "open" | "resolved" | "dismissed";
+
+export interface SupportTicketRecord {
+  ticketId: string;
+  playerId: string;
+  category: SupportTicketCategory;
+  message: string;
+  attachmentsRef?: string;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  handlerId?: string;
+  resolution?: string;
+  createdAt: string;
+  resolvedAt?: string;
+  updatedAt: string;
+}
+
+export interface SupportTicketCreateInput {
+  playerId: string;
+  category: SupportTicketCategory;
+  message: string;
+  attachmentsRef?: string;
+  priority?: SupportTicketPriority;
+}
+
+export interface SupportTicketListOptions {
+  status?: SupportTicketStatus;
+  playerId?: string;
+  category?: SupportTicketCategory;
+  limit?: number;
+}
+
+export interface SupportTicketResolveInput {
+  status: Exclude<SupportTicketStatus, "open">;
+  handlerId: string;
+  resolution: string;
+}
+
 export interface PlayerAccountProfilePatch {
   displayName?: string;
   avatarUrl?: string | null;
@@ -1225,6 +1284,9 @@ export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archi
 export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
 export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
 export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
+export const MYSQL_SUPPORT_TICKET_TABLE = "support_tickets";
+export const MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX = "idx_support_tickets_status_created";
+export const MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX = "idx_support_tickets_player_created";
 export const MYSQL_BATTLE_SNAPSHOT_TABLE = "battle_snapshots";
 export const MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX = "idx_battle_snapshots_status_updated";
 export const MYSQL_GUILD_TABLE = "guilds";
@@ -2066,6 +2128,88 @@ function normalizePlayerReportRecord(record: {
     status: normalizePlayerReportStatus(record.status),
     createdAt: formatTimestamp(record.createdAt) ?? new Date(0).toISOString(),
     ...(resolvedAt ? { resolvedAt } : {})
+  };
+}
+
+function normalizeSupportTicketCategory(category?: string | null): SupportTicketCategory {
+  if (category === "bug" || category === "payment" || category === "account" || category === "other") {
+    return category;
+  }
+
+  throw new Error("support ticket category must be bug, payment, account, or other");
+}
+
+function normalizeSupportTicketPriority(priority?: string | null): SupportTicketPriority {
+  if (priority === "normal" || priority === "high" || priority === "urgent") {
+    return priority;
+  }
+
+  throw new Error("support ticket priority must be normal, high, or urgent");
+}
+
+function normalizeSupportTicketStatus(status?: string | null): SupportTicketStatus {
+  if (status === "open" || status === "resolved" || status === "dismissed") {
+    return status;
+  }
+
+  throw new Error("support ticket status must be open, resolved, or dismissed");
+}
+
+function normalizeSupportTicketMessage(message?: string | null): string {
+  const normalized = message?.trim();
+  if (!normalized) {
+    throw new Error("support ticket message must not be empty");
+  }
+
+  return normalized.slice(0, 4_000);
+}
+
+function normalizeSupportTicketAttachmentsRef(value?: string | null): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
+}
+
+function normalizeSupportTicketResolution(value?: string | null): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error("support ticket resolution must not be empty");
+  }
+
+  return normalized.slice(0, 2_000);
+}
+
+function normalizeSupportTicketRecord(record: {
+  ticketId: string;
+  playerId: string;
+  category: string;
+  message: string;
+  attachmentsRef?: string | null;
+  priority: string;
+  status: string;
+  handlerId?: string | null;
+  resolution?: string | null;
+  createdAt: string | Date;
+  resolvedAt?: string | Date | null;
+  updatedAt: string | Date;
+}): SupportTicketRecord {
+  const attachmentsRef = normalizeSupportTicketAttachmentsRef(record.attachmentsRef);
+  const handlerId = record.handlerId?.trim();
+  const resolution = record.resolution?.trim();
+  const resolvedAt = formatTimestamp(record.resolvedAt);
+
+  return {
+    ticketId: record.ticketId.trim(),
+    playerId: normalizePlayerId(record.playerId),
+    category: normalizeSupportTicketCategory(record.category),
+    message: normalizeSupportTicketMessage(record.message),
+    ...(attachmentsRef ? { attachmentsRef } : {}),
+    priority: normalizeSupportTicketPriority(record.priority),
+    status: normalizeSupportTicketStatus(record.status),
+    ...(handlerId ? { handlerId } : {}),
+    ...(resolution ? { resolution: resolution.slice(0, 2_000) } : {}),
+    createdAt: formatTimestamp(record.createdAt) ?? new Date(0).toISOString(),
+    ...(resolvedAt ? { resolvedAt } : {}),
+    updatedAt: formatTimestamp(record.updatedAt) ?? new Date(0).toISOString()
   };
 }
 
@@ -2962,6 +3106,22 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PLAYER_REPORT_TABLE}\` (
   UNIQUE KEY \`${MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX}\` (room_id, reporter_id, target_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS \`${MYSQL_SUPPORT_TICKET_TABLE}\` (
+  ticket_id VARCHAR(191) NOT NULL,
+  player_id VARCHAR(191) NOT NULL,
+  category VARCHAR(32) NOT NULL,
+  message TEXT NOT NULL,
+  attachments_ref VARCHAR(512) NULL,
+  priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+  status VARCHAR(16) NOT NULL DEFAULT 'open',
+  handler_id VARCHAR(191) NULL,
+  resolution TEXT NULL,
+  resolved_at DATETIME NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (ticket_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS \`${MYSQL_BATTLE_SNAPSHOT_TABLE}\` (
   room_id VARCHAR(191) NOT NULL,
   battle_id VARCHAR(191) NOT NULL,
@@ -3041,6 +3201,42 @@ SET @veil_player_reports_idx_sql := IF(
 PREPARE veil_player_reports_idx_stmt FROM @veil_player_reports_idx_sql;
 EXECUTE veil_player_reports_idx_stmt;
 DEALLOCATE PREPARE veil_player_reports_idx_stmt;
+
+SET @veil_support_tickets_status_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_SUPPORT_TICKET_TABLE}'
+    AND INDEX_NAME = '${MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX}'
+);
+
+SET @veil_support_tickets_status_idx_sql := IF(
+  @veil_support_tickets_status_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX}\` ON \`${MYSQL_SUPPORT_TICKET_TABLE}\` (status, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_support_tickets_status_idx_stmt FROM @veil_support_tickets_status_idx_sql;
+EXECUTE veil_support_tickets_status_idx_stmt;
+DEALLOCATE PREPARE veil_support_tickets_status_idx_stmt;
+
+SET @veil_support_tickets_player_idx_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_SUPPORT_TICKET_TABLE}'
+    AND INDEX_NAME = '${MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX}'
+);
+
+SET @veil_support_tickets_player_idx_sql := IF(
+  @veil_support_tickets_player_idx_exists = 0,
+  'CREATE INDEX \`${MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX}\` ON \`${MYSQL_SUPPORT_TICKET_TABLE}\` (player_id, created_at DESC)',
+  'SELECT 1'
+);
+
+PREPARE veil_support_tickets_player_idx_stmt FROM @veil_support_tickets_player_idx_sql;
+EXECUTE veil_support_tickets_player_idx_stmt;
+DEALLOCATE PREPARE veil_support_tickets_player_idx_stmt;
 
 SET @veil_battle_snapshots_idx_exists := (
   SELECT COUNT(*)
@@ -4717,6 +4913,23 @@ function toPlayerReportRecord(row: PlayerReportRow): PlayerReportRecord {
   });
 }
 
+function toSupportTicketRecord(row: SupportTicketRow): SupportTicketRecord {
+  return normalizeSupportTicketRecord({
+    ticketId: row.ticket_id,
+    playerId: row.player_id,
+    category: row.category,
+    message: row.message,
+    attachmentsRef: row.attachments_ref,
+    priority: row.priority,
+    status: row.status,
+    handlerId: row.handler_id,
+    resolution: row.resolution,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+    updatedAt: row.updated_at
+  });
+}
+
 function toBattleSnapshotRecord(row: BattleSnapshotRow): BattleSnapshotRecord {
   const startedAt = formatTimestamp(row.started_at);
   const createdAt = formatTimestamp(row.created_at);
@@ -5891,6 +6104,56 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     }
   }
 
+  async createSupportTicket(input: SupportTicketCreateInput): Promise<SupportTicketRecord> {
+    const ticketId = randomUUID();
+    const playerId = normalizePlayerId(input.playerId);
+    const category = normalizeSupportTicketCategory(input.category);
+    const message = normalizeSupportTicketMessage(input.message);
+    const attachmentsRef = normalizeSupportTicketAttachmentsRef(input.attachmentsRef);
+    const priority = normalizeSupportTicketPriority(input.priority ?? "normal");
+
+    await this.pool.query<ResultSetHeader>(
+      `INSERT INTO \`${MYSQL_SUPPORT_TICKET_TABLE}\` (
+         ticket_id,
+         player_id,
+         category,
+         message,
+         attachments_ref,
+         priority,
+         status
+       )
+       VALUES (?, ?, ?, ?, ?, ?, 'open')`,
+      [ticketId, playerId, category, message, attachmentsRef ?? null, priority]
+    );
+
+    const [rows] = await this.pool.query<SupportTicketRow[]>(
+      `SELECT
+         ticket_id,
+         player_id,
+         category,
+         message,
+         attachments_ref,
+         priority,
+         status,
+         handler_id,
+         resolution,
+         created_at,
+         resolved_at,
+         updated_at
+       FROM \`${MYSQL_SUPPORT_TICKET_TABLE}\`
+       WHERE ticket_id = ?
+       LIMIT 1`,
+      [ticketId]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      throw new Error("support ticket insert failed");
+    }
+
+    return toSupportTicketRecord(row);
+  }
+
   async loadPlayerAccountByLoginId(loginId: string): Promise<PlayerAccountSnapshot | null> {
     const normalizedLoginId = normalizePlayerLoginId(loginId);
     const [rows] = await this.pool.query<PlayerAccountRow[]>(
@@ -6470,6 +6733,79 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toPlayerReportRecord(row));
+  }
+
+  async loadSupportTicket(ticketId: string): Promise<SupportTicketRecord | null> {
+    const normalizedTicketId = ticketId.trim();
+    if (!normalizedTicketId) {
+      throw new Error("ticketId must not be empty");
+    }
+
+    const [rows] = await this.pool.query<SupportTicketRow[]>(
+      `SELECT
+         ticket_id,
+         player_id,
+         category,
+         message,
+         attachments_ref,
+         priority,
+         status,
+         handler_id,
+         resolution,
+         created_at,
+         resolved_at,
+         updated_at
+       FROM \`${MYSQL_SUPPORT_TICKET_TABLE}\`
+       WHERE ticket_id = ?
+       LIMIT 1`,
+      [normalizedTicketId]
+    );
+
+    const row = rows[0];
+    return row ? toSupportTicketRecord(row) : null;
+  }
+
+  async listSupportTickets(options: SupportTicketListOptions = {}): Promise<SupportTicketRecord[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (options.status) {
+      clauses.push("status = ?");
+      params.push(normalizeSupportTicketStatus(options.status));
+    }
+    if (options.playerId?.trim()) {
+      clauses.push("player_id = ?");
+      params.push(normalizePlayerId(options.playerId));
+    }
+    if (options.category) {
+      clauses.push("category = ?");
+      params.push(normalizeSupportTicketCategory(options.category));
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<SupportTicketRow[]>(
+      `SELECT
+         ticket_id,
+         player_id,
+         category,
+         message,
+         attachments_ref,
+         priority,
+         status,
+         handler_id,
+         resolution,
+         created_at,
+         resolved_at,
+         updated_at
+       FROM \`${MYSQL_SUPPORT_TICKET_TABLE}\`
+       ${whereClause}
+       ORDER BY created_at DESC, ticket_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toSupportTicketRecord(row));
   }
 
   async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
@@ -8810,6 +9146,37 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const row = rows[0];
     return row ? toPlayerReportRecord(row) : null;
+  }
+
+  async resolveSupportTicket(ticketId: string, input: SupportTicketResolveInput): Promise<SupportTicketRecord | null> {
+    const normalizedTicketId = ticketId.trim();
+    if (!normalizedTicketId) {
+      throw new Error("ticketId must not be empty");
+    }
+
+    const status = normalizeSupportTicketStatus(input.status);
+    if (status === "open") {
+      throw new Error("resolved support ticket status must not be open");
+    }
+
+    const handlerId = normalizePlayerId(input.handlerId);
+    const resolution = normalizeSupportTicketResolution(input.resolution);
+
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `UPDATE \`${MYSQL_SUPPORT_TICKET_TABLE}\`
+       SET status = ?,
+           handler_id = ?,
+           resolution = ?,
+           resolved_at = ?
+       WHERE ticket_id = ?`,
+      [status, handlerId, resolution, new Date(), normalizedTicketId]
+    );
+
+    if (result.affectedRows === 0) {
+      return null;
+    }
+
+    return this.loadSupportTicket(normalizedTicketId);
   }
 
   async savePlayerAccountProfile(playerId: string, patch: PlayerAccountProfilePatch): Promise<PlayerAccountSnapshot> {

@@ -1,8 +1,8 @@
 import { createSign } from "node:crypto";
 import { connect } from "node:http2";
-import type { MobilePushTokenRegistration } from "../../../packages/shared/src/index";
-import type { RoomSnapshotStore } from "./persistence";
-import { removeMobilePushToken } from "./mobile-push-tokens";
+import type { MobilePushTokenRegistration } from "../../../../packages/shared/src/index";
+import type { RoomSnapshotStore } from "../persistence";
+import { removeMobilePushToken } from "../mobile-push-tokens";
 import { getNotificationPreferenceValue } from "./wechat-social";
 
 export type MobilePushTemplateKey = "match_found" | "turn_reminder";

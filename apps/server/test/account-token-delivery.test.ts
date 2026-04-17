@@ -7,7 +7,7 @@ import {
   deliverAccountToken,
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode
-} from "../src/account-token-delivery";
+} from "../src/adapters/account-token-delivery";
 
 async function startWebhookServer(): Promise<{
   close: () => Promise<void>;

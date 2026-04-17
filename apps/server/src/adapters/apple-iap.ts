@@ -1,16 +1,16 @@
 import { createPrivateKey, createSign, createVerify, randomUUID, X509Certificate } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { emitAnalyticsEvent } from "./analytics";
-import { validateAuthSessionFromRequest } from "./auth";
+import { emitAnalyticsEvent } from "../analytics";
+import { validateAuthSessionFromRequest } from "../auth";
 import {
   recordPaymentDeadLetter,
   recordRuntimeErrorEvent,
   setPaymentGrantDeadLetterCount,
   setPaymentGrantQueueCount,
   setPaymentGrantQueueLatency
-} from "./observability";
-import type { PaymentOrderSnapshot, RoomSnapshotStore } from "./persistence";
-import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "./shop";
+} from "../observability";
+import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
+import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
 
 interface HttpApp {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;

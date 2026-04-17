@@ -6,7 +6,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX,
   MYSQL_GEM_LEDGER_TABLE,

@@ -110,6 +110,37 @@ jobs:
             echo "- Workflow job: \`readme-script-gate\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
+  arch-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Enforce architecture boundaries
+        run: npm run lint:arch
+
+      - name: Summarize boundary gate
+        if: always()
+        run: |
+          {
+            echo "## Architecture Boundaries"
+            echo
+            echo "- Config: \`.dependency-cruiser.cjs\`"
+            echo "- Docs: \`docs/architecture-boundaries.md\`"
+            echo "- Command: \`npm run lint:arch\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   ops-tooling-typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 10

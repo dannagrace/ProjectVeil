@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX,
   MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX,

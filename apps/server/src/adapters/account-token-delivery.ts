@@ -10,8 +10,8 @@ import {
   setAuthTokenDeliveryDeadLetterCount,
   setAuthTokenDeliveryQueueCount,
   setAuthTokenDeliveryQueueLatency
-} from "./observability";
-import { readRuntimeSecret } from "./runtime-secrets";
+} from "../observability";
+import { readRuntimeSecret } from "../runtime-secrets";
 
 export type AccountTokenDeliveryKind = "account-registration" | "password-recovery";
 export type AccountTokenDeliveryMode = "disabled" | "dev-token" | "smtp" | "webhook";
