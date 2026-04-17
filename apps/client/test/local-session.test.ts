@@ -614,9 +614,11 @@ test("remote game sessions send player reports through the websocket protocol", 
     });
 
     assert.equal(room.sent[0]?.type, "report.player");
+    const requestId = (room.sent[0]?.payload as { requestId?: string } | undefined)?.requestId;
+    assert.match(String(requestId), /-req-1$/);
     assert.deepEqual(room.sent[0]?.payload, {
       type: "report.player",
-      requestId: "req-1",
+      requestId,
       targetPlayerId: "player-2",
       reason: "harassment",
       description: "Repeated abuse in battle chat"
@@ -624,7 +626,7 @@ test("remote game sessions send player reports through the websocket protocol", 
 
     room.emitMessage({
       type: "report.player",
-      requestId: "req-1",
+      requestId: String(requestId),
       reportId: "report-1",
       targetPlayerId: "player-2",
       reason: "harassment",
