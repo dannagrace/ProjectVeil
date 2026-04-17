@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   parseLatestSuccessTimestamp,
   parseLatestTimestampFromListing
-} from "../src/backup-storage";
+} from "../src/infra/backup-storage";
 
 test("parseLatestSuccessTimestamp returns the epoch for a marker timestamp field", () => {
   const markerJson = JSON.stringify({

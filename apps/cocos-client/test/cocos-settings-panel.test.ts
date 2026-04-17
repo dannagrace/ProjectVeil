@@ -33,3 +33,14 @@ test("settings round-trip through storage serialization correctly", () => {
     frameRateCap: 60
   });
 });
+
+test("applySettingsUpdate preserves support submission state", () => {
+  const state = createDefaultCocosSettingsView();
+  const updated = applySettingsUpdate(state, {
+    supportSubmittingCategory: "bug",
+    statusMessage: "正在提交..."
+  });
+
+  assert.equal(updated.supportSubmittingCategory, "bug");
+  assert.equal(updated.statusMessage, "正在提交...");
+});

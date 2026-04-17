@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX,
   MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { sendMobilePushNotification } from "../src/mobile-push";
+import { sendMobilePushNotification } from "../src/adapters/mobile-push";
 
 test("sendMobilePushNotification fans out to APNs and FCM for registered devices", async () => {
   const store = new MemoryRoomSnapshotStore();

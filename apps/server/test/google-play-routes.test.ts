@@ -10,7 +10,7 @@ import {
   registerGooglePlayRoutes,
   type GooglePlayBillingRuntimeConfig,
   type GoogleVerifiedProductPurchase
-} from "../src/google-play";
+} from "../src/adapters/google-play";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import type { ShopProduct } from "../src/shop";
 

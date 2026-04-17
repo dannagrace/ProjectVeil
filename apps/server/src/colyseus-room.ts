@@ -82,13 +82,13 @@ import {
   recordWorldActionMessage,
   removeRuntimeRoom
 } from "./observability";
-import { sendMobilePushNotification } from "./mobile-push";
-import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./wechat-subscribe";
+import { sendMobilePushNotification } from "./adapters/mobile-push";
+import { sendWechatSubscribeMessage, type WechatSubscribeTemplateKey } from "./adapters/wechat-subscribe";
 import { resolveFeatureFlagsForPlayer } from "./feature-flags";
 import { captureServerError } from "./error-monitoring";
 import { settleLeaderboardMatch } from "./leaderboard-anti-abuse";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
-import { buildFriendLeaderboard, createGroupChallenge, encodeGroupChallengeToken } from "./wechat-social";
+import { buildFriendLeaderboard, createGroupChallenge, encodeGroupChallengeToken } from "./adapters/wechat-social";
 import { readRuntimeSecret } from "./runtime-secrets";
 
 type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;

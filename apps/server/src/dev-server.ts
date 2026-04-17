@@ -4,7 +4,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
 import { registerAuthRoutes } from "./auth";
 import { getAnalyticsPipelineSnapshot, registerAnalyticsRoutes } from "./analytics";
-import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./backup-storage";
+import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "./infra/backup-storage";
 import { registerClientErrorRoutes } from "./client-error";
 import {
   FileSystemConfigCenterStore,
@@ -41,16 +41,16 @@ import {
   type SnapshotRetentionPolicy
 } from "./persistence";
 import { registerPlayerAccountRoutes } from "./player-accounts";
-import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./redis";
+import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "./infra/redis";
 import { registerRetentionSummaryRoute } from "./retention-summary";
 import { loadRuntimeSecrets } from "./runtime-secrets";
-import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./schema-migrations";
+import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./infra/schema-migrations";
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
 import { registerShopRoutes } from "./shop";
-import { registerApplePaymentRoutes } from "./apple-iap";
-import { registerGooglePlayRoutes } from "./google-play";
-import { registerWechatPayRoutes } from "./wechat-pay";
+import { registerApplePaymentRoutes } from "./adapters/apple-iap";
+import { registerGooglePlayRoutes } from "./adapters/google-play";
+import { registerWechatPayRoutes } from "./adapters/wechat-pay";
 import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
 import { recordRuntimeErrorEvent } from "./observability";
 import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "./battle-replay-retention";

@@ -34,6 +34,7 @@ import {
   claimCocosDailyQuest,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
+  submitCocosSupportTicket,
   type CocosCampaignMissionCompleteResult,
   type CocosCampaignMissionStartResult,
   type CocosCampaignSummary,
@@ -316,6 +317,7 @@ interface VeilRootRuntime {
   purchaseShopProduct: typeof VeilCocosSession.purchaseShopProduct;
   equipShopCosmetic: typeof VeilCocosSession.equipShopCosmetic;
   claimDailyQuest: typeof claimCocosDailyQuest;
+  submitSupportTicket: typeof submitCocosSupportTicket;
 }
 
 const defaultVeilRootRuntime: VeilRootRuntime = {
@@ -354,7 +356,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   loadShopProducts: (...args) => VeilCocosSession.fetchShopProducts(...args),
   purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args),
   equipShopCosmetic: (...args) => VeilCocosSession.equipShopCosmetic(...args),
-  claimDailyQuest: (...args) => claimCocosDailyQuest(...args)
+  claimDailyQuest: (...args) => claimCocosDailyQuest(...args),
+  submitSupportTicket: (...args) => submitCocosSupportTicket(...args)
 };
 
 let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
@@ -499,6 +502,7 @@ export class VeilRoot extends Component {
   private gameplayCampaignPendingAction: "start" | "complete" | null = null;
   private settingsPanel: CocosSettingsPanel | null = null;
   private settingsView: CocosSettingsPanelView = createDefaultCocosSettingsView();
+  private supportTicketSubmittingCategory: "bug" | "payment" | "account" | null = null;
   private activeAccountFlow: CocosAccountLifecycleKind | null = null;
   private registrationDisplayName = "";
   private registrationToken = "";
@@ -1413,6 +1417,9 @@ export class VeilRoot extends Component {
       },
       onOpenPrivacyPolicy: () => {
         this.openSettingsPrivacyPolicy();
+      },
+      onSubmitSupportTicket: (category) => {
+        void this.handleSettingsSupportTicket(category);
       }
     });
 
@@ -5029,6 +5036,67 @@ export class VeilRoot extends Component {
     this.renderView();
   }
 
+  private buildSupportTicketDraft(category: "bug" | "payment" | "account"): string {
+    const headline =
+      category === "bug"
+        ? "Cocos 客户端 BUG 反馈"
+        : category === "payment"
+          ? "支付与商品问题反馈"
+          : "账号与客服问题反馈";
+    const lines = [
+      headline,
+      `玩家：${this.displayName || this.playerId}`,
+      `玩家 ID：${this.playerId}`,
+      `登录方式：${this.authMode === "account" ? this.loginId || "account" : this.authMode}`,
+      `房间：${this.roomId}`,
+      `客户端：Cocos`,
+      "问题描述："
+    ];
+    return lines.join("\n");
+  }
+
+  private async handleSettingsSupportTicket(category: "bug" | "payment" | "account"): Promise<void> {
+    const authSession = this.currentLobbyAuthSession();
+    if (!authSession?.token) {
+      this.updateSettings({ statusMessage: "客服工单需要先登录云端账号或游客会话。" });
+      return;
+    }
+
+    this.supportTicketSubmittingCategory = category;
+    this.updateSettings({
+      supportSubmittingCategory: category,
+      statusMessage: "正在提交客服工单..."
+    });
+
+    try {
+      const result = await resolveVeilRootRuntime().submitSupportTicket(
+        this.remoteUrl,
+        {
+          category,
+          message: this.buildSupportTicketDraft(category),
+          priority: category === "payment" ? "high" : "normal"
+        },
+        {
+          authSession,
+          storage: this.readWebStorage()
+        }
+      );
+      const successMessage = `客服工单已提交：${result.ticket.ticketId}`;
+      this.lobbyStatus = successMessage;
+      this.updateSettings({ statusMessage: successMessage });
+    } catch (error) {
+      this.updateSettings({
+        statusMessage: error instanceof Error ? error.message : "客服工单提交失败。"
+      });
+    } finally {
+      this.supportTicketSubmittingCategory = null;
+      this.settingsView = applySettingsUpdate(this.settingsView, {
+        supportSubmittingCategory: null
+      });
+      this.renderView();
+    }
+  }
+
   private async logoutAuthSession(): Promise<void> {
     this.stopMatchmakingPolling();
     this.updateMatchmakingStatus({ status: "idle" });
@@ -6235,6 +6303,7 @@ export class VeilRoot extends Component {
       loginId: this.loginId,
       authMode: this.authMode,
       privacyConsentAccepted: this.privacyConsentAccepted,
+      supportSubmittingCategory: this.supportTicketSubmittingCategory,
       privacyPolicyUrl: resolveCocosPrivacyPolicyUrl(globalThis.location)
     });
   }

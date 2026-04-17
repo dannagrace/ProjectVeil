@@ -10,7 +10,7 @@ import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
 import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
-import { resetAccountTokenDeliveryState } from "../src/account-token-delivery";
+import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
 import {
   configureAnalyticsRuntimeDependencies,
   flushAnalyticsEventsForTest,
@@ -27,7 +27,7 @@ import {
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import { resetWechatSessionKeyCache } from "../src/wechat-session-key";
+import { resetWechatSessionKeyCache } from "../src/adapters/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,

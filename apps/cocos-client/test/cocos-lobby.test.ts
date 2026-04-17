@@ -26,6 +26,7 @@ import {
   rememberPreferredCocosDisplayName,
   resolveCocosApiBaseUrl,
   resolveCocosConfigCenterUrl,
+  submitCocosSupportTicket,
   syncCurrentCocosAuthSession
 } from "../assets/scripts/cocos-lobby.ts";
 
@@ -1077,6 +1078,58 @@ test("mailbox claim helpers target the authenticated /me endpoints", async () =>
   assert.deepEqual(requestedUrls, [
     "http://127.0.0.1:2567/api/player-accounts/me/mailbox/comp-1/claim",
     "http://127.0.0.1:2567/api/player-accounts/me/mailbox/claim-all"
+  ]);
+});
+
+test("submitCocosSupportTicket targets the authenticated player support route", async () => {
+  const requestedUrls: string[] = [];
+  const authSession = {
+    token: "account.token",
+    playerId: "account-player",
+    displayName: "暮潮守望",
+    authMode: "account" as const,
+    source: "remote" as const
+  };
+
+  const payload = await submitCocosSupportTicket(
+    "http://127.0.0.1:2567",
+    {
+      category: "bug",
+      message: "设置页按钮重叠。",
+      priority: "high"
+    },
+    {
+      authSession,
+      fetchImpl: async (input) => {
+        requestedUrls.push(String(input));
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            ticket: {
+              ticketId: "ticket-1",
+              playerId: "account-player",
+              category: "bug",
+              message: "设置页按钮重叠。",
+              priority: "high",
+              status: "open",
+              createdAt: "2026-04-17T12:00:00.000Z",
+              updatedAt: "2026-04-17T12:00:00.000Z"
+            }
+          }),
+          {
+            status: 202,
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+      }
+    }
+  );
+
+  assert.equal(payload.accepted, true);
+  assert.equal(payload.ticket.ticketId, "ticket-1");
+  assert.equal(payload.ticket.priority, "high");
+  assert.deepEqual(requestedUrls, [
+    "http://127.0.0.1:2567/api/player-accounts/me/support-tickets"
   ]);
 });
 

@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX,
   MYSQL_GUILD_MESSAGE_GUILD_CREATED_INDEX,

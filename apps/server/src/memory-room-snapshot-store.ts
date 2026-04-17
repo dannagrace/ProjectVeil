@@ -71,6 +71,10 @@ import {
   type PlayerReportListOptions,
   type PlayerReportRecord,
   type PlayerReportResolveInput,
+  type SupportTicketCreateInput,
+  type SupportTicketListOptions,
+  type SupportTicketRecord,
+  type SupportTicketResolveInput,
   type PlayerHeroArchiveSnapshot,
   type PlayerEventHistoryQuery,
   type PlayerEventHistorySnapshot,
@@ -251,6 +255,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly playerQuestStates = new Map<string, PlayerQuestState>();
   private readonly shopPurchases = new Map<string, ShopPurchaseResult>();
   private readonly reports = new Map<string, PlayerReportRecord>();
+  private readonly supportTickets = new Map<string, SupportTicketRecord>();
   private readonly seasons = new Map<string, SeasonSnapshot>();
   private readonly leaderboardSeasonArchives = new Map<string, LeaderboardSeasonArchiveEntry[]>();
   private readonly seasonRewardLog = new Map<string, { gems: number; badge: string; distributedAt: string }>();
@@ -743,6 +748,59 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.reportId.localeCompare(right.reportId))
       .slice(0, safeLimit)
       .map((report) => structuredClone(report));
+  }
+
+  async loadSupportTicket(ticketId: string): Promise<SupportTicketRecord | null> {
+    const normalizedTicketId = ticketId.trim();
+    if (!normalizedTicketId) {
+      throw new Error("ticketId must not be empty");
+    }
+
+    return structuredClone(this.supportTickets.get(normalizedTicketId) ?? null);
+  }
+
+  async createSupportTicket(input: SupportTicketCreateInput): Promise<SupportTicketRecord> {
+    const playerId = normalizePlayerId(input.playerId);
+    const message = input.message.trim();
+    if (!message) {
+      throw new Error("support ticket message must not be empty");
+    }
+
+    const normalizedCategory = input.category;
+    if (normalizedCategory !== "bug" && normalizedCategory !== "payment" && normalizedCategory !== "account" && normalizedCategory !== "other") {
+      throw new Error("support ticket category must be bug, payment, account, or other");
+    }
+
+    const normalizedPriority = input.priority ?? "normal";
+    if (normalizedPriority !== "normal" && normalizedPriority !== "high" && normalizedPriority !== "urgent") {
+      throw new Error("support ticket priority must be normal, high, or urgent");
+    }
+
+    const createdAt = new Date().toISOString();
+    const ticket: SupportTicketRecord = {
+      ticketId: randomUUID(),
+      playerId,
+      category: normalizedCategory,
+      message: message.slice(0, 4_000),
+      ...(input.attachmentsRef?.trim() ? { attachmentsRef: input.attachmentsRef.trim().slice(0, 512) } : {}),
+      priority: normalizedPriority,
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    };
+    this.supportTickets.set(ticket.ticketId, structuredClone(ticket));
+    return structuredClone(ticket);
+  }
+
+  async listSupportTickets(options: SupportTicketListOptions = {}): Promise<SupportTicketRecord[]> {
+    const safeLimit = Math.max(1, Math.floor(options.limit ?? 50));
+    return Array.from(this.supportTickets.values())
+      .filter((ticket) => !options.status || ticket.status === options.status)
+      .filter((ticket) => !options.playerId || ticket.playerId === options.playerId)
+      .filter((ticket) => !options.category || ticket.category === options.category)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.ticketId.localeCompare(right.ticketId))
+      .slice(0, safeLimit)
+      .map((ticket) => structuredClone(ticket));
   }
 
   async loadPlayerAccountAuthByLoginId(loginId: string): Promise<PlayerAccountAuthSnapshot | null> {
@@ -2103,6 +2161,11 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     delete nextAccount.wechatMiniGameUnionId;
     delete nextAccount.wechatMiniGameBoundAt;
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    for (const [ticketId, ticket] of this.supportTickets.entries()) {
+      if (ticket.playerId === normalizedPlayerId) {
+        this.supportTickets.delete(ticketId);
+      }
+    }
     return cloneAccount(nextAccount);
   }
 
@@ -2123,6 +2186,39 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
       resolvedAt: new Date().toISOString()
     };
     this.reports.set(normalizedReportId, structuredClone(next));
+    return structuredClone(next);
+  }
+
+  async resolveSupportTicket(ticketId: string, input: SupportTicketResolveInput): Promise<SupportTicketRecord | null> {
+    const normalizedTicketId = ticketId.trim();
+    if (!normalizedTicketId) {
+      throw new Error("ticketId must not be empty");
+    }
+
+    const existing = this.supportTickets.get(normalizedTicketId);
+    if (!existing) {
+      return null;
+    }
+
+    if (input.status !== "resolved" && input.status !== "dismissed") {
+      throw new Error("resolved support ticket status must not be open");
+    }
+
+    const resolution = input.resolution.trim();
+    if (!resolution) {
+      throw new Error("support ticket resolution must not be empty");
+    }
+
+    const resolvedAt = new Date().toISOString();
+    const next: SupportTicketRecord = {
+      ...existing,
+      status: input.status,
+      handlerId: normalizePlayerId(input.handlerId),
+      resolution: resolution.slice(0, 2_000),
+      resolvedAt,
+      updatedAt: resolvedAt
+    };
+    this.supportTickets.set(normalizedTicketId, structuredClone(next));
     return structuredClone(next);
   }
 
