@@ -48,6 +48,11 @@ export interface BuildCocosShopPanelInput {
   products: ShopProduct[];
   gemBalance: number;
   pendingProductId: string | null;
+  experiments?: Array<{
+    experimentKey: string;
+    variant: string;
+    assigned?: boolean;
+  }>;
   ownedCosmeticIds?: string[];
   equippedCosmetics?: {
     heroSkinId?: string;
@@ -164,6 +169,10 @@ function buildFeaturedCopy(product: ShopProduct | null, input: BuildCocosShopPan
     };
   }
 
+  const shopHeadlineExperiment = (input.experiments ?? []).find(
+    (experiment) => experiment.experimentKey === "shop_headline_2026_05" && experiment.assigned !== false
+  );
+
   const priceLabel = formatPriceLabel(product);
   if (product.type === "season_pass_premium") {
     return {
@@ -187,8 +196,14 @@ function buildFeaturedCopy(product: ShopProduct | null, input: BuildCocosShopPan
 
   return {
     productId: product.productId,
-    title: `补给推荐 · ${product.name.trim() || product.productId}`,
-    summary: `${formatGrantLabel(product)} · ${priceLabel}`,
+    title:
+      shopHeadlineExperiment?.variant === "value"
+        ? `超值补给 · ${product.name.trim() || product.productId}`
+        : `补给推荐 · ${product.name.trim() || product.productId}`,
+    summary:
+      shopHeadlineExperiment?.variant === "value"
+        ? `${formatGrantLabel(product)} · ${priceLabel} · 本期更适合连续推进主线与活动追逐`
+        : `${formatGrantLabel(product)} · ${priceLabel}`,
     footnote:
       Math.max(0, Math.floor(product.wechatPriceFen ?? 0)) > 0
         ? "这是当前最直接的付费补给位，适合准备连续推进主线、地城或活动追逐时先补一档。"
