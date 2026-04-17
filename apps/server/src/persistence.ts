@@ -1235,6 +1235,9 @@ export type AdminAuditAction =
   | "player_unbanned"
   | "report_resolved"
   | "support_ticket_resolved"
+  | "risk_review_warned"
+  | "risk_review_cleared"
+  | "risk_review_banned"
   | "reengagement_sent"
   | "reengagement_opened"
   | "reengagement_returned";

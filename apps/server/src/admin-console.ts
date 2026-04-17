@@ -32,6 +32,7 @@ import {
   type LaunchMaintenanceModeRecord
 } from "./launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "./observability";
+import { registerRiskReviewAdminRoutes } from "./risk-review-admin";
 import { registerReengagementAdminRoutes } from "./reengagement-admin";
 import { readRuntimeSecret } from "./runtime-secrets";
 
@@ -1148,6 +1149,7 @@ export function registerAdminRoutes(
   _gameServer?: unknown
 ): void {
   const guildService = new GuildService(store);
+  registerRiskReviewAdminRoutes(app, store);
   registerReengagementAdminRoutes(app, store);
   app.use((request, response, next) => {
     if (request.method === "OPTIONS") {
