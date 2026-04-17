@@ -121,6 +121,14 @@ export const ANALYTICS_EVENT_CATALOG = {
     currency: "wechat_fen",
     price: 600
   }),
+  purchase_attempt: defineAnalyticsEvent("purchase_attempt", 1, "Player attempted a shop purchase from the client.", {
+    roomId: "room-contract",
+    productId: "gem_pack_small",
+    productType: "gem_pack",
+    currency: "wechat_fen",
+    price: 600,
+    surface: "lobby"
+  }),
   purchase_completed: defineAnalyticsEvent(
     "purchase_completed",
     1,

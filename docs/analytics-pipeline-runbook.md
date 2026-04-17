@@ -83,6 +83,7 @@ Notes:
 | Event | Payload fields | Notes |
 | --- | --- | --- |
 | `session_end` | `roomId`, `disconnectReason`, `sessionDurationMs` | Emitted when a room transport closes or the room disposes. |
+| `purchase_attempt` | `productId`, `productType`, `currency`, `price`, `surface` | Emitted when the client presses a monetized CTA and enters the purchase funnel. |
 | `purchase_completed` | `purchaseId`, `productId`, `paymentMethod`, `quantity`, `totalPrice` | Emitted only after rewards are granted successfully. |
 | `purchase_failed` | `purchaseId`, `productId`, `paymentMethod`, `failureReason`, `orderStatus` | Emitted when a purchase cannot grant rewards or fails before completion. |
 | `tutorial_step` | `stepId`, `status` | Tutorial completion remains `tutorial_step` with `stepId = tutorial_completed`; no standalone `tutorial_completed` event is introduced in this change. |
@@ -226,3 +227,20 @@ If delivery health degrades:
 2. Check `/metrics` for `veil_analytics_flush_failures_total`, `veil_analytics_events_buffered`, and whether `session_start` / `payment_fraud_signal` counters are still moving.
 3. If the sink is `stdout` unexpectedly, treat that as a config drift incident and restore `ANALYTICS_SINK=http` plus `ANALYTICS_ENDPOINT`.
 4. If the gateway is down, keep the runtime buffer under review, pause dashboards that assume freshness, and escalate via the alerts in [`docs/alerting-rules.yml`](/home/gpt/project/ProjectVeil/docs/alerting-rules.yml).
+
+## Daily live-ops digest
+
+When growth / monetization needs a concise business-facing summary, generate a daily digest from the curated KPI export:
+
+```bash
+node --import ./node_modules/tsx/dist/loader.mjs ./scripts/live-ops-daily-digest.ts \
+  --input artifacts/analytics/live-ops-daily-digest-input.json \
+  --output artifacts/analytics/live-ops-daily-digest.json \
+  --markdown-output artifacts/analytics/live-ops-daily-digest.md
+```
+
+The digest answers three quick questions:
+
+1. Did DAU and retention hold?
+2. Did the purchase funnel convert?
+3. Which SKU carried the day?
