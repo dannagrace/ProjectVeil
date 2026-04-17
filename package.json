@@ -53,6 +53,7 @@
     "stress:rooms": "node --import tsx ./scripts/stress-concurrent-rooms.ts",
     "stress:rooms:baseline": "node --import tsx ./scripts/stress-concurrent-rooms.ts --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150 --artifact-path=artifacts/release-readiness/stress-rooms-runtime-metrics.json",
     "stress:rooms:capacity-plan": "node --import tsx ./scripts/capacity-planning-report.ts",
+    "ops:hpa-scale-drill": "node --import tsx ./scripts/hpa-scale-drill.ts",
     "stress:rooms:reconnect-soak": "node --import tsx ./scripts/stress-concurrent-rooms.ts --scenarios=reconnect_soak --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150 --reconnect-cycles=8",
     "perf:runtime:compare": "node --import tsx ./scripts/compare-runtime-regression.ts --baseline ./configs/runtime-regression-baseline.json --artifact ./artifacts/release-readiness/stress-rooms-runtime-metrics.json --output ./artifacts/release-readiness/runtime-regression-report.json",
     "validate:battle": "node --import tsx ./scripts/validate-battle-balance.ts",
