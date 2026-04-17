@@ -129,8 +129,23 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly playerIdByWechatOpenId = new Map<string, string>();
   private readonly eventHistoryByPlayerId = new Map<string, PlayerAccountSnapshot["recentEventLog"]>();
   private readonly playerQuestStates = new Map<string, PlayerQuestState>();
+  private readonly supportTickets = new Map<string, Array<{
+    ticketId: string;
+    playerId: string;
+    category: "bug" | "payment" | "account" | "other";
+    message: string;
+    attachmentsRef?: string;
+    priority: "normal" | "high" | "urgent";
+    status: "open" | "resolved" | "dismissed";
+    handlerId?: string;
+    resolution?: string;
+    createdAt: string;
+    resolvedAt?: string;
+    updatedAt: string;
+  }>>();
   private readonly referrals = new Set<string>();
   private nextNameHistoryId = 1;
+  private nextSupportTicketId = 1;
 
   private normalizeName(displayName: string): string {
     return displayName.normalize("NFKC").toLowerCase().replace(/[\s\p{P}\p{S}_]+/gu, "");
@@ -505,6 +520,47 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
       updatedAt: now.toISOString()
     });
     return result;
+  }
+
+  async createSupportTicket(input: {
+    playerId: string;
+    category: "bug" | "payment" | "account" | "other";
+    message: string;
+    attachmentsRef?: string;
+    priority?: "normal" | "high" | "urgent";
+  }) {
+    const now = new Date().toISOString();
+    const ticket = {
+      ticketId: `ticket-${this.nextSupportTicketId++}`,
+      playerId: input.playerId.trim(),
+      category: input.category,
+      message: input.message.trim(),
+      ...(input.attachmentsRef?.trim() ? { attachmentsRef: input.attachmentsRef.trim() } : {}),
+      priority: input.priority ?? "normal",
+      status: "open" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+    const list = this.supportTickets.get(ticket.playerId) ?? [];
+    list.unshift(ticket);
+    this.supportTickets.set(ticket.playerId, list);
+    return structuredClone(ticket);
+  }
+
+  async listSupportTickets(options: {
+    playerId?: string;
+    status?: "open" | "resolved" | "dismissed";
+    category?: "bug" | "payment" | "account" | "other";
+    limit?: number;
+  } = {}) {
+    const items = options.playerId
+      ? this.supportTickets.get(options.playerId.trim()) ?? []
+      : Array.from(this.supportTickets.values()).flat();
+    return items
+      .filter((ticket) => !options.status || ticket.status === options.status)
+      .filter((ticket) => !options.category || ticket.category === options.category)
+      .slice(0, Math.max(1, Math.floor(options.limit ?? 20)))
+      .map((ticket) => structuredClone(ticket));
   }
 
   async listPlayerBanHistory(
@@ -4238,6 +4294,62 @@ test("admin mailbox delivery route skips duplicate message ids for the same play
   assert.equal(secondResponse.status, 200);
   assert.equal(secondPayload.delivered, 0);
   assert.equal(secondPayload.skipped, 1);
+});
+
+test("support ticket routes accept authenticated player submissions and list the created ticket", async (t) => {
+  const port = 44980 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "support-player",
+    displayName: "Support Player"
+  });
+  const server = await startAccountRouteServer(port, store);
+  const session = issueAccountAuthSession({
+    playerId: "support-player",
+    displayName: "Support Player",
+    loginId: "support-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const createResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/support-tickets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      category: "bug",
+      message: "设置页按钮在低分辨率下重叠。",
+      priority: "high"
+    })
+  });
+  const createPayload = (await createResponse.json()) as {
+    accepted: boolean;
+    ticket: { ticketId: string; category: string; status: string; priority: string };
+  };
+
+  assert.equal(createResponse.status, 202);
+  assert.equal(createPayload.accepted, true);
+  assert.equal(createPayload.ticket.category, "bug");
+  assert.equal(createPayload.ticket.status, "open");
+  assert.equal(createPayload.ticket.priority, "high");
+
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/support-tickets`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const listPayload = (await listResponse.json()) as {
+    items: Array<{ ticketId: string; category: string; status: string }>;
+  };
+
+  assert.equal(listResponse.status, 200);
+  assert.equal(listPayload.items.length, 1);
+  assert.equal(listPayload.items[0]?.ticketId, createPayload.ticket.ticketId);
+  assert.equal(listPayload.items[0]?.status, "open");
 });
 
 test("admin player name-history routes expose rename traces and active reservations", async (t) => {

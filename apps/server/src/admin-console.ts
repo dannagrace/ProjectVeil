@@ -9,7 +9,10 @@ import type {
   PlayerPurchaseHistorySnapshot,
   PlayerReportResolveInput,
   PlayerReportStatus,
-  RoomSnapshotStore
+  RoomSnapshotStore,
+  SupportTicketCategory,
+  SupportTicketResolveInput,
+  SupportTicketStatus
 } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
 import { recordLeaderboardAbuseAlert } from "./observability";
@@ -146,6 +149,13 @@ function hasPlayerReportStore(
 ): store is RoomSnapshotStore &
   Required<Pick<RoomSnapshotStore, "createPlayerReport" | "listPlayerReports" | "resolvePlayerReport">> {
   return Boolean(store?.createPlayerReport && store.listPlayerReports && store.resolvePlayerReport);
+}
+
+function hasSupportTicketStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "createSupportTicket" | "listSupportTickets" | "resolveSupportTicket">> {
+  return Boolean(store?.createSupportTicket && store.listSupportTickets && store.resolveSupportTicket);
 }
 
 function hasGuildModerationStore(
@@ -652,6 +662,54 @@ function parseResolveReportBody(value: unknown): PlayerReportResolveInput & { ap
 function readReportStatusFilter(request: IncomingMessage): PlayerReportStatus {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   return parseReportStatus(url.searchParams.get("status"), "pending");
+}
+
+function parseSupportTicketStatus(
+  value: string | null | undefined,
+  fallback: SupportTicketStatus = "open"
+): SupportTicketStatus {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (normalized === "open" || normalized === "resolved" || normalized === "dismissed") {
+    return normalized;
+  }
+
+  throw new InvalidAdminPayloadError('"status" must be "open", "resolved", or "dismissed"');
+}
+
+function parseSupportTicketCategory(value: string | null | undefined): SupportTicketCategory | undefined {
+  if (!value || value.trim() === "") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (normalized === "bug" || normalized === "payment" || normalized === "account" || normalized === "other") {
+    return normalized;
+  }
+
+  throw new InvalidAdminPayloadError('"category" must be "bug", "payment", "account", or "other"');
+}
+
+function parseResolveSupportTicketBody(value: unknown): SupportTicketResolveInput {
+  const payload = readRequiredObjectBody(value);
+  const status = parseSupportTicketStatus(readOptionalTrimmedString(payload, "status"), "open");
+  if (status === "open") {
+    throw new InvalidAdminPayloadError('"status" must be "resolved" or "dismissed"');
+  }
+
+  const resolution = readOptionalTrimmedString(payload, "resolution");
+  if (!resolution) {
+    throw new InvalidAdminPayloadError('"resolution" must be a non-empty string');
+  }
+
+  return {
+    status,
+    handlerId: "support:pending",
+    resolution
+  };
 }
 
 function requireSupportRole(response: ServerResponse, request: IncomingMessage, allowedRoles: AdminRole[]): AdminRole | null {
@@ -1215,6 +1273,81 @@ export function registerAdminRoutes(
       }
 
       sendJson(response, 200, { ok: true, report, disconnectedClients });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/support-tickets", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!hasSupportTicketStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const status = parseSupportTicketStatus(url.searchParams.get("status"), "open");
+      const playerId = url.searchParams.get("playerId")?.trim() || undefined;
+      const category = parseSupportTicketCategory(url.searchParams.get("category"));
+      const items = await store.listSupportTickets({
+        status,
+        ...(playerId ? { playerId } : {}),
+        ...(category ? { category } : {}),
+        limit: readLimit(request, 50)
+      });
+      sendJson(response, 200, { items, status });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/support-tickets/:id/resolve", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasSupportTicketStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const ticketId = readRequiredParam(request, "id");
+      const input = parseResolveSupportTicketBody(await readJsonBody(request));
+      const ticket = await store.resolveSupportTicket(ticketId, {
+        ...input,
+        handlerId: `${role}:admin-console`
+      });
+      if (!ticket) {
+        sendJson(response, 404, { error: "Support ticket not found" });
+        return;
+      }
+
+      let mailboxDelivered = false;
+      if (store.deliverPlayerMailbox) {
+        const delivery = await store.deliverPlayerMailbox({
+          playerIds: [ticket.playerId],
+          message: {
+            id: `support-ticket:${ticket.ticketId}:${ticket.status}`,
+            kind: "system",
+            title: ticket.status === "resolved" ? "客服工单已处理" : "客服工单已关闭",
+            body: `${ticket.category} 工单处理结果：${ticket.resolution ?? "已更新，请稍后查看。"}`,
+            sentAt: new Date().toISOString()
+          }
+        });
+        mailboxDelivered = delivery.deliveredPlayerIds.includes(ticket.playerId);
+      }
+
+      sendJson(response, 200, { ok: true, ticket, mailboxDelivered });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
         sendJson(response, 413, { error: (error as Error).message });

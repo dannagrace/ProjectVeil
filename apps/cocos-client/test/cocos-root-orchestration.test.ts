@@ -774,6 +774,59 @@ test("VeilRoot settings logout routes through the auth revoke path", async () =>
   assert.equal(root.authMode, "guest");
 });
 
+test("VeilRoot settings support ticket routes through the authenticated account API", async () => {
+  const storage = createMemoryStorage();
+  (sys as unknown as { localStorage: Storage }).localStorage = storage;
+
+  const root = createVeilRootHarness();
+  root.remoteUrl = "http://127.0.0.1:2567";
+  root.playerId = "player-settings";
+  root.displayName = "雾港旅人";
+  root.authToken = "signed.token";
+  root.authMode = "account";
+  root.loginId = "veil-ranger";
+  root.settingsView = {
+    ...root.settingsView,
+    open: true
+  };
+
+  const supportCalls: Array<{ remoteUrl: string; category: string; playerId: string }> = [];
+  installVeilRootRuntime({
+    submitSupportTicket: async (remoteUrl, input, options) => {
+      supportCalls.push({
+        remoteUrl,
+        category: input.category,
+        playerId: options.authSession.playerId
+      });
+      return {
+        accepted: true,
+        ticket: {
+          ticketId: "ticket-1",
+          playerId: options.authSession.playerId,
+          category: input.category,
+          message: input.message,
+          priority: input.priority ?? "normal",
+          status: "open",
+          createdAt: "2026-04-17T12:00:00.000Z",
+          updatedAt: "2026-04-17T12:00:00.000Z"
+        }
+      };
+    }
+  });
+
+  await root.handleSettingsSupportTicket("bug");
+
+  assert.deepEqual(supportCalls, [
+    {
+      remoteUrl: "http://127.0.0.1:2567",
+      category: "bug",
+      playerId: "player-settings"
+    }
+  ]);
+  assert.equal(root.supportTicketSubmittingCategory, null);
+  assert.match(String(root.settingsView.statusMessage), /ticket-1/);
+});
+
 test("VeilRoot emits primary-client telemetry for progression, inventory, and combat checkpoints", async () => {
   const root = createVeilRootHarness();
   root.roomId = "room-telemetry";
