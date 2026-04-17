@@ -1,0 +1,61 @@
+{
+  "title": "Project Veil Cost Overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "tags": ["launch-p3", "ops", "cost"],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "label": "Namespace",
+        "datasource": "Prometheus",
+        "query": "label_values(veil_infra_estimated_daily_cost_usd, namespace)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Estimated Daily Cost (USD)",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 5 },
+      "targets": [
+        {
+          "expr": "sum(veil_infra_estimated_daily_cost_usd{namespace=~\"$namespace\"})",
+          "legendFormat": "daily_cost"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost By Deployment",
+      "gridPos": { "x": 8, "y": 0, "w": 16, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (deployment) (veil_infra_estimated_daily_cost_usd{namespace=~\"$namespace\"})",
+          "legendFormat": "{{deployment}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Replica Pressure vs Active Rooms",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(veil_room_active_total{namespace=~\"$namespace\"})",
+          "legendFormat": "active_rooms"
+        },
+        {
+          "expr": "sum(kube_deployment_status_replicas{namespace=~\"$namespace\", deployment=\"project-veil-server\"})",
+          "legendFormat": "server_replicas"
+        }
+      ]
+    }
+  ]
+}
