@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEventLogEntries, type EventLogEntry, type ResourceLedger, type ServerMessage, type WorldState } from "../../../packages/shared/src/index";
 import { GuildService } from "./guilds";
+import { getRuntimeKillSwitchSnapshot } from "./feature-flags";
 import type {
   PlayerCompensationCreateInput,
   PlayerCompensationRecord,
@@ -1013,6 +1015,18 @@ export function registerAdminRoutes(
     }
   });
 
+  app.get("/admin/kill-switches", async (_request, response) => {
+    try {
+      const html = await readFile(join(process.cwd(), "apps/client/admin-kill-switches.html"), "utf8");
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+      response.end(html);
+    } catch (error) {
+      response.statusCode = 500;
+      response.end("Failed to load admin-kill-switches.html");
+    }
+  });
+
   app.get("/api/admin/overview", async (request, response) => {
     if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
@@ -1023,6 +1037,17 @@ export function registerAdminRoutes(
       activePlayers: lobbyRooms.reduce((sum, r) => sum + r.connectedPlayers, 0),
       nodeVersion: process.version,
       memoryUsage: process.memoryUsage()
+    });
+  });
+
+  app.get("/api/admin/runtime/kill-switches", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+    const snapshot = getRuntimeKillSwitchSnapshot();
+    sendJson(response, 200, {
+      serverTime: new Date().toISOString(),
+      clientMinVersion: snapshot.clientMinVersion,
+      killSwitches: snapshot.killSwitches
     });
   });
 

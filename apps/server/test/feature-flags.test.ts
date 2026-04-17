@@ -3,9 +3,11 @@ import test, { type TestContext } from "node:test";
 import {
   clearCachedFeatureFlagConfig,
   configureFeatureFlagRuntimeDependencies,
+  getRuntimeKillSwitchSnapshot,
   getFeatureFlagRuntimeSnapshot,
   loadFeatureFlagConfig,
   resetFeatureFlagRuntimeDependencies,
+  resolveMinimumSupportedClientVersion,
   resolveFeatureEntitlementsForPlayer,
   resolveFeatureFlagsForPlayer
 } from "../src/feature-flags";
@@ -217,6 +219,62 @@ test("resolveFeatureFlagsForPlayer leaves flags unchanged when VEIL_DAILY_QUESTS
 
   const flags = resolveFeatureFlagsForPlayer("player-1", {});
   assert.equal(flags.quest_system_enabled, true, "without legacy override, value from config should be used");
+});
+
+test("resolveMinimumSupportedClientVersion prefers channel-specific runtime gate values", (t) => {
+  withCleanState(t);
+  configureFeatureFlagRuntimeDependencies({
+    readFileSync: () =>
+      JSON.stringify({
+        ...DEFAULT_FEATURE_FLAG_CONFIG,
+        runtimeGates: {
+          clientMinVersion: {
+            defaultVersion: "1.0.0",
+            channels: {
+              wechat: "1.0.7",
+              h5: "1.0.2"
+            }
+          }
+        }
+      })
+  });
+
+  assert.equal(resolveMinimumSupportedClientVersion("wechat", {}), "1.0.7");
+  assert.equal(resolveMinimumSupportedClientVersion("h5", {}), "1.0.2");
+  assert.equal(resolveMinimumSupportedClientVersion(null, {}), "1.0.0");
+});
+
+test("getRuntimeKillSwitchSnapshot exposes kill switches and active version overrides", (t) => {
+  withCleanState(t);
+  configureFeatureFlagRuntimeDependencies({
+    readFileSync: () =>
+      JSON.stringify({
+        ...DEFAULT_FEATURE_FLAG_CONFIG,
+        runtimeGates: {
+          clientMinVersion: {
+            defaultVersion: "1.0.1",
+            channels: {
+              wechat: "1.0.8"
+            },
+            upgradeMessage: "force upgrade"
+          },
+          killSwitches: {
+            wechat_matchmaking: {
+              enabled: true,
+              label: "微信匹配入口",
+              channels: ["wechat"]
+            }
+          }
+        }
+      })
+  });
+
+  const snapshot = getRuntimeKillSwitchSnapshot({});
+  assert.equal(snapshot.clientMinVersion.activeVersion, "1.0.1");
+  assert.equal(snapshot.clientMinVersion.channels.wechat, "1.0.8");
+  assert.equal(snapshot.clientMinVersion.upgradeMessage, "force upgrade");
+  assert.equal(snapshot.killSwitches[0]?.key, "seasonal_live_ops");
+  assert.equal(snapshot.killSwitches.find((entry) => entry.key === "wechat_matchmaking")?.enabled, true);
 });
 
 test("resolveFeatureEntitlementsForPlayer applies VEIL_DAILY_QUESTS_ENABLED legacy override", (t) => {

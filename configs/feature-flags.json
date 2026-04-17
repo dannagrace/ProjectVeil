@@ -88,6 +88,36 @@
       }
     ]
   },
+  "runtimeGates": {
+    "clientMinVersion": {
+      "defaultVersion": "0.0.0",
+      "channels": {
+        "wechat": "1.0.3",
+        "h5": "0.0.0"
+      },
+      "upgradeMessage": "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。"
+    },
+    "killSwitches": {
+      "wechat_matchmaking": {
+        "enabled": false,
+        "label": "微信匹配入口",
+        "summary": "紧急停用微信侧排位与匹配入口。",
+        "channels": ["wechat"]
+      },
+      "wechat_payments": {
+        "enabled": false,
+        "label": "微信支付入口",
+        "summary": "紧急停用微信支付链路，保留商店浏览。",
+        "channels": ["wechat"]
+      },
+      "seasonal_live_ops": {
+        "enabled": false,
+        "label": "活动发布入口",
+        "summary": "暂停限时活动发布与时间化运营调度。",
+        "channels": ["wechat", "h5"]
+      }
+    }
+  },
   "experiments": {
     "account_portal_copy": {
       "name": "Account Portal Upgrade Copy",

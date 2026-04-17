@@ -685,10 +685,7 @@ export class VeilRoot extends Component {
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
       if (error instanceof Error && error.message === "upgrade_required") {
-        this.upgradeRequired = true;
-        this.showLobby = true;
-        this.lastUpdate = null;
-        this.lobbyStatus = failureMessage;
+        await this.handleForcedUpgrade(failureMessage);
       }
       if (this.session) {
         await this.session.dispose().catch(() => undefined);
@@ -711,6 +708,11 @@ export class VeilRoot extends Component {
     } catch (error) {
       this.maybeReportSessionRuntimeError(error, "refresh_snapshot");
       const failureMessage = this.describeSessionError(error, "Snapshot refresh failed.");
+      if (error instanceof Error && error.message === "upgrade_required") {
+        await this.handleForcedUpgrade(failureMessage);
+        this.renderView();
+        return;
+      }
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
       this.renderView();
@@ -744,6 +746,10 @@ export class VeilRoot extends Component {
     } catch (error) {
       this.maybeReportSessionRuntimeError(error, "end_day");
       const failureMessage = this.describeSessionError(error, "推进天数失败。");
+      if (error instanceof Error && error.message === "upgrade_required") {
+        await this.handleForcedUpgrade(failureMessage);
+        return;
+      }
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
     } finally {
@@ -791,6 +797,10 @@ export class VeilRoot extends Component {
       });
     } catch (error) {
       const failureMessage = this.describeSessionError(error, "技能学习失败。");
+      if (error instanceof Error && error.message === "upgrade_required") {
+        await this.handleForcedUpgrade(failureMessage);
+        return;
+      }
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
     } finally {
@@ -3174,6 +3184,10 @@ export class VeilRoot extends Component {
       this.surrenderStatusMessage = "认输已提交。";
     } catch (error) {
       const failureMessage = this.describeSessionError(error, "认输失败。");
+      if (error instanceof Error && error.message === "upgrade_required") {
+        await this.handleForcedUpgrade(failureMessage);
+        return;
+      }
       this.surrenderStatusMessage = failureMessage;
       this.predictionStatus = failureMessage;
       this.pushLog(failureMessage);
@@ -4313,6 +4327,10 @@ export class VeilRoot extends Component {
       this.roomId = previousRoomId;
       this.seed = previousSeed;
       const failureMessage = this.describeSessionError(error, "开启新一局失败。");
+      if (error instanceof Error && error.message === "upgrade_required") {
+        await this.handleForcedUpgrade(failureMessage);
+        return;
+      }
       this.pushLog(failureMessage);
       this.predictionStatus = failureMessage;
       this.renderView();
@@ -5616,6 +5634,19 @@ export class VeilRoot extends Component {
     this.logLines = [logLine];
   }
 
+  private async handleForcedUpgrade(failureMessage: string): Promise<void> {
+    this.upgradeRequired = true;
+    this.showLobby = true;
+    this.lobbyStatus = failureMessage;
+    this.resetSessionViewport(failureMessage);
+    this.predictionStatus = failureMessage;
+    const currentSession = this.session;
+    this.session = null;
+    if (currentSession) {
+      await currentSession.dispose().catch(() => undefined);
+    }
+  }
+
   private describeSessionError(error: unknown, fallback: string): string {
     if (!(error instanceof Error)) {
       return fallback;
@@ -5692,6 +5723,7 @@ export class VeilRoot extends Component {
       getDisplayName: () => this.displayName || this.playerId,
       getAuthToken: () => this.authToken,
       getClientVersion: () => resolveCocosClientVersion(),
+      getClientChannel: () => (this.runtimePlatform === "wechat-game" ? "wechat" : "h5"),
       onPushUpdate: (update) => {
         if (!this.isActiveSessionEpoch(epoch)) {
           return;

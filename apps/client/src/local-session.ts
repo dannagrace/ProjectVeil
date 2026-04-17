@@ -703,6 +703,7 @@ class RemoteGameSession implements GameSession {
         requestId: this.nextRequestId(),
         roomId: this.roomId,
         playerId: this.playerId,
+        clientChannel: "h5",
         ...(displayName ? { displayName } : {}),
         ...(authToken ? { authToken } : {})
       },

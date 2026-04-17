@@ -3,12 +3,15 @@ import crypto from "node:crypto";
 import path from "node:path";
 import {
   DEFAULT_FEATURE_FLAG_CONFIG,
+  DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
   evaluateFeatureEntitlements,
   evaluateFeatureFlags,
   normalizeFeatureFlagConfigDocument,
+  normalizeClientVersion,
   type FeatureFlagConfigDocument,
   type FeatureFlagKey,
   type FeatureFlagRolloutPolicy,
+  type RuntimeKillSwitchDefinition,
   type ResolvedFeatureEntitlements,
   type FeatureFlags
 } from "../../../packages/shared/src/index";
@@ -272,6 +275,76 @@ export interface FeatureFlagRuntimeSummary {
   defaultValue: boolean | string | number;
   owner?: string;
   rolloutPolicy?: FeatureFlagRolloutPolicy;
+}
+
+export interface RuntimeKillSwitchSummary extends RuntimeKillSwitchDefinition {
+  key: string;
+}
+
+export interface RuntimeKillSwitchSnapshot {
+  clientMinVersion: {
+    defaultVersion: string;
+    activeVersion: string;
+    channels: Record<string, string>;
+    upgradeMessage?: string;
+  };
+  killSwitches: RuntimeKillSwitchSummary[];
+}
+
+function readChannelSpecificMinimumVersion(channel: string | null | undefined, env: NodeJS.ProcessEnv): string | null {
+  const normalizedChannel = channel?.trim().toUpperCase();
+  if (!normalizedChannel) {
+    return null;
+  }
+
+  return normalizeClientVersion(env[`MIN_SUPPORTED_CLIENT_VERSION_${normalizedChannel}`]);
+}
+
+export function resolveMinimumSupportedClientVersion(
+  channel: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const snapshot = loadFeatureFlagSnapshot(env);
+  const config = snapshot.config.runtimeGates?.clientMinVersion;
+  const normalizedChannel = channel?.trim().toLowerCase();
+  return (
+    readChannelSpecificMinimumVersion(channel, env) ??
+    (normalizedChannel ? normalizeClientVersion(config?.channels?.[normalizedChannel]) : null) ??
+    normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ??
+    normalizeClientVersion(config?.defaultVersion) ??
+    DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
+  );
+}
+
+export function getRuntimeKillSwitchSnapshot(env: NodeJS.ProcessEnv = process.env): RuntimeKillSwitchSnapshot {
+  const snapshot = loadFeatureFlagSnapshot(env);
+  const config = snapshot.config.runtimeGates ?? DEFAULT_FEATURE_FLAG_CONFIG.runtimeGates ?? {};
+  const clientMinVersion = config.clientMinVersion ?? {
+    defaultVersion: DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
+  };
+  const channels = Object.fromEntries(
+    Object.entries(clientMinVersion.channels ?? {}).map(([channel, minimumVersion]) => [
+      channel,
+      resolveMinimumSupportedClientVersion(channel, env)
+    ])
+  );
+  return {
+    clientMinVersion: {
+      defaultVersion: normalizeClientVersion(clientMinVersion.defaultVersion) ?? DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
+      activeVersion: resolveMinimumSupportedClientVersion(null, env),
+      channels,
+      ...(clientMinVersion.upgradeMessage ? { upgradeMessage: clientMinVersion.upgradeMessage } : {})
+    },
+    killSwitches: Object.entries(config.killSwitches ?? {})
+      .map(([key, definition]) => ({
+        key,
+        enabled: definition.enabled === true,
+        label: definition.label,
+        ...(definition.summary ? { summary: definition.summary } : {}),
+        ...(definition.channels?.length ? { channels: definition.channels } : {})
+      }))
+      .sort((left, right) => left.key.localeCompare(right.key))
+  };
 }
 
 export function listFeatureFlagRuntimeSummaries(env: NodeJS.ProcessEnv = process.env): FeatureFlagRuntimeSummary[] {
