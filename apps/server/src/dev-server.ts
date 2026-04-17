@@ -21,6 +21,10 @@ import { installHttpRequestObservability } from "./http-request-context";
 import { registerLeaderboardRoutes } from "./leaderboard";
 import { registerLobbyRoutes } from "./lobby";
 import { registerLaunchRuntimeRoutes } from "./launch-runtime-routes";
+import {
+  createLiveOpsCalendarScheduler,
+  registerLiveOpsCalendarRoutes
+} from "./live-ops-calendar";
 import { registerMatchmakingRoutes } from "./matchmaking";
 import { createMemoryRoomSnapshotStore } from "./memory-room-snapshot-store";
 import { registerMinorProtectionRoutes } from "./minor-protection-routes";
@@ -416,6 +420,16 @@ export async function startDevServer(
     presence: redisPresence ?? undefined
   });
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
+  const liveOpsCalendarScheduler = createLiveOpsCalendarScheduler({
+    logger: deps.logger,
+    setInterval: (handler: () => void, delayMs: number) =>
+      deps.setInterval(handler, delayMs) as ReturnType<typeof globalThis.setInterval>,
+    clearInterval: (timer) => deps.clearInterval(timer as CleanupTimerHandle)
+  });
+  registerLiveOpsCalendarRoutes(expressApp as Parameters<typeof registerLiveOpsCalendarRoutes>[0], {
+    scheduler: liveOpsCalendarScheduler
+  });
+  await liveOpsCalendarScheduler.refresh();
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await gameServer.listen(port, host);
 
@@ -439,6 +453,7 @@ export async function startDevServer(
   deps.logger.log(`Prometheus metrics available at http://${host}:${port}/metrics`);
   deps.logger.log(`Runtime metrics available at http://${host}:${port}/api/runtime/metrics`);
   deps.logger.log(`Retention summary available at http://${host}:${port}/ops/retention-summary`);
+  deps.logger.log(`Live ops calendar available at http://${host}:${port}/admin/calendar`);
   deps.logger.log(`Config center storage: ${configCenterStore.mode}`);
   if (redisUrl) {
     deps.logger.log("Redis-backed Colyseus presence/driver enabled via REDIS_URL");
@@ -546,6 +561,7 @@ export async function startDevServer(
       deps.clearInterval(playerNameHistoryCleanupTimer);
       playerNameHistoryCleanupTimer = null;
     }
+    liveOpsCalendarScheduler.stop();
 
     if (!snapshotStore) {
       await effectiveSnapshotStore.close();
