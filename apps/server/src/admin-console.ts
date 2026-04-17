@@ -30,6 +30,7 @@ import {
   type LaunchMaintenanceModeRecord
 } from "./launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "./observability";
+import { registerReengagementAdminRoutes } from "./reengagement-admin";
 import { readRuntimeSecret } from "./runtime-secrets";
 
 class InvalidAdminJsonError extends Error {
@@ -1145,6 +1146,7 @@ export function registerAdminRoutes(
   _gameServer?: unknown
 ): void {
   const guildService = new GuildService(store);
+  registerReengagementAdminRoutes(app, store);
   app.use((request, response, next) => {
     if (request.method === "OPTIONS") {
       response.setHeader("Access-Control-Allow-Origin", "*");
