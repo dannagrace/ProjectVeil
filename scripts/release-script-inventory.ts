@@ -256,6 +256,17 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`codex.wechat.commercial-verification-<short-sha>.md` in the selected artifacts directory.",
     ],
   },
+  "release:wechat:assets-hotfix": {
+    purpose:
+      "Generate a WeChat CDN hotfix manifest that diffs one exported wechatgame build against a baseline release manifest and summarizes changed files/subpackages for fast asset rollback.",
+    requiredInputs: [
+      "Pass `--build-dir <wechatgame-build-dir>` and a config with `remoteAssetRoot`; optionally add `--baseline-manifest`, `--version`, `--source-revision`, and `--output-dir` to pin the diff lineage and artifact location.",
+    ],
+    producedArtifacts: [
+      "`codex.wechat.hotfix-manifest.json` in the selected output directory.",
+      "`codex.wechat.hotfix-manifest.md` in the selected output directory.",
+    ],
+  },
   "release:runtime-observability:evidence": {
     purpose: "Capture candidate-scoped runtime endpoint evidence for one target environment, including raw health, auth-readiness, and metrics payloads.",
     requiredInputs: [

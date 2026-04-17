@@ -258,6 +258,11 @@ npm run dev:server
   - 计算主包体积与 `subpackages` 总体积
   - 对照 `4MB / 30MB` 预算给出通过/失败结果
   - 会根据 `runtimeRemoteUrl` 自动推导小游戏需要的 `request / socket` 域名
+- 资源热更新 diff：
+  - `npm run release:wechat:assets-hotfix -- --build-dir <wechatgame-build-dir> --baseline-manifest <codex.wechat.release.json> --output-dir artifacts/wechat-hotfix`
+  - 会读取当前导出目录与上一版 `codex.wechat.release.json`，生成 `codex.wechat.hotfix-manifest.json/.md`
+  - manifest 会列出 CDN 版本路径、变更文件清单、按分包聚合的变更摘要，以及可回退到的 baseline revision
+  - 运行时侧可通过 `assets/scripts/cocos-wechat-hotfix.ts` 解析 `__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame` 里的 `remoteAssetRoot / hotfixManifestUrl / hotfixVersion`，并为资源加载桥接层提供 override URL
   - 若远程资源 CDN 域名未出现在 `downloadFile` 白名单中，也会给出告警
 - 运行时内存收口：
   - `assets/scripts/cocos-placeholder-sprites.ts`
