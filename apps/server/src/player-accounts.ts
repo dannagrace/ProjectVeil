@@ -75,6 +75,7 @@ import {
 } from "./adapters/wechat-social";
 import { removeMobilePushToken, upsertMobilePushToken } from "./mobile-push-tokens";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
+import { acknowledgeReengagementMailboxOpen, recordReengagementReturn } from "./reengagement";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -1007,6 +1008,7 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
+      await recordReengagementReturn(store, hydratedAccount);
       emitExperimentExposureForSurface(
         hydratedAccount.playerId,
         hydratedAccount.lastRoomId ?? "account-profile",
@@ -1073,7 +1075,8 @@ export function registerPlayerAccountRoutes(
           displayName: authSession.displayName
         }));
       const hydratedAccount = await surfaceEndedSeasonalEventRewards(store, account);
-      sendJson(response, 200, toMailboxResponse(hydratedAccount));
+      const openedAccount = await acknowledgeReengagementMailboxOpen(store, hydratedAccount);
+      sendJson(response, 200, toMailboxResponse(openedAccount));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
@@ -1477,6 +1480,7 @@ export function registerPlayerAccountRoutes(
         turnReminder?: boolean;
         groupChallenge?: boolean;
         friendLeaderboard?: boolean;
+        reengagement?: boolean;
       };
       const notificationPreferences = normalizeNotificationPreferences(body);
 

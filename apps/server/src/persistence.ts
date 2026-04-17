@@ -1237,7 +1237,10 @@ export type AdminAuditAction =
   | "support_ticket_resolved"
   | "risk_review_warned"
   | "risk_review_cleared"
-  | "risk_review_banned";
+  | "risk_review_banned"
+  | "reengagement_sent"
+  | "reengagement_opened"
+  | "reengagement_returned";
 
 export interface AdminAuditLogRecord {
   auditId: string;

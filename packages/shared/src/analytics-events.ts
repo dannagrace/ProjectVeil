@@ -204,6 +204,37 @@ export const ANALYTICS_EVENT_CATALOG = {
       owner: "growth"
     }
   ),
+  reengagement_sent: defineAnalyticsEvent(
+    "reengagement_sent",
+    1,
+    "A lapsed player reengagement campaign was dispatched through one or more channels.",
+    {
+      policyId: "returning-24h",
+      inactivityHours: 36,
+      channels: ["mailbox", "wechat_subscribe"],
+      campaignKey: "returning-24h:2026-04-17"
+    }
+  ),
+  reengagement_opened: defineAnalyticsEvent(
+    "reengagement_opened",
+    1,
+    "A reengagement mailbox message was surfaced to the returning player.",
+    {
+      policyId: "returning-24h",
+      campaignKey: "returning-24h:2026-04-17",
+      messageId: "reengagement:returning-24h:2026-04-17"
+    }
+  ),
+  reengagement_returned: defineAnalyticsEvent(
+    "reengagement_returned",
+    1,
+    "A lapsed player returned after at least one reengagement campaign send.",
+    {
+      policyId: "returning-24h",
+      campaignKey: "returning-24h:2026-04-17",
+      hoursSinceSend: 12
+    }
+  ),
   asset_load_failed: defineAnalyticsEvent("asset_load_failed", 1, "Client asset load failed after one or more attempts.", {
     assetType: "sprite",
     assetPath: "pixel/terrain/grass-1",

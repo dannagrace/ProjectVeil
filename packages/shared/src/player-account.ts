@@ -485,6 +485,7 @@ function normalizeNotificationPreferences(
     turnReminder: preferences.turnReminder !== false,
     groupChallenge: preferences.groupChallenge !== false,
     friendLeaderboard: preferences.friendLeaderboard !== false,
+    reengagement: preferences.reengagement !== false,
     ...(updatedAt ? { updatedAt } : {})
   };
 }
