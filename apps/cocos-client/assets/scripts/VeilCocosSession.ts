@@ -561,6 +561,7 @@ export interface VeilCocosSessionOptions {
   getDisplayName?: () => string | null;
   getAuthToken?: () => string | null;
   getClientVersion?: () => string | null;
+  getClientChannel?: () => string | null;
 }
 
 interface LeaderboardApiPayload {
@@ -699,6 +700,7 @@ type ClientMessage =
       roomId: string;
       playerId: string;
       clientVersion?: string;
+      clientChannel?: string;
       displayName?: string;
       authToken?: string;
     }
@@ -1429,6 +1431,7 @@ class RemoteGameSession {
     const displayName = this.options?.getDisplayName?.()?.trim();
     const authToken = this.options?.getAuthToken?.()?.trim();
     const clientVersion = this.options?.getClientVersion?.()?.trim() ?? resolveCocosClientVersion();
+    const clientChannel = this.options?.getClientChannel?.()?.trim() ?? "wechat";
     const response = await this.send<Extract<ServerMessage, { type: "session.state" }>>(
       {
         type: "connect",
@@ -1436,6 +1439,7 @@ class RemoteGameSession {
         roomId: this.roomId,
         playerId: this.playerId,
         clientVersion,
+        clientChannel,
         ...(displayName ? { displayName } : {}),
         ...(authToken ? { authToken } : {})
       },
@@ -1971,6 +1975,7 @@ class RecoverableRemoteGameSession {
       ...(this.options?.getDisplayName ? { getDisplayName: this.options.getDisplayName } : {}),
       ...(this.options?.getAuthToken ? { getAuthToken: this.options.getAuthToken } : {}),
       ...(this.options?.getClientVersion ? { getClientVersion: this.options.getClientVersion } : {}),
+      ...(this.options?.getClientChannel ? { getClientChannel: this.options.getClientChannel } : {}),
       onConnectionEvent: (event) => this.handleConnectionEvent(event)
     };
 
@@ -2047,7 +2052,8 @@ export class VeilCocosSession {
     private readonly remoteUrl?: string,
     private readonly getDisplayName?: (() => string | null) | undefined,
     private readonly getAuthToken?: (() => string | null) | undefined,
-    private readonly getClientVersion?: (() => string | null) | undefined
+    private readonly getClientVersion?: (() => string | null) | undefined,
+    private readonly getClientChannel?: (() => string | null) | undefined
   ) {}
 
   static readStoredReplay(roomId: string, playerId: string): SessionUpdate | null {
@@ -2067,7 +2073,8 @@ export class VeilCocosSession {
       options?.remoteUrl,
       options?.getDisplayName,
       options?.getAuthToken,
-      options?.getClientVersion
+      options?.getClientVersion,
+      options?.getClientChannel
     );
   }
 

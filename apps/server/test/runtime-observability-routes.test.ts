@@ -368,6 +368,32 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(featureFlagPayload.flags.find((flag) => flag.flagKey === "battle_pass_enabled")?.stages[0]?.key, "canary-1");
   assert.equal(featureFlagPayload.auditHistory[0]?.ticket, "#1203");
 
+  const killSwitchResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/kill-switches`);
+  const killSwitchPayload = (await killSwitchResponse.json()) as {
+    status: string;
+    headline: string;
+    clientMinVersion: {
+      defaultVersion: string;
+      activeVersion: string;
+      channels: Record<string, string>;
+      upgradeMessage?: string;
+    };
+    killSwitches: Array<{
+      key: string;
+      enabled: boolean;
+      label: string;
+      channels?: string[];
+    }>;
+  };
+
+  assert.equal(killSwitchResponse.status, 200);
+  assert.equal(killSwitchPayload.status, "ok");
+  assert.equal(killSwitchPayload.clientMinVersion.defaultVersion, "0.0.0");
+  assert.equal(killSwitchPayload.clientMinVersion.channels.wechat, "1.0.3");
+  assert.equal(killSwitchPayload.killSwitches.find((entry) => entry.key === "wechat_payments")?.enabled, false);
+  assert.equal(killSwitchPayload.killSwitches.find((entry) => entry.key === "wechat_matchmaking")?.channels?.[0], "wechat");
+  assert.match(killSwitchPayload.headline, /kill_switches active=0/);
+
   const diagnosticResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`);
   const diagnosticPayload = (await diagnosticResponse.json()) as {
     source: {

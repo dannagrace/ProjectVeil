@@ -33,6 +33,7 @@ import {
   type BattleAction
 } from "../../../packages/shared/src/index";
 import { emitAnalyticsEvent } from "./analytics";
+import { resolveMinimumSupportedClientVersion } from "./feature-flags";
 import {
   buildAuthoritativeRoomErrorContext,
   createRoom,
@@ -490,8 +491,15 @@ function readSuspiciousActionAlertConfig(env: NodeJS.ProcessEnv = process.env): 
   };
 }
 
-function readMinimumSupportedClientVersion(env: NodeJS.ProcessEnv = process.env): string {
-  return normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ?? DEFAULT_MIN_SUPPORTED_CLIENT_VERSION;
+function readMinimumSupportedClientVersion(
+  channel: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  return (
+    resolveMinimumSupportedClientVersion(channel, env) ??
+    normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ??
+    DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
+  );
 }
 
 function sendMessage<T extends ServerMessage["type"]>(
@@ -679,7 +687,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
       recordConnectMessage();
-      if (!isClientVersionSupported(message.clientVersion, readMinimumSupportedClientVersion())) {
+      if (!isClientVersionSupported(message.clientVersion, readMinimumSupportedClientVersion(message.clientChannel))) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "upgrade_required" });
         return;
       }

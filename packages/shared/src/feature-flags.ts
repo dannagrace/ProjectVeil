@@ -1,3 +1,5 @@
+import { DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, normalizeClientVersion } from "./client-version.ts";
+
 const DEFAULT_ROLLOUT = 1;
 const DEFAULT_EXPERIMENT_BUCKETS = 100;
 
@@ -47,6 +49,7 @@ export interface FeatureFlagConfigDocument {
   flags: FeatureFlagConfig;
   experiments?: ExperimentConfig;
   operations?: FeatureFlagOperationsConfig;
+  runtimeGates?: FeatureFlagRuntimeGateConfig;
 }
 
 export interface FeatureFlagRolloutStage {
@@ -90,6 +93,24 @@ export interface FeatureFlagAuditEntry {
 export interface FeatureFlagOperationsConfig {
   rolloutPolicies?: Partial<Record<FeatureFlagKey, FeatureFlagRolloutPolicy>>;
   auditHistory?: FeatureFlagAuditEntry[];
+}
+
+export interface ClientMinVersionConfig {
+  defaultVersion: string;
+  channels?: Record<string, string>;
+  upgradeMessage?: string;
+}
+
+export interface RuntimeKillSwitchDefinition {
+  enabled: boolean;
+  label: string;
+  summary?: string;
+  channels?: string[];
+}
+
+export interface FeatureFlagRuntimeGateConfig {
+  clientMinVersion?: ClientMinVersionConfig;
+  killSwitches?: Record<string, RuntimeKillSwitchDefinition>;
 }
 
 export interface ExperimentVariantDefinition {
@@ -172,6 +193,36 @@ export const DEFAULT_FEATURE_FLAG_CONFIG: FeatureFlagConfigDocument = {
     rolloutPolicies: {},
     auditHistory: []
   },
+  runtimeGates: {
+    clientMinVersion: {
+      defaultVersion: DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
+      channels: {
+        wechat: "1.0.3",
+        h5: DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
+      },
+      upgradeMessage: "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。"
+    },
+    killSwitches: {
+      wechat_matchmaking: {
+        enabled: false,
+        label: "微信匹配入口",
+        summary: "紧急停用微信侧排位与匹配入口。",
+        channels: ["wechat"]
+      },
+      wechat_payments: {
+        enabled: false,
+        label: "微信支付入口",
+        summary: "紧急停用微信支付链路，保留商店浏览。",
+        channels: ["wechat"]
+      },
+      seasonal_live_ops: {
+        enabled: false,
+        label: "活动发布入口",
+        summary: "暂停限时活动发布与时间化运营调度。",
+        channels: ["wechat", "h5"]
+      }
+    }
+  },
   experiments: {
     account_portal_copy: {
       name: "Account Portal Upgrade Copy",
@@ -250,6 +301,64 @@ function normalizeExperimentVariantDefinition(input: Partial<ExperimentVariantDe
   return {
     key,
     allocation: normalizeExperimentAllocation(input?.allocation)
+  };
+}
+
+function normalizeClientMinVersionConfig(input: Partial<ClientMinVersionConfig> | undefined): ClientMinVersionConfig {
+  const defaultConfig = DEFAULT_FEATURE_FLAG_CONFIG.runtimeGates?.clientMinVersion ?? {
+    defaultVersion: DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
+  };
+  const channels: Record<string, string> = { ...(defaultConfig.channels ?? {}) };
+  for (const [channelKey, version] of Object.entries(input?.channels ?? {})) {
+    const normalizedChannel = channelKey.trim();
+    if (!normalizedChannel) {
+      continue;
+    }
+    channels[normalizedChannel] =
+      normalizeClientVersion(version) ?? defaultConfig.channels?.[normalizedChannel] ?? defaultConfig.defaultVersion;
+  }
+
+  return {
+    defaultVersion: normalizeClientVersion(input?.defaultVersion) ?? defaultConfig.defaultVersion,
+    ...(Object.keys(channels).length > 0 ? { channels } : {}),
+    ...(input?.upgradeMessage?.trim()
+      ? { upgradeMessage: input.upgradeMessage.trim() }
+      : defaultConfig.upgradeMessage
+        ? { upgradeMessage: defaultConfig.upgradeMessage }
+        : {})
+  };
+}
+
+function normalizeRuntimeKillSwitchDefinition(
+  key: string,
+  input: Partial<RuntimeKillSwitchDefinition> | undefined
+): RuntimeKillSwitchDefinition {
+  const fallback = DEFAULT_FEATURE_FLAG_CONFIG.runtimeGates?.killSwitches?.[key] ?? {
+    enabled: false,
+    label: key
+  };
+  const channels = [...new Set((input?.channels ?? fallback.channels ?? []).map((channel) => channel.trim()).filter(Boolean))];
+  return {
+    enabled: input?.enabled === true,
+    label: input?.label?.trim() || fallback.label,
+    ...(input?.summary?.trim() ? { summary: input.summary.trim() } : fallback.summary ? { summary: fallback.summary } : {}),
+    ...(channels.length > 0 ? { channels } : {})
+  };
+}
+
+function normalizeFeatureFlagRuntimeGateConfig(
+  input: Partial<FeatureFlagRuntimeGateConfig> | undefined
+): FeatureFlagRuntimeGateConfig {
+  const defaultKillSwitches = DEFAULT_FEATURE_FLAG_CONFIG.runtimeGates?.killSwitches ?? {};
+  const inputKillSwitches = input?.killSwitches ?? {};
+  const killSwitchKeys = new Set([...Object.keys(defaultKillSwitches), ...Object.keys(inputKillSwitches)]);
+  return {
+    clientMinVersion: normalizeClientMinVersionConfig(input?.clientMinVersion),
+    killSwitches: Object.fromEntries(
+      [...killSwitchKeys]
+        .sort((left, right) => left.localeCompare(right))
+        .map((key) => [key, normalizeRuntimeKillSwitchDefinition(key, inputKillSwitches[key])])
+    )
   };
 }
 
@@ -523,6 +632,9 @@ export function normalizeFeatureFlagConfigDocument(
     },
     operations: normalizeFeatureFlagOperationsConfig(
       isPlainRecord(input?.operations) ? (input.operations as Partial<FeatureFlagOperationsConfig>) : undefined
+    ),
+    runtimeGates: normalizeFeatureFlagRuntimeGateConfig(
+      isPlainRecord(input?.runtimeGates) ? (input.runtimeGates as Partial<FeatureFlagRuntimeGateConfig>) : undefined
     ),
     experiments: {
       account_portal_copy: normalizeExperimentDefinition(

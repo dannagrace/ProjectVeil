@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Veil Admin Kill Switches</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #11161f;
+        --panel: #1b2331;
+        --line: #2e3a4f;
+        --text: #eef3ff;
+        --muted: #94a3bf;
+        --accent: #78d4ff;
+        --warn: #ffb86c;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top, #1f2d44 0%, var(--bg) 55%);
+        color: var(--text);
+        font: 14px/1.5 "SF Pro Display", "PingFang SC", sans-serif;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      .panel {
+        background: rgba(27, 35, 49, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+      }
+      h1, h2 { margin: 0 0 12px; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+      input, button {
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #101723;
+        color: var(--text);
+        padding: 10px 12px;
+      }
+      button { cursor: pointer; background: #16253a; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td {
+        text-align: left;
+        padding: 10px 8px;
+        border-bottom: 1px solid rgba(148, 163, 191, 0.14);
+        vertical-align: top;
+      }
+      .muted { color: var(--muted); }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(120, 212, 255, 0.14);
+        color: var(--accent);
+      }
+      .pill.warn {
+        background: rgba(255, 184, 108, 0.16);
+        color: var(--warn);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="panel">
+        <h1>Kill Switch Matrix</h1>
+        <p class="muted">查看当前客户端最低版本与 kill switch 状态。这个页面只做运营可视化，不直接写入配置。</p>
+        <div class="row">
+          <input id="adminSecret" type="password" placeholder="x-veil-admin-secret" />
+          <button id="refreshButton" type="button">刷新矩阵</button>
+        </div>
+        <div id="headline" class="muted">尚未加载。</div>
+      </section>
+
+      <section class="panel">
+        <h2>Client Min Version</h2>
+        <div id="clientVersionSummary" class="muted">尚未加载。</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>Minimum</th>
+            </tr>
+          </thead>
+          <tbody id="versionRows"></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Kill Switches</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Status</th>
+              <th>Channels</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody id="switchRows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script>
+      const headline = document.getElementById("headline");
+      const versionRows = document.getElementById("versionRows");
+      const switchRows = document.getElementById("switchRows");
+      const summary = document.getElementById("clientVersionSummary");
+
+      function render(payload) {
+        headline.textContent = `已加载 ${payload.serverTime} · activeVersion=${payload.clientMinVersion.activeVersion}`;
+        summary.textContent = `默认最低版本 ${payload.clientMinVersion.defaultVersion} · ${
+          payload.clientMinVersion.upgradeMessage || "未配置升级提示"
+        }`;
+        versionRows.innerHTML = Object.entries(payload.clientMinVersion.channels || {})
+          .map(([channel, version]) => `<tr><td>${channel}</td><td>${version}</td></tr>`)
+          .join("") || '<tr><td colspan="2" class="muted">当前没有按渠道覆盖。</td></tr>';
+        switchRows.innerHTML = payload.killSwitches
+          .map((item) => `
+            <tr>
+              <td>${item.key}<div class="muted">${item.label}</div></td>
+              <td><span class="pill ${item.enabled ? "warn" : ""}">${item.enabled ? "enabled" : "disabled"}</span></td>
+              <td>${(item.channels || []).join(", ") || '<span class="muted">all</span>'}</td>
+              <td>${item.summary || '<span class="muted">无备注</span>'}</td>
+            </tr>
+          `)
+          .join("");
+      }
+
+      async function refresh() {
+        const secret = document.getElementById("adminSecret").value.trim();
+        headline.textContent = "正在加载...";
+        try {
+          const response = await fetch("/api/admin/runtime/kill-switches", {
+            headers: secret ? { "x-veil-admin-secret": secret } : {}
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error || response.status);
+          }
+          render(payload);
+        } catch (error) {
+          headline.textContent = `加载失败：${error.message}`;
+        }
+      }
+
+      document.getElementById("refreshButton").addEventListener("click", refresh);
+    </script>
+  </body>
+</html>

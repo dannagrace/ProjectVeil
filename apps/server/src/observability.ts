@@ -10,7 +10,7 @@ import {
   type RuntimeDiagnosticsErrorEvent,
   type RuntimeDiagnosticsSnapshot
 } from "../../../packages/shared/src/index";
-import { getFeatureFlagRuntimeSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
+import { getFeatureFlagRuntimeSnapshot, getRuntimeKillSwitchSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
 import type { LeaderboardAlertEvent } from "./leaderboard-anti-abuse";
 import {
   getAnalyticsPipelineSnapshot,
@@ -361,6 +361,26 @@ interface FeatureFlagObservabilityPayload {
     stages: FeatureFlagRolloutPolicy["stages"];
   }>;
   auditHistory: FeatureFlagAuditEntry[];
+}
+
+interface RuntimeKillSwitchPayload {
+  status: "ok" | "warn";
+  service: string;
+  checkedAt: string;
+  headline: string;
+  clientMinVersion: {
+    defaultVersion: string;
+    activeVersion: string;
+    channels: Record<string, string>;
+    upgradeMessage?: string;
+  };
+  killSwitches: Array<{
+    key: string;
+    enabled: boolean;
+    label: string;
+    summary?: string;
+    channels?: string[];
+  }>;
 }
 
 export interface RoomLifecycleSummaryPayload {
@@ -928,6 +948,27 @@ function buildFeatureFlagObservabilityPayload(service = "project-veil-server"): 
     config: { ...snapshot.metadata },
     flags,
     auditHistory: snapshot.config.operations?.auditHistory ?? []
+  };
+}
+
+function buildRuntimeKillSwitchPayload(service = "project-veil-server"): RuntimeKillSwitchPayload {
+  const snapshot = getRuntimeKillSwitchSnapshot();
+  const activeSwitches = snapshot.killSwitches.filter((entry) => entry.enabled);
+  return {
+    status: activeSwitches.length > 0 ? "warn" : "ok",
+    service,
+    checkedAt: new Date().toISOString(),
+    headline:
+      activeSwitches.length > 0
+        ? `kill_switches active=${activeSwitches.length} client_min_version=${snapshot.clientMinVersion.activeVersion}`
+        : `kill_switches active=0 client_min_version=${snapshot.clientMinVersion.activeVersion}`,
+    clientMinVersion: {
+      defaultVersion: snapshot.clientMinVersion.defaultVersion,
+      activeVersion: snapshot.clientMinVersion.activeVersion,
+      channels: snapshot.clientMinVersion.channels,
+      ...(snapshot.clientMinVersion.upgradeMessage ? { upgradeMessage: snapshot.clientMinVersion.upgradeMessage } : {})
+    },
+    killSwitches: snapshot.killSwitches
   };
 }
 
@@ -2260,6 +2301,14 @@ export function registerRuntimeObservabilityRoutes(
   app.get("/api/runtime/feature-flags", async (_request, response) => {
     try {
       sendJson(response, 200, buildFeatureFlagObservabilityPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/kill-switches", async (_request, response) => {
+    try {
+      sendJson(response, 200, buildRuntimeKillSwitchPayload(serviceName));
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }

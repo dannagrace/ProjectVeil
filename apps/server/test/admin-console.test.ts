@@ -761,6 +761,40 @@ test("GET /api/admin/overview returns server overview payload with a valid admin
   assert.equal(typeof payload.memoryUsage.rss, "number");
 });
 
+test("GET /api/admin/runtime/kill-switches returns minimum versions and kill-switch matrix", async (t) => {
+  const secret = withAdminSecret(t);
+  const { gets } = registerRoutes();
+  const handler = gets.get("/api/admin/runtime/kill-switches");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as {
+    serverTime: string;
+    clientMinVersion: {
+      activeVersion: string;
+      channels: Record<string, string>;
+    };
+    killSwitches: Array<{
+      key: string;
+      enabled: boolean;
+    }>;
+  };
+
+  assert.equal(response.statusCode, 200);
+  assert.ok(Number.isFinite(Date.parse(payload.serverTime)));
+  assert.equal(payload.clientMinVersion.channels.wechat, "1.0.3");
+  assert.equal(payload.killSwitches.find((entry) => entry.key === "wechat_matchmaking")?.enabled, false);
+});
+
 test("POST /api/admin/players/:id/resources returns 401 without a valid admin secret", async (t) => {
   withAdminSecret(t);
   const store = createStore();
@@ -1474,6 +1508,14 @@ test("admin console html includes compensation form and history table", async ()
   assert.match(html, /compensationHistoryBody/);
   assert.match(html, /submitCompensation/);
   assert.match(html, /fetchCompensationHistory/);
+});
+
+test("admin kill-switch html exposes the matrix view", async () => {
+  const htmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin-kill-switches.html");
+  const html = await readFile(htmlPath, "utf8");
+  assert.match(html, /Kill Switch Matrix/);
+  assert.match(html, /clientMinVersion/i);
+  assert.match(html, /api\/admin\/runtime\/kill-switches/);
 });
 
 test("POST /api/admin/broadcast returns 401 without a valid admin secret", async (t) => {
