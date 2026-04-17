@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: project-veil-server-canary
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: project-veil-server
+      app.kubernetes.io/track: canary
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: project-veil-server
+        app.kubernetes.io/track: canary
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: server
+          image: ghcr.io/dannagrace/projectveil-server:v0.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: project-veil-server-secrets
+                  key: SENTRY_DSN
+          envFrom:
+            - configMapRef:
+                name: project-veil-server-config
+            - secretRef:
+                name: project-veil-server-secrets
+          ports:
+            - name: http
+              containerPort: 2567
+          readinessProbe:
+            httpGet:
+              path: /api/runtime/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6

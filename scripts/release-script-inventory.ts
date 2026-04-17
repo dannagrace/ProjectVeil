@@ -116,11 +116,22 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
     purpose:
       "Aggregate readiness, H5, reconnect soak, Cocos reconnect replay, WeChat, and config-change evidence into one top-level release gate decision.",
     requiredInputs: [
-      "Release evidence artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`, or explicit CLI paths such as `--snapshot`, `--cocos-rc-reconnect-replay`, and `--wechat-artifacts-dir`.",
+      "Release evidence artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`, or explicit CLI paths such as `--snapshot`, `--cocos-rc-reconnect-replay`, `--production-rollback-drill`, and `--wechat-artifacts-dir`; production promotion also accepts `--stage production`.",
     ],
     producedArtifacts: [
       "`artifacts/release-readiness/release-gate-summary-<short-sha>.json`",
       "`artifacts/release-readiness/release-gate-summary-<short-sha>.md`",
+    ],
+  },
+  "release:production:rollback-drill": {
+    purpose:
+      "Rehearse the production canary failure path, capture whether smoke triggered rollback, and emit the reviewer-facing rollback drill evidence used by production release gates.",
+    requiredInputs: [
+      "Pass `--candidate`; optionally switch to `--mode execute`, set `--image-tag`, override the namespace/canary manifest paths, and provide the smoke command that should fail over to rollback.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/production-rollback-drill-<candidate>.json`",
+      "`artifacts/release-readiness/production-rollback-drill-<candidate>.md`",
     ],
   },
   "release:go-no-go-packet": {

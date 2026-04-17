@@ -115,6 +115,8 @@ Rollback target: the previous known-good git SHA and image build.
 
 If both hosts are already on the bad release, roll them back one host at a time with the same drain procedure used for forward deploys.
 
+For the pre-release rehearsal path that proves this rollback still works on the current candidate, use [`docs/production-rollback-drill.md`](../production-rollback-drill.md) together with `npm run release:production:rollback-drill`.
+
 ## 8. Post-Deploy Smoke Tests
 
 Run these after every deploy or rollback:

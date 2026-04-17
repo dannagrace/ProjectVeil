@@ -439,6 +439,174 @@ test("buildReleaseGateSummaryReport warns when WeChat commercial verification is
   );
 });
 
+test("buildReleaseGateSummaryReport requires production rollback drill evidence for wechat production gates", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
+  const productionRollbackDrillPath = path.join(
+    workspace,
+    "artifacts",
+    "release-readiness",
+    "production-rollback-drill-abc123.json"
+  );
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0
+    },
+    summary: {
+      total: 1,
+      passed: 1,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 96,
+      invariantChecks: 384
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json"), {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json")
+      },
+      smoke: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json")
+      },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  const blocked = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      wechatArtifactsDir,
+      targetSurface: "wechat",
+      stage: "production"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(blocked.summary.status, "failed");
+  assert.match(blocked.releaseSurface.summary, /production/i);
+  assert.match(blocked.triage.blockers.map((entry) => entry.title).join("\n"), /Production rollback drill/);
+  assert.match(renderMarkdown(blocked), /Production rollback drill: `<missing>`/);
+
+  writeJson(productionRollbackDrillPath, {
+    generatedAt: isoHoursAgo(2),
+    candidate: {
+      revision: "abc123",
+      targetSurface: "wechat",
+      stage: "production"
+    },
+    mode: "execute",
+    status: "passed",
+    summary: {
+      headline: "Production rollback drill exercised the auto-rollback path and recovered the canary.",
+      autoRollbackCovered: true,
+      executedAgainstCluster: true,
+      rollbackRecovered: true,
+      requiredFreshnessDays: 30
+    }
+  });
+
+  const passing = buildReleaseGateSummaryReport(
+    {
+      snapshotPath,
+      h5SmokePath,
+      reconnectSoakPath,
+      wechatArtifactsDir,
+      productionRollbackDrillPath,
+      targetSurface: "wechat",
+      stage: "production"
+    },
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    }
+  );
+
+  assert.equal(passing.summary.status, "passed");
+  assert.equal(passing.triage.blockers.length, 0);
+  assert.match(renderMarkdown(passing), /Stage: `production`/);
+  assert.match(renderMarkdown(passing), /Production rollback drill: Production rollback drill exercised the auto-rollback path and recovered the canary/);
+});
+
 test("buildReleaseGateSummaryReport discovers nested candidate rehearsal evidence for wechat surface", () => {
   const workspace = createTempWorkspace();
   const rehearsalDir = path.join(workspace, "artifacts", "release-readiness", "phase1-candidate-rehearsal-local");

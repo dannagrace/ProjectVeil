@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 type GateStatus = "passed" | "failed";
 type TargetSurface = "h5" | "wechat";
+type ReleaseStage = "candidate" | "production";
 type EvidenceFreshness = "fresh" | "stale" | "missing_timestamp" | "invalid_timestamp" | "unknown";
 type ReleaseSurfaceEvidenceStatus = "passed" | "failed" | "pending";
 
@@ -19,8 +20,10 @@ interface Args {
   wechatCommercialVerificationPath?: string;
   wechatArtifactsDir?: string;
   manualEvidenceLedgerPath?: string;
+  productionRollbackDrillPath?: string;
   configCenterLibraryPath?: string;
   targetSurface: TargetSurface;
+  stage?: ReleaseStage;
   outputPath?: string;
   markdownOutputPath?: string;
 }
@@ -208,6 +211,7 @@ interface ReleaseSurfaceEvidenceItem {
 
 interface ReleaseSurfaceContract {
   targetSurface: TargetSurface;
+  stage: ReleaseStage;
   status: GateStatus;
   summary: string;
   evidence: ReleaseSurfaceEvidenceItem[];
@@ -221,7 +225,7 @@ interface ReleaseGateArtifactReference {
 interface ReleaseGateTriageEntry {
   id: string;
   severity: "blocker" | "warning";
-  gateId: GateResult["id"] | "config-change-risk" | "manual-evidence-ledger";
+  gateId: GateResult["id"] | "config-change-risk" | "manual-evidence-ledger" | "production-rollback-drill";
   title: string;
   impactedSurface: TargetSurface;
   summary: string;
@@ -300,6 +304,24 @@ interface WechatCommercialVerificationReport {
     requiredMetadataFailures?: number;
     acceptedRiskCount?: number;
     conclusion?: string;
+  };
+}
+
+interface ProductionRollbackDrillReport {
+  generatedAt?: string;
+  candidate?: {
+    revision?: string;
+    targetSurface?: "wechat";
+    stage?: "production";
+  };
+  mode?: "simulate" | "execute";
+  status?: "passed" | "failed" | "pending";
+  summary?: {
+    headline?: string;
+    autoRollbackCovered?: boolean;
+    executedAgainstCluster?: boolean;
+    rollbackRecovered?: boolean;
+    requiredFreshnessDays?: number;
   };
 }
 
@@ -394,6 +416,7 @@ interface ReleaseGateSummaryReport {
   generatedAt: string;
   revision: GitRevision;
   targetSurface: TargetSurface;
+  stage: ReleaseStage;
   summary: {
     status: GateStatus;
     totalGates: number;
@@ -412,6 +435,7 @@ interface ReleaseGateSummaryReport {
     wechatCommercialVerificationPath?: string;
     wechatArtifactsDir?: string;
     manualEvidenceLedgerPath?: string;
+    productionRollbackDrillPath?: string;
     configCenterLibraryPath?: string;
   };
   triage: {
@@ -427,6 +451,7 @@ const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
 const MAX_PHASE1_EVIDENCE_TIMESTAMP_DRIFT_MS = 1000 * 60 * 60 * 72;
 const MAX_TARGET_SURFACE_REVIEW_AGE_MS = 1000 * 60 * 60 * 72;
 const MAX_COMMERCIAL_VERIFICATION_AGE_MS = 1000 * 60 * 60 * 24;
+const MAX_PRODUCTION_ROLLBACK_DRILL_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const LEDGER_PENDING_STATUSES = new Set(["pending", "in-review"]);
 const COMMERCIAL_VERIFICATION_FILE_PREFIX = "codex.wechat.commercial-verification-";
 const COMMERCIAL_REVIEW_LEGACY_FILENAMES = [
@@ -534,8 +559,10 @@ function parseArgs(argv: string[]): Args {
   let wechatCommercialVerificationPath: string | undefined;
   let wechatArtifactsDir: string | undefined;
   let manualEvidenceLedgerPath: string | undefined;
+  let productionRollbackDrillPath: string | undefined;
   let configCenterLibraryPath: string | undefined;
   let targetSurface: TargetSurface = "wechat";
+  let stage: ReleaseStage = "candidate";
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
 
@@ -593,6 +620,11 @@ function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--production-rollback-drill" && next) {
+      productionRollbackDrillPath = next;
+      index += 1;
+      continue;
+    }
     if (arg === "--config-center-library" && next) {
       configCenterLibraryPath = next;
       index += 1;
@@ -603,6 +635,14 @@ function parseArgs(argv: string[]): Args {
         fail(`Unsupported --target-surface value: ${next}`);
       }
       targetSurface = next;
+      index += 1;
+      continue;
+    }
+    if (arg === "--stage" && next) {
+      if (next !== "candidate" && next !== "production") {
+        fail(`Unsupported --stage value: ${next}`);
+      }
+      stage = next;
       index += 1;
       continue;
     }
@@ -631,8 +671,10 @@ function parseArgs(argv: string[]): Args {
     ...(wechatCommercialVerificationPath ? { wechatCommercialVerificationPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+    ...(productionRollbackDrillPath ? { productionRollbackDrillPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
     targetSurface,
+    stage,
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {})
   };
@@ -710,6 +752,14 @@ export function resolveLatestCocosRcReconnectReplayFile(dirPath: string): string
   );
 }
 
+function resolveLatestProductionRollbackDrillFile(dirPath: string): string | undefined {
+  return resolveLatestFile(
+    dirPath,
+    (entry) => entry.startsWith("production-rollback-drill-") && entry.endsWith(".json"),
+    3
+  );
+}
+
 function resolveSnapshotPath(args: Args): string | undefined {
   if (args.snapshotPath) {
     return path.resolve(args.snapshotPath);
@@ -740,6 +790,13 @@ function resolveCocosRcReconnectReplayPath(args: Args): string | undefined {
     return path.resolve(args.cocosRcReconnectReplayPath);
   }
   return resolveLatestCocosRcReconnectReplayFile(getDefaultReleaseReadinessDir());
+}
+
+function resolveProductionRollbackDrillPath(args: Args): string | undefined {
+  if (args.productionRollbackDrillPath) {
+    return path.resolve(args.productionRollbackDrillPath);
+  }
+  return resolveLatestProductionRollbackDrillFile(getDefaultReleaseReadinessDir());
 }
 
 function directoryContainsWechatEvidence(dirPath: string): boolean {
@@ -1253,6 +1310,63 @@ function summarizeCocosRcReconnectReplayEvidence(
   };
 }
 
+function summarizeProductionRollbackDrillEvidence(
+  productionRollbackDrillPath: string | undefined,
+  candidateRevision: string
+): {
+  status: GateStatus;
+  summary: string;
+  freshness: EvidenceFreshness;
+  observedAt?: string;
+  revision?: string;
+} {
+  if (!productionRollbackDrillPath || !fs.existsSync(productionRollbackDrillPath)) {
+    return {
+      status: "failed",
+      summary: "Production rollback drill evidence is missing.",
+      freshness: "unknown"
+    };
+  }
+
+  const report = readJsonFile<ProductionRollbackDrillReport>(productionRollbackDrillPath);
+  const revision = report.candidate?.revision;
+  const freshness = evaluateFreshness(report.generatedAt, MAX_PRODUCTION_ROLLBACK_DRILL_AGE_MS);
+  const failures: string[] = [];
+
+  if (!commitsMatch(revision, candidateRevision)) {
+    failures.push(`revision ${revision?.trim() || "<missing>"} != ${candidateRevision}`);
+  }
+  if (report.candidate?.targetSurface !== "wechat") {
+    failures.push(`target surface is ${JSON.stringify(report.candidate?.targetSurface ?? "missing")}`);
+  }
+  if (report.candidate?.stage !== "production") {
+    failures.push(`stage is ${JSON.stringify(report.candidate?.stage ?? "missing")}`);
+  }
+  if (report.mode !== "execute" || report.summary?.executedAgainstCluster !== true) {
+    failures.push("drill did not execute against a live cluster");
+  }
+  if (report.status !== "passed") {
+    failures.push(`drill status is ${JSON.stringify(report.status ?? "missing")}`);
+  }
+  if (report.summary?.autoRollbackCovered !== true) {
+    failures.push("auto rollback path was not exercised");
+  }
+  if (report.summary?.rollbackRecovered !== true) {
+    failures.push("rollback did not recover the canary");
+  }
+
+  return {
+    status: failures.length === 0 ? "passed" : "failed",
+    summary:
+      failures.length === 0
+        ? report.summary?.headline?.trim() || "Production rollback drill is present and passing for this candidate."
+        : `Production rollback drill evidence is not ready: ${failures[0]}.`,
+    freshness,
+    ...(report.generatedAt ? { observedAt: report.generatedAt } : {}),
+    ...(revision ? { revision } : {})
+  };
+}
+
 export function evaluateWechatGate(
   targetSurface: TargetSurface,
   wechatRcValidationPath: string | undefined,
@@ -1623,6 +1737,7 @@ function buildManualEvidenceLedgerItems(
 }
 
 function buildReleaseSurfaceContract(
+  stage: ReleaseStage,
   targetSurface: TargetSurface,
   candidateRevision: string,
   snapshotPath: string | undefined,
@@ -1631,7 +1746,8 @@ function buildReleaseSurfaceContract(
   cocosRcReconnectReplayPath: string | undefined,
   wechatCandidateSummaryPath: string | undefined,
   wechatCommercialVerificationPath: string | undefined,
-  manualEvidenceLedgerPath: string | undefined
+  manualEvidenceLedgerPath: string | undefined,
+  productionRollbackDrillPath: string | undefined
 ): ReleaseSurfaceContract {
   const evidence: ReleaseSurfaceEvidenceItem[] = [];
 
@@ -1871,6 +1987,18 @@ function buildReleaseSurfaceContract(
     }
   }
 
+  if (targetSurface === "wechat" && stage === "production") {
+    evidence.push(
+      createSurfaceEvidenceItem({
+        id: "production-rollback-drill",
+        label: "Production rollback drill",
+        required: true,
+        ...summarizeProductionRollbackDrillEvidence(productionRollbackDrillPath, candidateRevision),
+        artifactPath: productionRollbackDrillPath
+      })
+    );
+  }
+
   const failures = evidence.filter(
     (entry) =>
       entry.required &&
@@ -1883,11 +2011,12 @@ function buildReleaseSurfaceContract(
 
   return {
     targetSurface,
+    stage,
     status: failures.length === 0 ? "passed" : "failed",
     summary:
       failures.length === 0
-        ? `Target surface ${targetSurface} has current required evidence.`
-        : `Target surface ${targetSurface} is blocked: ${failures[0]?.label} -> ${failures[0]?.summary}`,
+        ? `Target surface ${targetSurface} (${stage}) has current required evidence.`
+        : `Target surface ${targetSurface} (${stage}) is blocked: ${failures[0]?.label} -> ${failures[0]?.summary}`,
     evidence
   };
 }
@@ -2311,45 +2440,68 @@ export function buildConfigChangeRiskSummary(configCenterLibraryPath: string | u
   };
 }
 
-function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface): string {
+function formatReleaseGateSummaryCommand(targetSurface: TargetSurface, stage: ReleaseStage): string {
+  return `npm run release:gate:summary -- --target-surface ${targetSurface}${stage === "production" ? " --stage production" : ""}`;
+}
+
+function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface, stage: ReleaseStage): string {
   const sourceInstruction = gate.source?.path ? `Open \`${relativeReportPath(gate.source.path)}\`` : "Open the failing release evidence";
+  const rerunCommand = formatReleaseGateSummaryCommand(targetSurface, stage);
 
   if (gate.id === "release-readiness") {
-    return `${sourceInstruction}, clear the failing or pending readiness checks, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+    return `${sourceInstruction}, clear the failing or pending readiness checks, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "h5-release-candidate-smoke") {
-    return `${sourceInstruction}, rerun \`npm run smoke:client:release-candidate\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+    return `${sourceInstruction}, rerun \`npm run smoke:client:release-candidate\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "multiplayer-reconnect-soak") {
-    return `${sourceInstruction}, rerun \`npm run stress:rooms:reconnect-soak\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+    return `${sourceInstruction}, rerun \`npm run stress:rooms:reconnect-soak\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "cocos-primary-client-reconnect-replay") {
-    return `${sourceInstruction}, rerun \`npm run release:cocos:rc-reconnect-replay -- --candidate <candidate>\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+    return `${sourceInstruction}, rerun \`npm run release:cocos:rc-reconnect-replay -- --candidate <candidate>\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "wechat-release") {
     const command =
       gate.source?.kind === "wechat-smoke-report"
         ? "npm run smoke:wechat-release -- --check"
         : "npm run validate:wechat-rc";
-    return `${sourceInstruction}, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+    return `${sourceInstruction}, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`${rerunCommand}\`.`;
   }
-  return `${sourceInstruction}, refresh the release evidence for one candidate revision, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  return `${sourceInstruction}, refresh the release evidence for one candidate revision, then rerun \`${rerunCommand}\`.`;
 }
 
 function buildManualEvidenceNextStep(
   evidence: ReleaseSurfaceEvidenceItem,
   inputs: ReleaseGateSummaryReport["inputs"],
-  targetSurface: TargetSurface
+  targetSurface: TargetSurface,
+  stage: ReleaseStage
 ): string {
   const ledgerPath = evidence.id === "manual-evidence-ledger" ? inputs.manualEvidenceLedgerPath : evidence.artifactPath ?? inputs.manualEvidenceLedgerPath;
   const sourceInstruction = ledgerPath ? `Open \`${relativeReportPath(ledgerPath)}\`` : "Open the candidate manual evidence owner ledger";
-  return `${sourceInstruction}, update the owner/status/timestamp for the candidate rows, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`;
+  return `${sourceInstruction}, update the owner/status/timestamp for the candidate rows, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
+}
+
+function buildSurfaceEvidenceNextStep(
+  evidence: ReleaseSurfaceEvidenceItem,
+  targetSurface: TargetSurface,
+  stage: ReleaseStage
+): string {
+  const sourceInstruction = evidence.artifactPath
+    ? `Open \`${relativeReportPath(evidence.artifactPath)}\``
+    : "Open the failing target-surface evidence";
+
+  if (evidence.id === "production-rollback-drill") {
+    return `${sourceInstruction}, rerun \`npm run release:production:rollback-drill -- --candidate <candidate> --mode execute --image-tag <image-tag>\`, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
+  }
+
+  return `${sourceInstruction}, refresh the target-surface evidence, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
 }
 
 function buildReleaseGateTriage(
   gates: GateResult[],
   inputs: ReleaseGateSummaryReport["inputs"],
   targetSurface: TargetSurface,
+  stage: ReleaseStage,
   releaseSurface: ReleaseSurfaceContract,
   configChangeRisk: ConfigChangeRiskSummary
 ): ReleaseGateSummaryReport["triage"] {
@@ -2362,7 +2514,7 @@ function buildReleaseGateTriage(
       title: gate.label,
       impactedSurface: targetSurface,
       summary: `${gate.label} blocked ${targetSurface}: ${gate.failures[0] ?? gate.summary}`,
-      nextStep: buildReleaseGateNextStep(gate, targetSurface),
+      nextStep: buildReleaseGateNextStep(gate, targetSurface, stage),
       artifacts: buildGateTriageArtifacts(gate, inputs)
     }));
 
@@ -2384,14 +2536,36 @@ function buildReleaseGateTriage(
       title: entry.label,
       impactedSurface: targetSurface,
       summary: `${entry.label} blocked ${targetSurface}: ${entry.summary}`,
-      nextStep: buildManualEvidenceNextStep(entry, inputs, targetSurface),
+      nextStep: buildManualEvidenceNextStep(entry, inputs, targetSurface, stage),
       artifacts: [
         ...createTriageArtifactReference("Manual evidence owner ledger", inputs.manualEvidenceLedgerPath),
         ...createTriageArtifactReference(entry.label, entry.artifactPath)
       ].filter((artifact, index, entries) => entries.findIndex((candidate) => candidate.path === artifact.path) === index)
     }));
 
-  const blockers = [...gateBlockers, ...manualEvidenceBlockers];
+  const surfaceEvidenceBlockers = releaseSurface.evidence
+    .filter(
+      (entry) =>
+        entry.required &&
+        entry.id === "production-rollback-drill" &&
+        (entry.status === "failed" ||
+          entry.status === "pending" ||
+          entry.freshness === "stale" ||
+          entry.freshness === "missing_timestamp" ||
+          entry.freshness === "invalid_timestamp")
+    )
+    .map((entry) => ({
+      id: `release-surface:${entry.id}`,
+      severity: "blocker" as const,
+      gateId: "production-rollback-drill" as const,
+      title: entry.label,
+      impactedSurface: targetSurface,
+      summary: `${entry.label} blocked ${targetSurface}: ${entry.summary}`,
+      nextStep: buildSurfaceEvidenceNextStep(entry, targetSurface, stage),
+      artifacts: createTriageArtifactReference(entry.label, entry.artifactPath)
+    }));
+
+  const blockers = [...gateBlockers, ...manualEvidenceBlockers, ...surfaceEvidenceBlockers];
   const warnings: ReleaseGateTriageEntry[] = [
     ...(
       targetSurface === "wechat"
@@ -2414,7 +2588,7 @@ function buildReleaseGateTriage(
               nextStep:
                 `Run \`npm run release:wechat:commercial-verification -- --artifacts-dir ${
                   inputs.wechatArtifactsDir ? relativeReportPath(inputs.wechatArtifactsDir) : "artifacts/wechat-release"
-                }\`, then rerun \`npm run release:gate:summary -- --target-surface ${targetSurface}\`.`,
+                }\`, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`,
               artifacts: createTriageArtifactReference(entry.label, entry.artifactPath)
             }))
         : []
@@ -2432,7 +2606,7 @@ function buildReleaseGateTriage(
             gateId: "config-change-risk",
             title: "Config change risk summary",
             impactedSurface: targetSurface,
-            summary: `Config changes are ${configChangeRisk.overallRisk?.toUpperCase() ?? "UNKNOWN"} risk for ${targetSurface} and stay advisory until the suggested validation is complete.`,
+              summary: `Config changes are ${configChangeRisk.overallRisk?.toUpperCase() ?? "UNKNOWN"} risk for ${targetSurface} and stay advisory until the suggested validation is complete.`,
             nextStep: `Open \`${relativeReportPath(configChangeRisk.source?.path ?? getDefaultConfigCenterLibraryPath())}\` and run ${(
               configChangeRisk.suggestedValidationActions ?? []
             )
@@ -2450,10 +2624,12 @@ function buildReleaseGateTriage(
 }
 
 export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision): ReleaseGateSummaryReport {
+  const stage = args.stage ?? "candidate";
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
   const reconnectSoakPath = resolveReconnectSoakPath(args);
   const cocosRcReconnectReplayPath = resolveCocosRcReconnectReplayPath(args);
+  const productionRollbackDrillPath = resolveProductionRollbackDrillPath(args);
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
   const wechatCandidateSummaryPath = resolveWechatCandidateSummaryPath(args, wechatArtifactsDir);
@@ -2462,6 +2638,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const manualEvidenceLedgerPath = args.manualEvidenceLedgerPath ? resolveManualEvidenceLedgerPath(args) : undefined;
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
   const releaseSurface = buildReleaseSurfaceContract(
+    stage,
     args.targetSurface,
     revision.commit,
     snapshotPath,
@@ -2470,7 +2647,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     cocosRcReconnectReplayPath,
     wechatCandidateSummaryPath,
     wechatCommercialVerificationPath,
-    manualEvidenceLedgerPath
+    manualEvidenceLedgerPath,
+    productionRollbackDrillPath
   );
 
   const gates = [
@@ -2504,6 +2682,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     ...(wechatCommercialVerificationPath ? { wechatCommercialVerificationPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
+    ...(productionRollbackDrillPath ? { productionRollbackDrillPath } : {}),
     ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
   };
   const configChangeRisk = buildConfigChangeRiskSummary(configCenterLibraryPath);
@@ -2513,6 +2692,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     generatedAt: new Date().toISOString(),
     revision,
     targetSurface: args.targetSurface,
+    stage,
     summary: {
       status: failedGates.length === 0 && releaseSurface.status === "passed" ? "passed" : "failed",
       totalGates: gates.length,
@@ -2521,7 +2701,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       failedGateIds: failedGates.map((gate) => gate.id)
     },
     inputs,
-    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, releaseSurface, configChangeRisk),
+    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, stage, releaseSurface, configChangeRisk),
     gates,
     releaseSurface,
     configChangeRisk
@@ -2538,6 +2718,7 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
     `- Generated at: \`${report.generatedAt}\``,
     `- Revision: \`${report.revision.shortCommit}\` on \`${report.revision.branch}\``,
     `- Target surface: \`${report.targetSurface}\``,
+    `- Stage: \`${report.stage}\``,
     `- Overall status: **${report.summary.status.toUpperCase()}**`,
     ""
   ];
@@ -2557,6 +2738,9 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
   lines.push(
     `- WeChat commercial verification: \`${report.inputs.wechatCommercialVerificationPath ? relativeReportPath(report.inputs.wechatCommercialVerificationPath) : "<missing>"}\``
+  );
+  lines.push(
+    `- Production rollback drill: \`${report.inputs.productionRollbackDrillPath ? relativeReportPath(report.inputs.productionRollbackDrillPath) : "<missing>"}\``
   );
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
   lines.push(`- Manual evidence ledger: \`${report.inputs.manualEvidenceLedgerPath ? relativeReportPath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
@@ -2597,6 +2781,7 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push("## Target Surface Contract");
   lines.push("");
   lines.push(`- Surface: \`${report.releaseSurface.targetSurface}\``);
+  lines.push(`- Stage: \`${report.releaseSurface.stage}\``);
   lines.push(`- Status: **${report.releaseSurface.status.toUpperCase()}**`);
   lines.push(`- Summary: ${report.releaseSurface.summary}`);
   lines.push("- Evidence:");

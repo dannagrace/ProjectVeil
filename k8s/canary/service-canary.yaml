@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: project-veil-server-canary
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: project-veil-server
+    app.kubernetes.io/track: canary
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
