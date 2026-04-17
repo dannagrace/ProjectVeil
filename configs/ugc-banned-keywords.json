@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "reviewThreshold": 40,
+  "approvedTerms": ["projectveil", "veilguild"],
+  "candidateTerms": ["vx", "wx", "v信", "微x", "qq", "扣扣", "telegram", "discord", "escort", "包养"]
+}

@@ -35,6 +35,7 @@ import { recordLeaderboardAbuseAlert } from "./observability";
 import { registerRiskReviewAdminRoutes } from "./risk-review-admin";
 import { registerReengagementAdminRoutes } from "./reengagement-admin";
 import { readRuntimeSecret } from "./runtime-secrets";
+import { registerUgcReviewAdminRoutes } from "./ugc-review-admin";
 
 class InvalidAdminJsonError extends Error {
   constructor() {
@@ -1149,6 +1150,7 @@ export function registerAdminRoutes(
   _gameServer?: unknown
 ): void {
   const guildService = new GuildService(store);
+  registerUgcReviewAdminRoutes(app, store);
   registerRiskReviewAdminRoutes(app, store);
   registerReengagementAdminRoutes(app, store);
   app.use((request, response, next) => {
