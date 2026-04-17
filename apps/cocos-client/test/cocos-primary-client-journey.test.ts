@@ -874,7 +874,7 @@ test("primary cocos client journey renders actionable HUD and battle-panel contr
   );
   assert.equal(
     readNodeLabel(hudActionsNode?.getChildByName("HudInventory")?.getChildByName("Label")),
-    "装备背包"
+    "整理装备背包"
   );
 
   room.emitPush(createJourneyBattleUpdate(roomId, playerId));
