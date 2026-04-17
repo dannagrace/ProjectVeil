@@ -27,6 +27,13 @@ function execFileAsync(command: string, args: string[], cwd: string): Promise<st
   });
 }
 
+function isoNowMinus(parts: { days?: number; minutes?: number } = {}): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - (parts.days ?? 0));
+  date.setUTCMinutes(date.getUTCMinutes() - (parts.minutes ?? 0));
+  return date.toISOString();
+}
+
 test("release:readiness:dashboard aggregates live endpoints and local evidence into a pass report", async (t) => {
   const workspaceDir = createTempDir("veil-release-dashboard-pass-");
   const outputPath = path.join(workspaceDir, "dashboard.json");
@@ -41,9 +48,16 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const archivePath = path.join(wechatArtifactsDir, "project-veil.tar.gz");
   const smokeReportPath = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
+  const snapshotGeneratedAt = isoNowMinus({ days: 1, minutes: 30 });
+  const smokeExecutedAt = isoNowMinus({ days: 1, minutes: 15 });
+  const diagnosticsGeneratedAt = isoNowMinus({ days: 1, minutes: 12 });
+  const cocosExecutedAt = isoNowMinus({ days: 1, minutes: 10 });
+  const reconnectGeneratedAt = isoNowMinus({ days: 1, minutes: 8 });
+  const persistenceGeneratedAt = isoNowMinus({ days: 1, minutes: 6 });
+  const runtimeCheckedAt = isoNowMinus({ days: 1, minutes: 1 });
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-03-29T08:00:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -67,12 +81,12 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     },
     execution: {
       overallStatus: "passed",
-      executedAt: "2026-03-29T08:20:00.000Z",
+      executedAt: cocosExecutedAt,
       summary: "Canonical gameplay journey passed."
     }
   });
   writeJson(primaryClientDiagnosticsPath, {
-    generatedAt: "2026-03-29T08:18:00.000Z",
+    generatedAt: diagnosticsGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -91,7 +105,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     checkpoints: []
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-03-29T08:22:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -118,7 +132,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     ]
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-03-29T08:24:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -164,7 +178,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
     },
     execution: {
       result: "passed",
-      executedAt: "2026-03-29T08:15:00.000Z",
+      executedAt: smokeExecutedAt,
       tester: "codex",
       device: "iPhone 15 / WeChat 8.0.x",
       summary: "All required smoke cases passed."
@@ -184,7 +198,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       response.end(
         JSON.stringify({
           status: "ok",
-          checkedAt: "2026-03-29T08:30:00.000Z",
+          checkedAt: runtimeCheckedAt,
           runtime: {
             activeRoomCount: 2,
             connectionCount: 3,
@@ -205,7 +219,7 @@ test("release:readiness:dashboard aggregates live endpoints and local evidence i
       response.end(
         JSON.stringify({
           status: "ok",
-          checkedAt: "2026-03-29T08:30:00.000Z",
+          checkedAt: runtimeCheckedAt,
           headline: "auth ready; guest=1 account=2 lockouts=0",
           alerts: [],
           auth: {
@@ -361,9 +375,13 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const packageMetadataPath = path.join(wechatArtifactsDir, "project-veil.package.json");
   const smokeReportPath = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
+  const snapshotGeneratedAt = isoNowMinus({ days: 1, minutes: 30 });
+  const smokeExecutedAt = isoNowMinus({ days: 1, minutes: 15 });
+  const reconnectGeneratedAt = isoNowMinus({ days: 1, minutes: 8 });
+  const persistenceGeneratedAt = isoNowMinus({ days: 1, minutes: 6 });
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-03-29T08:00:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -393,14 +411,14 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     },
     execution: {
       result: "pending",
-      executedAt: "2026-03-29T08:15:00.000Z"
+      executedAt: smokeExecutedAt
     },
     cases: [
       { id: "login-lobby", status: "pending" }
     ]
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-03-29T08:22:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -427,7 +445,7 @@ test("release:readiness:dashboard reports warns and failures when evidence is mi
     ]
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-03-29T08:24:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
