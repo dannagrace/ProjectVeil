@@ -41,6 +41,7 @@ import {
 } from "./persistence";
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
+import { loadLaunchRuntimeState, resolveLaunchMaintenanceAccess } from "./launch-runtime-state";
 import { readRuntimeSecret } from "./runtime-secrets";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "./adapters/wechat-session-key";
 
@@ -385,6 +386,34 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
+}
+
+async function sendMaintenanceModeIfBlocked(
+  response: ServerResponse,
+  identity: {
+    playerId?: string | null;
+    loginId?: string | null;
+  }
+): Promise<boolean> {
+  const state = await loadLaunchRuntimeState();
+  const maintenance = resolveLaunchMaintenanceAccess(state, identity);
+  if (!maintenance.blocked) {
+    return false;
+  }
+
+  sendJson(response, 503, {
+    error: {
+      code: "maintenance_mode_active",
+      message: maintenance.message
+    },
+    maintenanceMode: {
+      active: maintenance.active,
+      title: maintenance.title,
+      message: maintenance.message,
+      ...(maintenance.nextOpenAt ? { nextOpenAt: maintenance.nextOpenAt } : {})
+    }
+  });
+  return true;
 }
 
 function toErrorPayload(error: unknown): { code: string; message: string } {
@@ -1123,6 +1152,9 @@ async function handleWechatLogin(
 
   const code = normalizeWechatMiniGameCode(body.code);
   const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
+  if (await sendMaintenanceModeIfBlocked(response, { playerId: body.playerId })) {
+    return;
+  }
   const migrationChoice = body.migrationChoice?.trim();
   if (
     migrationChoice !== undefined &&
@@ -2302,6 +2334,9 @@ export function registerAuthRoutes(
 
       let playerId = normalizePlayerId(body.playerId);
       let displayName = normalizeDisplayName(playerId, body.displayName);
+      if (await sendMaintenanceModeIfBlocked(response, { playerId })) {
+        return;
+      }
       await assertDisplayNameAvailableOrThrow(store, displayName, playerId);
 
       if (store) {
@@ -2421,6 +2456,9 @@ export function registerAuthRoutes(
 
       const loginId = normalizeAccountLoginId(body.loginId);
       const password = normalizeAccountPassword(body.password);
+      if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
+        return;
+      }
       const requestIp = resolveRequestIp(request);
 
       const sourceBlockedUntil = getCredentialStuffingBlockedUntil(requestIp);
@@ -2563,6 +2601,9 @@ export function registerAuthRoutes(
       }
 
       const loginId = normalizeAccountLoginId(body.loginId);
+      if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
+        return;
+      }
       const existingAuthAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (existingAuthAccount) {
         sendJson(response, 409, {
@@ -2670,6 +2711,9 @@ export function registerAuthRoutes(
       const loginId = normalizeAccountLoginId(body.loginId);
       const registrationToken = normalizeAccountRegistrationToken(body.registrationToken);
       const password = normalizeAccountPassword(body.password);
+      if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
+        return;
+      }
       if (body.privacyConsentAccepted !== true) {
         sendPrivacyConsentRequired(response);
         return;
@@ -2760,6 +2804,9 @@ export function registerAuthRoutes(
       }
 
       const loginId = normalizeAccountLoginId(body.loginId);
+      if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
+        return;
+      }
       const deliveryMode = readPasswordRecoveryDeliveryMode();
       const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (!authAccount) {
@@ -2855,6 +2902,9 @@ export function registerAuthRoutes(
       const loginId = normalizeAccountLoginId(body.loginId);
       const recoveryToken = normalizePasswordRecoveryToken(body.recoveryToken);
       const newPassword = normalizeAccountPassword(body.newPassword);
+      if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
+        return;
+      }
       const pendingRecoveryState = getPasswordRecoveryState(loginId);
       if (!pendingRecoveryState) {
         sendJson(response, 401, {

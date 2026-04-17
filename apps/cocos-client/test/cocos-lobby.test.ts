@@ -9,7 +9,9 @@ import {
   createCocosLobbyPreferences,
   getCocosLobbyPreferencesStorageKey,
   getCocosPlayerAccountStorageKey,
+  loadCocosAnnouncements,
   loadCocosBattleReplayHistoryPage,
+  loadCocosMaintenanceMode,
   loadCocosPlayerAchievementProgress,
   loadCocosLobbyRooms,
   loadCocosPlayerAccountProfile,
@@ -127,6 +129,76 @@ test("loadCocosLobbyRooms queries the lobby api from the resolved remote host", 
 
   assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/lobby/rooms?limit=3");
   assert.equal(rooms[0]?.roomId, "room-alpha");
+});
+
+test("loadCocosAnnouncements returns the active server-side announcement banner list", async () => {
+  const requestedUrls: string[] = [];
+  const items = await loadCocosAnnouncements("ws://127.0.0.1:2567/ws", {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "maintenance-preview",
+              title: "停服预告",
+              message: "10 分钟后进入维护。",
+              tone: "warning",
+              startsAt: "2026-04-17T08:00:00.000Z"
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/announcements/current");
+  assert.deepEqual(items, [
+    {
+      id: "maintenance-preview",
+      title: "停服预告",
+      message: "10 分钟后进入维护。",
+      tone: "warning",
+      startsAt: "2026-04-17T08:00:00.000Z"
+    }
+  ]);
+});
+
+test("loadCocosMaintenanceMode normalizes the current maintenance snapshot", async () => {
+  const requestedUrls: string[] = [];
+  const snapshot = await loadCocosMaintenanceMode("http://127.0.0.1:2567", {
+    fetchImpl: async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          active: true,
+          title: "停服维护中",
+          message: "预计 10:00 恢复。",
+          nextOpenAt: "2026-04-17T10:00:00.000Z"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+  });
+
+  assert.equal(requestedUrls[0], "http://127.0.0.1:2567/api/runtime/maintenance-mode");
+  assert.deepEqual(snapshot, {
+    active: true,
+    title: "停服维护中",
+    message: "预计 10:00 恢复。",
+    nextOpenAt: "2026-04-17T10:00:00.000Z"
+  });
 });
 
 test("loadCocosPlayerEventHistory returns normalized paging metadata from the event-history route", async () => {

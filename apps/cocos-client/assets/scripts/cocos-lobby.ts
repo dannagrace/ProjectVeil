@@ -89,6 +89,22 @@ export interface CocosCampaignMissionCompleteResult {
   campaign: CocosCampaignSummary;
 }
 
+export interface CocosLaunchAnnouncement {
+  id: string;
+  title: string;
+  message: string;
+  tone: "info" | "warning" | "critical";
+  startsAt: string;
+  endsAt?: string;
+}
+
+export interface CocosMaintenanceModeSnapshot {
+  active: boolean;
+  title: string;
+  message: string;
+  nextOpenAt?: string;
+}
+
 export type CocosSupportTicketCategory = "bug" | "payment" | "account" | "other";
 export type CocosSupportTicketPriority = "normal" | "high" | "urgent";
 
@@ -208,6 +224,17 @@ interface PlayerReferralApiPayload {
 
 interface LobbyRoomsApiPayload {
   items?: CocosLobbyRoomSummary[];
+}
+
+interface LaunchAnnouncementsApiPayload {
+  items?: Array<Partial<CocosLaunchAnnouncement>>;
+}
+
+interface MaintenanceModeApiPayload {
+  active?: boolean;
+  title?: string;
+  message?: string;
+  nextOpenAt?: string;
 }
 
 interface CampaignApiPayload {
@@ -1865,6 +1892,56 @@ export async function loadCocosLobbyRooms(
     options?.fetchImpl
   )) as LobbyRoomsApiPayload;
   return Array.isArray(payload.items) ? payload.items : [];
+}
+
+export async function loadCocosAnnouncements(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosLaunchAnnouncement[]> {
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/announcements/current`,
+    undefined,
+    options?.fetchImpl
+  )) as LaunchAnnouncementsApiPayload;
+
+  return (payload.items ?? [])
+    .filter((entry): entry is NonNullable<LaunchAnnouncementsApiPayload["items"]>[number] => Boolean(entry?.id && entry?.title && entry?.message))
+    .map((entry) => ({
+      id: String(entry.id).trim(),
+      title: String(entry.title).trim(),
+      message: String(entry.message).trim(),
+      tone: entry.tone === "warning" || entry.tone === "critical" ? entry.tone : "info",
+      startsAt: String(entry.startsAt ?? new Date().toISOString()).trim(),
+      ...(entry.endsAt ? { endsAt: String(entry.endsAt).trim() } : {})
+    }));
+}
+
+export async function loadCocosMaintenanceMode(
+  remoteUrl: string,
+  options?: {
+    fetchImpl?: FetchLike;
+  }
+): Promise<CocosMaintenanceModeSnapshot | null> {
+  const payload = (await fetchJson(
+    `${resolveCocosApiBaseUrl(remoteUrl)}/api/runtime/maintenance-mode`,
+    undefined,
+    options?.fetchImpl
+  )) as MaintenanceModeApiPayload;
+
+  const title = payload.title?.trim();
+  const message = payload.message?.trim();
+  if (!title || !message) {
+    return null;
+  }
+
+  return {
+    active: payload.active === true,
+    title,
+    message,
+    ...(payload.nextOpenAt?.trim() ? { nextOpenAt: payload.nextOpenAt.trim() } : {})
+  };
 }
 
 export async function loginCocosGuestAuthSession(

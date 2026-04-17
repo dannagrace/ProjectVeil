@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
@@ -125,6 +126,22 @@ function withSupportSecrets(
     }
   });
   return { moderator, supervisor };
+}
+
+async function withAnnouncementConfig(t: TestContext, payload: unknown): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "veil-announcements-admin-"));
+  const filePath = path.join(dir, "announcements.json");
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const originalPath = process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+  process.env.VEIL_ANNOUNCEMENTS_CONFIG = filePath;
+  t.after(() => {
+    if (originalPath === undefined) {
+      delete process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+      return;
+    }
+    process.env.VEIL_ANNOUNCEMENTS_CONFIG = originalPath;
+  });
+  return filePath;
 }
 
 function registerRoutes(store: RoomSnapshotStore | null = null) {
@@ -1465,6 +1482,167 @@ test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) =>
   assert.equal(payload.ok, true);
   assert.equal(payload.report.status, "warned");
   assert.ok(payload.report.resolvedAt);
+});
+
+test("admin launch runtime routes list, create, and delete announcements", async (t) => {
+  withAdminSecret(t);
+  await withAnnouncementConfig(t, {
+    announcements: [
+      {
+        id: "launch-1",
+        title: "首发公告",
+        message: "服务器将于今晚维护。",
+        tone: "warning",
+        startsAt: "2020-04-17T10:00:00.000Z",
+        endsAt: "2099-04-17T12:00:00.000Z"
+      }
+    ],
+    maintenanceMode: {
+      enabled: false,
+      title: "停服维护中",
+      message: "服务器正在维护，请稍后再试。",
+      whitelistPlayerIds: [],
+      whitelistLoginIds: []
+    },
+    updatedAt: "2026-04-17T09:00:00.000Z"
+  });
+
+  const { gets, posts, deletes } = registerRoutes(createStore() as RoomSnapshotStore);
+  const listHandler = gets.get("/api/admin/announcements");
+  const createHandler = posts.get("/api/admin/announcements");
+  const deleteHandler = deletes.get("/api/admin/announcements/:id");
+  assert.ok(listHandler);
+  assert.ok(createHandler);
+  assert.ok(deleteHandler);
+
+  const listResponse = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      }
+    }),
+    listResponse
+  );
+  assert.equal(listResponse.statusCode, 200);
+  const listPayload = JSON.parse(listResponse.body) as {
+    announcements: Array<{ id: string; title: string }>;
+    active: Array<{ id: string }>;
+    maintenanceMode: { active: boolean; blocked: boolean };
+  };
+  assert.equal(listPayload.announcements.length, 1);
+  assert.equal(listPayload.announcements[0]?.id, "launch-1");
+  assert.deepEqual(listPayload.active.map((item) => item.id), ["launch-1"]);
+  assert.equal(listPayload.maintenanceMode.active, false);
+  assert.equal(listPayload.maintenanceMode.blocked, false);
+
+  const createResponseState = createResponse();
+  await createHandler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      },
+      body: JSON.stringify({
+        id: "launch-2",
+        title: "热更新公告",
+        message: "热更新将在 15 分钟后生效。",
+        tone: "info",
+        startsAt: "2020-04-17T12:10:00.000Z",
+        endsAt: "2099-04-17T13:00:00.000Z"
+      })
+    }),
+    createResponseState
+  );
+  assert.equal(createResponseState.statusCode, 200);
+  const createPayload = JSON.parse(createResponseState.body) as {
+    ok: boolean;
+    announcement: { id: string; title: string };
+    active: Array<{ id: string }>;
+  };
+  assert.equal(createPayload.ok, true);
+  assert.equal(createPayload.announcement.id, "launch-2");
+  assert.deepEqual(createPayload.active.map((item) => item.id), ["launch-1", "launch-2"]);
+
+  const deleteResponse = createResponse();
+  await deleteHandler(
+    createRequest({
+      method: "DELETE",
+      params: { id: "launch-1" },
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      }
+    }),
+    deleteResponse
+  );
+  assert.equal(deleteResponse.statusCode, 200);
+  const deletePayload = JSON.parse(deleteResponse.body) as {
+    ok: boolean;
+    removed: boolean;
+    announcement?: { id: string };
+    active: Array<{ id: string }>;
+  };
+  assert.equal(deletePayload.ok, true);
+  assert.equal(deletePayload.removed, true);
+  assert.equal(deletePayload.announcement?.id, "launch-1");
+  assert.deepEqual(deletePayload.active.map((item) => item.id), ["launch-2"]);
+});
+
+test("admin maintenance mode route persists the current maintenance snapshot", async (t) => {
+  withAdminSecret(t);
+  await withAnnouncementConfig(t, {
+    announcements: [],
+    maintenanceMode: {
+      enabled: false,
+      title: "停服维护中",
+      message: "服务器正在维护，请稍后再试。",
+      whitelistPlayerIds: [],
+      whitelistLoginIds: []
+    },
+    updatedAt: "2026-04-17T09:00:00.000Z"
+  });
+
+  const { posts } = registerRoutes(createStore() as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/maintenance-mode");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      },
+      body: JSON.stringify({
+        enabled: true,
+        title: "停服维护中",
+        message: "预计 30 分钟后恢复开放。",
+        nextOpenAt: "2026-04-17T15:30:00.000Z",
+        whitelistPlayerIds: ["ops-player"],
+        whitelistLoginIds: ["ops-login"]
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    maintenanceMode: {
+      active: boolean;
+      blocked: boolean;
+      title: string;
+      message: string;
+      nextOpenAt?: string;
+    };
+    updatedAt?: string;
+  };
+  assert.equal(payload.ok, true);
+  assert.equal(payload.maintenanceMode.active, true);
+  assert.equal(payload.maintenanceMode.blocked, true);
+  assert.equal(payload.maintenanceMode.message, "预计 30 分钟后恢复开放。");
+  assert.equal(payload.maintenanceMode.nextOpenAt, "2026-04-17T15:30:00.000Z");
+  assert.ok(payload.updatedAt);
 });
 
 test("GET /api/admin/support-tickets returns open support tickets", async (t) => {

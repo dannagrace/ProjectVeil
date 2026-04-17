@@ -143,6 +143,9 @@ export function describeAccountAuthFailure(
   if (failure.status === 429) {
     return "请求过于频繁，请稍后再试。";
   }
+  if (failure.status === 503 && failure.code === "maintenance_mode_active") {
+    return "当前服务器正在维护，请稍后再试。";
+  }
 
   return "";
 }

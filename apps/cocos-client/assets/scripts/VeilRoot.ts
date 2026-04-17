@@ -38,16 +38,20 @@ import {
   type CocosCampaignMissionCompleteResult,
   type CocosCampaignMissionStartResult,
   type CocosCampaignSummary,
+  type CocosLaunchAnnouncement,
+  type CocosMaintenanceModeSnapshot,
   confirmCocosAccountRegistration,
   confirmCocosPasswordRecovery,
   createFallbackCocosPlayerAccountProfile,
   deleteCurrentCocosPlayerAccount,
   createCocosGuestPlayerId,
+  loadCocosAnnouncements,
   loadCocosBattleReplayHistoryPage,
   loadCocosActiveSeasonalEvents,
   loadCocosDailyDungeon,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
+  loadCocosMaintenanceMode,
   loadCocosPlayerAccountProfile,
   loadCocosPlayerAchievementProgress,
   loadCocosPlayerEventHistory,
@@ -286,6 +290,8 @@ interface VeilRootRuntime {
   startMatchmakingPolling: typeof startCocosMatchmakingStatusPolling;
   readStoredReplay: typeof VeilCocosSession.readStoredReplay;
   loadLobbyRooms: typeof loadCocosLobbyRooms;
+  loadAnnouncements: typeof loadCocosAnnouncements;
+  loadMaintenanceMode: typeof loadCocosMaintenanceMode;
   syncAuthSession: typeof syncCurrentCocosAuthSession;
   loadAccountProfile: typeof loadCocosPlayerAccountProfile;
   updateTutorialProgress: typeof updateCocosTutorialProgress;
@@ -324,6 +330,8 @@ const defaultVeilRootRuntime: VeilRootRuntime = {
   startMatchmakingPolling: (...args) => startCocosMatchmakingStatusPolling(...args),
   readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
   loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
+  loadAnnouncements: (...args) => loadCocosAnnouncements(...args),
+  loadMaintenanceMode: (...args) => loadCocosMaintenanceMode(...args),
   syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
   loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
   updateTutorialProgress: (...args) => updateCocosTutorialProgress(...args),
@@ -437,6 +445,8 @@ export class VeilRoot extends Component {
   private showLobby = false;
   private lobbyRooms: CocosLobbyRoomSummary[] = [];
   private lobbyStatus = "请选择一个房间，或手动输入新的房间 ID。";
+  private lobbyAnnouncements: CocosLaunchAnnouncement[] = [];
+  private lobbyMaintenanceMode: CocosMaintenanceModeSnapshot | null = null;
   private upgradeRequired = false;
   private lobbyLoading = false;
   private lobbyEntering = false;
@@ -1557,6 +1567,8 @@ export class VeilRoot extends Component {
         loading: this.lobbyLoading,
         entering: this.lobbyEntering,
         status: this.lobbyStatus,
+        announcements: this.lobbyAnnouncements,
+        maintenanceMode: this.lobbyMaintenanceMode,
         matchmaking: this.matchmakingView,
         matchmakingSearching: this.isMatchmakingActive(),
         matchmakingBusy: this.lobbyEntering || this.matchmakingJoinInFlight,
@@ -1871,7 +1883,7 @@ export class VeilRoot extends Component {
       this.sessionSource = "none";
     }
 
-    const [profile, leaderboardResult, shopProductsResult, activeEventsResult] = await Promise.all([
+    const [profile, leaderboardResult, shopProductsResult, activeEventsResult, announcementsResult, maintenanceModeResult] = await Promise.all([
       resolveVeilRootRuntime().loadAccountProfile(this.remoteUrl, this.playerId, this.roomId, {
         storage,
         authSession: syncedSession
@@ -1906,13 +1918,21 @@ export class VeilRoot extends Component {
             })
             .then((events) => ({ ok: true as const, events }))
             .catch((error: unknown) => ({ ok: false as const, error }))
-        : Promise.resolve({ ok: true as const, events: [] as CocosSeasonalEvent[] })
+        : Promise.resolve({ ok: true as const, events: [] as CocosSeasonalEvent[] }),
+      resolveVeilRootRuntime().loadAnnouncements(this.remoteUrl)
+        .then((items) => ({ ok: true as const, items }))
+        .catch((error: unknown) => ({ ok: false as const, error })),
+      resolveVeilRootRuntime().loadMaintenanceMode(this.remoteUrl)
+        .then((snapshot) => ({ ok: true as const, snapshot }))
+        .catch((error: unknown) => ({ ok: false as const, error }))
     ]);
     if (!this.isActiveLobbyAccountEpoch(requestEpoch)) {
       return;
     }
 
     this.commitAccountProfile(profile, false);
+    this.lobbyAnnouncements = announcementsResult.ok ? announcementsResult.items : [];
+    this.lobbyMaintenanceMode = maintenanceModeResult.ok ? maintenanceModeResult.snapshot : null;
     if (this.runtimePlatform === "wechat-game") {
       const wxRuntime = (globalThis as { wx?: unknown }).wx ?? null;
       void syncCocosWechatFriendCloudStorage(wxRuntime, {
@@ -4309,10 +4329,17 @@ export class VeilRoot extends Component {
     this.renderView();
 
     try {
-      const rooms = await resolveVeilRootRuntime().loadLobbyRooms(this.remoteUrl);
+      const [rooms, announcements, maintenanceMode] = await Promise.all([
+        resolveVeilRootRuntime().loadLobbyRooms(this.remoteUrl),
+        resolveVeilRootRuntime().loadAnnouncements(this.remoteUrl).catch(() => []),
+        resolveVeilRootRuntime().loadMaintenanceMode(this.remoteUrl).catch(() => null)
+      ]);
       this.lobbyRooms = rooms;
-      this.lobbyStatus =
-        rooms.length > 0
+      this.lobbyAnnouncements = announcements;
+      this.lobbyMaintenanceMode = maintenanceMode;
+      this.lobbyStatus = maintenanceMode?.active
+        ? `${maintenanceMode.title} · ${maintenanceMode.message}`
+        : rooms.length > 0
           ? `发现 ${rooms.length} 个活跃房间，可直接加入或继续创建新房间。`
           : "当前没有活跃房间，输入房间 ID 后点击“进入房间”即可创建新实例。";
     } catch {
@@ -4424,9 +4451,7 @@ export class VeilRoot extends Component {
       this.lobbyStatus =
         error instanceof Error && error.message === "cocos_request_failed:401"
           ? "账号会话已失效，请重新登录后再进入房间。"
-          : error instanceof Error
-            ? error.message
-            : "enter_room_failed";
+          : this.describeCocosAccountFlowError(error, "enter_room_failed");
       this.renderView();
     } finally {
       this.lobbyEntering = false;
