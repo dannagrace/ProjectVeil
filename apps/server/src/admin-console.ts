@@ -9,9 +9,20 @@ import type {
   PlayerPurchaseHistorySnapshot,
   PlayerReportResolveInput,
   PlayerReportStatus,
-  RoomSnapshotStore
+  RoomSnapshotStore,
+  SupportTicketCategory,
+  SupportTicketResolveInput,
+  SupportTicketStatus
 } from "./persistence";
 import { listLobbyRooms, getActiveRoomInstances } from "./colyseus-room";
+import {
+  loadLaunchRuntimeState,
+  resolveActiveLaunchAnnouncements,
+  resolveLaunchMaintenanceAccess,
+  saveLaunchRuntimeState,
+  type LaunchAnnouncementRecord,
+  type LaunchMaintenanceModeRecord
+} from "./launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "./observability";
 import { readRuntimeSecret } from "./runtime-secrets";
 
@@ -146,6 +157,13 @@ function hasPlayerReportStore(
 ): store is RoomSnapshotStore &
   Required<Pick<RoomSnapshotStore, "createPlayerReport" | "listPlayerReports" | "resolvePlayerReport">> {
   return Boolean(store?.createPlayerReport && store.listPlayerReports && store.resolvePlayerReport);
+}
+
+function hasSupportTicketStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore &
+  Required<Pick<RoomSnapshotStore, "createSupportTicket" | "listSupportTickets" | "resolveSupportTicket">> {
+  return Boolean(store?.createSupportTicket && store.listSupportTickets && store.resolveSupportTicket);
 }
 
 function hasGuildModerationStore(
@@ -618,6 +636,67 @@ function parseBroadcastBody(value: unknown): { message: string; type: string } {
   };
 }
 
+function parseAnnouncementRecord(value: unknown): LaunchAnnouncementRecord {
+  const payload = readRequiredObjectBody(value);
+  const id = String(payload.id ?? randomUUID()).trim();
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  const startsAt = typeof payload.startsAt === "string" ? payload.startsAt.trim() : "";
+  const tone = payload.tone;
+  const endsAt = typeof payload.endsAt === "string" ? payload.endsAt.trim() : "";
+
+  if (!id || !title || !message || !startsAt) {
+    throw new InvalidAdminPayloadError('"announcement" requires id, title, message, and startsAt');
+  }
+  if (tone !== undefined && tone !== "info" && tone !== "warning" && tone !== "critical") {
+    throw new InvalidAdminPayloadError('"announcement.tone" must be info, warning, or critical');
+  }
+
+  return {
+    id,
+    title,
+    message,
+    tone: tone === "warning" || tone === "critical" ? tone : "info",
+    startsAt,
+    ...(endsAt ? { endsAt } : {})
+  };
+}
+
+function parseMaintenanceModeBody(value: unknown): LaunchMaintenanceModeRecord {
+  const payload = readRequiredObjectBody(value);
+  if (typeof payload.enabled !== "boolean") {
+    throw new InvalidAdminPayloadError('"enabled" must be a boolean');
+  }
+
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "停服维护中";
+  const message =
+    typeof payload.message === "string" && payload.message.trim()
+      ? payload.message.trim()
+      : "服务器正在维护，请稍后再试。";
+  const nextOpenAt = typeof payload.nextOpenAt === "string" && payload.nextOpenAt.trim() ? payload.nextOpenAt.trim() : "";
+  const whitelistPlayerIds = Array.isArray(payload.whitelistPlayerIds)
+    ? payload.whitelistPlayerIds.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+  const whitelistLoginIds = Array.isArray(payload.whitelistLoginIds)
+    ? payload.whitelistLoginIds.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  return {
+    enabled: payload.enabled,
+    title,
+    message,
+    ...(nextOpenAt ? { nextOpenAt } : {}),
+    whitelistPlayerIds: Array.from(new Set(whitelistPlayerIds)).sort((left, right) => left.localeCompare(right)),
+    whitelistLoginIds: Array.from(new Set(whitelistLoginIds)).sort((left, right) => left.localeCompare(right))
+  };
+}
+
+function broadcastGlobalAnnouncement(message: string, type = "info"): void {
+  for (const room of getActiveRoomInstances().values()) {
+    room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
+  }
+}
+
 function parseReportStatus(value: string | null | undefined, fallback: PlayerReportStatus = "pending"): PlayerReportStatus {
   if (!value || value.trim() === "") {
     return fallback;
@@ -652,6 +731,54 @@ function parseResolveReportBody(value: unknown): PlayerReportResolveInput & { ap
 function readReportStatusFilter(request: IncomingMessage): PlayerReportStatus {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   return parseReportStatus(url.searchParams.get("status"), "pending");
+}
+
+function parseSupportTicketStatus(
+  value: string | null | undefined,
+  fallback: SupportTicketStatus = "open"
+): SupportTicketStatus {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (normalized === "open" || normalized === "resolved" || normalized === "dismissed") {
+    return normalized;
+  }
+
+  throw new InvalidAdminPayloadError('"status" must be "open", "resolved", or "dismissed"');
+}
+
+function parseSupportTicketCategory(value: string | null | undefined): SupportTicketCategory | undefined {
+  if (!value || value.trim() === "") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (normalized === "bug" || normalized === "payment" || normalized === "account" || normalized === "other") {
+    return normalized;
+  }
+
+  throw new InvalidAdminPayloadError('"category" must be "bug", "payment", "account", or "other"');
+}
+
+function parseResolveSupportTicketBody(value: unknown): SupportTicketResolveInput {
+  const payload = readRequiredObjectBody(value);
+  const status = parseSupportTicketStatus(readOptionalTrimmedString(payload, "status"), "open");
+  if (status === "open") {
+    throw new InvalidAdminPayloadError('"status" must be "resolved" or "dismissed"');
+  }
+
+  const resolution = readOptionalTrimmedString(payload, "resolution");
+  if (!resolution) {
+    throw new InvalidAdminPayloadError('"resolution" must be a non-empty string');
+  }
+
+  return {
+    status,
+    handlerId: "support:pending",
+    resolution
+  };
 }
 
 function requireSupportRole(response: ServerResponse, request: IncomingMessage, allowedRoles: AdminRole[]): AdminRole | null {
@@ -1058,10 +1185,7 @@ export function registerAdminRoutes(
     if (!isAuthorized(request)) return sendUnauthorized(response);
     try {
       const { message, type } = parseBroadcastBody(await readJsonBody(request));
-      const activeRooms = getActiveRoomInstances();
-      for (const [_, room] of activeRooms) {
-        room.broadcast("system.announcement", { text: message, type, timestamp: new Date().toISOString() });
-      }
+      broadcastGlobalAnnouncement(message, type);
       sendJson(response, 200, { ok: true });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1185,6 +1309,134 @@ export function registerAdminRoutes(
     }
   });
 
+  app.get("/api/admin/announcements", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const state = await loadLaunchRuntimeState();
+      sendJson(response, 200, {
+        announcements: state.announcements,
+        active: resolveActiveLaunchAnnouncements(state),
+        maintenanceMode: resolveLaunchMaintenanceAccess(state),
+        updatedAt: state.updatedAt
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/announcements", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const body = readRequiredObjectBody(await readJsonBody(request));
+      const announcement = parseAnnouncementRecord(body.announcement ?? body);
+      const state = await loadLaunchRuntimeState();
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        announcements: [
+          ...state.announcements.filter((entry) => entry.id !== announcement.id),
+          announcement
+        ],
+        updatedAt: new Date().toISOString()
+      });
+      broadcastGlobalAnnouncement(`${announcement.title}：${announcement.message}`, announcement.tone);
+      sendJson(response, 200, {
+        ok: true,
+        announcement,
+        active: resolveActiveLaunchAnnouncements(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.delete("/api/admin/announcements/:id", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const id = readRequiredParam(request, "id");
+      const state = await loadLaunchRuntimeState();
+      const existing = state.announcements.find((entry) => entry.id === id) ?? null;
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        announcements: state.announcements.filter((entry) => entry.id !== id),
+        updatedAt: new Date().toISOString()
+      });
+      sendJson(response, 200, {
+        ok: true,
+        removed: Boolean(existing),
+        ...(existing ? { announcement: existing } : {}),
+        active: resolveActiveLaunchAnnouncements(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/maintenance-mode", async (request, response) => {
+    if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
+    if (!isAuthorized(request)) return sendUnauthorized(response);
+
+    try {
+      const maintenanceMode = parseMaintenanceModeBody(await readJsonBody(request));
+      const state = await loadLaunchRuntimeState();
+      const nextState = await saveLaunchRuntimeState({
+        ...state,
+        maintenanceMode,
+        updatedAt: new Date().toISOString()
+      });
+
+      if (maintenanceMode.enabled) {
+        broadcastGlobalAnnouncement(
+          `${maintenanceMode.title}：${maintenanceMode.message}${maintenanceMode.nextOpenAt ? ` · 预计恢复 ${maintenanceMode.nextOpenAt}` : ""}`,
+          "critical"
+        );
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        maintenanceMode: resolveLaunchMaintenanceAccess(nextState),
+        updatedAt: nextState.updatedAt
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 500, { error: String(error) });
+    }
+  });
+
   app.post("/api/admin/reports/:id/resolve", async (request, response) => {
     const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
     if (!role) return;
@@ -1215,6 +1467,81 @@ export function registerAdminRoutes(
       }
 
       sendJson(response, 200, { ok: true, report, disconnectedClients });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: (error as Error).message });
+        return;
+      }
+      if (error instanceof InvalidAdminJsonError) {
+        sendInvalidJson(response);
+        return;
+      }
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.get("/api/admin/support-tickets", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"])) return;
+    if (!hasSupportTicketStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const status = parseSupportTicketStatus(url.searchParams.get("status"), "open");
+      const playerId = url.searchParams.get("playerId")?.trim() || undefined;
+      const category = parseSupportTicketCategory(url.searchParams.get("category"));
+      const items = await store.listSupportTickets({
+        status,
+        ...(playerId ? { playerId } : {}),
+        ...(category ? { category } : {}),
+        limit: readLimit(request, 50)
+      });
+      sendJson(response, 200, { items, status });
+    } catch (error) {
+      if (error instanceof InvalidAdminPayloadError) {
+        sendInvalidPayload(response, error.message);
+        return;
+      }
+      sendJson(response, 400, { error: String(error) });
+    }
+  });
+
+  app.post("/api/admin/support-tickets/:id/resolve", async (request, response) => {
+    const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
+    if (!role) return;
+    if (!hasSupportTicketStore(store)) return sendStoreUnavailable(response);
+
+    try {
+      const ticketId = readRequiredParam(request, "id");
+      const input = parseResolveSupportTicketBody(await readJsonBody(request));
+      const ticket = await store.resolveSupportTicket(ticketId, {
+        ...input,
+        handlerId: `${role}:admin-console`
+      });
+      if (!ticket) {
+        sendJson(response, 404, { error: "Support ticket not found" });
+        return;
+      }
+
+      let mailboxDelivered = false;
+      if (store.deliverPlayerMailbox) {
+        const delivery = await store.deliverPlayerMailbox({
+          playerIds: [ticket.playerId],
+          message: {
+            id: `support-ticket:${ticket.ticketId}:${ticket.status}`,
+            kind: "system",
+            title: ticket.status === "resolved" ? "客服工单已处理" : "客服工单已关闭",
+            body: `${ticket.category} 工单处理结果：${ticket.resolution ?? "已更新，请稍后查看。"}`,
+            sentAt: new Date().toISOString()
+          }
+        });
+        mailboxDelivered = delivery.deliveredPlayerIds.includes(ticket.playerId);
+      }
+
+      sendJson(response, 200, { ok: true, ticket, mailboxDelivered });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
         sendJson(response, 413, { error: (error as Error).message });

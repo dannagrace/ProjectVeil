@@ -4,7 +4,7 @@ import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import {
   resetWechatSubscribeRuntimeForTests,
   sendWechatSubscribeMessage
-} from "../src/wechat-subscribe";
+} from "../src/adapters/wechat-subscribe";
 
 test("sendWechatSubscribeMessage constructs the expected POST body", async () => {
   resetWechatSubscribeRuntimeForTests();

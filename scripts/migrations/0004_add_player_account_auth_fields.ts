@@ -4,7 +4,7 @@ import {
   ensureColumnExists,
   ensureIndexExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX,
   MYSQL_PLAYER_ACCOUNT_TABLE,

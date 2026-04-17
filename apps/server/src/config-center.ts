@@ -58,7 +58,7 @@ import {
   type MySqlPersistenceConfig,
   readMySqlPersistenceConfig
 } from "./persistence";
-import { createTrackedMySqlPool } from "./mysql-pool";
+import { createTrackedMySqlPool } from "./infra/mysql-pool";
 import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "./observability";
 import { captureServerError } from "./error-monitoring";
 

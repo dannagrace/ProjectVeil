@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX,
   MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX,

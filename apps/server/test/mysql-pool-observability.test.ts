@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import type { Pool } from "mysql2/promise";
-import { createTrackedMySqlPool } from "../src/mysql-pool";
+import { createTrackedMySqlPool } from "../src/infra/mysql-pool";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
 
 test("prometheus metrics expose mysql pool pressure gauges when mysql pools are configured", async (t) => {

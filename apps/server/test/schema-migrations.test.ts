@@ -11,7 +11,7 @@ import {
   schemaMigrationTableName,
   type AppliedSchemaMigration,
   type SchemaMigrationConfig
-} from "../src/schema-migrations";
+} from "../src/infra/schema-migrations";
 
 const TEST_CONFIG: SchemaMigrationConfig = {
   host: "127.0.0.1",

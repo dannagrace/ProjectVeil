@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildLobbyAnnouncementBannerView,
   buildLobbyAccountIdentityView,
   buildLobbyGuestEntryView,
   buildLobbyRoomCards,
@@ -33,6 +34,66 @@ function createRoom(index: number): CocosLobbyRoomSummary {
 
 test("buildLobbyRoomCards returns an empty list when there are no rooms", () => {
   assert.deepEqual(buildLobbyRoomCards([]), []);
+});
+
+test("buildLobbyAnnouncementBannerView prioritizes active maintenance mode over normal announcements", () => {
+  const banner = buildLobbyAnnouncementBannerView(
+    createLobbyState({
+      announcements: [
+        {
+          id: "notice-1",
+          title: "停服预告",
+          message: "20 分钟后维护。",
+          tone: "warning",
+          startsAt: "2026-04-17T08:00:00.000Z"
+        }
+      ],
+      maintenanceMode: {
+        active: true,
+        title: "停服维护中",
+        message: "服务器正在热更新。",
+        nextOpenAt: "2026-04-17T10:00:00.000Z"
+      }
+    })
+  );
+
+  assert.deepEqual(banner, {
+    title: "停服维护中",
+    detailLines: ["服务器正在热更新。", "预计恢复：2026-04-17T10:00:00.000Z"],
+    tone: "critical"
+  });
+});
+
+test("buildLobbyAnnouncementBannerView summarizes the current public announcement feed", () => {
+  const banner = buildLobbyAnnouncementBannerView(
+    createLobbyState({
+      announcements: [
+        {
+          id: "notice-1",
+          title: "活动预告",
+          message: "今日 20:00 开启双倍掉落。",
+          tone: "info",
+          startsAt: "2026-04-17T08:00:00.000Z"
+        },
+        {
+          id: "notice-2",
+          title: "停服预告",
+          message: "今晚 23:00 维护 15 分钟。",
+          tone: "warning",
+          startsAt: "2026-04-17T18:00:00.000Z"
+        }
+      ]
+    })
+  );
+
+  assert.deepEqual(banner, {
+    title: "全服公告 · 2 条",
+    detailLines: [
+      "活动预告：今日 20:00 开启双倍掉落。",
+      "停服预告：今晚 23:00 维护 15 分钟。"
+    ],
+    tone: "warning"
+  });
 });
 
 test("buildLobbyRoomCards keeps exactly four rooms without truncating", () => {

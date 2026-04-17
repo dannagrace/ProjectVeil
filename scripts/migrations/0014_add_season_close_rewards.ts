@@ -4,7 +4,7 @@ import {
   ensureColumnExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_TABLE,
   MYSQL_SEASON_REWARD_LOG_TABLE,

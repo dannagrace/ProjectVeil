@@ -41,7 +41,9 @@ import type {
   PlayerAccountProfilePatch,
   PlayerAccountSnapshot,
   PlayerEventHistoryQuery,
-  RoomSnapshotStore
+  RoomSnapshotStore,
+  SupportTicketCategory,
+  SupportTicketPriority
 } from "./persistence";
 import {
   applySeasonalEventProgress,
@@ -63,14 +65,14 @@ import {
   resolveActiveDailyDungeon,
   startDailyDungeonRun
 } from "./pve-content";
-import { decryptWechatPhoneNumber, validateWechatSignature } from "./wechat-session-key";
+import { decryptWechatPhoneNumber, validateWechatSignature } from "./adapters/wechat-session-key";
 import {
   buildFriendLeaderboard,
   createGroupChallenge,
   encodeGroupChallengeToken,
   normalizeNotificationPreferences,
   validateGroupChallengeToken
-} from "./wechat-social";
+} from "./adapters/wechat-social";
 import { removeMobilePushToken, upsertMobilePushToken } from "./mobile-push-tokens";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./tutorial-progress";
@@ -1204,6 +1206,86 @@ export function registerPlayerAccountRoutes(
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/player-accounts/me/support-tickets", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.listSupportTickets) {
+      sendJson(response, 503, {
+        error: {
+          code: "support_ticket_persistence_unavailable",
+          message: "Support tickets require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const statusQuery = parseOptionalQueryParam(request, "status");
+      const categoryQuery = parseOptionalQueryParam(request, "category");
+      const status =
+        statusQuery === "open" || statusQuery === "resolved" || statusQuery === "dismissed" ? statusQuery : undefined;
+      const category =
+        categoryQuery === "bug" || categoryQuery === "payment" || categoryQuery === "account" || categoryQuery === "other"
+          ? categoryQuery
+          : undefined;
+      const items = await store.listSupportTickets({
+        playerId: authSession.playerId,
+        ...(status ? { status } : {}),
+        ...(category ? { category } : {}),
+        limit: parseLimit(request) ?? 20
+      });
+      sendJson(response, 200, { items });
+    } catch (error) {
+      sendJson(response, 400, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.post("/api/player-accounts/me/support-tickets", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
+    if (!store?.createSupportTicket) {
+      sendJson(response, 503, {
+        error: {
+          code: "support_ticket_persistence_unavailable",
+          message: "Support tickets require configured room persistence storage"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as {
+        category?: SupportTicketCategory;
+        message?: string;
+        attachmentsRef?: string;
+        priority?: SupportTicketPriority;
+      };
+      const ticket = await store.createSupportTicket({
+        playerId: authSession.playerId,
+        category: body.category ?? "other",
+        message: body.message ?? "",
+        ...(body.attachmentsRef ? { attachmentsRef: body.attachmentsRef } : {}),
+        ...(body.priority ? { priority: body.priority } : {})
+      });
+      sendJson(response, 202, {
+        accepted: true,
+        ticket
+      });
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(response, 413, { error: toErrorPayload(error) });
+        return;
+      }
+      sendJson(response, 400, { error: toErrorPayload(error) });
     }
   });
 

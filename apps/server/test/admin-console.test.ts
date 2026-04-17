@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { normalizeGuildState, type GuildState } from "../../../packages/shared/src/index";
@@ -127,6 +128,22 @@ function withSupportSecrets(
   return { moderator, supervisor };
 }
 
+async function withAnnouncementConfig(t: TestContext, payload: unknown): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "veil-announcements-admin-"));
+  const filePath = path.join(dir, "announcements.json");
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const originalPath = process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+  process.env.VEIL_ANNOUNCEMENTS_CONFIG = filePath;
+  t.after(() => {
+    if (originalPath === undefined) {
+      delete process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+      return;
+    }
+    process.env.VEIL_ANNOUNCEMENTS_CONFIG = originalPath;
+  });
+  return filePath;
+}
+
 function registerRoutes(store: RoomSnapshotStore | null = null) {
   const { app, gets, posts, deletes } = createTestApp();
   registerAdminRoutes(app, store);
@@ -158,6 +175,20 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     createdAt: string;
     resolvedAt?: string;
   }>();
+  const supportTickets = new Map<string, {
+    ticketId: string;
+    playerId: string;
+    category: "bug" | "payment" | "account" | "other";
+    message: string;
+    priority: "normal" | "high" | "urgent";
+    status: "open" | "resolved" | "dismissed";
+    handlerId?: string;
+    resolution?: string;
+    createdAt: string;
+    resolvedAt?: string;
+    updatedAt: string;
+  }>();
+  const mailboxByPlayerId = new Map<string, Array<{ id: string; title: string; body: string }>>();
   const guilds = new Map<string, GuildState>();
   const battleHistoryByPlayerId = new Map<string, Array<{
     roomId: string;
@@ -178,9 +209,11 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
   }> = [];
   const saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }> = [];
   let nextReportId = 1;
+  let nextSupportTicketId = 1;
 
   const store = {
     saveCalls,
+    mailboxByPlayerId,
     async loadPlayerAccount(playerId: string) {
       return accounts.get(playerId) ?? null;
     },
@@ -220,6 +253,28 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       };
       reports.set(report.reportId, report);
       return report;
+    },
+    async createSupportTicket(input: {
+      playerId: string;
+      category: "bug" | "payment" | "account" | "other";
+      message: string;
+      attachmentsRef?: string;
+      priority?: "normal" | "high" | "urgent";
+    }) {
+      const now = new Date().toISOString();
+      const ticket = {
+        ticketId: `ticket-${nextSupportTicketId++}`,
+        playerId: input.playerId,
+        category: input.category,
+        message: input.message,
+        ...(input.attachmentsRef ? { attachmentsRef: input.attachmentsRef } : {}),
+        priority: input.priority ?? "normal",
+        status: "open" as const,
+        createdAt: now,
+        updatedAt: now
+      };
+      supportTickets.set(ticket.ticketId, ticket);
+      return ticket;
     },
     async loadPlayerBan(playerId: string) {
       const account = accounts.get(playerId);
@@ -461,6 +516,19 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.reportId.localeCompare(right.reportId))
         .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
     },
+    async listSupportTickets(options: {
+      status?: "open" | "resolved" | "dismissed";
+      playerId?: string;
+      category?: "bug" | "payment" | "account" | "other";
+      limit?: number;
+    } = {}) {
+      return Array.from(supportTickets.values())
+        .filter((ticket) => !options.status || ticket.status === options.status)
+        .filter((ticket) => !options.playerId || ticket.playerId === options.playerId)
+        .filter((ticket) => !options.category || ticket.category === options.category)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.ticketId.localeCompare(right.ticketId))
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)));
+    },
     async resolvePlayerReport(reportId: string, input: { status: "dismissed" | "warned" | "banned" }) {
       const report = reports.get(reportId);
       if (!report) {
@@ -473,6 +541,48 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
       };
       reports.set(reportId, next);
       return next;
+    },
+    async resolveSupportTicket(
+      ticketId: string,
+      input: { status: "resolved" | "dismissed"; handlerId: string; resolution: string }
+    ) {
+      const ticket = supportTickets.get(ticketId);
+      if (!ticket) {
+        return null;
+      }
+      const next = {
+        ...ticket,
+        status: input.status,
+        handlerId: input.handlerId,
+        resolution: input.resolution,
+        resolvedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      supportTickets.set(ticketId, next);
+      return next;
+    },
+    async deliverPlayerMailbox(input: { playerIds: string[]; message: { id: string; title: string; body: string } }) {
+      const deliveredPlayerIds: string[] = [];
+      const skippedPlayerIds: string[] = [];
+      for (const playerId of input.playerIds) {
+        const mailbox = mailboxByPlayerId.get(playerId) ?? [];
+        if (mailbox.some((message) => message.id === input.message.id)) {
+          skippedPlayerIds.push(playerId);
+          continue;
+        }
+        mailbox.push({
+          id: input.message.id,
+          title: input.message.title,
+          body: input.message.body
+        });
+        mailboxByPlayerId.set(playerId, mailbox);
+        deliveredPlayerIds.push(playerId);
+      }
+      return {
+        deliveredPlayerIds,
+        skippedPlayerIds,
+        message: input.message
+      };
     }
   };
 
@@ -500,8 +610,13 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
     | "listBattleSnapshotsForPlayer"
     | "listPlayerReports"
     | "resolvePlayerReport"
+    | "createSupportTicket"
+    | "listSupportTickets"
+    | "resolveSupportTicket"
+    | "deliverPlayerMailbox"
   > & {
     saveCalls: Array<{ playerId: string; globalResources: { gold: number; wood: number; ore: number } }>;
+    mailboxByPlayerId: Map<string, Array<{ id: string; title: string; body: string }>>;
     seedPurchaseHistory(playerId: string, items: PlayerPurchaseHistoryRecord[]): void;
     seedBattleHistory(
       playerId: string,
@@ -513,7 +628,7 @@ function createStore(initialResourcesByPlayer: Record<string, { gold: number; wo
         startedAt: string;
       }>
     ): void;
-  };
+  } & typeof store;
 }
 
 test("GET /api/admin/overview returns 401 without a valid admin secret", async (t) => {
@@ -1367,6 +1482,258 @@ test("POST /api/admin/reports/:id/resolve marks a report resolved", async (t) =>
   assert.equal(payload.ok, true);
   assert.equal(payload.report.status, "warned");
   assert.ok(payload.report.resolvedAt);
+});
+
+test("admin launch runtime routes list, create, and delete announcements", async (t) => {
+  withAdminSecret(t);
+  await withAnnouncementConfig(t, {
+    announcements: [
+      {
+        id: "launch-1",
+        title: "首发公告",
+        message: "服务器将于今晚维护。",
+        tone: "warning",
+        startsAt: "2020-04-17T10:00:00.000Z",
+        endsAt: "2099-04-17T12:00:00.000Z"
+      }
+    ],
+    maintenanceMode: {
+      enabled: false,
+      title: "停服维护中",
+      message: "服务器正在维护，请稍后再试。",
+      whitelistPlayerIds: [],
+      whitelistLoginIds: []
+    },
+    updatedAt: "2026-04-17T09:00:00.000Z"
+  });
+
+  const { gets, posts, deletes } = registerRoutes(createStore() as RoomSnapshotStore);
+  const listHandler = gets.get("/api/admin/announcements");
+  const createHandler = posts.get("/api/admin/announcements");
+  const deleteHandler = deletes.get("/api/admin/announcements/:id");
+  assert.ok(listHandler);
+  assert.ok(createHandler);
+  assert.ok(deleteHandler);
+
+  const listResponse = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      }
+    }),
+    listResponse
+  );
+  assert.equal(listResponse.statusCode, 200);
+  const listPayload = JSON.parse(listResponse.body) as {
+    announcements: Array<{ id: string; title: string }>;
+    active: Array<{ id: string }>;
+    maintenanceMode: { active: boolean; blocked: boolean };
+  };
+  assert.equal(listPayload.announcements.length, 1);
+  assert.equal(listPayload.announcements[0]?.id, "launch-1");
+  assert.deepEqual(listPayload.active.map((item) => item.id), ["launch-1"]);
+  assert.equal(listPayload.maintenanceMode.active, false);
+  assert.equal(listPayload.maintenanceMode.blocked, false);
+
+  const createResponseState = createResponse();
+  await createHandler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      },
+      body: JSON.stringify({
+        id: "launch-2",
+        title: "热更新公告",
+        message: "热更新将在 15 分钟后生效。",
+        tone: "info",
+        startsAt: "2020-04-17T12:10:00.000Z",
+        endsAt: "2099-04-17T13:00:00.000Z"
+      })
+    }),
+    createResponseState
+  );
+  assert.equal(createResponseState.statusCode, 200);
+  const createPayload = JSON.parse(createResponseState.body) as {
+    ok: boolean;
+    announcement: { id: string; title: string };
+    active: Array<{ id: string }>;
+  };
+  assert.equal(createPayload.ok, true);
+  assert.equal(createPayload.announcement.id, "launch-2");
+  assert.deepEqual(createPayload.active.map((item) => item.id), ["launch-1", "launch-2"]);
+
+  const deleteResponse = createResponse();
+  await deleteHandler(
+    createRequest({
+      method: "DELETE",
+      params: { id: "launch-1" },
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      }
+    }),
+    deleteResponse
+  );
+  assert.equal(deleteResponse.statusCode, 200);
+  const deletePayload = JSON.parse(deleteResponse.body) as {
+    ok: boolean;
+    removed: boolean;
+    announcement?: { id: string };
+    active: Array<{ id: string }>;
+  };
+  assert.equal(deletePayload.ok, true);
+  assert.equal(deletePayload.removed, true);
+  assert.equal(deletePayload.announcement?.id, "launch-1");
+  assert.deepEqual(deletePayload.active.map((item) => item.id), ["launch-2"]);
+});
+
+test("admin maintenance mode route persists the current maintenance snapshot", async (t) => {
+  withAdminSecret(t);
+  await withAnnouncementConfig(t, {
+    announcements: [],
+    maintenanceMode: {
+      enabled: false,
+      title: "停服维护中",
+      message: "服务器正在维护，请稍后再试。",
+      whitelistPlayerIds: [],
+      whitelistLoginIds: []
+    },
+    updatedAt: "2026-04-17T09:00:00.000Z"
+  });
+
+  const { posts } = registerRoutes(createStore() as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/maintenance-mode");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": process.env.ADMIN_SECRET
+      },
+      body: JSON.stringify({
+        enabled: true,
+        title: "停服维护中",
+        message: "预计 30 分钟后恢复开放。",
+        nextOpenAt: "2026-04-17T15:30:00.000Z",
+        whitelistPlayerIds: ["ops-player"],
+        whitelistLoginIds: ["ops-login"]
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    maintenanceMode: {
+      active: boolean;
+      blocked: boolean;
+      title: string;
+      message: string;
+      nextOpenAt?: string;
+    };
+    updatedAt?: string;
+  };
+  assert.equal(payload.ok, true);
+  assert.equal(payload.maintenanceMode.active, true);
+  assert.equal(payload.maintenanceMode.blocked, true);
+  assert.equal(payload.maintenanceMode.message, "预计 30 分钟后恢复开放。");
+  assert.equal(payload.maintenanceMode.nextOpenAt, "2026-04-17T15:30:00.000Z");
+  assert.ok(payload.updatedAt);
+});
+
+test("GET /api/admin/support-tickets returns open support tickets", async (t) => {
+  withAdminSecret(t);
+  const { moderator } = withSupportSecrets(t);
+  const store = createStore();
+  await store.createSupportTicket({
+    playerId: "player-1",
+    category: "bug",
+    message: "Cocos 大厅按钮没有响应。",
+    priority: "high"
+  });
+  const resolved = await store.createSupportTicket({
+    playerId: "player-2",
+    category: "payment",
+    message: "支付后未到账。"
+  });
+  await store.resolveSupportTicket(resolved.ticketId, {
+    status: "resolved",
+    handlerId: "support-moderator:admin-console",
+    resolution: "已经补发。"
+  });
+
+  const { gets } = registerRoutes(store as RoomSnapshotStore);
+  const handler = gets.get("/api/admin/support-tickets");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      url: "/api/admin/support-tickets?status=open",
+      headers: {
+        "x-veil-admin-secret": moderator
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    status: string;
+    items: Array<{ ticketId: string; category: string; status: string }>;
+  };
+  assert.equal(payload.status, "open");
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0]?.category, "bug");
+  assert.equal(payload.items[0]?.status, "open");
+});
+
+test("POST /api/admin/support-tickets/:id/resolve resolves the ticket and delivers mailbox feedback", async (t) => {
+  withAdminSecret(t);
+  const { supervisor } = withSupportSecrets(t);
+  const store = createStore();
+  const ticket = await store.createSupportTicket({
+    playerId: "player-support",
+    category: "account",
+    message: "请帮忙处理账号异常。"
+  });
+
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
+  const handler = posts.get("/api/admin/support-tickets/:id/resolve");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      params: { id: ticket.ticketId },
+      headers: {
+        "x-veil-admin-secret": supervisor
+      },
+      body: JSON.stringify({
+        status: "resolved",
+        resolution: "已重置账号状态，请重新登录。"
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body) as {
+    ok: boolean;
+    mailboxDelivered: boolean;
+    ticket: { status: string; handlerId?: string; resolution?: string };
+  };
+  assert.equal(payload.ok, true);
+  assert.equal(payload.mailboxDelivered, true);
+  assert.equal(payload.ticket.status, "resolved");
+  assert.equal(payload.ticket.handlerId, "support-supervisor:admin-console");
+  assert.equal(payload.ticket.resolution, "已重置账号状态，请重新登录。");
+  assert.equal(store.mailboxByPlayerId.get("player-support")?.[0]?.title, "客服工单已处理");
 });
 
 test("GET /api/admin/overview returns 503 when ADMIN_SECRET is not configured", async () => {

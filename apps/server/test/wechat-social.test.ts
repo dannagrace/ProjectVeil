@@ -6,7 +6,7 @@ import {
   encodeGroupChallengeToken,
   normalizeNotificationPreferences,
   validateGroupChallengeToken
-} from "../src/wechat-social";
+} from "../src/adapters/wechat-social";
 
 test("group challenge tokens round-trip and reject stale payloads", () => {
   const createdAt = new Date("2026-04-04T10:00:00.000Z");

@@ -1,4 +1,10 @@
-import type { CocosCampaignSummary, CocosLobbyRoomSummary, CocosPlayerAccountProfile } from "./cocos-lobby.ts";
+import type {
+  CocosCampaignSummary,
+  CocosLaunchAnnouncement,
+  CocosLobbyRoomSummary,
+  CocosMaintenanceModeSnapshot,
+  CocosPlayerAccountProfile
+} from "./cocos-lobby.ts";
 import { buildCocosLeaderboardPanelView } from "./cocos-leaderboard-panel.ts";
 import type { MatchmakingStatusView } from "./cocos-matchmaking-status.ts";
 import type { CocosDailyDungeonSummary } from "./cocos-progression-panel.ts";
@@ -66,6 +72,12 @@ export interface LobbyPvpFrontdoorView {
   primaryActionKind: LobbyPvpFrontdoorActionKind;
 }
 
+export interface LobbyAnnouncementBannerView {
+  title: string;
+  detailLines: string[];
+  tone: "info" | "warning" | "critical";
+}
+
 export function buildLobbyRoomCards(rooms: CocosLobbyRoomSummary[]): LobbyRoomCardView[] {
   return rooms.slice(0, 4).map((room) => ({
     roomId: room.roomId,
@@ -76,6 +88,42 @@ export function buildLobbyRoomCards(rooms: CocosLobbyRoomSummary[]): LobbyRoomCa
       (room.disconnectedPlayers > 0 ? `（掉线 ${room.disconnectedPlayers}）` : "") +
       ` · 英雄 ${room.heroCount} · 战斗 ${room.activeBattles}`
   }));
+}
+
+function rankAnnouncementTone(tone: "info" | "warning" | "critical"): number {
+  return tone === "critical" ? 3 : tone === "warning" ? 2 : 1;
+}
+
+export function buildLobbyAnnouncementBannerView(
+  state: Pick<VeilLobbyRenderState, "announcements" | "maintenanceMode">
+): LobbyAnnouncementBannerView | null {
+  if (state.maintenanceMode?.active) {
+    return {
+      title: state.maintenanceMode.title,
+      detailLines: [
+        state.maintenanceMode.message,
+        ...(state.maintenanceMode.nextOpenAt ? [`预计恢复：${state.maintenanceMode.nextOpenAt}`] : [])
+      ],
+      tone: "critical"
+    };
+  }
+
+  if ((state.announcements ?? []).length === 0) {
+    return null;
+  }
+
+  const announcements: CocosLaunchAnnouncement[] = [...state.announcements];
+  const tone = announcements.reduce<"info" | "warning" | "critical">(
+    (current, announcement) =>
+      rankAnnouncementTone(announcement.tone) > rankAnnouncementTone(current) ? announcement.tone : current,
+    "info"
+  );
+
+  return {
+    title: announcements.length === 1 ? announcements[0]?.title ?? "全服公告" : `全服公告 · ${announcements.length} 条`,
+    detailLines: announcements.slice(0, 2).map((announcement) => `${announcement.title}：${announcement.message}`),
+    tone
+  };
 }
 
 export function buildLobbyGuestEntryView(
