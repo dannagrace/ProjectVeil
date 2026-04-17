@@ -4,8 +4,8 @@ import type {
   GroupChallenge,
   GroupChallengeType,
   NotificationPreferences
-} from "../../../packages/shared/src/index";
-import type { PlayerAccountSnapshot } from "./persistence";
+} from "../../../../packages/shared/src/index";
+import type { PlayerAccountSnapshot } from "../persistence";
 
 export const GROUP_CHALLENGE_TTL_MS = 24 * 60 * 60 * 1000;
 

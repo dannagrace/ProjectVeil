@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/schema-migrations";
+} from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX,
   MYSQL_GUILD_MEMBERSHIP_TABLE,

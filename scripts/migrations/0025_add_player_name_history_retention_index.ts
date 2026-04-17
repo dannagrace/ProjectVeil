@@ -1,4 +1,4 @@
-import { dropIndexIfExists, ensureIndexExists, type SchemaMigrationConnection } from "../../apps/server/src/schema-migrations";
+import { dropIndexIfExists, ensureIndexExists, type SchemaMigrationConnection } from "../../apps/server/src/infra/schema-migrations";
 import {
   MYSQL_PLAYER_NAME_HISTORY_CHANGED_AT_INDEX,
   MYSQL_PLAYER_NAME_HISTORY_TABLE
