@@ -13,9 +13,16 @@ import {
   summarizeWechatSmoke
 } from "../../../scripts/release-readiness-dashboard.ts";
 
+function isoNowMinus(parts: { days?: number; minutes?: number } = {}): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - (parts.days ?? 0));
+  date.setUTCMinutes(date.getUTCMinutes() - (parts.minutes ?? 0));
+  return date.toISOString();
+}
+
 test("summarizeSnapshot fails when a required release-readiness check is missing from an otherwise passed snapshot", () => {
   const summary = summarizeSnapshot("/tmp/release-readiness.json", {
-    generatedAt: "2026-03-30T00:00:00.000Z",
+    generatedAt: isoNowMinus({ days: 1 }),
     revision: {
       shortCommit: "abc1234"
     },
@@ -40,7 +47,7 @@ test("summarizeSnapshot fails when a required release-readiness check is missing
 
 test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence into a failing gate", () => {
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
-    generatedAt: "2026-03-30T00:00:00.000Z",
+    generatedAt: isoNowMinus({ days: 1 }),
     revision: {
       shortCommit: "abc1234"
     },
@@ -60,7 +67,7 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
   const smokeSummary = summarizeWechatSmoke("/tmp/codex.wechat.smoke-report.json", {
     execution: {
       result: "failed",
-      executedAt: "2026-03-30T00:05:00.000Z"
+      executedAt: isoNowMinus({ minutes: 30 })
     },
     cases: [{ id: "login-lobby", status: "failed" }]
   });
@@ -79,8 +86,11 @@ test("buildBuildPackageGate aggregates snapshot, package, and smoke evidence int
 });
 
 test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves fresh failures", () => {
+  const staleSnapshotAt = isoNowMinus({ days: 30 });
+  const recentSmokeAt = isoNowMinus({ days: 1, minutes: 5 });
+  const recentCocosAt = isoNowMinus({ days: 1 });
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
-    generatedAt: "2026-03-01T00:00:00.000Z",
+    generatedAt: staleSnapshotAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -99,14 +109,14 @@ test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves 
   const smokeSummary = summarizeWechatSmoke("/tmp/codex.wechat.smoke-report.json", {
     execution: {
       result: "failed",
-      executedAt: "2026-03-30T00:05:00.000Z"
+      executedAt: recentSmokeAt
     },
     cases: [{ id: "login-lobby", status: "failed" }]
   });
   const cocosSummary = summarizeCocosRc("/tmp/cocos-rc.json", {
     execution: {
       overallStatus: "passed",
-      executedAt: "2026-03-30T00:10:00.000Z",
+      executedAt: recentCocosAt,
       summary: "RC journey passed."
     }
   });
@@ -120,7 +130,7 @@ test("buildCriticalEvidenceGate downgrades stale evidence to warn and preserves 
   assert.equal(gate.status, "fail");
   assert.match(gate.summary, /missing or includes failing signals/i);
   assert.match(gate.details[0] ?? "", /older than 14 day\(s\)/);
-  assert.match(gate.details[1] ?? "", /2026-03-30T00:05:00.000Z/);
+  assert.match(gate.details[1] ?? "", new RegExp(recentSmokeAt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.deepEqual(gate.failReasons, ["wechat_smoke_failed"]);
   assert.deepEqual(gate.warnReasons, ["evidence_stale"]);
   assert.equal(gate.evidence[0]?.freshness, "stale");
@@ -149,7 +159,7 @@ test("buildCriticalEvidenceGate fails when a critical artifact is missing and ex
 
 test("summarizePrimaryClientDiagnostics fails incomplete checkpoint coverage", () => {
   const summary = summarizePrimaryClientDiagnostics("/tmp/cocos-primary-diagnostics.json", {
-    generatedAt: "2026-03-30T00:00:00.000Z",
+    generatedAt: isoNowMinus({ days: 1 }),
     revision: {
       shortCommit: "abc1234"
     },
@@ -180,8 +190,10 @@ test("summarizeSameCandidateAudit warns when the dashboard was not run as a cand
 });
 
 test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions disagree", () => {
+  const recentSnapshotAt = isoNowMinus({ days: 1, minutes: 20 });
+  const recentSmokeAt = isoNowMinus({ days: 1, minutes: 5 });
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
-    generatedAt: "2026-03-30T00:00:00.000Z",
+    generatedAt: recentSnapshotAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -205,7 +217,7 @@ test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions
     },
     execution: {
       result: "passed",
-      executedAt: "2026-03-30T00:05:00.000Z"
+      executedAt: recentSmokeAt
     },
     cases: [{ id: "login-lobby", status: "passed" }]
   });
@@ -233,8 +245,10 @@ test("buildGoNoGoReport marks a candidate blocked when linked evidence revisions
 });
 
 test("buildGoNoGoReport blocks explicit candidate pinning when evidence metadata is missing or stale", () => {
+  const staleSnapshotAt = isoNowMinus({ days: 30 });
+  const recentSmokeAt = isoNowMinus({ days: 1, minutes: 5 });
   const snapshotSummary = summarizeSnapshot("/tmp/release-readiness.json", {
-    generatedAt: "2026-03-01T00:00:00.000Z",
+    generatedAt: staleSnapshotAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -255,7 +269,7 @@ test("buildGoNoGoReport blocks explicit candidate pinning when evidence metadata
   const smokeSummary = summarizeWechatSmoke("/tmp/codex.wechat.smoke-report.json", {
     execution: {
       result: "passed",
-      executedAt: "2026-03-30T00:05:00.000Z"
+      executedAt: recentSmokeAt
     },
     cases: [{ id: "login-lobby", status: "passed" }]
   });
