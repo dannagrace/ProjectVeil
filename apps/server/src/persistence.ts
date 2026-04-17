@@ -1234,7 +1234,9 @@ export type AdminAuditAction =
   | "player_banned"
   | "player_unbanned"
   | "report_resolved"
-  | "support_ticket_resolved";
+  | "support_ticket_resolved"
+  | "ugc_review_approved"
+  | "ugc_review_rejected";
 
 export interface AdminAuditLogRecord {
   auditId: string;
