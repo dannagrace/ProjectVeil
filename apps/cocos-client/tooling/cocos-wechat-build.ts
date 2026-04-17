@@ -23,6 +23,11 @@ export interface WechatMinigameSubpackageExpectation {
   label?: string;
 }
 
+export interface WechatMinigameGameJsonSubpackage {
+  root: string;
+  name: string;
+}
+
 export interface WechatMinigameBuildConfig {
   projectName: string;
   appId: string;
@@ -40,6 +45,7 @@ export interface WechatMinigameBuildConfig {
 interface WechatMinigameGameJson {
   deviceOrientation: WechatMinigameOrientation;
   networkTimeout: WechatMinigameNetworkTimeoutMs;
+  subpackages?: WechatMinigameGameJsonSubpackage[];
 }
 
 interface WechatMinigameProjectConfig {
@@ -291,6 +297,40 @@ function normalizeSubpackageRootsFromGameJson(value: unknown): string[] {
   return roots;
 }
 
+function slugifySubpackageName(root: string, fallbackIndex: number): string {
+  const basename = root
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .at(-1)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return basename && basename.length > 0 ? basename : `subpackage-${fallbackIndex + 1}`;
+}
+
+function buildGameJsonSubpackages(
+  expectedSubpackages: WechatMinigameSubpackageExpectation[]
+): WechatMinigameGameJsonSubpackage[] | undefined {
+  if (expectedSubpackages.length === 0) {
+    return undefined;
+  }
+
+  const seenNames = new Set<string>();
+  return expectedSubpackages.map((subpackage, index) => {
+    let name = slugifySubpackageName(subpackage.label ?? subpackage.root, index);
+    let suffix = 2;
+    while (seenNames.has(name)) {
+      name = `${name}-${suffix}`;
+      suffix += 1;
+    }
+    seenNames.add(name);
+    return {
+      root: subpackage.root,
+      name
+    };
+  });
+}
+
 function createEmptyDomainMatrix(): WechatMinigameDomainMatrix {
   return {
     request: [],
@@ -505,9 +545,11 @@ export function buildWechatMinigameTemplateArtifacts(
   config: WechatMinigameBuildConfig
 ): WechatMinigameTemplateArtifacts {
   const domainCoverage = buildWechatMinigameDomainCoverage(config);
+  const gameJsonSubpackages = buildGameJsonSubpackages(config.expectedSubpackages);
   const gameJson: WechatMinigameGameJson = {
     deviceOrientation: config.orientation,
-    networkTimeout: config.networkTimeoutMs
+    networkTimeout: config.networkTimeoutMs,
+    ...(gameJsonSubpackages ? { subpackages: gameJsonSubpackages } : {})
   };
 
   const projectConfigJson: WechatMinigameProjectConfig = {
@@ -578,7 +620,8 @@ export function buildWechatMinigameTemplateArtifacts(
     "- 在 Cocos Creator 的微信小游戏构建目标中执行正式导出。",
     "- 若资源需要分包，请把对应 Asset Bundle 的 Compression Type 设为 Mini Game Subpackage。",
     "- 导出后运行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` 校验注入配置与 4MB / 30MB 预算。",
-    "- 把远程资源目录上传到 CDN 后，再在微信开发者工具中补齐域名白名单。"
+    "- 把远程资源目录上传到 CDN 后，再在微信开发者工具中补齐域名白名单。",
+    "- 如果需要增量资源发布，运行 `npm run release:wechat:assets-hotfix -- --build-dir <wechatgame-build-dir>` 生成 hotfix manifest 并上传变更资源。"
   ].join("\n");
 
   return {
