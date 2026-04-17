@@ -30,6 +30,7 @@ Relevant scripts: 56
 | `release:health:summary` | release | `artifacts/release-readiness/release-health-summary-<short-sha>.json` |
 | `release:health:trend-baseline` | release | `artifacts/release-readiness/release-health-trend-baseline.json` |
 | `release:health:trend-compare` | release | `artifacts/release-readiness/release-health-trend-compare.json` |
+| `release:launch-compliance:gate` | release | `artifacts/release-readiness/launch-compliance-gate-<short-sha>.json` |
 | `release:phase1:candidate-dossier` | release | Bundle directory `artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<short-sha>/` with `phase1-candidate-dossier.json/.md`, `runtime-observability-dossier.json/.md`, `release-gate-summary.json/.md`, and `release-health-summary.json/.md`. |
 | `release:phase1:candidate-rehearsal` | release | Bundle directory under `artifacts/release-readiness/phase1-candidate-rehearsal/` with staged JSON/Markdown outputs, including the release candidate manifest JSON/Markdown pair, the same-candidate evidence audit Markdown, the runtime observability gate Markdown companion, the runtime SLO summary JSON / Markdown / text trio, and the WeChat candidate summary Markdown companion surfaced at the top of `SUMMARY.md`, Cocos primary journey evidence, the Cocos reconnect replay artifact, the Cocos main-journey replay gate, Cocos primary diagnostics, the derived candidate revision triage input/digest pair, the release readiness snapshot, the staged runtime observability gate, the staged H5 candidate smoke report, the staged reconnect soak summary, the staged WeChat candidate summary, the runtime observability bundle, raw runtime observability evidence, the candidate-scoped Cocos RC bundle, the restaged release-readiness dashboard, the same-revision evidence bundle manifest, the release gate summary plus its Markdown companion, the release health summary plus its Markdown companion, the staged CI trend summary plus its Markdown companion, the paired Phase 1 release evidence drift gate, the Phase 1 exit audit, the Phase 1 exit-dossier freshness gate, the Phase 1 candidate dossier plus its Markdown companion, the final go/no-go packet, the manual evidence owner ledger, the candidate evidence audit, the candidate evidence freshness guard, the candidate owner reminder and freshness history companions, the current evidence index plus its Markdown companion, the reviewer-facing release PR summary, and a top-level `SUMMARY.md` that serves as the canonical packet-level reviewer entrypoint. |
 | `release:phase1:evidence-drift-gate` | release | `artifacts/release-readiness/phase1-release-evidence-drift-gate-<candidate>-<short-sha>.json` |
@@ -248,6 +249,17 @@ Relevant scripts: 56
 - Produced artifacts:
   - `artifacts/release-readiness/release-health-trend-compare.json`
   - `artifacts/release-readiness/release-health-trend-compare.md`
+
+## `release:launch-compliance:gate`
+
+- Family: `release`
+- Command: `node --import tsx ./scripts/release-launch-compliance-gate.ts`
+- Purpose: Validate launch paperwork, policy URLs, real-name verification credentials, and payment-channel registration before external release.
+- Required inputs:
+  - `configs/launch-compliance.json` by default, or `VEIL_LAUNCH_COMPLIANCE_JSON`, `VEIL_LAUNCH_COMPLIANCE_PATH`, or `--config` overrides.
+- Produced artifacts:
+  - `artifacts/release-readiness/launch-compliance-gate-<short-sha>.json`
+  - `artifacts/release-readiness/launch-compliance-gate-<short-sha>.md`
 
 ## `release:phase1:candidate-dossier`
 

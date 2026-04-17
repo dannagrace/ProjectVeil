@@ -367,6 +367,16 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "`artifacts/release-readiness/runtime-slo-summary-<short-sha>.txt`",
     ],
   },
+  "release:launch-compliance:gate": {
+    purpose: "Validate launch paperwork, policy URLs, real-name verification credentials, and payment-channel registration before external release.",
+    requiredInputs: [
+      "`configs/launch-compliance.json` by default, or `VEIL_LAUNCH_COMPLIANCE_JSON`, `VEIL_LAUNCH_COMPLIANCE_PATH`, or `--config` overrides.",
+    ],
+    producedArtifacts: [
+      "`artifacts/release-readiness/launch-compliance-gate-<short-sha>.json`",
+      "`artifacts/release-readiness/launch-compliance-gate-<short-sha>.md`",
+    ],
+  },
   "release:candidate:evidence-audit": {
     purpose:
       "Audit whether all candidate evidence artifacts refer to the same revision, remain fresh enough for release review, and should be treated as blocking vs warning for the selected surface.",

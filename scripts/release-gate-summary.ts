@@ -2,6 +2,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  buildLaunchComplianceGateReport,
+  loadLaunchComplianceDossier,
+  type LaunchComplianceGateStatus
+} from "./release-launch-compliance-gate";
 
 type GateStatus = "passed" | "failed";
 type TargetSurface = "h5" | "wechat";
@@ -26,6 +31,12 @@ interface Args {
   stage?: ReleaseStage;
   outputPath?: string;
   markdownOutputPath?: string;
+}
+
+interface LaunchComplianceAdvisory {
+  status: LaunchComplianceGateStatus | "missing";
+  summary: string;
+  configPath?: string;
 }
 
 interface GitRevision {
@@ -437,6 +448,7 @@ interface ReleaseGateSummaryReport {
     manualEvidenceLedgerPath?: string;
     productionRollbackDrillPath?: string;
     configCenterLibraryPath?: string;
+    launchComplianceConfigPath?: string;
   };
   triage: {
     blockers: ReleaseGateTriageEntry[];
@@ -445,6 +457,7 @@ interface ReleaseGateSummaryReport {
   gates: GateResult[];
   releaseSurface: ReleaseSurfaceContract;
   configChangeRisk: ConfigChangeRiskSummary;
+  launchCompliance: LaunchComplianceAdvisory;
 }
 
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
@@ -2497,13 +2510,31 @@ function buildSurfaceEvidenceNextStep(
   return `${sourceInstruction}, refresh the target-surface evidence, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
 }
 
+function buildLaunchComplianceAdvisory(): LaunchComplianceAdvisory {
+  try {
+    const { dossier, configPath } = loadLaunchComplianceDossier();
+    const report = buildLaunchComplianceGateReport(dossier, configPath);
+    return {
+      status: report.status,
+      summary: report.summary,
+      configPath
+    };
+  } catch (error) {
+    return {
+      status: "missing",
+      summary: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function buildReleaseGateTriage(
   gates: GateResult[],
   inputs: ReleaseGateSummaryReport["inputs"],
   targetSurface: TargetSurface,
   stage: ReleaseStage,
   releaseSurface: ReleaseSurfaceContract,
-  configChangeRisk: ConfigChangeRiskSummary
+  configChangeRisk: ConfigChangeRiskSummary,
+  launchCompliance: LaunchComplianceAdvisory
 ): ReleaseGateSummaryReport["triage"] {
   const gateBlockers = gates
     .filter((gate) => gate.required && gate.status === "failed")
@@ -2594,6 +2625,25 @@ function buildReleaseGateTriage(
         : []
     ),
     ...(
+      targetSurface === "wechat" && launchCompliance.status !== "pass"
+        ? [
+            {
+              id: "launch-compliance:warning",
+              severity: "warning" as const,
+              gateId: "wechat-release" as const,
+              title: "Launch compliance dossier",
+              impactedSurface: targetSurface,
+              summary:
+                launchCompliance.status === "missing"
+                  ? `Launch compliance dossier is missing: ${launchCompliance.summary}`
+                  : `Launch compliance dossier still needs follow-up: ${launchCompliance.summary}`,
+              nextStep: "Run `npm run release:launch-compliance:gate` and update the missing launch paperwork before promotion.",
+              artifacts: createTriageArtifactReference("Launch compliance dossier", launchCompliance.configPath)
+            }
+          ]
+        : []
+    ),
+    ...(
     configChangeRisk.status === "available" &&
     (configChangeRisk.overallRisk === "medium" ||
       configChangeRisk.overallRisk === "high" ||
@@ -2637,6 +2687,7 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const wechatCommercialVerificationPath = resolveWechatCommercialVerificationPath(args, wechatArtifactsDir);
   const manualEvidenceLedgerPath = args.manualEvidenceLedgerPath ? resolveManualEvidenceLedgerPath(args) : undefined;
   const configCenterLibraryPath = resolveConfigCenterLibraryPath(args);
+  const launchCompliance = buildLaunchComplianceAdvisory();
   const releaseSurface = buildReleaseSurfaceContract(
     stage,
     args.targetSurface,
@@ -2683,7 +2734,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(manualEvidenceLedgerPath ? { manualEvidenceLedgerPath } : {}),
     ...(productionRollbackDrillPath ? { productionRollbackDrillPath } : {}),
-    ...(configCenterLibraryPath ? { configCenterLibraryPath } : {})
+    ...(configCenterLibraryPath ? { configCenterLibraryPath } : {}),
+    ...(launchCompliance.configPath ? { launchComplianceConfigPath: launchCompliance.configPath } : {})
   };
   const configChangeRisk = buildConfigChangeRiskSummary(configCenterLibraryPath);
 
@@ -2701,10 +2753,11 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
       failedGateIds: failedGates.map((gate) => gate.id)
     },
     inputs,
-    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, stage, releaseSurface, configChangeRisk),
+    triage: buildReleaseGateTriage(gates, inputs, args.targetSurface, stage, releaseSurface, configChangeRisk, launchCompliance),
     gates,
     releaseSurface,
-    configChangeRisk
+    configChangeRisk,
+    launchCompliance
   };
 }
 
@@ -2737,6 +2790,9 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   );
   lines.push(`- WeChat smoke fallback: \`${report.inputs.wechatSmokeReportPath ? relativeReportPath(report.inputs.wechatSmokeReportPath) : "<missing>"}\``);
   lines.push(
+    `- Launch compliance dossier: \`${report.inputs.launchComplianceConfigPath ? relativeReportPath(report.inputs.launchComplianceConfigPath) : "<missing>"}\``
+  );
+  lines.push(
     `- WeChat commercial verification: \`${report.inputs.wechatCommercialVerificationPath ? relativeReportPath(report.inputs.wechatCommercialVerificationPath) : "<missing>"}\``
   );
   lines.push(
@@ -2745,6 +2801,12 @@ export function renderMarkdown(report: ReleaseGateSummaryReport): string {
   lines.push(`- WeChat artifacts dir: \`${report.inputs.wechatArtifactsDir ? relativeReportPath(report.inputs.wechatArtifactsDir) : "<missing>"}\``);
   lines.push(`- Manual evidence ledger: \`${report.inputs.manualEvidenceLedgerPath ? relativeReportPath(report.inputs.manualEvidenceLedgerPath) : "<missing>"}\``);
   lines.push(`- Config audit: \`${report.inputs.configCenterLibraryPath ? relativeReportPath(report.inputs.configCenterLibraryPath) : "<missing>"}\``);
+  lines.push("");
+
+  lines.push("## Launch Compliance");
+  lines.push("");
+  lines.push(`- Status: \`${report.launchCompliance.status.toUpperCase()}\``);
+  lines.push(`- Summary: ${report.launchCompliance.summary}`);
   lines.push("");
 
   lines.push("## Triage Summary");
