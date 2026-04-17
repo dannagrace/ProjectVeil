@@ -1388,6 +1388,11 @@ test("player progression loader normalizes summary, achievements, and limited ev
       latestUnlockedAchievementId: "first_battle",
       latestUnlockedAchievementTitle: "初次交锋",
       latestUnlockedAt: "2026-03-27T12:00:00.000Z",
+      nextGoalAchievementId: "world_explorer",
+      nextGoalAchievementTitle: "踏勘全境",
+      nextGoalCurrent: 0,
+      nextGoalTarget: 1,
+      nextGoalRemaining: 1,
       recentEventCount: 1,
       latestEventAt: "2026-03-27T12:03:00.000Z"
     });
