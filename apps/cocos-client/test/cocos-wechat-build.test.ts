@@ -13,7 +13,11 @@ import {
 } from "../tooling/cocos-wechat-build.ts";
 
 function resolveMainRepoTsxLoaderPath(): string {
-  return path.resolve(__dirname, "../../../../../ProjectVeil/node_modules/tsx/dist/loader.mjs");
+  const loaderPath = path.resolve(__dirname, "../../../node_modules/tsx/dist/loader.mjs");
+  if (!fs.existsSync(loaderPath)) {
+    throw new Error(`Unable to resolve tsx loader from current workspace: ${loaderPath}`);
+  }
+  return loaderPath;
 }
 
 function createPackagedWechatReleaseArtifact(): {
