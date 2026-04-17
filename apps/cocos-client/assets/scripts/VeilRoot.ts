@@ -3633,6 +3633,7 @@ export class VeilRoot extends Component {
     | "experiment_exposure"
     | "shop_open"
     | "purchase_initiated"
+    | "purchase_attempt"
     | "asset_load_failed"
     | "client_perf_degraded"
     | "client_runtime_error"
@@ -3850,14 +3851,16 @@ export class VeilRoot extends Component {
 
   private trackPurchaseInitiated(product: ShopProduct, surface: "lobby" | "battle_pass"): void {
     const price = Math.max(0, Math.floor(product.wechatPriceFen ?? product.price ?? 0));
-    this.trackClientAnalyticsEvent("purchase_initiated", {
+    const payload = {
       roomId: this.roomId,
       productId: product.productId,
       productType: product.type,
       currency: product.wechatPriceFen ? "wechat_fen" : "gems",
       price,
       surface
-    });
+    };
+    this.trackClientAnalyticsEvent("purchase_initiated", payload);
+    this.trackClientAnalyticsEvent("purchase_attempt", payload);
   }
 
   private setBattleFeedback(feedback: CocosBattleFeedbackView | null, durationMs = BATTLE_FEEDBACK_DURATION_MS): void {

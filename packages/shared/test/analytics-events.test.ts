@@ -219,6 +219,24 @@ test("createAnalyticsEvent: purchase_completed event carries monetization funnel
   assert.equal(event.payload.totalPrice, 600);
 });
 
+test("createAnalyticsEvent: purchase_attempt carries surface and pricing fields", () => {
+  const event = createAnalyticsEvent("purchase_attempt", {
+    playerId: "player-1",
+    payload: {
+      roomId: "room-1",
+      productId: "gem_pack_small",
+      productType: "gem_pack",
+      currency: "wechat_fen",
+      price: 600,
+      surface: "lobby"
+    }
+  });
+
+  assert.equal(event.payload.productId, "gem_pack_small");
+  assert.equal(event.payload.surface, "lobby");
+  assert.equal(event.payload.price, 600);
+});
+
 test("createAnalyticsEvent: purchase_failed event carries failure reason and status", () => {
   const event = createAnalyticsEvent("purchase_failed", {
     playerId: "player-1",
