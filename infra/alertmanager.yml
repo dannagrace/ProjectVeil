@@ -13,6 +13,10 @@ route:
   repeat_interval: 3h
   routes:
     - matchers:
+        - alertname="VeilDailyInfrastructureCostHigh"
+      receiver: ops-pagerduty
+      continue: false
+    - matchers:
         - notify="ops-pagerduty"
       receiver: ops-pagerduty
       continue: false
