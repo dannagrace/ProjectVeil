@@ -279,3 +279,15 @@ groups:
           summary: Project Veil client severe runtime errors are above budget
           description: Client `client_runtime_error` analytics exceeded five flushed events in 15 minutes. Check whether the spike is dominated by `session_disconnect` or `client_error_boundary_triggered` payloads before widening rollout.
           runbook_url: ./alerting-runbook.md#alert-veilclientruntimeerrorshigh
+
+      - alert: VeilDailyInfrastructureCostHigh
+        expr: sum(veil_infra_estimated_daily_cost_usd) > 180
+        for: 30m
+        labels:
+          severity: warning
+          service: project-veil-ops
+          notify: ops-pagerduty
+        annotations:
+          summary: Project Veil daily infrastructure cost exceeded the configured budget
+          description: Estimated daily infrastructure cost has remained above $180 for at least 30 minutes. Review namespace and deployment cost panels, then confirm whether HPA or live-ops traffic is responsible before the next scale change.
+          runbook_url: ./capacity-scale-drill.md#alert-veildailyinfrastructurecosthigh
