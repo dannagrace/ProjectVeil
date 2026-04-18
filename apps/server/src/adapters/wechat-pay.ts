@@ -2,14 +2,26 @@ import { createCipheriv, createDecipheriv, createSign, createVerify, randomBytes
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "../analytics";
 import { validateAuthSessionFromRequest } from "../auth";
+import { recordPaymentGrantRetry } from "../observability";
 import {
-  recordPaymentDeadLetter,
-  recordPaymentGrantRetry,
-  recordRuntimeErrorEvent,
-  setPaymentGrantDeadLetterCount,
-  setPaymentGrantQueueCount,
-  setPaymentGrantQueueLatency
-} from "../observability";
+  CallbackDeadLetterQueue,
+  buildPaymentGrantRuntimePayload as buildSharedPaymentGrantRuntimePayload,
+  normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
+  refreshPaymentGrantObservability as refreshSharedPaymentGrantObservability
+} from "../domain/payment/CallbackDeadLetterQueue";
+import {
+  OrderIdempotencyStore,
+  isAcceptedPaymentOrderStatus as isSharedAcceptedPaymentOrderStatus,
+  isFinalizedPaymentOrderStatus as isSharedFinalizedPaymentOrderStatus,
+  isPaymentRetryOpsStoreReady,
+  isPaymentStoreReady as isSharedPaymentStoreReady
+} from "../domain/payment/OrderIdempotencyStore";
+import { PurchaseAuditLog } from "../domain/payment/PurchaseAuditLog";
+import {
+  type PaymentGateway,
+  unsupportedPaymentGatewayOperation
+} from "../domain/payment/PaymentGateway";
+import type { PaymentGatewayRegistration } from "../domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
 import { readRuntimeSecret } from "../runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
@@ -89,9 +101,13 @@ interface WechatPayCallbackTransaction {
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 const MAX_CALLBACK_TIMESTAMP_SKEW_SECONDS = 5 * 60;
-const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
-const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;
 const SUCCESS_CALLBACK_BODY = { code: "SUCCESS", message: "success" };
+const wechatPurchaseAuditLog = new PurchaseAuditLog({
+  surface: "wechat-pay",
+  paymentMethod: "wechat_pay",
+  defaultRoute: "/api/payments/wechat/verify",
+  defaultTags: ["wechat-pay"]
+});
 
 function emitPurchaseCompletedEvent(input: {
   playerId: string;
@@ -101,16 +117,7 @@ function emitPurchaseCompletedEvent(input: {
   quantity: number;
   totalPrice: number;
 }): void {
-  emitAnalyticsEvent("purchase_completed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      quantity: input.quantity,
-      totalPrice: input.totalPrice
-    }
-  });
+  wechatPurchaseAuditLog.emitCompleted(input);
 }
 
 function emitPurchaseFailedEvent(input: {
@@ -121,16 +128,7 @@ function emitPurchaseFailedEvent(input: {
   failureReason: string;
   orderStatus: PaymentOrderSnapshot["status"] | "failed";
 }): void {
-  emitAnalyticsEvent("purchase_failed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      failureReason: input.failureReason,
-      orderStatus: input.orderStatus
-    }
-  });
+  wechatPurchaseAuditLog.emitFailed(input);
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -310,44 +308,13 @@ function emitPaymentFraudSignal(
   },
   route: "/api/payments/wechat/verify" | "/api/payments/wechat/callback"
 ): void {
-  try {
-    emitAnalyticsEvent("payment_fraud_signal", {
-      playerId,
-      payload: {
-        signal,
-        ...payload
-      }
-    });
-  } catch {
-    // Fraud logging must not break legitimate payment handling.
-  }
-
-  recordRuntimeErrorEvent({
-    id: randomUUID(),
-    recordedAt: new Date().toISOString(),
-    source: "server",
-    surface: "wechat-pay",
-    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
-    featureArea: "payment",
-    ownerArea: "commerce",
-    severity: "warn",
-    errorCode: "payment_fraud_signal",
-    message: `WeChat Pay fraud signal triggered: ${signal}`,
-    tags: ["wechat-pay", signal],
-    context: {
-      roomId: null,
-      playerId,
-      requestId: null,
-      route,
-      action: null,
-      statusCode: null,
-      crash: false,
-      detail: JSON.stringify({
-        orderId: payload.orderId,
-        productId: payload.productId,
-        signal
-      })
-    }
+  wechatPurchaseAuditLog.emitFraudSignal({
+    playerId,
+    signal,
+    orderId: payload.orderId,
+    productId: payload.productId,
+    route,
+    details: payload
   });
 }
 
@@ -453,25 +420,12 @@ function sendCallbackResponse(response: ServerResponse, statusCode: number, payl
   response.end(JSON.stringify(payload));
 }
 
-function isPaymentStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<
-    Pick<
-      RoomSnapshotStore,
-      "createPaymentOrder" | "completePaymentOrder" | "loadPaymentOrder" | "loadPaymentReceiptByOrderId" | "countVerifiedPaymentReceiptsSince"
-    >
-  > {
-  return Boolean(
-    store?.createPaymentOrder &&
-      store.completePaymentOrder &&
-      store.loadPaymentOrder &&
-      store.loadPaymentReceiptByOrderId &&
-      store.countVerifiedPaymentReceiptsSince
-  );
+function isPaymentStoreReady(store: RoomSnapshotStore | null) {
+  return isSharedPaymentStoreReady(store);
 }
 
-function isPaymentOpsStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "listPaymentOrders" | "retryPaymentOrderGrant">> {
-  return Boolean(store?.listPaymentOrders && store.retryPaymentOrderGrant);
+function isPaymentOpsStoreReady(store: RoomSnapshotStore | null) {
+  return isPaymentRetryOpsStoreReady(store);
 }
 
 function readAdminToken(): string | null {
@@ -485,67 +439,26 @@ function isAdminRequest(request: IncomingMessage): boolean {
 }
 
 function normalizePaymentGrantRetryPolicy(): { maxAttempts: number; baseDelayMs: number } {
-  return {
-    maxAttempts: DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS,
-    baseDelayMs: DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS
-  };
+  return normalizeSharedPaymentGrantRetryPolicy();
 }
 
 function isFinalizedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status === "settled" || status === "dead_letter";
+  return isSharedFinalizedPaymentOrderStatus(status);
 }
 
 function isAcceptedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status !== "created";
+  return isSharedAcceptedPaymentOrderStatus(status);
 }
 
 async function refreshPaymentGrantObservability(store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>, now: Date) {
-  const [pendingOrders, deadLetterOrders] = await Promise.all([
-    store.listPaymentOrders({ statuses: ["grant_pending"], limit: 200 }),
-    store.listPaymentOrders({ statuses: ["dead_letter"], limit: 200 })
-  ]);
-
-  setPaymentGrantQueueCount(pendingOrders.length);
-  setPaymentGrantDeadLetterCount(deadLetterOrders.length);
-
-  const pendingRetryTimes = pendingOrders
-    .map((order) => (order.nextGrantRetryAt ? new Date(order.nextGrantRetryAt).getTime() : null))
-    .filter((value): value is number => value != null && Number.isFinite(value))
-    .sort((left, right) => left - right);
-
-  const oldestQueuedLatencyMs =
-    pendingOrders.length === 0
-      ? null
-      : pendingOrders
-          .map((order) => (order.lastGrantAttemptAt ? Math.max(0, now.getTime() - new Date(order.lastGrantAttemptAt).getTime()) : 0))
-          .reduce((max, value) => Math.max(max, value), 0);
-  const nextPendingRetryTime = pendingRetryTimes[0];
-  const nextAttemptDelayMs =
-    nextPendingRetryTime != null ? Math.max(0, nextPendingRetryTime - now.getTime()) : null;
-
-  setPaymentGrantQueueLatency({
-    oldestQueuedLatencyMs,
-    nextAttemptDelayMs
-  });
-
-  return {
-    pendingOrders,
-    deadLetterOrders
-  };
+  return refreshSharedPaymentGrantObservability(store, now);
 }
 
 async function buildPaymentGrantRuntimePayload(
   store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>,
   now: Date
 ) {
-  const { pendingOrders, deadLetterOrders } = await refreshPaymentGrantObservability(store, now);
-  return {
-    checkedAt: now.toISOString(),
-    queueCount: pendingOrders.length,
-    deadLetterCount: deadLetterOrders.length,
-    pendingOrders,
-    deadLetterOrders
-  };
+  return buildSharedPaymentGrantRuntimePayload(store, now);
 }
 
 function findProduct(products: ShopProduct[], productId: string): ShopProduct | undefined {
@@ -710,6 +623,7 @@ export function registerWechatPayRoutes(
       });
       return;
     }
+    const paymentStore = new OrderIdempotencyStore(store);
 
     try {
       const body = (await readJsonBody(request)) as { productId?: string | null };
@@ -727,7 +641,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      const order = await store.createPaymentOrder({
+      const order = await paymentStore.createOrder({
         orderId: orderIdGenerator(),
         playerId: authSession.playerId,
         productId: product.productId,
@@ -830,6 +744,7 @@ export function registerWechatPayRoutes(
       });
       return;
     }
+    const paymentStore = new OrderIdempotencyStore(store);
 
     let order: PaymentOrderSnapshot | null = null;
     try {
@@ -845,7 +760,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      order = await store.loadPaymentOrder(orderId);
+      order = await paymentStore.loadOrder(orderId);
       if (!order || order.playerId !== authSession.playerId) {
         sendJson(response, 404, {
           error: {
@@ -856,7 +771,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      const existingReceipt = await paymentStore.loadReceiptByOrderId(order.orderId);
       if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
@@ -907,7 +822,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      const settlement = await store.completePaymentOrder(order.orderId, {
+      const settlement = await paymentStore.completeOrder(order.orderId, {
         wechatOrderId: verified.transaction_id,
         paidAt: verified.success_time,
         verifiedAt: now().toISOString(),
@@ -915,11 +830,10 @@ export function registerWechatPayRoutes(
         grant: product.grant,
         retryPolicy: normalizePaymentGrantRetryPolicy()
       });
-      if (settlement.order.status === "dead_letter") {
-        recordPaymentDeadLetter();
-      }
+      const deadLetterQueue = new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, now);
+      deadLetterQueue.recordSettlement(settlement.order);
       if (isPaymentOpsStoreReady(store)) {
-        await refreshPaymentGrantObservability(store, now());
+        await deadLetterQueue.refresh();
       }
       if (!settlement.credited) {
         emitPurchaseFailedEvent({
@@ -966,7 +880,7 @@ export function registerWechatPayRoutes(
         });
       }
 
-      const recentVerifiedCount = await store.countVerifiedPaymentReceiptsSince(
+      const recentVerifiedCount = await paymentStore.countVerifiedReceiptsSince(
         order.playerId,
         new Date(now().getTime() - 60_000).toISOString()
       );
@@ -1031,6 +945,7 @@ export function registerWechatPayRoutes(
       });
       return;
     }
+    const paymentStore = new OrderIdempotencyStore(store);
 
     try {
       const rawBody = await readRawBody(request);
@@ -1077,7 +992,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      const order = await store.loadPaymentOrder(orderId);
+      const order = await paymentStore.loadOrder(orderId);
       if (!order) {
         sendCallbackResponse(response, 404, {
           code: "FAIL",
@@ -1096,7 +1011,7 @@ export function registerWechatPayRoutes(
         return;
       }
 
-      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      const existingReceipt = await paymentStore.loadReceiptByOrderId(order.orderId);
       if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_out_trade_no", {
           orderId: order.orderId,
@@ -1134,7 +1049,7 @@ export function registerWechatPayRoutes(
         }, "/api/payments/wechat/callback");
       }
 
-      const settlement = await store.completePaymentOrder(order.orderId, {
+      const settlement = await paymentStore.completeOrder(order.orderId, {
         wechatOrderId: verified.transaction_id,
         paidAt: verified.success_time,
         verifiedAt: now().toISOString(),
@@ -1142,11 +1057,10 @@ export function registerWechatPayRoutes(
         grant: product.grant,
         retryPolicy: normalizePaymentGrantRetryPolicy()
       });
-      if (settlement.order.status === "dead_letter") {
-        recordPaymentDeadLetter();
-      }
+      const deadLetterQueue = new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, now);
+      deadLetterQueue.recordSettlement(settlement.order);
       if (isPaymentOpsStoreReady(store)) {
-        await refreshPaymentGrantObservability(store, now());
+        await deadLetterQueue.refresh();
       }
       if (settlement.credited) {
         emitAnalyticsEvent("purchase", {
@@ -1309,9 +1223,10 @@ export function registerWechatPayRoutes(
           retryPolicy,
           allowDeadLetter: body.includeDeadLetter === true
         });
-        if (currentOrder.status !== "dead_letter" && settlement.order.status === "dead_letter") {
-          recordPaymentDeadLetter();
-        }
+        new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, () => processedAt).recordDeadLetterTransition(
+          currentOrder.status,
+          settlement.order.status
+        );
         if (settlement.credited) {
           emitAnalyticsEvent("purchase", {
             playerId: settlement.order.playerId,
@@ -1372,9 +1287,10 @@ export function registerWechatPayRoutes(
             retriedAt: processedAt.toISOString(),
             retryPolicy
           });
-          if (pendingOrder.status !== "dead_letter" && settlement.order.status === "dead_letter") {
-            recordPaymentDeadLetter();
-          }
+          new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, () => processedAt).recordDeadLetterTransition(
+            pendingOrder.status,
+            settlement.order.status
+          );
           if (settlement.credited) {
             emitAnalyticsEvent("purchase", {
               playerId: settlement.order.playerId,
@@ -1461,5 +1377,35 @@ export function signWechatCallbackForTest(privateKey: string, timestamp: string,
   signer.end();
   return signer.sign(privateKey, "base64");
 }
+
+const wechatPaymentGateway: PaymentGateway = {
+  channel: "wechat",
+  supportedOperations: ["createOrder", "verifyCallback", "grantRewards"],
+  createOrder: (input) =>
+    unsupportedPaymentGatewayOperation(
+      "wechat",
+      "createOrder",
+      `Use the WeChat route adapter to create runtime-bound JSAPI orders for ${input.productId}.`
+    ),
+  verifyCallback: () =>
+    unsupportedPaymentGatewayOperation(
+      "wechat",
+      "verifyCallback",
+      "Use the WeChat route adapter to verify callback envelopes with request headers and runtime keys."
+    ),
+  grantRewards: () =>
+    unsupportedPaymentGatewayOperation(
+      "wechat",
+      "grantRewards",
+      "Use the WeChat route adapter to settle verified orders against persistence and grant queues."
+    ),
+  issueRefund: () =>
+    unsupportedPaymentGatewayOperation("wechat", "issueRefund", "WeChat refunds are not implemented in the current server runtime.")
+};
+
+export const wechatPaymentGatewayRegistration: PaymentGatewayRegistration = {
+  gateway: wechatPaymentGateway,
+  registerRoutes: (app, store) => registerWechatPayRoutes(app as HttpApp, store)
+};
 
 export type { RegisterWechatPayRoutesOptions, WechatPayRuntimeConfig, PaymentOrderSnapshot };

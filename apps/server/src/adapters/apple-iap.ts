@@ -1,14 +1,22 @@
-import { createPrivateKey, createSign, createVerify, randomUUID, X509Certificate } from "node:crypto";
+import { createPrivateKey, createSign, createVerify, X509Certificate } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "../analytics";
 import { validateAuthSessionFromRequest } from "../auth";
 import {
-  recordPaymentDeadLetter,
-  recordRuntimeErrorEvent,
-  setPaymentGrantDeadLetterCount,
-  setPaymentGrantQueueCount,
-  setPaymentGrantQueueLatency
-} from "../observability";
+  CallbackDeadLetterQueue,
+  normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
+  refreshPaymentGrantObservability as refreshSharedPaymentGrantObservability
+} from "../domain/payment/CallbackDeadLetterQueue";
+import {
+  OrderIdempotencyStore,
+  isAcceptedPaymentOrderStatus as isSharedAcceptedPaymentOrderStatus,
+  isFinalizedPaymentOrderStatus as isSharedFinalizedPaymentOrderStatus,
+  isPaymentOpsStoreReady as isSharedPaymentOpsStoreReady,
+  isPaymentStoreReady as isSharedPaymentStoreReady
+} from "../domain/payment/OrderIdempotencyStore";
+import { PurchaseAuditLog } from "../domain/payment/PurchaseAuditLog";
+import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "../domain/payment/PaymentGateway";
+import type { PaymentGatewayRegistration } from "../domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
 
@@ -95,8 +103,12 @@ interface AppleTransactionLookupResponse {
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
-const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
-const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;
+const applePurchaseAuditLog = new PurchaseAuditLog({
+  surface: "apple-iap",
+  paymentMethod: "apple_iap",
+  defaultRoute: "/api/payments/apple/verify",
+  defaultTags: ["apple-iap"]
+});
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -217,61 +229,20 @@ async function requireAuthSession(request: IncomingMessage, response: ServerResp
   return result.session;
 }
 
-function isPaymentStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<
-    Pick<
-      RoomSnapshotStore,
-      "createPaymentOrder" | "completePaymentOrder" | "loadPaymentOrder" | "loadPaymentReceiptByOrderId" | "countVerifiedPaymentReceiptsSince"
-    >
-  > {
-  return Boolean(
-    store?.createPaymentOrder &&
-      store.completePaymentOrder &&
-      store.loadPaymentOrder &&
-      store.loadPaymentReceiptByOrderId &&
-      store.countVerifiedPaymentReceiptsSince
-  );
+function isPaymentStoreReady(store: RoomSnapshotStore | null) {
+  return isSharedPaymentStoreReady(store);
 }
 
-function isPaymentOpsStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "listPaymentOrders">> {
-  return Boolean(store?.listPaymentOrders);
+function isPaymentOpsStoreReady(store: RoomSnapshotStore | null) {
+  return isSharedPaymentOpsStoreReady(store);
 }
 
 function normalizePaymentGrantRetryPolicy(): { maxAttempts: number; baseDelayMs: number } {
-  return {
-    maxAttempts: DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS,
-    baseDelayMs: DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS
-  };
+  return normalizeSharedPaymentGrantRetryPolicy();
 }
 
 async function refreshPaymentGrantObservability(store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>, now: Date) {
-  const [pendingOrders, deadLetterOrders] = await Promise.all([
-    store.listPaymentOrders({ statuses: ["grant_pending"], limit: 200 }),
-    store.listPaymentOrders({ statuses: ["dead_letter"], limit: 200 })
-  ]);
-
-  setPaymentGrantQueueCount(pendingOrders.length);
-  setPaymentGrantDeadLetterCount(deadLetterOrders.length);
-
-  const pendingRetryTimes = pendingOrders
-    .map((order) => (order.nextGrantRetryAt ? new Date(order.nextGrantRetryAt).getTime() : null))
-    .filter((value): value is number => value != null && Number.isFinite(value))
-    .sort((left, right) => left - right);
-
-  const oldestQueuedLatencyMs =
-    pendingOrders.length === 0
-      ? null
-      : pendingOrders
-          .map((order) => (order.lastGrantAttemptAt ? Math.max(0, now.getTime() - new Date(order.lastGrantAttemptAt).getTime()) : 0))
-          .reduce((max, value) => Math.max(max, value), 0);
-  const nextPendingRetryTime = pendingRetryTimes[0];
-  const nextAttemptDelayMs = nextPendingRetryTime != null ? Math.max(0, nextPendingRetryTime - now.getTime()) : null;
-
-  setPaymentGrantQueueLatency({
-    oldestQueuedLatencyMs,
-    nextAttemptDelayMs
-  });
+  return refreshSharedPaymentGrantObservability(store, now);
 }
 
 function normalizeApplePaymentProduct(product: ShopProduct | undefined): ShopProduct & { grant: ShopProductGrant } {
@@ -328,11 +299,11 @@ function resolveAppleOrderAmount(product: ShopProduct): number {
 }
 
 function isFinalizedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status === "settled" || status === "dead_letter";
+  return isSharedFinalizedPaymentOrderStatus(status);
 }
 
 function isAcceptedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status !== "created";
+  return isSharedAcceptedPaymentOrderStatus(status);
 }
 
 function emitPurchaseCompletedEvent(input: {
@@ -343,16 +314,7 @@ function emitPurchaseCompletedEvent(input: {
   quantity: number;
   totalPrice: number;
 }): void {
-  emitAnalyticsEvent("purchase_completed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      quantity: input.quantity,
-      totalPrice: input.totalPrice
-    }
-  });
+  applePurchaseAuditLog.emitCompleted(input);
 }
 
 function emitPurchaseFailedEvent(input: {
@@ -363,16 +325,7 @@ function emitPurchaseFailedEvent(input: {
   failureReason: string;
   orderStatus: PaymentOrderSnapshot["status"] | "failed";
 }): void {
-  emitAnalyticsEvent("purchase_failed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      failureReason: input.failureReason,
-      orderStatus: input.orderStatus
-    }
-  });
+  applePurchaseAuditLog.emitFailed(input);
 }
 
 function emitPaymentFraudSignal(
@@ -384,44 +337,12 @@ function emitPaymentFraudSignal(
     [key: string]: unknown;
   }
 ): void {
-  try {
-    emitAnalyticsEvent("payment_fraud_signal", {
-      playerId,
-      payload: {
-        signal,
-        ...payload
-      }
-    });
-  } catch {
-    // Fraud logging must not break payment handling.
-  }
-
-  recordRuntimeErrorEvent({
-    id: randomUUID(),
-    recordedAt: new Date().toISOString(),
-    source: "server",
-    surface: "apple-iap",
-    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
-    featureArea: "payment",
-    ownerArea: "commerce",
-    severity: "warn",
-    errorCode: "payment_fraud_signal",
-    message: `Apple IAP fraud signal triggered: ${signal}`,
-    tags: ["apple-iap", signal],
-    context: {
-      roomId: null,
-      playerId,
-      requestId: null,
-      route: "/api/payments/apple/verify",
-      action: null,
-      statusCode: null,
-      crash: false,
-      detail: JSON.stringify({
-        orderId: payload.orderId,
-        productId: payload.productId,
-        signal
-      })
-    }
+  applePurchaseAuditLog.emitFraudSignal({
+    playerId,
+    signal,
+    orderId: payload.orderId,
+    productId: payload.productId,
+    details: payload
   });
 }
 
@@ -857,6 +778,7 @@ export function registerApplePaymentRoutes(
       });
       return;
     }
+    const paymentStore = new OrderIdempotencyStore(store);
 
     let orderId = "";
     let productId = "";
@@ -880,7 +802,7 @@ export function registerApplePaymentRoutes(
       orderId = `apple:${verified.transactionId}`;
       productId = product.productId;
 
-      let order = await store.loadPaymentOrder(orderId);
+      let order = await paymentStore.loadOrder(orderId);
       if (order && order.playerId !== authSession.playerId) {
         emitPaymentFraudSignal(authSession.playerId, "transaction_claimed_by_another_player", {
           orderId,
@@ -900,7 +822,7 @@ export function registerApplePaymentRoutes(
 
       if (!order) {
         try {
-          order = await store.createPaymentOrder({
+          order = await paymentStore.createOrder({
             orderId,
             playerId: authSession.playerId,
             productId: product.productId,
@@ -912,7 +834,7 @@ export function registerApplePaymentRoutes(
           if (!/duplicate/i.test(message)) {
             throw error;
           }
-          order = await store.loadPaymentOrder(orderId);
+          order = await paymentStore.loadOrder(orderId);
         }
       }
 
@@ -926,7 +848,7 @@ export function registerApplePaymentRoutes(
         });
       }
 
-      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      const existingReceipt = await paymentStore.loadReceiptByOrderId(order.orderId);
       if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_transaction_id", {
           orderId: order.orderId,
@@ -944,7 +866,7 @@ export function registerApplePaymentRoutes(
         return;
       }
 
-      const settlement = await store.completePaymentOrder(order.orderId, {
+      const settlement = await paymentStore.completeOrder(order.orderId, {
         wechatOrderId: verified.transactionId,
         paidAt: verified.purchaseDate,
         verifiedAt: now().toISOString(),
@@ -953,11 +875,10 @@ export function registerApplePaymentRoutes(
         retryPolicy: normalizePaymentGrantRetryPolicy()
       });
 
-      if (settlement.order.status === "dead_letter") {
-        recordPaymentDeadLetter();
-      }
+      const deadLetterQueue = new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, now);
+      deadLetterQueue.recordSettlement(settlement.order);
       if (isPaymentOpsStoreReady(store)) {
-        await refreshPaymentGrantObservability(store, now());
+        await deadLetterQueue.refresh();
       }
       if (!settlement.credited) {
         emitPurchaseFailedEvent({
@@ -1001,7 +922,7 @@ export function registerApplePaymentRoutes(
         });
       }
 
-      const recentVerifiedCount = await store.countVerifiedPaymentReceiptsSince(
+      const recentVerifiedCount = await paymentStore.countVerifiedReceiptsSince(
         order.playerId,
         new Date(now().getTime() - 60_000).toISOString()
       );
@@ -1045,3 +966,33 @@ export function registerApplePaymentRoutes(
     }
   });
 }
+
+const applePaymentGateway: PaymentGateway = {
+  channel: "apple",
+  supportedOperations: ["grantRewards"],
+  createOrder: (input) =>
+    unsupportedPaymentGatewayOperation(
+      "apple",
+      "createOrder",
+      `Apple IAP orders are created client-side; server settlement begins at receipt verification for ${input.productId}.`
+    ),
+  verifyCallback: () =>
+    unsupportedPaymentGatewayOperation(
+      "apple",
+      "verifyCallback",
+      "Apple IAP uses signed transaction verification instead of a server callback contract."
+    ),
+  grantRewards: () =>
+    unsupportedPaymentGatewayOperation(
+      "apple",
+      "grantRewards",
+      "Use the Apple payment route adapter to settle verified StoreKit transactions against persistence."
+    ),
+  issueRefund: () =>
+    unsupportedPaymentGatewayOperation("apple", "issueRefund", "Apple refunds are handled outside the current server runtime.")
+};
+
+export const applePaymentGatewayRegistration: PaymentGatewayRegistration = {
+  gateway: applePaymentGateway,
+  registerRoutes: (app, store) => registerApplePaymentRoutes(app as HttpApp, store)
+};

@@ -1,14 +1,22 @@
-import { createHash, createSign, randomUUID } from "node:crypto";
+import { createHash, createSign } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "../analytics";
 import { validateAuthSessionFromRequest } from "../auth";
 import {
-  recordPaymentDeadLetter,
-  recordRuntimeErrorEvent,
-  setPaymentGrantDeadLetterCount,
-  setPaymentGrantQueueCount,
-  setPaymentGrantQueueLatency
-} from "../observability";
+  CallbackDeadLetterQueue,
+  normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
+  refreshPaymentGrantObservability as refreshSharedPaymentGrantObservability
+} from "../domain/payment/CallbackDeadLetterQueue";
+import {
+  OrderIdempotencyStore,
+  isAcceptedPaymentOrderStatus as isSharedAcceptedPaymentOrderStatus,
+  isFinalizedPaymentOrderStatus as isSharedFinalizedPaymentOrderStatus,
+  isPaymentOpsStoreReady as isSharedPaymentOpsStoreReady,
+  isPaymentStoreReady as isSharedPaymentStoreReady
+} from "../domain/payment/OrderIdempotencyStore";
+import { PurchaseAuditLog } from "../domain/payment/PurchaseAuditLog";
+import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "../domain/payment/PaymentGateway";
+import type { PaymentGatewayRegistration } from "../domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
 
@@ -98,9 +106,13 @@ interface GoogleProductPurchaseResponse {
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
-const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
-const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;
 const GOOGLE_PLAY_ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher";
+const googlePurchaseAuditLog = new PurchaseAuditLog({
+  surface: "google-play",
+  paymentMethod: "google_play",
+  defaultRoute: "/api/payments/google/verify",
+  defaultTags: ["google-play"]
+});
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -220,61 +232,20 @@ async function requireAuthSession(request: IncomingMessage, response: ServerResp
   return result.session;
 }
 
-function isPaymentStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<
-    Pick<
-      RoomSnapshotStore,
-      "createPaymentOrder" | "completePaymentOrder" | "loadPaymentOrder" | "loadPaymentReceiptByOrderId" | "countVerifiedPaymentReceiptsSince"
-    >
-  > {
-  return Boolean(
-    store?.createPaymentOrder &&
-      store.completePaymentOrder &&
-      store.loadPaymentOrder &&
-      store.loadPaymentReceiptByOrderId &&
-      store.countVerifiedPaymentReceiptsSince
-  );
+function isPaymentStoreReady(store: RoomSnapshotStore | null) {
+  return isSharedPaymentStoreReady(store);
 }
 
-function isPaymentOpsStoreReady(store: RoomSnapshotStore | null): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "listPaymentOrders">> {
-  return Boolean(store?.listPaymentOrders);
+function isPaymentOpsStoreReady(store: RoomSnapshotStore | null) {
+  return isSharedPaymentOpsStoreReady(store);
 }
 
 function normalizePaymentGrantRetryPolicy(): { maxAttempts: number; baseDelayMs: number } {
-  return {
-    maxAttempts: DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS,
-    baseDelayMs: DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS
-  };
+  return normalizeSharedPaymentGrantRetryPolicy();
 }
 
 async function refreshPaymentGrantObservability(store: RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPaymentOrders">>, now: Date) {
-  const [pendingOrders, deadLetterOrders] = await Promise.all([
-    store.listPaymentOrders({ statuses: ["grant_pending"], limit: 200 }),
-    store.listPaymentOrders({ statuses: ["dead_letter"], limit: 200 })
-  ]);
-
-  setPaymentGrantQueueCount(pendingOrders.length);
-  setPaymentGrantDeadLetterCount(deadLetterOrders.length);
-
-  const pendingRetryTimes = pendingOrders
-    .map((order) => (order.nextGrantRetryAt ? new Date(order.nextGrantRetryAt).getTime() : null))
-    .filter((value): value is number => value != null && Number.isFinite(value))
-    .sort((left, right) => left - right);
-
-  const oldestQueuedLatencyMs =
-    pendingOrders.length === 0
-      ? null
-      : pendingOrders
-          .map((order) => (order.lastGrantAttemptAt ? Math.max(0, now.getTime() - new Date(order.lastGrantAttemptAt).getTime()) : 0))
-          .reduce((max, value) => Math.max(max, value), 0);
-  const nextPendingRetryTime = pendingRetryTimes[0];
-  const nextAttemptDelayMs = nextPendingRetryTime != null ? Math.max(0, nextPendingRetryTime - now.getTime()) : null;
-
-  setPaymentGrantQueueLatency({
-    oldestQueuedLatencyMs,
-    nextAttemptDelayMs
-  });
+  return refreshSharedPaymentGrantObservability(store, now);
 }
 
 function normalizeGooglePaymentProduct(product: ShopProduct | undefined): ShopProduct & { grant: ShopProductGrant; googlePriceCents: number } {
@@ -326,11 +297,11 @@ function findProductForGooglePurchase(products: ShopProduct[], googleProductId: 
 }
 
 function isFinalizedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status === "settled" || status === "dead_letter";
+  return isSharedFinalizedPaymentOrderStatus(status);
 }
 
 function isAcceptedPaymentOrderStatus(status: PaymentOrderSnapshot["status"]): boolean {
-  return status !== "created";
+  return isSharedAcceptedPaymentOrderStatus(status);
 }
 
 function emitPurchaseCompletedEvent(input: {
@@ -341,16 +312,7 @@ function emitPurchaseCompletedEvent(input: {
   quantity: number;
   totalPrice: number;
 }): void {
-  emitAnalyticsEvent("purchase_completed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      quantity: input.quantity,
-      totalPrice: input.totalPrice
-    }
-  });
+  googlePurchaseAuditLog.emitCompleted(input);
 }
 
 function emitPurchaseFailedEvent(input: {
@@ -361,16 +323,7 @@ function emitPurchaseFailedEvent(input: {
   failureReason: string;
   orderStatus: PaymentOrderSnapshot["status"] | "failed";
 }): void {
-  emitAnalyticsEvent("purchase_failed", {
-    playerId: input.playerId,
-    payload: {
-      purchaseId: input.purchaseId,
-      productId: input.productId,
-      paymentMethod: input.paymentMethod,
-      failureReason: input.failureReason,
-      orderStatus: input.orderStatus
-    }
-  });
+  googlePurchaseAuditLog.emitFailed(input);
 }
 
 function emitPaymentFraudSignal(
@@ -382,44 +335,12 @@ function emitPaymentFraudSignal(
     [key: string]: unknown;
   }
 ): void {
-  try {
-    emitAnalyticsEvent("payment_fraud_signal", {
-      playerId,
-      payload: {
-        signal,
-        ...payload
-      }
-    });
-  } catch {
-    // Fraud logging must not break payment handling.
-  }
-
-  recordRuntimeErrorEvent({
-    id: randomUUID(),
-    recordedAt: new Date().toISOString(),
-    source: "server",
-    surface: "google-play",
-    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
-    featureArea: "payment",
-    ownerArea: "commerce",
-    severity: "warn",
-    errorCode: "payment_fraud_signal",
-    message: `Google Play Billing fraud signal triggered: ${signal}`,
-    tags: ["google-play", signal],
-    context: {
-      roomId: null,
-      playerId,
-      requestId: null,
-      route: "/api/payments/google/verify",
-      action: null,
-      statusCode: null,
-      crash: false,
-      detail: JSON.stringify({
-        orderId: payload.orderId,
-        productId: payload.productId,
-        signal
-      })
-    }
+  googlePurchaseAuditLog.emitFraudSignal({
+    playerId,
+    signal,
+    orderId: payload.orderId,
+    productId: payload.productId,
+    details: payload
   });
 }
 
@@ -781,6 +702,7 @@ export function registerGooglePlayRoutes(
       });
       return;
     }
+    const paymentStore = new OrderIdempotencyStore(store);
 
     let orderId = "";
     let productId = "";
@@ -816,7 +738,7 @@ export function registerGooglePlayRoutes(
       productId = product.productId;
       const googleProductId = product.googleProductId ?? product.productId;
 
-      let order = await store.loadPaymentOrder(orderId);
+      let order = await paymentStore.loadOrder(orderId);
       if (order && order.playerId !== authSession.playerId) {
         emitPaymentFraudSignal(authSession.playerId, "purchase_token_claimed_by_another_player", {
           orderId,
@@ -836,7 +758,7 @@ export function registerGooglePlayRoutes(
 
       if (!order) {
         try {
-          order = await store.createPaymentOrder({
+          order = await paymentStore.createOrder({
             orderId,
             playerId: authSession.playerId,
             productId: product.productId,
@@ -848,7 +770,7 @@ export function registerGooglePlayRoutes(
           if (!/duplicate/i.test(message)) {
             throw error;
           }
-          order = await store.loadPaymentOrder(orderId);
+          order = await paymentStore.loadOrder(orderId);
         }
       }
 
@@ -862,7 +784,7 @@ export function registerGooglePlayRoutes(
         });
       }
 
-      const existingReceipt = await store.loadPaymentReceiptByOrderId(order.orderId);
+      const existingReceipt = await paymentStore.loadReceiptByOrderId(order.orderId);
       if (isAcceptedPaymentOrderStatus(order.status) || existingReceipt) {
         emitPaymentFraudSignal(order.playerId, "duplicate_purchase_token", {
           orderId: order.orderId,
@@ -912,7 +834,7 @@ export function registerGooglePlayRoutes(
         });
       }
 
-      const settlement = await store.completePaymentOrder(order.orderId, {
+      const settlement = await paymentStore.completeOrder(order.orderId, {
         wechatOrderId: purchaseTokenHash,
         paidAt: verified.purchaseDate,
         verifiedAt: now().toISOString(),
@@ -921,11 +843,10 @@ export function registerGooglePlayRoutes(
         retryPolicy: normalizePaymentGrantRetryPolicy()
       });
 
-      if (settlement.order.status === "dead_letter") {
-        recordPaymentDeadLetter();
-      }
+      const deadLetterQueue = new CallbackDeadLetterQueue(isPaymentOpsStoreReady(store) ? store : null, now);
+      deadLetterQueue.recordSettlement(settlement.order);
       if (isPaymentOpsStoreReady(store)) {
-        await refreshPaymentGrantObservability(store, now());
+        await deadLetterQueue.refresh();
       }
       if (!settlement.credited) {
         emitPurchaseFailedEvent({
@@ -993,7 +914,7 @@ export function registerGooglePlayRoutes(
         });
       }
 
-      const recentVerifiedCount = await store.countVerifiedPaymentReceiptsSince(
+      const recentVerifiedCount = await paymentStore.countVerifiedReceiptsSince(
         order.playerId,
         new Date(now().getTime() - 60_000).toISOString()
       );
@@ -1037,3 +958,33 @@ export function registerGooglePlayRoutes(
     }
   });
 }
+
+const googlePlayPaymentGateway: PaymentGateway = {
+  channel: "google",
+  supportedOperations: ["grantRewards"],
+  createOrder: (input) =>
+    unsupportedPaymentGatewayOperation(
+      "google",
+      "createOrder",
+      `Google Play orders are created client-side; server settlement begins at purchase token verification for ${input.productId}.`
+    ),
+  verifyCallback: () =>
+    unsupportedPaymentGatewayOperation(
+      "google",
+      "verifyCallback",
+      "Google Play Billing uses purchase-token verification instead of a server callback contract."
+    ),
+  grantRewards: () =>
+    unsupportedPaymentGatewayOperation(
+      "google",
+      "grantRewards",
+      "Use the Google Play route adapter to settle verified purchases against persistence."
+    ),
+  issueRefund: () =>
+    unsupportedPaymentGatewayOperation("google", "issueRefund", "Google Play refunds are handled outside the current server runtime.")
+};
+
+export const googlePlayPaymentGatewayRegistration: PaymentGatewayRegistration = {
+  gateway: googlePlayPaymentGateway,
+  registerRoutes: (app, store) => registerGooglePlayRoutes(app as HttpApp, store)
+};
