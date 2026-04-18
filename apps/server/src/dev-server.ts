@@ -52,9 +52,7 @@ import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "./infra/
 import { registerAdminRoutes } from "./admin-console";
 import { registerSeasonRoutes } from "./seasons";
 import { registerShopRoutes } from "./shop";
-import { registerApplePaymentRoutes } from "./adapters/apple-iap";
-import { registerGooglePlayRoutes } from "./adapters/google-play";
-import { registerWechatPayRoutes } from "./adapters/wechat-pay";
+import { createDefaultPaymentGatewayRegistry } from "./domain/payment/DefaultPaymentGatewayRegistry";
 import { captureServerError, isErrorMonitoringEnabled } from "./error-monitoring";
 import { recordRuntimeErrorEvent } from "./observability";
 import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "./battle-replay-retention";
@@ -216,6 +214,7 @@ export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
 }
 
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
+  const paymentGatewayRegistry = createDefaultPaymentGatewayRegistry();
   return {
     loadRuntimeSecrets: () => loadRuntimeSecrets(),
     readMySqlPersistenceConfig,
@@ -239,9 +238,12 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerGuildRoutes: (app, store) => registerGuildRoutes(app as never, store as RoomSnapshotStore),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
     registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
-    registerApplePaymentRoutes: (app, store) => registerApplePaymentRoutes(app as never, store as RoomSnapshotStore),
-    registerGooglePlayRoutes: (app, store) => registerGooglePlayRoutes(app as never, store as RoomSnapshotStore),
-    registerWechatPayRoutes: (app, store) => registerWechatPayRoutes(app as never, store as RoomSnapshotStore),
+    registerApplePaymentRoutes: (app, store) =>
+      paymentGatewayRegistry.get("apple").registerRoutes(app as never, store as RoomSnapshotStore),
+    registerGooglePlayRoutes: (app, store) =>
+      paymentGatewayRegistry.get("google").registerRoutes(app as never, store as RoomSnapshotStore),
+    registerWechatPayRoutes: (app, store) =>
+      paymentGatewayRegistry.get("wechat").registerRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
     registerLaunchRuntimeRoutes: (app) => registerLaunchRuntimeRoutes(app as never),
     registerMatchmakingRoutes: (app, dependencies) =>
