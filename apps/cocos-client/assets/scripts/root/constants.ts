@@ -1,0 +1,16 @@
+export const HUD_NODE_NAME = "ProjectVeilHud";
+export const MAP_NODE_NAME = "ProjectVeilMap";
+export const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
+export const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
+export const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
+export const TUTORIAL_OVERLAY_NODE_NAME = "ProjectVeilTutorialOverlay";
+export const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
+export const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
+export const CAMPAIGN_PANEL_NODE_NAME = "ProjectVeilCampaignPanel";
+export const SETTINGS_PANEL_NODE_NAME = "ProjectVeilSettingsPanel";
+export const SETTINGS_BUTTON_NODE_NAME = "ProjectVeilSettingsButton";
+export const DEFAULT_MAP_WIDTH_TILES = 8;
+export const DEFAULT_MAP_HEIGHT_TILES = 8;
+export const BATTLE_FEEDBACK_DURATION_MS = 2600;
+export const ACCOUNT_REVIEW_PAGE_SIZE = 3;
+export const FORCE_UPGRADE_MESSAGE = "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。";

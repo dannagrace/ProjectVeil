@@ -243,146 +243,34 @@ import {
 
 const { ccclass, property } = _decorator;
 
-const HUD_NODE_NAME = "ProjectVeilHud";
-const MAP_NODE_NAME = "ProjectVeilMap";
-const BATTLE_NODE_NAME = "ProjectVeilBattlePanel";
-const TIMELINE_NODE_NAME = "ProjectVeilTimelinePanel";
-const LOBBY_NODE_NAME = "ProjectVeilLobbyPanel";
-const TUTORIAL_OVERLAY_NODE_NAME = "ProjectVeilTutorialOverlay";
-const ACCOUNT_REVIEW_PANEL_NODE_NAME = "ProjectVeilAccountReviewPanel";
-const EQUIPMENT_PANEL_NODE_NAME = "ProjectVeilEquipmentPanel";
-const CAMPAIGN_PANEL_NODE_NAME = "ProjectVeilCampaignPanel";
-const SETTINGS_PANEL_NODE_NAME = "ProjectVeilSettingsPanel";
-const SETTINGS_BUTTON_NODE_NAME = "ProjectVeilSettingsButton";
-const DEFAULT_MAP_WIDTH_TILES = 8;
-const DEFAULT_MAP_HEIGHT_TILES = 8;
-const BATTLE_FEEDBACK_DURATION_MS = 2600;
-const ACCOUNT_REVIEW_PAGE_SIZE = 3;
-const FORCE_UPGRADE_MESSAGE = "当前客户端版本已停止支持，请升级到最新版本后再进入游戏。";
-
-interface BattleSettlementSnapshot {
-  label: string;
-  detail: string;
-  badge: string;
-  tone: CocosBattleFeedbackView["tone"];
-  summaryLines: string[];
-}
-
-interface TutorialCampaignGuidance {
-  mission: NonNullable<CocosCampaignSummary["missions"]>[number] | null;
-  objectivePreview: string[];
-  phaseLabel: string;
-}
-
-interface GlobalErrorBoundaryEvent {
-  message?: string;
-  error?: unknown;
-  reason?: unknown;
-}
-
-interface VeilRootRuntime {
-  createSession: typeof VeilCocosSession.create;
-  loadLeaderboard: typeof VeilCocosSession.fetchLeaderboard;
-  loadFriendLeaderboard: typeof VeilCocosSession.fetchFriendLeaderboard;
-  enqueueMatchmaking: typeof VeilCocosSession.enqueueForMatchmaking;
-  getMatchmakingStatus: typeof VeilCocosSession.getMatchmakingStatus;
-  cancelMatchmaking: typeof VeilCocosSession.cancelMatchmaking;
-  startMatchmakingPolling: typeof startCocosMatchmakingStatusPolling;
-  readStoredReplay: typeof VeilCocosSession.readStoredReplay;
-  loadLobbyRooms: typeof loadCocosLobbyRooms;
-  loadAnnouncements: typeof loadCocosAnnouncements;
-  loadMaintenanceMode: typeof loadCocosMaintenanceMode;
-  syncAuthSession: typeof syncCurrentCocosAuthSession;
-  loadAccountProfile: typeof loadCocosPlayerAccountProfile;
-  updateTutorialProgress: typeof updateCocosTutorialProgress;
-  loadProgressionSnapshot: typeof loadCocosPlayerProgressionSnapshot;
-  loadCampaignSummary: typeof loadCocosCampaignSummary;
-  startCampaignMission: typeof startCocosCampaignMission;
-  completeCampaignMission: typeof completeCocosCampaignMission;
-  loadAchievementProgress: typeof loadCocosPlayerAchievementProgress;
-  loadEventHistory: typeof loadCocosPlayerEventHistory;
-  loadBattleReplayHistoryPage: typeof loadCocosBattleReplayHistoryPage;
-  loadSeasonProgress: typeof loadCocosSeasonProgress;
-  loadDailyDungeon: typeof loadCocosDailyDungeon;
-  loadActiveSeasonalEvents: typeof loadCocosActiveSeasonalEvents;
-  submitSeasonalEventProgress: typeof submitCocosSeasonalEventProgress;
-  claimSeasonTier: typeof claimCocosSeasonTier;
-  attemptDailyDungeonFloor: typeof attemptCocosDailyDungeonFloor;
-  claimDailyDungeonRunReward: typeof claimCocosDailyDungeonRunReward;
-  loginGuestAuthSession: typeof loginCocosGuestAuthSession;
-  postPlayerReferral: typeof postCocosPlayerReferral;
-  logoutAuthSession: typeof logoutCurrentCocosAuthSession;
-  deletePlayerAccount: typeof deleteCurrentCocosPlayerAccount;
-  loadShopProducts: typeof VeilCocosSession.fetchShopProducts;
-  purchaseShopProduct: typeof VeilCocosSession.purchaseShopProduct;
-  equipShopCosmetic: typeof VeilCocosSession.equipShopCosmetic;
-  claimDailyQuest: typeof claimCocosDailyQuest;
-  submitSupportTicket: typeof submitCocosSupportTicket;
-}
-
-const defaultVeilRootRuntime: VeilRootRuntime = {
-  createSession: (...args) => VeilCocosSession.create(...args),
-  loadLeaderboard: (...args) => VeilCocosSession.fetchLeaderboard(...args),
-  loadFriendLeaderboard: (...args) => VeilCocosSession.fetchFriendLeaderboard(...args),
-  enqueueMatchmaking: (...args) => VeilCocosSession.enqueueForMatchmaking(...args),
-  getMatchmakingStatus: (...args) => VeilCocosSession.getMatchmakingStatus(...args),
-  cancelMatchmaking: (...args) => VeilCocosSession.cancelMatchmaking(...args),
-  startMatchmakingPolling: (...args) => startCocosMatchmakingStatusPolling(...args),
-  readStoredReplay: (...args) => VeilCocosSession.readStoredReplay(...args),
-  loadLobbyRooms: (...args) => loadCocosLobbyRooms(...args),
-  loadAnnouncements: (...args) => loadCocosAnnouncements(...args),
-  loadMaintenanceMode: (...args) => loadCocosMaintenanceMode(...args),
-  syncAuthSession: (...args) => syncCurrentCocosAuthSession(...args),
-  loadAccountProfile: (...args) => loadCocosPlayerAccountProfile(...args),
-  updateTutorialProgress: (...args) => updateCocosTutorialProgress(...args),
-  loadProgressionSnapshot: (...args) => loadCocosPlayerProgressionSnapshot(...args),
-  loadCampaignSummary: (...args) => loadCocosCampaignSummary(...args),
-  startCampaignMission: (...args) => startCocosCampaignMission(...args),
-  completeCampaignMission: (...args) => completeCocosCampaignMission(...args),
-  loadAchievementProgress: (...args) => loadCocosPlayerAchievementProgress(...args),
-  loadEventHistory: (...args) => loadCocosPlayerEventHistory(...args),
-  loadBattleReplayHistoryPage: (...args) => loadCocosBattleReplayHistoryPage(...args),
-  loadSeasonProgress: (...args) => loadCocosSeasonProgress(...args),
-  loadDailyDungeon: (...args) => loadCocosDailyDungeon(...args),
-  loadActiveSeasonalEvents: (...args) => loadCocosActiveSeasonalEvents(...args),
-  submitSeasonalEventProgress: (...args) => submitCocosSeasonalEventProgress(...args),
-  claimSeasonTier: (...args) => claimCocosSeasonTier(...args),
-  attemptDailyDungeonFloor: (...args) => attemptCocosDailyDungeonFloor(...args),
-  claimDailyDungeonRunReward: (...args) => claimCocosDailyDungeonRunReward(...args),
-  loginGuestAuthSession: (...args) => loginCocosGuestAuthSession(...args),
-  postPlayerReferral: (...args) => postCocosPlayerReferral(...args),
-  logoutAuthSession: (...args) => logoutCurrentCocosAuthSession(...args),
-  deletePlayerAccount: (...args) => deleteCurrentCocosPlayerAccount(...args),
-  loadShopProducts: (...args) => VeilCocosSession.fetchShopProducts(...args),
-  purchaseShopProduct: (...args) => VeilCocosSession.purchaseShopProduct(...args),
-  equipShopCosmetic: (...args) => VeilCocosSession.equipShopCosmetic(...args),
-  claimDailyQuest: (...args) => claimCocosDailyQuest(...args),
-  submitSupportTicket: (...args) => submitCocosSupportTicket(...args)
-};
-
-let testVeilRootRuntimeOverrides: Partial<VeilRootRuntime> | null = null;
-
-function resolveVeilRootRuntime(): VeilRootRuntime {
-  return {
-    ...defaultVeilRootRuntime,
-    ...testVeilRootRuntimeOverrides
-  };
-}
-
-function formatHeroStatBonus(bonus: { attack: number; defense: number; power: number; knowledge: number }): string {
-  return [
-    bonus.attack > 0 ? `攻击 +${bonus.attack}` : "",
-    bonus.defense > 0 ? `防御 +${bonus.defense}` : "",
-    bonus.power > 0 ? `力量 +${bonus.power}` : "",
-    bonus.knowledge > 0 ? `知识 +${bonus.knowledge}` : ""
-  ]
-    .filter(Boolean)
-    .join(" / ");
-}
-
-function formatResourceKindLabel(kind: "gold" | "wood" | "ore"): string {
-  return kind === "gold" ? "金币" : kind === "wood" ? "木材" : "矿石";
-}
+import {
+  ACCOUNT_REVIEW_PAGE_SIZE,
+  ACCOUNT_REVIEW_PANEL_NODE_NAME,
+  BATTLE_FEEDBACK_DURATION_MS,
+  BATTLE_NODE_NAME,
+  CAMPAIGN_PANEL_NODE_NAME,
+  cloneSessionUpdate,
+  collapseAdjacentEntries,
+  DEFAULT_MAP_HEIGHT_TILES,
+  DEFAULT_MAP_WIDTH_TILES,
+  EQUIPMENT_PANEL_NODE_NAME,
+  FORCE_UPGRADE_MESSAGE,
+  formatHeroStatBonus,
+  formatResourceKindLabel,
+  formatUpgradeCostLabel,
+  HUD_NODE_NAME,
+  LOBBY_NODE_NAME,
+  MAP_NODE_NAME,
+  resolveVeilRootRuntime,
+  SETTINGS_BUTTON_NODE_NAME,
+  SETTINGS_PANEL_NODE_NAME,
+  TIMELINE_NODE_NAME,
+  TUTORIAL_OVERLAY_NODE_NAME,
+  type BattleSettlementSnapshot,
+  type GlobalErrorBoundaryEvent,
+  type TutorialCampaignGuidance,
+  type VeilRootRuntime
+} from "./root/index.ts";
 
 @ccclass("ProjectVeilRoot")
 export class VeilRoot extends Component {
@@ -3951,9 +3839,6 @@ export class VeilRoot extends Component {
     this.selectedInteractionBuildingId = null;
   }
 
-  private formatUpgradeCostLabel(cost: { gold: number; wood: number; ore: number }): string {
-    return [`金币 ${cost.gold}`, `木材 ${cost.wood}`, `矿石 ${cost.ore}`].join(" / ");
-  }
 
   private buildHudInteractionState(): VeilHudRenderState["interaction"] {
     const hero = this.activeHero();
@@ -4000,7 +3885,7 @@ export class VeilRoot extends Component {
         actions.push({ id: "upgrade", label: `升级建筑 · ${building.tier}→${upgradeStep.toTier}` });
         return {
           title: building.label,
-          detail: `${tierLabel} · 升级花费 ${this.formatUpgradeCostLabel(upgradeStep.cost)}`,
+          detail: `${tierLabel} · 升级花费 ${formatUpgradeCostLabel(upgradeStep.cost)}`,
           actions
         };
       }
@@ -7005,30 +6890,4 @@ export class VeilRoot extends Component {
 
 }
 
-export function setVeilRootRuntimeForTests(runtime: Partial<VeilRootRuntime>): void {
-  // Tests only replace transport/persistence edges here so the VeilRoot boot,
-  // reconnect, and handoff orchestration still runs through the production code.
-  testVeilRootRuntimeOverrides = {
-    ...testVeilRootRuntimeOverrides,
-    ...runtime
-  };
-}
-
-export function resetVeilRootRuntimeForTests(): void {
-  testVeilRootRuntimeOverrides = null;
-}
-
-function cloneSessionUpdate(update: SessionUpdate): SessionUpdate {
-  return JSON.parse(JSON.stringify(update)) as SessionUpdate;
-}
-
-function collapseAdjacentEntries(entries: string[]): string[] {
-  const collapsed: string[] = [];
-  for (const entry of entries) {
-    if (collapsed[collapsed.length - 1] === entry) {
-      continue;
-    }
-    collapsed.push(entry);
-  }
-  return collapsed;
-}
+export { setVeilRootRuntimeForTests, resetVeilRootRuntimeForTests } from "./root/index.ts";
