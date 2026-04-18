@@ -1313,75 +1313,78 @@ export interface PlayerRoomProfileListOptions {
   playerId?: string;
 }
 
-export const MYSQL_DEFAULT_DATABASE = "project_veil";
-export const MYSQL_ROOM_SNAPSHOT_TABLE = "room_snapshots";
-export const MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX = "idx_room_snapshots_updated_at";
-export const MYSQL_PLAYER_ROOM_PROFILE_TABLE = "player_room_profiles";
-export const MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX = "idx_player_room_profiles_updated_at";
-export const MYSQL_PLAYER_ACCOUNT_TABLE = "player_accounts";
-export const MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX = "idx_player_accounts_updated_at";
-export const MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX = "uidx_player_accounts_login_id";
-export const MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX = "uidx_player_accounts_wechat_open_id";
-export const MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX = "uidx_player_accounts_wechat_idp_open_id";
-export const MYSQL_GEM_LEDGER_TABLE = "gem_ledger";
-export const MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX = "idx_gem_ledger_player_created";
-export const MYSQL_PLAYER_REFERRAL_TABLE = "referrals";
-export const MYSQL_PLAYER_REFERRAL_REFERRER_CREATED_INDEX = "idx_referrals_referrer_created";
-export const MYSQL_SHOP_PURCHASE_TABLE = "shop_purchases";
-export const MYSQL_PAYMENT_ORDER_TABLE = "orders";
-export const MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX = "idx_orders_player_created";
-export const MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX = "uidx_orders_wechat_order_id";
-export const MYSQL_PAYMENT_ORDER_STATUS_RETRY_INDEX = "idx_orders_status_next_retry";
-export const MYSQL_PAYMENT_RECEIPT_TABLE = "payment_receipts";
-export const MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX = "uidx_payment_receipts_order_id";
-export const MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX = "idx_payment_receipts_player_verified";
-export const MYSQL_PLAYER_ACCOUNT_SESSION_TABLE = "player_account_sessions";
-export const MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX = "idx_player_account_sessions_player_last_used";
-export const MYSQL_PLAYER_BAN_HISTORY_TABLE = "player_ban_history";
-export const MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX = "idx_player_ban_history_player_created";
-export const MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE = "player_compensation_history";
-export const MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX = "idx_player_compensation_history_player_created";
-export const MYSQL_ADMIN_AUDIT_LOG_TABLE = "admin_audit_logs";
-export const MYSQL_ADMIN_AUDIT_LOG_OCCURRED_INDEX = "idx_admin_audit_logs_occurred";
-export const MYSQL_ADMIN_AUDIT_LOG_TARGET_OCCURRED_INDEX = "idx_admin_audit_logs_target_occurred";
-export const MYSQL_PLAYER_NAME_HISTORY_TABLE = "player_name_history";
-export const MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX = "idx_player_name_history_player_changed";
-export const MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX = "idx_player_name_history_normalized_changed";
-export const MYSQL_PLAYER_NAME_HISTORY_CHANGED_AT_INDEX = "idx_player_name_history_changed_at";
-export const MYSQL_PLAYER_NAME_RESERVATION_TABLE = "player_name_reservations";
-export const MYSQL_PLAYER_NAME_RESERVATION_UNTIL_INDEX = "idx_player_name_reservations_until";
-export const MYSQL_PLAYER_NAME_RESERVATION_NORMALIZED_INDEX = "uidx_player_name_reservations_normalized";
-export const MYSQL_PLAYER_EVENT_HISTORY_TABLE = "player_event_history";
-export const MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX = "idx_player_event_history_player_time";
-export const MYSQL_PLAYER_QUEST_STATE_TABLE = "player_quest_states";
-export const MYSQL_PLAYER_QUEST_STATE_UPDATED_AT_INDEX = "idx_player_quest_states_updated_at";
-export const MYSQL_PLAYER_HERO_ARCHIVE_TABLE = "player_hero_archives";
-export const MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX = "idx_player_hero_archives_updated_at";
-export const MYSQL_PLAYER_REPORT_TABLE = "player_reports";
-export const MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX = "idx_player_reports_status_created";
-export const MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX = "uidx_player_reports_room_reporter_target";
-export const MYSQL_SUPPORT_TICKET_TABLE = "support_tickets";
-export const MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX = "idx_support_tickets_status_created";
-export const MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX = "idx_support_tickets_player_created";
-export const MYSQL_BATTLE_SNAPSHOT_TABLE = "battle_snapshots";
-export const MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX = "idx_battle_snapshots_status_updated";
-export const MYSQL_GUILD_TABLE = "guilds";
-export const MYSQL_GUILD_UPDATED_AT_INDEX = "idx_guilds_updated_at";
-export const MYSQL_GUILD_TAG_INDEX = "uidx_guilds_tag";
-export const MYSQL_GUILD_MEMBERSHIP_TABLE = "guild_memberships";
-export const MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX = "uidx_guild_memberships_player";
-export const MYSQL_GUILD_AUDIT_LOG_TABLE = "guild_audit_logs";
-export const MYSQL_GUILD_AUDIT_LOG_GUILD_OCCURRED_INDEX = "idx_guild_audit_logs_guild_occurred";
-export const MYSQL_GUILD_AUDIT_LOG_ACTOR_OCCURRED_INDEX = "idx_guild_audit_logs_actor_occurred";
-export const MYSQL_GUILD_MESSAGE_TABLE = "guild_messages";
-export const MYSQL_GUILD_MESSAGE_GUILD_CREATED_INDEX = "idx_guild_messages_guild_created";
-export const MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX = "idx_guild_messages_expires_at";
-export const MYSQL_CONFIG_DOCUMENT_TABLE = "config_documents";
-export const MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX = "idx_config_documents_updated_at";
-export const MYSQL_SEASON_TABLE = "veil_seasons";
-export const MYSQL_SEASON_RANKINGS_TABLE = "veil_season_rankings";
-export const MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE = "leaderboard_season_archives";
-export const MYSQL_SEASON_REWARD_LOG_TABLE = "season_reward_log";
+import {
+  MYSQL_ADMIN_AUDIT_LOG_OCCURRED_INDEX,
+  MYSQL_ADMIN_AUDIT_LOG_TABLE,
+  MYSQL_ADMIN_AUDIT_LOG_TARGET_OCCURRED_INDEX,
+  MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX,
+  MYSQL_BATTLE_SNAPSHOT_TABLE,
+  MYSQL_CONFIG_DOCUMENT_TABLE,
+  MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX,
+  MYSQL_DEFAULT_DATABASE,
+  MYSQL_GEM_LEDGER_PLAYER_CREATED_INDEX,
+  MYSQL_GEM_LEDGER_TABLE,
+  MYSQL_GUILD_AUDIT_LOG_ACTOR_OCCURRED_INDEX,
+  MYSQL_GUILD_AUDIT_LOG_GUILD_OCCURRED_INDEX,
+  MYSQL_GUILD_AUDIT_LOG_TABLE,
+  MYSQL_GUILD_MEMBERSHIP_PLAYER_INDEX,
+  MYSQL_GUILD_MEMBERSHIP_TABLE,
+  MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX,
+  MYSQL_GUILD_MESSAGE_GUILD_CREATED_INDEX,
+  MYSQL_GUILD_MESSAGE_TABLE,
+  MYSQL_GUILD_TABLE,
+  MYSQL_GUILD_TAG_INDEX,
+  MYSQL_GUILD_UPDATED_AT_INDEX,
+  MYSQL_LEADERBOARD_SEASON_ARCHIVE_TABLE,
+  MYSQL_PAYMENT_ORDER_PLAYER_CREATED_INDEX,
+  MYSQL_PAYMENT_ORDER_STATUS_RETRY_INDEX,
+  MYSQL_PAYMENT_ORDER_TABLE,
+  MYSQL_PAYMENT_ORDER_WECHAT_ORDER_ID_INDEX,
+  MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX,
+  MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX,
+  MYSQL_PAYMENT_RECEIPT_TABLE,
+  MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX,
+  MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX,
+  MYSQL_PLAYER_ACCOUNT_SESSION_TABLE,
+  MYSQL_PLAYER_ACCOUNT_TABLE,
+  MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX,
+  MYSQL_PLAYER_ACCOUNT_WECHAT_IDP_OPEN_ID_INDEX,
+  MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX,
+  MYSQL_PLAYER_BAN_HISTORY_PLAYER_CREATED_INDEX,
+  MYSQL_PLAYER_BAN_HISTORY_TABLE,
+  MYSQL_PLAYER_COMPENSATION_HISTORY_PLAYER_CREATED_INDEX,
+  MYSQL_PLAYER_COMPENSATION_HISTORY_TABLE,
+  MYSQL_PLAYER_EVENT_HISTORY_TABLE,
+  MYSQL_PLAYER_EVENT_HISTORY_TIMESTAMP_INDEX,
+  MYSQL_PLAYER_HERO_ARCHIVE_TABLE,
+  MYSQL_PLAYER_HERO_ARCHIVE_UPDATED_AT_INDEX,
+  MYSQL_PLAYER_NAME_HISTORY_CHANGED_AT_INDEX,
+  MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX,
+  MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX,
+  MYSQL_PLAYER_NAME_HISTORY_TABLE,
+  MYSQL_PLAYER_NAME_RESERVATION_NORMALIZED_INDEX,
+  MYSQL_PLAYER_NAME_RESERVATION_TABLE,
+  MYSQL_PLAYER_NAME_RESERVATION_UNTIL_INDEX,
+  MYSQL_PLAYER_QUEST_STATE_TABLE,
+  MYSQL_PLAYER_QUEST_STATE_UPDATED_AT_INDEX,
+  MYSQL_PLAYER_REFERRAL_REFERRER_CREATED_INDEX,
+  MYSQL_PLAYER_REFERRAL_TABLE,
+  MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX,
+  MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX,
+  MYSQL_PLAYER_REPORT_TABLE,
+  MYSQL_PLAYER_ROOM_PROFILE_TABLE,
+  MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX,
+  MYSQL_ROOM_SNAPSHOT_TABLE,
+  MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX,
+  MYSQL_SEASON_RANKINGS_TABLE,
+  MYSQL_SEASON_REWARD_LOG_TABLE,
+  MYSQL_SEASON_TABLE,
+  MYSQL_SHOP_PURCHASE_TABLE,
+  MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX,
+  MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX,
+  MYSQL_SUPPORT_TICKET_TABLE
+} from "./persistence/mysql-tables";
+export * from "./persistence/mysql-tables";
 const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
 export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
 export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
