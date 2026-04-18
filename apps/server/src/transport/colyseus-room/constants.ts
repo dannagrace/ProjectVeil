@@ -1,0 +1,14 @@
+export const DEFAULT_GROUP_CHALLENGE_SECRET = "project-veil-local-group-challenge-secret";
+export const RECONNECTION_WINDOW_SECONDS = 20;
+export const MAP_SYNC_CHUNK_SIZE = 8;
+export const MAP_SYNC_CHUNK_PADDING = 1;
+export const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
+export const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
+export const DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS = 60_000;
+export const DEFAULT_SUSPICIOUS_ACTION_THRESHOLD = 5;
+export const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
+export const MINOR_PROTECTION_TICK_MS = 60_000;
+export const TURN_TIMER_TICK_MS = 5_000;
+export const TURN_REMINDER_DISCONNECT_THRESHOLD_MS = 30_000;
+export const ZOMBIE_ROOM_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
+export const EMPTY_ROOM_TTL_MS = 10 * 60 * 1_000;

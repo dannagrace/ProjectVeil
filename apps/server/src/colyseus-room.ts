@@ -92,520 +92,62 @@ import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "./t
 import { buildFriendLeaderboard, createGroupChallenge, encodeGroupChallengeToken } from "./adapters/wechat-social";
 import { readRuntimeSecret } from "./runtime-secrets";
 
-type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
+import {
+  activeRoomInstances,
+  advanceLobbyRoomOwnerToken,
+  clamp,
+  cloneResourceLedger,
+  compareDefaultPlayerSlotIds,
+  configuredRoomSnapshotStore,
+  DEFAULT_GROUP_CHALLENGE_SECRET,
+  EMPTY_ROOM_TTL_MS,
+  ensureZombieRoomCleanupLoop,
+  formatBackgroundTaskDetail,
+  hasBattleSnapshotStore,
+  hasPlayerReportStore,
+  isDefaultPlayerSlotId,
+  lobbyRoomOwnerTokens,
+  lobbyRoomSummaries,
+  MAP_SYNC_CHUNK_SIZE,
+  MAP_SYNC_CHUNK_PADDING,
+  MINOR_PROTECTION_TICK_MS,
+  readMinimumSupportedClientVersion,
+  readSuspiciousActionAlertConfig,
+  readWebSocketActionRateLimitConfig,
+  rebindWorldStatePlayerId,
+  RECONNECTION_WINDOW_SECONDS,
+  reportBackgroundTaskFailure,
+  reportPersistenceSaveFailure,
+  resolveFocusedMapBounds,
+  roomRuntimeDependencies,
+  sendMessage,
+  TURN_REMINDER_DISCONNECT_THRESHOLD_MS,
+  TURN_TIMER_TICK_MS,
+  type IdempotentActionReplayEntry,
+  type IdempotentActionReply,
+  type JoinOptions,
+  type LobbyRoomSummary,
+  type PendingIdempotentActionReplayEntry,
+  type RoomRuntimeDependencies,
+  type RoomTimerHandle,
+  type SuspiciousActionAlertConfig,
+  type SuspiciousActionTracker,
+  type VeilRoomMetadata,
+  type VeilRoomOptions,
+  type WebSocketActionRateLimitConfig
+} from "./transport/colyseus-room/index";
 
-const DEFAULT_GROUP_CHALLENGE_SECRET = "project-veil-local-group-challenge-secret";
-
-interface VeilRoomMetadata {
-  logicalRoomId: string;
-}
-
-interface VeilRoomOptions {
-  metadata: VeilRoomMetadata;
-}
-
-interface JoinOptions {
-  logicalRoomId?: string;
-  playerId?: string;
-  seed?: number;
-}
-
-const RECONNECTION_WINDOW_SECONDS = 20;
-const MAP_SYNC_CHUNK_SIZE = 8;
-const MAP_SYNC_CHUNK_PADDING = 1;
-const DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS = 1_000;
-const DEFAULT_WS_ACTION_RATE_LIMIT_MAX = 8;
-const DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS = 60_000;
-const DEFAULT_SUSPICIOUS_ACTION_THRESHOLD = 5;
-const DEFAULT_PLAYER_SLOT_ID = /^player-(\d+)$/;
-const MINOR_PROTECTION_TICK_MS = 60_000;
-const TURN_TIMER_TICK_MS = 5_000;
-const TURN_REMINDER_DISCONNECT_THRESHOLD_MS = 30_000;
-const ZOMBIE_ROOM_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
-const EMPTY_ROOM_TTL_MS = 10 * 60 * 1_000;
-let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
-const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
-const lobbyRoomOwnerTokens = new Map<string, number>();
-const activeRoomInstances = new Map<string, VeilColyseusRoom>();
-let nextLobbyRoomOwnerToken = 1;
-let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
-
-type BackgroundTaskType = "minor_playtime" | "turn_timer" | "zombie_room_cleanup";
-
-function formatBackgroundTaskDetail(taskType: BackgroundTaskType, error: unknown, extras: Record<string, string | number | null> = {}): string {
-  const detailParts = [`task=${taskType}`];
-  for (const [key, value] of Object.entries(extras)) {
-    if (value == null) {
-      continue;
-    }
-    detailParts.push(`${key}=${value}`);
-  }
-  detailParts.push(`error=${error instanceof Error ? error.message : String(error)}`);
-  return detailParts.join(" ");
-}
-
-function reportBackgroundTaskFailure(input: {
-  taskType: BackgroundTaskType;
-  errorCode: string;
-  message: string;
-  logMessage: string;
-  error: unknown;
-  roomId?: string | null;
-  playerId?: string | null;
-  roomDay?: number | null;
-  detail?: string | null;
-}): void {
-  const detail = input.detail ?? formatBackgroundTaskDetail(input.taskType, input.error);
-
-  console.error(input.logMessage, {
-    ...(input.roomId ? { roomId: input.roomId } : {}),
-    ...(input.playerId ? { playerId: input.playerId } : {}),
-    ...(input.roomDay != null ? { roomDay: input.roomDay } : {}),
-    error: input.error
-  });
-
-  recordRuntimeErrorEvent({
-    id: `${input.errorCode}:${input.roomId ?? "global"}:${Date.now()}`,
-    recordedAt: new Date().toISOString(),
-    source: "server",
-    surface: "colyseus-room",
-    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || "workspace",
-    featureArea: "runtime",
-    ownerArea: "multiplayer",
-    severity: "error",
-    errorCode: input.errorCode,
-    message: input.message,
-    context: {
-      roomId: input.roomId ?? null,
-      playerId: input.playerId ?? null,
-      requestId: null,
-      route: null,
-      action: input.taskType,
-      statusCode: null,
-      crash: false,
-      detail
-    }
-  });
-
-  void captureServerError({
-    errorCode: input.errorCode,
-    message: input.message,
-    error: input.error,
-    severity: "error",
-    featureArea: "runtime",
-    ownerArea: "multiplayer",
-    surface: "colyseus-room",
-    context: {
-      roomId: input.roomId ?? null,
-      playerId: input.playerId ?? null,
-      action: input.taskType,
-      roomDay: input.roomDay ?? null,
-      detail
-    }
-  });
-}
-
-function reportPersistenceSaveFailure(
-  room: AuthoritativeWorldRoom,
-  playerId: string,
-  requestId: string,
-  action: string,
-  error: unknown
-): void {
-  const roomContext = buildAuthoritativeRoomErrorContext(room, playerId);
-  const detail = error instanceof Error ? error.message : String(error);
-
-  recordRuntimeErrorEvent({
-    id: `${roomContext.roomId}:${playerId}:${requestId}:persistence_save_failed`,
-    recordedAt: new Date().toISOString(),
-    source: "server",
-    surface: "colyseus-room",
-    candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
-    featureArea: "runtime",
-    ownerArea: "multiplayer",
-    severity: "error",
-    errorCode: "persistence_save_failed",
-    message: "Room state persistence failed and the action was rolled back.",
-    tags: ["room-persistence", action],
-    context: {
-      roomId: roomContext.roomId,
-      playerId: roomContext.playerId,
-      requestId,
-      route: null,
-      action,
-      statusCode: null,
-      crash: false,
-      detail: `battleId=${roomContext.battleId ?? "none"} heroId=${roomContext.heroId ?? "none"} day=${roomContext.day} error=${detail}`
-    }
-  });
-
-  void captureServerError({
-    errorCode: "persistence_save_failed",
-    message: "Room state persistence failed and the action was rolled back.",
-    error,
-    severity: "error",
-    featureArea: "runtime",
-    ownerArea: "multiplayer",
-    surface: "colyseus-room",
-    tags: ["room-persistence", action],
-    context: {
-      roomId: roomContext.roomId,
-      playerId: roomContext.playerId,
-      requestId,
-      action,
-      roomDay: roomContext.day,
-      battleId: roomContext.battleId,
-      heroId: roomContext.heroId,
-      detail
-    }
-  });
-}
-
-configureConfigRuntimeStatusProvider(() => {
-  const rooms = Array.from(activeRoomInstances.values())
-    .map((room) => ({
-      roomId: room.roomId,
-      activeBattles: room.worldRoom?.getActiveBattles().length ?? 0
-    }))
-    .filter((room) => room.activeBattles > 0);
-
-  return {
-    rooms,
-    activeBattleCount: rooms.reduce((sum, room) => sum + room.activeBattles, 0)
-  };
-});
-
-interface RoomTimerHandle {
-  unref?(): void;
-}
-
-interface RoomRuntimeDependencies {
-  setInterval(handler: () => void, delayMs: number): RoomTimerHandle;
-  clearInterval(handle: RoomTimerHandle): void;
-  isMySqlSnapshotStore(store: RoomSnapshotStore | null): boolean;
-  now(): number;
-  sendWechatSubscribeMessage(
-    playerId: string,
-    templateKey: WechatSubscribeTemplateKey,
-    data: Record<string, unknown>,
-    options?: { store?: RoomSnapshotStore | null }
-  ): Promise<boolean>;
-  sendMobilePushNotification(
-    playerId: string,
-    templateKey: WechatSubscribeTemplateKey,
-    data: Record<string, unknown>,
-    options?: { store?: RoomSnapshotStore | null }
-  ): Promise<boolean>;
-}
-
-const defaultRoomRuntimeDependencies: RoomRuntimeDependencies = {
-  setInterval: (handler, delayMs) => globalThis.setInterval(handler, delayMs),
-  clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof globalThis.setInterval>),
-  isMySqlSnapshotStore: (store) => Boolean(store && "getRetentionPolicy" in store),
-  now: () => Date.now(),
-  sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
-    sendWechatSubscribeMessage(playerId, templateKey, data, options),
-  sendMobilePushNotification: (playerId, templateKey, data, options) =>
-    sendMobilePushNotification(playerId, templateKey, data, options)
-};
-
-let roomRuntimeDependencies: RoomRuntimeDependencies = defaultRoomRuntimeDependencies;
-
-interface WebSocketActionRateLimitConfig {
-  windowMs: number;
-  max: number;
-}
-
-interface SuspiciousActionAlertConfig {
-  windowMs: number;
-  threshold: number;
-}
-
-interface SuspiciousActionTracker {
-  timestamps: number[];
-  lastAlertAt: number | null;
-}
-
-type IdempotentActionReply = Extract<ServerMessage, { type: "session.state" | "error" }>;
-
-interface IdempotentActionReplayEntry {
-  fingerprint: string;
-  reply: IdempotentActionReply;
-}
-
-interface PendingIdempotentActionReplayEntry {
-  fingerprint: string;
-  promise: Promise<IdempotentActionReply>;
-}
-
-function hasPlayerReportStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "createPlayerReport">> {
-  return Boolean(store?.createPlayerReport);
-}
-
-function hasBattleSnapshotStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore &
-  Required<
-    Pick<
-      RoomSnapshotStore,
-      "saveBattleSnapshotStart" | "saveBattleSnapshotResolution" | "settleInterruptedBattleSnapshot" | "listBattleSnapshotsForPlayer"
-    >
-  > {
-  return Boolean(
-    store?.saveBattleSnapshotStart &&
-      store.saveBattleSnapshotResolution &&
-      store.settleInterruptedBattleSnapshot &&
-      store.listBattleSnapshotsForPlayer
-  );
-}
-
-export interface LobbyRoomSummary {
-  roomId: string;
-  seed: number;
-  day: number;
-  connectedPlayers: number;
-  disconnectedPlayers: number;
-  heroCount: number;
-  activeBattles: number;
-  statusLabel: string;
-  updatedAt: string;
-}
-
-export function configureRoomSnapshotStore(store: RoomSnapshotStore | null): void {
-  configuredRoomSnapshotStore = store;
-}
-
-export function configureRoomRuntimeDependencies(overrides: Partial<RoomRuntimeDependencies>): void {
-  roomRuntimeDependencies = {
-    ...roomRuntimeDependencies,
-    ...overrides
-  };
-}
-
-export function resetRoomRuntimeDependencies(): void {
-  if (zombieRoomCleanupHandle) {
-    roomRuntimeDependencies.clearInterval(zombieRoomCleanupHandle);
-    zombieRoomCleanupHandle = null;
-  }
-  roomRuntimeDependencies = defaultRoomRuntimeDependencies;
-}
-
-export function listLobbyRooms(): LobbyRoomSummary[] {
-  return Array.from(lobbyRoomSummaries.values()).sort(
-    (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
-  );
-}
-
-export function resetLobbyRoomRegistry(): void {
-  lobbyRoomSummaries.clear();
-  lobbyRoomOwnerTokens.clear();
-  if (zombieRoomCleanupHandle) {
-    roomRuntimeDependencies.clearInterval(zombieRoomCleanupHandle);
-    zombieRoomCleanupHandle = null;
-  }
-}
-
-export function getActiveRoomInstances(): Map<string, VeilColyseusRoom> {
-  return activeRoomInstances;
-}
-
-export async function runZombieRoomCleanup(now = roomRuntimeDependencies.now()): Promise<void> {
-  for (const room of Array.from(activeRoomInstances.values())) {
-    try {
-      await room.runExpiredEmptyRoomCleanup(now);
-    } catch (error) {
-      const roomState = room.worldRoom.getInternalState();
-      reportBackgroundTaskFailure({
-        taskType: "zombie_room_cleanup",
-        errorCode: "zombie_room_cleanup_tick_failed",
-        message: "Background zombie-room cleanup tick failed.",
-        logMessage: "[VeilRoom] Zombie room cleanup failed",
-        error,
-        roomId: room.roomId,
-        roomDay: roomState.meta.day,
-        detail: formatBackgroundTaskDetail("zombie_room_cleanup", error, {
-          activeBattles: room.worldRoom.getActiveBattles().length,
-          connectedPlayers: room.clients.length
-        })
-      });
-    }
-  }
-}
-
-function ensureZombieRoomCleanupLoop(): void {
-  if (zombieRoomCleanupHandle) {
-    return;
-  }
-
-  zombieRoomCleanupHandle = roomRuntimeDependencies.setInterval(() => {
-    void runZombieRoomCleanup().catch((error) => {
-      console.error("[VeilRoom] Zombie room cleanup failed", { error });
-    });
-  }, ZOMBIE_ROOM_CLEANUP_INTERVAL_MS);
-  zombieRoomCleanupHandle.unref?.();
-}
-
-function parseEnvNumber(
-  value: string | undefined,
-  fallback: number,
-  options: { minimum?: number; integer?: boolean } = {}
-): number {
-  const parsed = Number(value?.trim());
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  const normalized = options.integer ? Math.floor(parsed) : parsed;
-  if (options.minimum != null && normalized < options.minimum) {
-    return fallback;
-  }
-
-  return normalized;
-}
-
-function readWebSocketActionRateLimitConfig(env: NodeJS.ProcessEnv = process.env): WebSocketActionRateLimitConfig {
-  return {
-    windowMs: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_WINDOW_MS, DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS, {
-      minimum: 1,
-      integer: true
-    }),
-    max: parseEnvNumber(env.VEIL_RATE_LIMIT_WS_ACTION_MAX, DEFAULT_WS_ACTION_RATE_LIMIT_MAX, {
-      minimum: 1,
-      integer: true
-    })
-  };
-}
-
-function readSuspiciousActionAlertConfig(env: NodeJS.ProcessEnv = process.env): SuspiciousActionAlertConfig {
-  return {
-    windowMs: parseEnvNumber(env.VEIL_ANTI_CHEAT_SUSPICIOUS_ACTION_WINDOW_MS, DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS, {
-      minimum: 1,
-      integer: true
-    }),
-    threshold: parseEnvNumber(env.VEIL_ANTI_CHEAT_SUSPICIOUS_ACTION_THRESHOLD, DEFAULT_SUSPICIOUS_ACTION_THRESHOLD, {
-      minimum: 1,
-      integer: true
-    })
-  };
-}
-
-function readMinimumSupportedClientVersion(
-  channel: string | null | undefined,
-  env: NodeJS.ProcessEnv = process.env
-): string {
-  return (
-    resolveMinimumSupportedClientVersion(channel, env) ??
-    normalizeClientVersion(env.MIN_SUPPORTED_CLIENT_VERSION) ??
-    DEFAULT_MIN_SUPPORTED_CLIENT_VERSION
-  );
-}
-
-function sendMessage<T extends ServerMessage["type"]>(
-  client: ColyseusClient,
-  type: T,
-  payload: MessageOfType<T>
-): void {
-  client.send(type, payload);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function compareDefaultPlayerSlotIds(left: string, right: string): number {
-  const leftMatch = DEFAULT_PLAYER_SLOT_ID.exec(left);
-  const rightMatch = DEFAULT_PLAYER_SLOT_ID.exec(right);
-  if (!leftMatch || !rightMatch) {
-    return left.localeCompare(right);
-  }
-
-  return Number(leftMatch[1]) - Number(rightMatch[1]) || left.localeCompare(right);
-}
-
-function isDefaultPlayerSlotId(playerId: string): boolean {
-  return DEFAULT_PLAYER_SLOT_ID.test(playerId);
-}
-
-function cloneResourceLedger(ledger?: { gold: number; wood: number; ore: number }): { gold: number; wood: number; ore: number } {
-  return {
-    gold: ledger?.gold ?? 0,
-    wood: ledger?.wood ?? 0,
-    ore: ledger?.ore ?? 0
-  };
-}
-
-function rebindWorldStatePlayerId(
-  state: RoomPersistenceSnapshot["state"],
-  previousPlayerId: string,
-  nextPlayerId: string
-): RoomPersistenceSnapshot["state"] {
-  if (previousPlayerId === nextPlayerId) {
-    return state;
-  }
-
-  const nextHeroes = state.heroes.map((hero) =>
-    hero.playerId === previousPlayerId
-      ? {
-          ...hero,
-          playerId: nextPlayerId
-        }
-      : hero
-  );
-
-  const nextResources = { ...state.resources };
-  nextResources[nextPlayerId] = cloneResourceLedger(nextResources[nextPlayerId] ?? nextResources[previousPlayerId]);
-  delete nextResources[previousPlayerId];
-
-  const nextVisibilityByPlayer = { ...state.visibilityByPlayer };
-  if (nextVisibilityByPlayer[previousPlayerId]) {
-    nextVisibilityByPlayer[nextPlayerId] = [...nextVisibilityByPlayer[previousPlayerId]!];
-    delete nextVisibilityByPlayer[previousPlayerId];
-  }
-
-  const nextAfkStrikes = state.afkStrikes ? { ...state.afkStrikes } : undefined;
-  if (nextAfkStrikes?.[previousPlayerId] != null) {
-    nextAfkStrikes[nextPlayerId] = nextAfkStrikes[previousPlayerId]!;
-    delete nextAfkStrikes[previousPlayerId];
-  }
-
-  return {
-    ...state,
-    heroes: nextHeroes,
-    resources: nextResources,
-    visibilityByPlayer: nextVisibilityByPlayer,
-    ...(nextAfkStrikes ? { afkStrikes: nextAfkStrikes } : {})
-  };
-}
-
-function resolveFocusedMapBounds(world: SessionStatePayload["world"]): { x: number; y: number; width: number; height: number } | null {
-  if (world.map.width <= MAP_SYNC_CHUNK_SIZE && world.map.height <= MAP_SYNC_CHUNK_SIZE) {
-    return null;
-  }
-
-  if (world.ownHeroes.length === 0) {
-    return null;
-  }
-
-  const chunkXs = world.ownHeroes.map((hero) => Math.floor(hero.position.x / MAP_SYNC_CHUNK_SIZE));
-  const chunkYs = world.ownHeroes.map((hero) => Math.floor(hero.position.y / MAP_SYNC_CHUNK_SIZE));
-  const maxChunkX = Math.max(0, Math.ceil(world.map.width / MAP_SYNC_CHUNK_SIZE) - 1);
-  const maxChunkY = Math.max(0, Math.ceil(world.map.height / MAP_SYNC_CHUNK_SIZE) - 1);
-  const minChunkX = clamp(Math.min(...chunkXs) - MAP_SYNC_CHUNK_PADDING, 0, maxChunkX);
-  const maxFocusedChunkX = clamp(Math.max(...chunkXs) + MAP_SYNC_CHUNK_PADDING, 0, maxChunkX);
-  const minChunkY = clamp(Math.min(...chunkYs) - MAP_SYNC_CHUNK_PADDING, 0, maxChunkY);
-  const maxFocusedChunkY = clamp(Math.max(...chunkYs) + MAP_SYNC_CHUNK_PADDING, 0, maxChunkY);
-  const x = minChunkX * MAP_SYNC_CHUNK_SIZE;
-  const y = minChunkY * MAP_SYNC_CHUNK_SIZE;
-
-  return {
-    x,
-    y,
-    width: Math.min(world.map.width - x, (maxFocusedChunkX - minChunkX + 1) * MAP_SYNC_CHUNK_SIZE),
-    height: Math.min(world.map.height - y, (maxFocusedChunkY - minChunkY + 1) * MAP_SYNC_CHUNK_SIZE)
-  };
-}
+// Re-export public API so existing imports from "./colyseus-room" continue to work.
+export type { JoinOptions, LobbyRoomSummary, VeilRoomMetadata, VeilRoomOptions } from "./transport/colyseus-room/index";
+export {
+  configureRoomSnapshotStore,
+  configureRoomRuntimeDependencies,
+  resetRoomRuntimeDependencies,
+  listLobbyRooms,
+  resetLobbyRoomRegistry,
+  getActiveRoomInstances,
+  runZombieRoomCleanup
+} from "./transport/colyseus-room/index";
 
 export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   maxClients = 8;
@@ -615,7 +157,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private readonly wsActionRateLimitConfig = readWebSocketActionRateLimitConfig();
   private readonly suspiciousActionAlertConfig = readSuspiciousActionAlertConfig();
   private readonly minorProtectionConfig = readMinorProtectionConfig();
-  private readonly lobbyRoomOwnerToken = nextLobbyRoomOwnerToken++;
+  private readonly lobbyRoomOwnerToken = advanceLobbyRoomOwnerToken();
   private readonly playerIdBySessionId = new Map<string, string>();
   private readonly authSessionByPlayerId = new Map<string, GuestAuthSession>();
   private readonly analyticsSessionStartedAtBySessionId = new Map<string, number>();
