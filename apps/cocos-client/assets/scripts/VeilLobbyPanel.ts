@@ -44,8 +44,8 @@ import {
   type LobbyTerrainShowcaseEntry,
   type LobbyShowcasePhase
 } from "./cocos-showcase-gallery.ts";
+import { HUD_ACCENT } from "./cocos-hud-panel-model.ts";
 import type { CocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
-import { HUD_ACCENT } from "./VeilHudPanel.ts";
 import type { HeroView } from "./VeilCocosSession.ts";
 import {
   resolveCocosBattlePassClaimableRewardSummary,

@@ -54,9 +54,9 @@ test("VeilTimelinePanel renders timeline entries with icon and watermark transit
   assert.equal(watermark.active, false);
 
   const firstEntryLabel = findNode(node, "TimelineEntry-0-Label");
-  assert.equal(readLabelString(firstEntryLabel), "房间权威状态恢复 · 推送缓存快照");
+  assert.equal(readLabelString(firstEntryLabel), "系统： 房间权威状态恢复 · 推送缓存快照");
   const secondEntryBadge = findNode(node, "TimelineEntry-1")?.getChildByName("Badge");
-  assert.match(readLabelString(secondEntryBadge), /事件/);
+  assert.match(readLabelString(secondEntryBadge), /记录/);
   assert.equal(readLabelString(findNode(node, "TimelineContent")), "时间线");
 
   component.render({

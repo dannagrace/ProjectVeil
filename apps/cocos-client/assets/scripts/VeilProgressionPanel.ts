@@ -1,7 +1,7 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
 import { type CocosAccountReviewPage, type CocosAccountReviewSection } from "./cocos-account-review.ts";
 import { type CocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
-import { type CocosBattlePassPanelView, type CocosDailyDungeonPanelView } from "./cocos-progression-panel.ts";
+import { type CocosBattlePassPanelView, type CocosDailyDungeonPanelView } from "./cocos-progression-panel-model.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;

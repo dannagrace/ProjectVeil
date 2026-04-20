@@ -165,15 +165,17 @@ export {
 } from "../cocos-asset-load-resilience.ts";
 export { createCocosAudioAssetBridge } from "../cocos-audio-resources.ts";
 export {
+  CocosSettingsPanel
+} from "../cocos-settings-panel.ts";
+export {
   applySettingsUpdate,
-  CocosSettingsPanel,
   createDefaultCocosSettingsView,
   readPersistedCocosSettings,
   resolveCocosPrivacyPolicyUrl,
   writePersistedCocosSettings,
   type CocosSettingsPanelUpdate,
   type CocosSettingsPanelView
-} from "../cocos-settings-panel.ts";
+} from "../cocos-settings-panel-model.ts";
 export { cocosPresentationConfig } from "../cocos-presentation-config.ts";
 export { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "../cocos-pixel-sprites.ts";
 export { type CocosCampaignDialogueState } from "../cocos-campaign-panel.ts";
@@ -198,4 +200,3 @@ export {
   type CocosWechatPaymentRuntimeLike
 } from "../cocos-wechat-payment.ts";
 export { normalizeTutorialStep } from "@veil/shared/progression";
-

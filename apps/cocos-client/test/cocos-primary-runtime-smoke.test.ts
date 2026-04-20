@@ -136,6 +136,7 @@ test("primary cocos runtime smoke boots VeilRoot from cached replay into the fir
         requestId: "cocos-req-1",
         roomId: "room-smoke",
         playerId: "player-smoke",
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "Smoke Player",
         authToken: "smoke.auth.token"

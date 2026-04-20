@@ -513,6 +513,7 @@ test("primary cocos client journey reuses an account session from lobby bootstra
         requestId: "cocos-req-1",
         roomId: "room-journey",
         playerId: "player-account",
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "暮潮守望",
         authToken: "account.session.token"
@@ -671,6 +672,7 @@ test("primary cocos client journey gates lobby entry, world exploration, battle 
         requestId: "cocos-req-1",
         roomId,
         playerId,
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "暮潮守望",
         authToken: "account.session.token"
@@ -721,6 +723,7 @@ test("primary cocos client journey gates lobby entry, world exploration, battle 
         requestId: "cocos-req-1",
         roomId,
         playerId,
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "暮潮守望",
         authToken: "account.session.token"

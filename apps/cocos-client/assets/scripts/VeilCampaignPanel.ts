@@ -4,7 +4,7 @@ import {
   buildCocosCampaignPanelView,
   type CocosCampaignPanelInput,
   type CocosCampaignPanelView
-} from "./cocos-campaign-panel.ts";
+} from "./cocos-campaign-panel-model.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;

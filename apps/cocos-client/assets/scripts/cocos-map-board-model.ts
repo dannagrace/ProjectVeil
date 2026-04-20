@@ -1,6 +1,8 @@
 import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
 import { resolveCocosTileMarkerVisual, type CocosTileMarkerVisual } from "./cocos-object-visuals.ts";
 
+export type { CocosTileMarkerVisual } from "./cocos-object-visuals.ts";
+
 export interface MapBoardTileViewModel {
   key: string;
   tile: PlayerTileView | null;

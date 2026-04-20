@@ -5,7 +5,7 @@ import {
   createDefaultCocosSettingsView,
   deserializeCocosSettings,
   serializeCocosSettings
-} from "../assets/scripts/cocos-settings-panel.ts";
+} from "../assets/scripts/cocos-settings-panel-model.ts";
 
 test("applySettingsUpdate clamps volume between 0 and 100", () => {
   const state = createDefaultCocosSettingsView();

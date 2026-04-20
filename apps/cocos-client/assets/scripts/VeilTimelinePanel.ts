@@ -6,6 +6,10 @@ import {
   releasePlaceholderSpriteAssets,
   retainPlaceholderSpriteAssets
 } from "./cocos-placeholder-sprites.ts";
+import {
+  buildTimelinePanelView,
+  type TimelineEntryView
+} from "./cocos-timeline-panel-model.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
 
 const { ccclass } = _decorator;
@@ -21,12 +25,6 @@ const CONTENT_NODE_NAME = "TimelineContent";
 const HEADER_ICON_NODE_NAME = "TimelineHeaderIcon";
 const WATERMARK_NODE_NAME = "TimelineWatermark";
 const ENTRY_PREFIX = "TimelineEntry";
-
-interface TimelineEntryView {
-  tone: "system" | "event";
-  badge: string;
-  body: string;
-}
 
 export interface VeilTimelinePanelState {
   entries: string[];
@@ -44,15 +42,16 @@ export class VeilTimelinePanel extends Component {
 
   render(state: VeilTimelinePanelState): void {
     this.currentState = state;
+    const view = buildTimelinePanelView(state.entries);
     this.syncPlaceholderAssets(state.entries.length > 0);
     this.cleanupLegacyNodes();
     this.syncChrome();
     this.syncHeaderIcon();
     const label = this.ensureLabel();
-    const lines = ["时间线"];
+    const lines = [...view.headerLines];
     this.syncWatermark(state.entries.length === 0);
 
-    if (state.entries.length === 0) {
+    if (view.empty) {
       this.hideEntryNodes();
       lines.push("等待房间动态...");
       label.string = lines.join("\n");
@@ -60,7 +59,7 @@ export class VeilTimelinePanel extends Component {
     }
 
     label.string = lines.join("\n");
-    this.renderEntries(state.entries.slice(0, 3));
+    this.renderEntries(view.entries);
   }
 
   onDestroy(): void {
@@ -217,7 +216,7 @@ export class VeilTimelinePanel extends Component {
     }
   }
 
-  private renderEntries(entries: string[]): void {
+  private renderEntries(entries: TimelineEntryView[]): void {
     const used = new Set<string>();
     const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
     const entryWidth = Math.max(124, transform.width - 34);
@@ -225,10 +224,9 @@ export class VeilTimelinePanel extends Component {
     const gap = 8;
     let cursorY = transform.height / 2 - 92;
 
-    entries.forEach((entry, index) => {
+    entries.forEach((view, index) => {
       const key = `${ENTRY_PREFIX}-${index}`;
       const entryNode = this.ensureEntryNode(key);
-      const view = parseTimelineEntry(entry);
       const rowTransform = entryNode.node.getComponent(UITransform) ?? entryNode.node.addComponent(UITransform);
       rowTransform.setContentSize(entryWidth, rowHeight);
       entryNode.node.setPosition(-transform.width / 2 + entryWidth / 2 + 20, cursorY - rowHeight / 2, 0.5);
@@ -347,28 +345,4 @@ export class VeilTimelinePanel extends Component {
       entryNode.node.active = false;
     }
   }
-}
-
-function parseTimelineEntry(entry: string): TimelineEntryView {
-  if (entry.startsWith("系统：")) {
-    return {
-      tone: "system",
-      badge: "系统",
-      body: entry.replace(/^系统：\s*/, "")
-    };
-  }
-
-  if (entry.startsWith("事件：")) {
-    return {
-      tone: "event",
-      badge: "事件",
-      body: entry.replace(/^事件：\s*/, "")
-    };
-  }
-
-  return {
-    tone: "event",
-    badge: "记录",
-    body: entry
-  };
 }
