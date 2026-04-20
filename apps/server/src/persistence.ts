@@ -95,6 +95,19 @@ import {
 } from "./persistence/env-readers";
 
 import {
+  formatTimestamp,
+  normalizePlayerId,
+  parseJsonColumn
+} from "./persistence/column-helpers";
+
+import {
+  normalizeBattleSnapshotPlayerIds,
+  normalizeBattleSnapshotStatus,
+  toBattleSnapshotRecord,
+  type BattleSnapshotRow
+} from "./persistence/battle-snapshots";
+
+import {
   type BattleSnapshotCompensation,
   type BattleSnapshotInterruptedSettlementInput,
   type BattleSnapshotListOptions,
@@ -580,30 +593,6 @@ interface SupportTicketRow extends RowDataPacket {
   updated_at: Date | string;
 }
 
-interface BattleSnapshotRow extends RowDataPacket {
-  room_id: string;
-  battle_id: string;
-  hero_id: string;
-  attacker_player_id: string;
-  defender_player_id: string | null;
-  defender_hero_id: string | null;
-  neutral_army_id: string | null;
-  encounter_kind: "neutral" | "hero";
-  initiator: "hero" | "neutral" | null;
-  path_json: string | Vec2[];
-  move_cost: number;
-  player_ids_json: string | string[];
-  initial_state_json: string | BattleState;
-  estimated_compensation_grant_json: string | PlayerMailboxGrant | null;
-  status: BattleSnapshotStatus;
-  result: "attacker_victory" | "defender_victory" | null;
-  resolution_reason: string | null;
-  compensation_json: string | BattleSnapshotCompensation | null;
-  started_at: Date | string;
-  resolved_at: Date | string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
-}
 
 export interface RoomSnapshotSummary {
   roomId: string;
@@ -2225,34 +2214,8 @@ export function isPlayerBanActive(
   return Boolean(expiry && !Number.isNaN(expiry.getTime()) && expiry.getTime() > Date.now());
 }
 
-function normalizePlayerId(playerId: string): string {
-  const normalized = playerId.trim();
-  if (normalized.length === 0) {
-    throw new Error("playerId must not be empty");
-  }
-
-  return normalized;
-}
-
 function createDeletedFinancialRecordPseudonym(): string {
   return `deleted-financial-${randomUUID()}`;
-}
-
-function normalizeBattleSnapshotStatus(status: BattleSnapshotStatus): BattleSnapshotStatus {
-  if (status !== "active" && status !== "resolved" && status !== "compensated" && status !== "aborted") {
-    throw new Error("battle snapshot status is invalid");
-  }
-
-  return status;
-}
-
-function normalizeBattleSnapshotPlayerIds(playerIds: string[]): string[] {
-  const normalized = Array.from(new Set(playerIds.map((playerId) => normalizePlayerId(playerId))));
-  if (normalized.length === 0) {
-    throw new Error("battle snapshot must include at least one playerId");
-  }
-
-  return normalized;
 }
 
 function normalizePlayerDisplayName(playerId: string, displayName?: string | null): string {
@@ -2409,19 +2372,6 @@ function normalizeAuthSessionId(sessionId: string): string {
 function normalizeAuthSessionDeviceLabel(deviceLabel?: string | null): string {
   const normalized = deviceLabel?.trim();
   return normalized ? normalized.slice(0, 191) : "Unknown device";
-}
-
-function formatTimestamp(value: Date | string | null | undefined): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  const date = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return date.toISOString();
 }
 
 function isMySqlDuplicateEntryError(error: unknown): boolean {
@@ -4596,14 +4546,6 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` (
 `.trim();
 }
 
-function parseJsonColumn<T>(value: string | T): T {
-  if (typeof value === "string") {
-    return JSON.parse(value) as T;
-  }
-
-  return value;
-}
-
 function toPlayerHeroArchiveSnapshot(row: PlayerHeroArchiveRow): PlayerHeroArchiveSnapshot {
   const archivedHero = normalizeHeroState(parseJsonColumn<HeroState>(row.hero_json));
 
@@ -4977,47 +4919,6 @@ function toSupportTicketRecord(row: SupportTicketRow): SupportTicketRecord {
     resolvedAt: row.resolved_at,
     updatedAt: row.updated_at
   });
-}
-
-function toBattleSnapshotRecord(row: BattleSnapshotRow): BattleSnapshotRecord {
-  const startedAt = formatTimestamp(row.started_at);
-  const createdAt = formatTimestamp(row.created_at);
-  const updatedAt = formatTimestamp(row.updated_at);
-  if (!startedAt || !createdAt || !updatedAt) {
-    throw new Error("battle snapshot timestamps must be present");
-  }
-
-  const resolvedAt = formatTimestamp(row.resolved_at);
-  const compensation = row.compensation_json
-    ? parseJsonColumn<BattleSnapshotCompensation>(row.compensation_json)
-    : null;
-
-  return {
-    roomId: row.room_id,
-    battleId: row.battle_id,
-    heroId: row.hero_id,
-    attackerPlayerId: normalizePlayerId(row.attacker_player_id),
-    ...(row.defender_player_id ? { defenderPlayerId: normalizePlayerId(row.defender_player_id) } : {}),
-    ...(row.defender_hero_id ? { defenderHeroId: row.defender_hero_id } : {}),
-    ...(row.neutral_army_id ? { neutralArmyId: row.neutral_army_id } : {}),
-    encounterKind: row.encounter_kind,
-    ...(row.initiator ? { initiator: row.initiator } : {}),
-    path: parseJsonColumn<Vec2[]>(row.path_json),
-    moveCost: Math.max(0, Math.floor(row.move_cost)),
-    playerIds: normalizeBattleSnapshotPlayerIds(parseJsonColumn<string[]>(row.player_ids_json)),
-    initialState: parseJsonColumn<BattleState>(row.initial_state_json),
-    ...(row.estimated_compensation_grant_json
-      ? { estimatedCompensationGrant: parseJsonColumn<PlayerMailboxGrant>(row.estimated_compensation_grant_json) }
-      : {}),
-    status: normalizeBattleSnapshotStatus(row.status),
-    ...(row.result ? { result: row.result } : {}),
-    ...(row.resolution_reason ? { resolutionReason: row.resolution_reason } : {}),
-    ...(compensation ? { compensation } : {}),
-    startedAt,
-    ...(resolvedAt ? { resolvedAt } : {}),
-    createdAt,
-    updatedAt
-  };
 }
 
 async function appendPlayerEventHistoryEntries(
