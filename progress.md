@@ -1,3 +1,13 @@
+## Map art upgrade closure - 2026-04-20
+
+- Closed the approved map-art upgrade spec by updating the design doc status from planning to implemented and adding the missing implementation / integration / acceptance sections:
+  - `docs/superpowers/specs/2026-04-20-map-art-upgrade-design.md`
+- Added a dedicated acceptance record for the delivered cold-frontier map pack:
+  - `docs/superpowers/specs/2026-04-20-map-art-upgrade-acceptance.md`
+- Promoted the temporary local map-art gallery into a tracked repository preview page so the delivered terrain / fog / building / resource assets can be reviewed without relying on an untracked output directory:
+  - `docs/superpowers/specs/2026-04-20-map-art-upgrade-preview.html`
+- This closes the remaining documentation gap between the already-landed asset pack (`scripts/art/generate_cocos_map_art_pack.py` + resource replacements) and the original spec, so the repository now carries the design, implementation outcome, validation summary, and a reusable preview entry in one place.
+
 ## Issue #1500 - V0.9 Lobby PVP frontdoor - 2026-04-16
 
 - Defined `V0.9 PVP / 社交深化` in the roadmap:

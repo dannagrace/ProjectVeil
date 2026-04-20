@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed and approved for planning. Not yet in implementation.
+Implemented and accepted on 2026-04-20.
 
 ## Objective
 
@@ -205,14 +205,65 @@ A reinforced map pack can expand quickly. Keep variants only where they produce 
 - allow minimal hand cleanup only where generation leaves obvious artifacts
 - do not perform blind bulk replacement; land the upgrade in phase order and validate after each phase
 
+## Implementation Outcome
+
+The implementation preserved the existing asset slots and loading contract while replacing the full targeted map pack with regenerated bitmap assets.
+
+Delivered files:
+
+- terrain:
+  - `apps/cocos-client/assets/resources/pixel/terrain/*.png`
+- fog:
+  - `apps/cocos-client/assets/resources/placeholder/fog/*.png`
+- buildings:
+  - `apps/cocos-client/assets/resources/pixel/buildings/*.png`
+- resources:
+  - `apps/cocos-client/assets/resources/pixel/resources/*.png`
+- generator:
+  - `scripts/art/generate_cocos_map_art_pack.py`
+
+The generated art pack keeps current filenames, config keys, and runtime load paths intact. No gameplay-system rewrite was required.
+
+## Integration Validation
+
+Validated against:
+
+- `configs/assets.json`
+- `packages/shared/src/assets-config.ts`
+- `apps/cocos-client/assets/scripts/cocos-pixel-sprite-manifest.ts`
+- `apps/cocos-client/assets/scripts/cocos-map-visuals.ts`
+
+Validation result:
+
+- terrain, building, resource, and fog assets stayed slot-compatible
+- current terrain variants remained consumable without config churn
+- placeholder fog masks remained consumable by the existing fog-style lookup
+- Cocos resource-path resolution remained unchanged
+
+## Acceptance Evidence
+
+Functional and runtime acceptance was completed with:
+
+- `npm run typecheck -- cocos`
+- `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/cocos-map-visuals.test.ts ./apps/cocos-client/test/cocos-fog-overlay.test.ts ./apps/cocos-client/test/cocos-pixel-sprite-manifest.test.ts ./apps/cocos-client/test/cocos-pixel-sprites.test.ts ./apps/cocos-client/test/cocos-placeholder-sprites.test.ts ./apps/cocos-client/test/cocos-lobby-panel.test.ts ./apps/cocos-client/test/cocos-lobby-panel-model.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-primary-client-journey.test.ts`
+- `npm run smoke -- cocos:canonical-journey`
+
+Manual runtime usage was also checked through the Cocos gameplay chain:
+
+- new run
+- movement
+- resource collection
+- mine capture
+- next-day progression
+- recruitment-post interaction
+- fog-state visibility transitions
+
 ## Review Outcome
 
-This spec reflects the agreed plan:
+This spec is complete and implemented:
 
-- maps and scene resources first
-- higher-fidelity pixel art
-- full-map scope
-- cold-frontier visual direction
-- reinforced map-pack delivery
-
-Implementation should start only after this spec is reviewed and locked.
+- maps and scene resources were upgraded first
+- the visual direction landed as higher-fidelity pixel art
+- the full map package was covered within the agreed scope
+- the final atmosphere reads as cold frontier
+- delivery stayed inside an art-pack upgrade boundary

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Veil Map Art Upgrade Preview</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: #121922;
+        --panel-2: #18202a;
+        --text: #e8edf3;
+        --muted: #9da9b7;
+        --line: #273241;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px;
+        background:
+          radial-gradient(circle at top, rgba(84, 102, 124, 0.18), transparent 30%),
+          linear-gradient(180deg, #0d1218 0%, var(--bg) 100%);
+        color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p.lead {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+
+      section {
+        padding: 18px;
+        margin-bottom: 18px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent), var(--panel);
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+      }
+
+      section h2 {
+        margin: 0 0 6px;
+        font-size: 18px;
+      }
+
+      section p {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      }
+
+      .card {
+        padding: 12px;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 14px;
+        background: var(--panel-2);
+      }
+
+      .frame {
+        display: grid;
+        place-items: center;
+        min-height: 124px;
+        margin-bottom: 10px;
+        border-radius: 10px;
+        background:
+          linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)),
+          #0e141b;
+      }
+
+      .frame img {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        max-width: 100%;
+      }
+
+      .frame.tile img {
+        width: 108px;
+        height: 108px;
+      }
+
+      .frame.fog img {
+        width: 126px;
+        height: 126px;
+      }
+
+      .frame.building img {
+        width: 144px;
+        height: 144px;
+      }
+
+      .frame.resource img {
+        width: 96px;
+        height: 96px;
+      }
+
+      .name {
+        font-weight: 600;
+      }
+
+      .path {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Project Veil Map Art Upgrade Preview</h1>
+      <p class="lead">当前预览的是仓库内已经落地的真实地图资源。方向：更高保真的像素风 + 冷峻边境风。</p>
+
+      <section>
+        <h2>Terrain</h2>
+        <p>地块主色调切到冷灰底和低饱和边境气质，保留默认缩放下的快速识别。</p>
+        <div class="grid">
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/grass-tile.png" alt="grass-tile" /></div><div class="name">grass-tile</div><div class="path">pixel/terrain/grass-tile.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/grass-tile-alt.png" alt="grass-tile-alt" /></div><div class="name">grass-tile-alt</div><div class="path">pixel/terrain/grass-tile-alt.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/dirt-tile.png" alt="dirt-tile" /></div><div class="name">dirt-tile</div><div class="path">pixel/terrain/dirt-tile.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/dirt-tile-alt.png" alt="dirt-tile-alt" /></div><div class="name">dirt-tile-alt</div><div class="path">pixel/terrain/dirt-tile-alt.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/sand-tile.png" alt="sand-tile" /></div><div class="name">sand-tile</div><div class="path">pixel/terrain/sand-tile.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/sand-tile-alt.png" alt="sand-tile-alt" /></div><div class="name">sand-tile-alt</div><div class="path">pixel/terrain/sand-tile-alt.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/water-tile.png" alt="water-tile" /></div><div class="name">water-tile</div><div class="path">pixel/terrain/water-tile.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/water-tile-alt.png" alt="water-tile-alt" /></div><div class="name">water-tile-alt</div><div class="path">pixel/terrain/water-tile-alt.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/hidden-tile.png" alt="hidden-tile" /></div><div class="name">hidden-tile</div><div class="path">pixel/terrain/hidden-tile.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/hidden-tile-alt.png" alt="hidden-tile-alt" /></div><div class="name">hidden-tile-alt</div><div class="path">pixel/terrain/hidden-tile-alt.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/hidden-tile-deep.png" alt="hidden-tile-deep" /></div><div class="name">hidden-tile-deep</div><div class="path">pixel/terrain/hidden-tile-deep.png</div></div>
+          <div class="card"><div class="frame tile"><img src="../../../apps/cocos-client/assets/resources/pixel/terrain/fog-tile.png" alt="fog-tile" /></div><div class="name">fog-tile</div><div class="path">pixel/terrain/fog-tile.png</div></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Fog</h2>
+        <p>迷雾保留现有 mask 语义，但已经换成分层压暗和噪点边缘，不再是纯黑遮罩。</p>
+        <div class="grid">
+          <div class="card"><div class="frame fog"><img src="../../../apps/cocos-client/assets/resources/placeholder/fog/hidden-0.png" alt="hidden-0" /></div><div class="name">hidden-0</div><div class="path">placeholder/fog/hidden-0.png</div></div>
+          <div class="card"><div class="frame fog"><img src="../../../apps/cocos-client/assets/resources/placeholder/fog/hidden-7.png" alt="hidden-7" /></div><div class="name">hidden-7</div><div class="path">placeholder/fog/hidden-7.png</div></div>
+          <div class="card"><div class="frame fog"><img src="../../../apps/cocos-client/assets/resources/placeholder/fog/explored-0.png" alt="explored-0" /></div><div class="name">explored-0</div><div class="path">placeholder/fog/explored-0.png</div></div>
+          <div class="card"><div class="frame fog"><img src="../../../apps/cocos-client/assets/resources/placeholder/fog/explored-7.png" alt="explored-7" /></div><div class="name">explored-7</div><div class="path">placeholder/fog/explored-7.png</div></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Buildings</h2>
+        <p>建筑轮廓保持当前槽位和尺寸，但语义收到了边境据点、冷石祭坛和前线工事方向。</p>
+        <div class="grid">
+          <div class="card"><div class="frame building"><img src="../../../apps/cocos-client/assets/resources/pixel/buildings/recruitment-post.png" alt="recruitment-post" /></div><div class="name">recruitment-post</div><div class="path">pixel/buildings/recruitment-post.png</div></div>
+          <div class="card"><div class="frame building"><img src="../../../apps/cocos-client/assets/resources/pixel/buildings/attribute-shrine.png" alt="attribute-shrine" /></div><div class="name">attribute-shrine</div><div class="path">pixel/buildings/attribute-shrine.png</div></div>
+          <div class="card"><div class="frame building"><img src="../../../apps/cocos-client/assets/resources/pixel/buildings/resource-mine.png" alt="resource-mine" /></div><div class="name">resource-mine</div><div class="path">pixel/buildings/resource-mine.png</div></div>
+          <div class="card"><div class="frame building"><img src="../../../apps/cocos-client/assets/resources/pixel/buildings/forge-hall.png" alt="forge-hall" /></div><div class="name">forge-hall / watchtower</div><div class="path">pixel/buildings/forge-hall.png</div></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Resources</h2>
+        <p>资源点按材质区分，不再只靠颜色变化表达种类。</p>
+        <div class="grid">
+          <div class="card"><div class="frame resource"><img src="../../../apps/cocos-client/assets/resources/pixel/resources/gold-pile.png" alt="gold-pile" /></div><div class="name">gold-pile</div><div class="path">pixel/resources/gold-pile.png</div></div>
+          <div class="card"><div class="frame resource"><img src="../../../apps/cocos-client/assets/resources/pixel/resources/wood-stack.png" alt="wood-stack" /></div><div class="name">wood-stack</div><div class="path">pixel/resources/wood-stack.png</div></div>
+          <div class="card"><div class="frame resource"><img src="../../../apps/cocos-client/assets/resources/pixel/resources/ore-crate.png" alt="ore-crate" /></div><div class="name">ore-crate</div><div class="path">pixel/resources/ore-crate.png</div></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
