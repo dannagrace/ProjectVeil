@@ -34,11 +34,11 @@ import {
 import { issueDailyLoginReward } from "./daily-login-rewards";
 import { deriveWechatMinorProtection } from "./minor-protection";
 import {
-  isPlayerBanActive,
   type PlayerAccountBanSnapshot,
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "./persistence";
+import { isPlayerBanActive } from "./domain/player-ban";
 import { assertDisplayNameAvailableOrThrow } from "./display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "./feature-flags";
 import { loadLaunchRuntimeState, resolveLaunchMaintenanceAccess } from "./launch-runtime-state";
