@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { BattleState, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { BattleState, MovementPlan, PlayerWorldView } from "@veil/shared/models";
 import type { SessionUpdate } from "../src/local-session";
 import {
   renderEncounterSourceDetail,

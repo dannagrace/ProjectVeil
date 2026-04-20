@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRuntimeDiagnosticsErrorEvent } from "../../../packages/shared/src/index.ts";
+import { buildRuntimeDiagnosticsErrorEvent } from "@veil/shared/platform";
 import { buildCocosRuntimeDiagnosticsSnapshot, buildCocosRuntimeTriageSummaryLines } from "../assets/scripts/cocos-runtime-diagnostics.ts";
 import { createFallbackCocosPlayerAccountProfile } from "../assets/scripts/cocos-lobby.ts";
 import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";

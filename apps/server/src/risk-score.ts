@@ -1,4 +1,4 @@
-import { type LeaderboardAbuseState, type PlayerBanStatus } from "../../../packages/shared/src/index";
+import type { LeaderboardAbuseState, PlayerBanStatus } from "@veil/shared/progression";
 import type { AdminAuditAction, AdminAuditLogRecord, AdminAuditActorRole, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";
 

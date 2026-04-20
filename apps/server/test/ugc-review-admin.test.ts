@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import test, { type TestContext } from "node:test";
 
-import { normalizeGuildState } from "../../../packages/shared/src/index";
+import { normalizeGuildState } from "@veil/shared/social";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { registerUgcReviewAdminRoutes } from "../src/ugc-review-admin";
 

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getRankDivisionForRating } from "../../../packages/shared/src/index";
+import { getRankDivisionForRating } from "@veil/shared/progression";
 import { getCurrentAndPreviousWeeklyEntries } from "./competitive-season";
 import type { ConfigCenterStore } from "./config-center";
 import {

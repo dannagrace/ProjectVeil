@@ -6,28 +6,12 @@ import campaignChapter4Document from "../../../configs/campaign-chapter4.json";
 import campaignChapter5Document from "../../../configs/campaign-chapter5.json";
 import campaignChapter6Document from "../../../configs/campaign-chapter6.json";
 import dailyDungeonsDocument from "../../../configs/daily-dungeons.json";
-import type {
-  CampaignMission,
-  CampaignUnlockRequirement,
-  CampaignMissionProgress,
-  CampaignMissionState,
-  CampaignProgressState,
-  DailyDungeonDefinition,
-  DailyDungeonFloor,
-  DailyDungeonReward,
-  DailyDungeonRunRecord,
-  DailyDungeonState,
-  DialogueLine,
-  MissionObjective,
-  RankDivisionId
-} from "../../../packages/shared/src/index";
-import {
-  getDefaultBossEncounterTemplateCatalog,
-  getDivisionLabel,
-  getRankDivisionIndex,
-  resolveCosmeticCatalog,
-  validateDailyDungeonConfigDocument
-} from "../../../packages/shared/src/index";
+import type { CampaignMission, CampaignMissionProgress, CampaignMissionState, CampaignProgressState, CampaignUnlockRequirement, DailyDungeonDefinition, DailyDungeonFloor, DailyDungeonReward, DailyDungeonRunRecord, DailyDungeonState } from "@veil/shared/models";
+import type { DialogueLine, MissionObjective } from "@veil/shared/progression";
+import type { RankDivisionId } from "@veil/shared/social";
+import { resolveCosmeticCatalog } from "@veil/shared/economy";
+import { getDivisionLabel, getRankDivisionIndex, validateDailyDungeonConfigDocument } from "@veil/shared/progression";
+import { getDefaultBossEncounterTemplateCatalog } from "@veil/shared/world";
 import { getDailyRewardDateKey } from "./daily-rewards";
 
 interface CampaignConfigMissionDocument {

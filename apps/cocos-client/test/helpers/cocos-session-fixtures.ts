@@ -1,4 +1,4 @@
-import { DEFAULT_FEATURE_FLAGS } from "../../../../packages/shared/src/index.ts";
+import { DEFAULT_FEATURE_FLAGS } from "@veil/shared/platform";
 import type { SessionUpdate } from "../../assets/scripts/VeilCocosSession.ts";
 
 type FakeRoomReply =

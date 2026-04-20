@@ -1,8 +1,4 @@
-import {
-  createAnalyticsEvent,
-  type AnalyticsEvent,
-  type AnalyticsEventName
-} from "../../../packages/shared/src/index";
+import { type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent } from "@veil/shared/platform";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;

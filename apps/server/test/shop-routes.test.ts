@@ -9,13 +9,10 @@ import {
 import { issueAccountAuthSession } from "../src/auth";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import type { PlayerAccountSnapshot } from "../src/persistence";
 import { registerShopRoutes, type ShopProduct } from "../src/shop";
-import {
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  resolveWeeklyShopRotation,
-  type PlayerAccountSnapshot
-} from "../../../packages/shared/src/index";
+import { resolveWeeklyShopRotation } from "@veil/shared/economy";
+import { createDefaultHeroLoadout, createDefaultHeroProgression } from "@veil/shared/models";
 
 function createShopWorldSnapshot(): RoomPersistenceSnapshot {
   return {

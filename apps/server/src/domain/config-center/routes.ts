@@ -1,8 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type {
-  MapObjectsConfig,
-  WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { MapObjectsConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { ConfigCenterStore, ConfigDocumentId, ConfigStageDocumentInput } from "./types";
 import { CONFIG_DEFINITIONS } from "./constants";
 import {

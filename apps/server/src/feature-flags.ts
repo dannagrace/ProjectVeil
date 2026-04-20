@@ -1,20 +1,7 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
-import {
-  DEFAULT_FEATURE_FLAG_CONFIG,
-  DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
-  evaluateFeatureEntitlements,
-  evaluateFeatureFlags,
-  normalizeFeatureFlagConfigDocument,
-  normalizeClientVersion,
-  type FeatureFlagConfigDocument,
-  type FeatureFlagKey,
-  type FeatureFlagRolloutPolicy,
-  type RuntimeKillSwitchDefinition,
-  type ResolvedFeatureEntitlements,
-  type FeatureFlags
-} from "../../../packages/shared/src/index";
+import { DEFAULT_FEATURE_FLAG_CONFIG, DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, evaluateFeatureEntitlements, evaluateFeatureFlags, type FeatureFlagConfigDocument, type FeatureFlagKey, type FeatureFlagRolloutPolicy, type FeatureFlags, normalizeClientVersion, normalizeFeatureFlagConfigDocument, type ResolvedFeatureEntitlements, type RuntimeKillSwitchDefinition } from "@veil/shared/platform";
 
 const DEFAULT_FEATURE_FLAG_CONFIG_PATH = path.resolve(process.cwd(), "configs/feature-flags.json");
 const DEFAULT_FEATURE_FLAG_RELOAD_INTERVAL_MS = 30_000;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDefaultHeroLoadout, createDefaultHeroProgression, type PlayerBattleReplaySummary, type WorldState } from "../../../packages/shared/src/index";
+import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 

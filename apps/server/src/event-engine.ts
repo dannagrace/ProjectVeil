@@ -1,14 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import defendTheBridgeDocument from "../../../configs/event-defend-the-bridge.json";
 import seasonalEventsDocument from "../../../configs/seasonal-events.json";
-import type {
-  EventLeaderboardEntry,
-  SeasonalEventDefinition,
-  SeasonalEventLeaderboardRewardTier,
-  SeasonalEventObjective,
-  SeasonalEventReward,
-  SeasonalEventState
-} from "../../../packages/shared/src/index";
+import type { EventLeaderboardEntry, SeasonalEventDefinition, SeasonalEventLeaderboardRewardTier, SeasonalEventObjective, SeasonalEventReward, SeasonalEventState } from "@veil/shared/models";
 import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import type { DailyQuestConfigDefinition } from "./daily-quest-config";

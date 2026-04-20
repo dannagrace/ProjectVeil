@@ -1,16 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  countRemainingProtectedPvpMatches,
-  createMatchmakingHeroSnapshot,
-  estimateMatchmakingWaitSeconds,
-  normalizeEloRating,
-  normalizeMatchmakingRequest,
-  selectBestMatchPair,
-  resolveMapVariantIdForRoom,
-  type HeroState,
-  type MatchResult,
-  type MatchmakingRequest
-} from "../../../packages/shared/src/index";
+import type { HeroState } from "@veil/shared/models";
+import { countRemainingProtectedPvpMatches } from "@veil/shared/progression";
+import { createMatchmakingHeroSnapshot, estimateMatchmakingWaitSeconds, type MatchmakingRequest, type MatchResult, normalizeEloRating, normalizeMatchmakingRequest, selectBestMatchPair } from "@veil/shared/social";
+import { resolveMapVariantIdForRoom } from "@veil/shared/world";
 import { validateAuthSessionFromRequest } from "./auth";
 import { sendMobilePushNotification } from "./adapters/mobile-push";
 import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "./observability";

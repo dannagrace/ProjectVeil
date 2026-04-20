@@ -11,7 +11,7 @@ import {
   resolveFeatureEntitlementsForPlayer,
   resolveFeatureFlagsForPlayer
 } from "../src/feature-flags";
-import { DEFAULT_FEATURE_FLAG_CONFIG, type FeatureFlagConfigDocument } from "../../../packages/shared/src/index";
+import { DEFAULT_FEATURE_FLAG_CONFIG, type FeatureFlagConfigDocument } from "@veil/shared/platform";
 
 function makeMinimalFlagConfig(overrides: Partial<FeatureFlagConfigDocument["flags"]> = {}): FeatureFlagConfigDocument {
   return {

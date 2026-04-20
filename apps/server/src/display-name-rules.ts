@@ -1,14 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  DEFAULT_DISPLAY_NAME_VALIDATION_RULES,
-  findDisplayNameModerationViolation,
-  normalizeDisplayNameValidationRules,
-  normalizeTextForModeration,
-  type DisplayNameModerationViolation,
-  type DisplayNameValidationRules
-} from "../../../packages/shared/src/index";
+import { DEFAULT_DISPLAY_NAME_VALIDATION_RULES, type DisplayNameModerationViolation, type DisplayNameValidationRules, findDisplayNameModerationViolation, normalizeDisplayNameValidationRules, normalizeTextForModeration } from "@veil/shared/platform";
 import type { RoomSnapshotStore } from "./persistence";
 
 const DEFAULT_DISPLAY_NAME_RULES_PATH = path.resolve(process.cwd(), "configs/display-name-rules.json");

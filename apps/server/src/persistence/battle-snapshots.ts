@@ -1,9 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
-import type {
-  BattleState,
-  PlayerMailboxGrant,
-  Vec2
-} from "../../../../packages/shared/src/index";
+import type { BattleState, Vec2 } from "@veil/shared/models";
+import type { PlayerMailboxGrant } from "@veil/shared/progression";
 import type {
   BattleSnapshotCompensation,
   BattleSnapshotRecord,

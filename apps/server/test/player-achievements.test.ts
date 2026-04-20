@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  type PlayerAchievementProgress,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import type { PlayerAchievementProgress } from "@veil/shared/event-log";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
 import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
 
 function createTrackingWorldState(): WorldState {

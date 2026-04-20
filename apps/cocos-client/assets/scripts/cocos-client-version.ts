@@ -1,4 +1,4 @@
-import { normalizeClientVersion } from "../../../../packages/shared/src/index.ts";
+import { normalizeClientVersion } from "@veil/shared/platform";
 
 export const DEFAULT_COCOS_CLIENT_VERSION = "1.0.3";
 

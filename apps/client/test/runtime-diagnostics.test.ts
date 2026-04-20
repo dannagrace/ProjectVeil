@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  buildRuntimeDiagnosticsErrorEvent,
-  renderRuntimeDiagnosticsSnapshotText,
-  serializeRuntimeDiagnosticsSnapshot,
-  type PlayerBattleReplaySummary
-} from "../../../packages/shared/src/index";
+import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { buildRuntimeDiagnosticsErrorEvent, renderRuntimeDiagnosticsSnapshotText, serializeRuntimeDiagnosticsSnapshot } from "@veil/shared/platform";
 import { buildH5RuntimeDiagnosticsSnapshot } from "../src/runtime-diagnostics";
 import type { PlayerAccountProfile } from "../src/player-account";
 

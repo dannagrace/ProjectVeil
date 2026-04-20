@@ -1,6 +1,6 @@
 import assetConfigJson from "../../../configs/assets.json";
 import unitCatalog from "../../../configs/units.json";
-import { parseAssetConfig, type AssetConfig, type AssetMetadataEntry } from "../../../packages/shared/src/assets-config";
+import { type AssetConfig, type AssetMetadataEntry, parseAssetConfig } from "@veil/shared/assets-config";
 
 const assetConfig: AssetConfig = parseAssetConfig(assetConfigJson);
 

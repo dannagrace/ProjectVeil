@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderBattleState, renderWorldState } from "../src/renderers";
-import type { BattleState, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { BattleState, PlayerWorldView } from "@veil/shared/models";
 
 function makeBattleState(overrides: Partial<BattleState> = {}): BattleState {
   return {

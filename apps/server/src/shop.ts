@@ -1,15 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import shopConfigDocument from "../../../configs/shop-config.json";
-import {
-  getEquipmentDefinition,
-  normalizeCosmeticInventory,
-  resolveCosmeticCatalog,
-  resolveWeeklyShopRotation,
-  type CosmeticId,
-  type EquippedCosmetics,
-  type ResourceLedger,
-  type ShopRotation
-} from "../../../packages/shared/src/index";
+import { getEquipmentDefinition, normalizeCosmeticInventory, resolveCosmeticCatalog, resolveWeeklyShopRotation } from "@veil/shared/economy";
+import type { CosmeticId, EquippedCosmetics, ResourceLedger, ShopRotation } from "@veil/shared/models";
 import { emitAnalyticsEvent } from "./analytics";
 import { validateAuthSessionFromRequest } from "./auth";
 import { equipOwnedCosmetic, type RoomSnapshotStore } from "./persistence";

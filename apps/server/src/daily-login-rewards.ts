@@ -1,4 +1,4 @@
-import { appendEventLogEntries } from "../../../packages/shared/src/index";
+import { appendEventLogEntries } from "@veil/shared/event-log";
 import { emitAnalyticsEvent } from "./analytics";
 import { resolveBattlePassConfig } from "./battle-pass";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey, resolveDailyRewardForStreak } from "./daily-rewards";

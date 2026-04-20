@@ -40,17 +40,10 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import {
-  DEFAULT_TUTORIAL_STEP,
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  queryEventLogEntries,
-  type PlayerAchievementProgress,
-  type PlayerBattleReportCenter,
-  type PlayerProgressionSnapshot,
-  type PlayerBattleReplaySummary,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import type { PlayerBattleReplaySummary, PlayerBattleReportCenter } from "@veil/shared/battle";
+import { type PlayerAchievementProgress, type PlayerProgressionSnapshot, queryEventLogEntries } from "@veil/shared/event-log";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
+import { DEFAULT_TUTORIAL_STEP } from "@veil/shared/progression";
 
 function getRelativeDailyRewardDateKey(baseDateKey: string, deltaDays: number): string {
   const parsed = new Date(`${baseDateKey}T00:00:00.000Z`);

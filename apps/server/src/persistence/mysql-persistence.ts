@@ -1,48 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
-import {
-  appendEventLogEntries,
-  DEFAULT_TUTORIAL_STEP,
-  getEquipmentDefinition,
-  getTierForRating,
-  appendPlayerBattleReplaySummaries,
-  normalizeGuildState,
-  getRankDivisionForRating,
-  normalizeEloRating,
-  normalizeEventLogQuery,
-  normalizeAchievementProgress,
-  normalizeTextForModeration,
-  normalizeCosmeticInventory,
-  normalizeEventLogEntries,
-  normalizeEquippedCosmetics,
-  normalizePlayerAccountReadModel,
-  resolveCosmeticCatalog,
-  resolveWeeklyShopRotation,
-  tryAddEquipmentToInventory,
-  type EventLogQuery,
-  type CosmeticId,
-  normalizeHeroState,
-  summarizePlayerMailbox,
-  type EventLogEntry,
-  type EquipmentId,
-  type GuildState,
-  type HeroState,
-  type MobilePushTokenRegistration,
-  type PlayerBanStatus,
-  type PlayerAccountReadModel,
-  type PlayerBattleReplaySummary,
-  type PlayerAchievementProgress,
-  type NotificationPreferences,
-  type PlayerMailboxMessage,
-  type PlayerMailboxGrant,
-  type BattleState,
-  type Vec2,
-  type RankedWeeklyProgress,
-  type ResourceLedger,
-  type SeasonalEventState,
-  type SeasonArchiveEntry,
-  type WorldState
-} from "../../../../packages/shared/src/index";
+import { appendPlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { getEquipmentDefinition, normalizeCosmeticInventory, normalizeEquippedCosmetics, resolveCosmeticCatalog, resolveWeeklyShopRotation, tryAddEquipmentToInventory } from "@veil/shared/economy";
+import { appendEventLogEntries, type EventLogEntry, type EventLogQuery, normalizeAchievementProgress, normalizeEventLogEntries, normalizeEventLogQuery, type PlayerAchievementProgress } from "@veil/shared/event-log";
+import { type BattleState, type CosmeticId, type EquipmentId, type GuildState, type HeroState, type MobilePushTokenRegistration, normalizeHeroState, type NotificationPreferences, type RankedWeeklyProgress, type ResourceLedger, type SeasonalEventState, type SeasonArchiveEntry, type Vec2, type WorldState } from "@veil/shared/models";
+import { normalizeTextForModeration } from "@veil/shared/platform";
+import { DEFAULT_TUTORIAL_STEP, getRankDivisionForRating, normalizePlayerAccountReadModel, type PlayerAccountReadModel, type PlayerBanStatus, type PlayerMailboxGrant, type PlayerMailboxMessage, summarizePlayerMailbox } from "@veil/shared/progression";
+import { getTierForRating, normalizeEloRating, normalizeGuildState } from "@veil/shared/social";
 import { normalizeMobilePushTokenRegistrations } from "../mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,

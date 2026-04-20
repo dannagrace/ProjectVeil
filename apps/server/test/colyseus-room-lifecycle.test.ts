@@ -6,16 +6,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import {
-  applyEloMatchResult,
-  createNeutralBattleState,
-  decodePlayerWorldView,
-  getBattleBalanceConfig,
-  getDefaultBattleSkillCatalog,
-  getDefaultWorldConfig,
-  resetRuntimeConfigs
-} from "../../../packages/shared/src/index";
-import type { BattleState, ServerMessage, WorldEvent } from "../../../packages/shared/src/index";
+import { createNeutralBattleState } from "@veil/shared/battle";
+import { applyEloMatchResult } from "@veil/shared/social";
+import { decodePlayerWorldView, getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs } from "@veil/shared/world";
+import type { BattleState, WorldEvent } from "@veil/shared/models";
+import type { ServerMessage } from "@veil/shared/protocol";
 import { resolveBattlePassConfig } from "../src/battle-pass";
 import {
   configureAnalyticsRuntimeDependencies,

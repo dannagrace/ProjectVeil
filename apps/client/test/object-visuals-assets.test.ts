@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PlayerTileView, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { PlayerTileView, PlayerWorldView } from "@veil/shared/models";
 import {
   assetManifestEntry,
   buildingAsset,

@@ -1,14 +1,5 @@
-import {
-  appendPlayerBattleReplaySummaries,
-  type ActionValidationFailure,
-  type BattleAction,
-  type BattleOutcome,
-  type BattleReplayCamp,
-  type BattleReplayResult,
-  type BattleReplayStep,
-  type BattleState,
-  type PlayerBattleReplaySummary
-} from "../../../packages/shared/src/index";
+import { type ActionValidationFailure, appendPlayerBattleReplaySummaries, type BattleReplayCamp, type BattleReplayResult, type BattleReplayStep, type PlayerBattleReplaySummary } from "@veil/shared/battle";
+import type { BattleAction, BattleOutcome, BattleState } from "@veil/shared/models";
 import type { PlayerAccountSnapshot } from "./persistence";
 import {
   applyBattleReplayRetentionToSummary,

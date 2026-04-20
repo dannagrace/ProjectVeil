@@ -1,19 +1,6 @@
-import {
-  appendEventLogEntries,
-  applyAchievementMetricDelta,
-  applyAchievementProgressValue,
-  createAchievementProgressEventLogEntry,
-  createAchievementUnlockedEventLogEntry,
-  createWorldEventLogEntry,
-  hasFullyExploredMap,
-  getEquipmentDefinition,
-  type AchievementMetric,
-  type AchievementId,
-  type EventLogEntry,
-  type PlayerAchievementProgress,
-  type WorldEvent,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import { getEquipmentDefinition } from "@veil/shared/economy";
+import { type AchievementId, type AchievementMetric, appendEventLogEntries, applyAchievementMetricDelta, applyAchievementProgressValue, createAchievementProgressEventLogEntry, createAchievementUnlockedEventLogEntry, createWorldEventLogEntry, type EventLogEntry, hasFullyExploredMap, type PlayerAchievementProgress } from "@veil/shared/event-log";
+import type { WorldEvent, WorldState } from "@veil/shared/models";
 import type { PlayerAccountSnapshot } from "./persistence";
 
 const RECENT_EVENT_LOG_LIMIT = 12;

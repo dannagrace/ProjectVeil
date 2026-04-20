@@ -1,5 +1,6 @@
 import battlePassConfigDocument from "../../../configs/battle-pass.json";
-import { getEquipmentDefinition, type EquipmentId, type ResourceLedger } from "../../../packages/shared/src/index";
+import { getEquipmentDefinition } from "@veil/shared/economy";
+import type { EquipmentId, ResourceLedger } from "@veil/shared/models";
 
 export interface BattlePassReward {
   gems?: number;

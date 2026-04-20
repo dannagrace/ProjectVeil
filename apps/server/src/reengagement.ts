@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  type AnalyticsEventName,
-  type PlayerAccountReadModel,
-  type PlayerMailboxMessage
-} from "../../../packages/shared/src/index";
+import type { AnalyticsEventName } from "@veil/shared/platform";
+import type { PlayerAccountReadModel, PlayerMailboxMessage } from "@veil/shared/progression";
 import { emitAnalyticsEvent } from "./analytics";
 import { sendMobilePushNotification } from "./adapters/mobile-push";
 import { sendWechatSubscribeMessage } from "./adapters/wechat-subscribe";

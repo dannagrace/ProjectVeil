@@ -1,23 +1,5 @@
-import {
-  getBattleBalanceConfig,
-  getDefaultBattleBalanceConfig,
-  getDefaultBattleSkillCatalog,
-  getDefaultMapObjectsConfig,
-  getDefaultUnitCatalog,
-  getDefaultWorldConfig,
-  replaceRuntimeConfigs,
-  validateBattleBalanceConfig,
-  validateBattleSkillCatalog,
-  validateMapObjectsConfig,
-  validateUnitCatalog,
-  validateWorldConfig,
-  type BattleBalanceConfig,
-  type BattleSkillCatalogConfig,
-  type MapObjectsConfig,
-  type RuntimeConfigBundle,
-  type UnitCatalogConfig,
-  type WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { getBattleBalanceConfig, getDefaultBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultMapObjectsConfig, getDefaultUnitCatalog, getDefaultWorldConfig, replaceRuntimeConfigs, type RuntimeConfigBundle, validateBattleBalanceConfig, validateBattleSkillCatalog, validateMapObjectsConfig, validateUnitCatalog, validateWorldConfig } from "@veil/shared/world";
 import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "../../observability";
 import { captureServerError } from "../../error-monitoring";
 import { parseLeaderboardTierThresholdsConfigDocument, validateLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";

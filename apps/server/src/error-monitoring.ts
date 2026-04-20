@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  STRUCTURED_ERROR_CODE_CATALOG,
-  type StructuredErrorCode,
-  type StructuredErrorCodeDefinition
-} from "../../../packages/shared/src/index";
+import { STRUCTURED_ERROR_CODE_CATALOG, type StructuredErrorCode, type StructuredErrorCodeDefinition } from "@veil/shared/platform";
 
 type MonitoringSeverity = "warn" | "error" | "fatal";
 

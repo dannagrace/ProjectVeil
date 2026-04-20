@@ -1,19 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  createGuild,
-  createGuildRosterView,
-  createGuildSummaryView,
-  findDisplayNameModerationViolation,
-  validateGuildChatMessageContentOrThrow,
-  joinGuild,
-  leaveGuild,
-  type GuildChatMessage,
-  type GuildChatSendAction,
-  type GuildCreateAction,
-  type GuildState,
-  type GuildMembershipEvent
-} from "../../../packages/shared/src/index";
+import type { GuildState } from "@veil/shared/models";
+import { findDisplayNameModerationViolation } from "@veil/shared/platform";
+import type { GuildCreateAction } from "@veil/shared/protocol";
+import { createGuild, createGuildRosterView, createGuildSummaryView, type GuildChatMessage, type GuildChatSendAction, type GuildMembershipEvent, joinGuild, leaveGuild, validateGuildChatMessageContentOrThrow } from "@veil/shared/social";
 import { validateAuthSessionFromRequest } from "./auth";
 import { loadDisplayNameValidationRules } from "./display-name-rules";
 import { recordHttpRateLimited } from "./observability";

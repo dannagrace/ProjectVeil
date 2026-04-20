@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_FEATURE_FLAGS } from "../../../packages/shared/src/index";
+import { DEFAULT_FEATURE_FLAGS } from "@veil/shared/platform";
 import type { SessionUpdate } from "../src/local-session";
 import type { StoredAuthSession } from "../src/auth-session";
 import { bootstrapH5App, registerAutomationHooks, syncH5PlayerAccountProfile } from "../src/main-boot";

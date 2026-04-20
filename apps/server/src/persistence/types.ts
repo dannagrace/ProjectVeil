@@ -1,9 +1,5 @@
-import type {
-  BattleState,
-  PlayerMailboxGrant,
-  PlayerMailboxMessage,
-  Vec2
-} from "../../../../packages/shared/src/index";
+import type { BattleState, Vec2 } from "@veil/shared/models";
+import type { PlayerMailboxGrant, PlayerMailboxMessage } from "@veil/shared/progression";
 
 export interface SeasonSnapshot {
   seasonId: string;

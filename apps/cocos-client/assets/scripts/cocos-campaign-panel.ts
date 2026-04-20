@@ -1,4 +1,5 @@
-import type { CampaignMissionState, CampaignReward, DialogueLine } from "../../../../packages/shared/src/index.ts";
+import type { CampaignMissionState, CampaignReward } from "@veil/shared/models";
+import type { DialogueLine } from "@veil/shared/progression";
 import type { CocosCampaignSummary } from "./cocos-lobby.ts";
 
 export interface CocosCampaignDialogueState {

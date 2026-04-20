@@ -26,13 +26,10 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import {
-  createEmptyBattleState,
-  queryEventLogEntries,
-  type BattleState,
-  type PlayerBattleReplaySummary,
-  type ServerMessage
-} from "../../../packages/shared/src/index";
+import { createEmptyBattleState, type PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { queryEventLogEntries } from "@veil/shared/event-log";
+import type { BattleState } from "@veil/shared/models";
+import type { ServerMessage } from "@veil/shared/protocol";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

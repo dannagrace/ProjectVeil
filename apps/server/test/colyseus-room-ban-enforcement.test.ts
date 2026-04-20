@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import type { ServerMessage } from "../../../packages/shared/src/index";
+import type { ServerMessage } from "@veil/shared/protocol";
 import {
   VeilColyseusRoom,
   configureRoomSnapshotStore,

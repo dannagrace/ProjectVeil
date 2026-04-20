@@ -1,15 +1,8 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Pool } from "mysql2/promise";
-import {
-  replaceRuntimeConfigs,
-  type BattleBalanceConfig,
-  type BattleSkillCatalogConfig,
-  type MapObjectsConfig,
-  type RuntimeConfigBundle,
-  type UnitCatalogConfig,
-  type WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { replaceRuntimeConfigs, type RuntimeConfigBundle } from "@veil/shared/world";
 import { parseLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
 import {
   MYSQL_CONFIG_DOCUMENT_TABLE,

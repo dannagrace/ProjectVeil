@@ -1,30 +1,12 @@
 import { createRoom, type AuthoritativeWorldRoom } from "../../../apps/server/src/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
-import {
-  classifyReconnectFailure,
-  decodePlayerWorldView,
-  listReachableTiles,
-  normalizeFeatureFlags,
-  planHeroMovement,
-  replaceRuntimeConfigs,
-  type ReconnectFailureReason
-} from "../../../packages/shared/src/index";
-import type {
-  ActionValidationFailure,
-  BattleAction,
-  BattleState,
-  ClientMessage,
-  EquipmentType,
-  FeatureFlags,
-  MovementPlan,
-  PlayerReportReason,
-  PlayerWorldView,
-  RuntimeConfigBundle,
-  ServerMessage,
-  SessionStatePayload,
-  Vec2,
-  WorldEvent
-} from "../../../packages/shared/src/index";
+import { classifyReconnectFailure, normalizeFeatureFlags, type ReconnectFailureReason } from "@veil/shared/platform";
+import { decodePlayerWorldView, listReachableTiles, planHeroMovement, replaceRuntimeConfigs } from "@veil/shared/world";
+import type { ActionValidationFailure } from "@veil/shared/battle";
+import type { BattleAction, BattleState, EquipmentType, MovementPlan, PlayerWorldView, Vec2, WorldEvent } from "@veil/shared/models";
+import type { FeatureFlags } from "@veil/shared/platform";
+import type { ClientMessage, PlayerReportReason, ServerMessage, SessionStatePayload } from "@veil/shared/protocol";
+import type { RuntimeConfigBundle } from "@veil/shared/world";
 
 export interface SessionUpdate {
   world: PlayerWorldView;

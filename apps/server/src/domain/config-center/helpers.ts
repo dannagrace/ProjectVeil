@@ -1,14 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type {
-  BattleBalanceConfig,
-  BattleSkillCatalogConfig,
-  MapObjectsConfig,
-  ResourceKind,
-  TerrainType,
-  UnitCatalogConfig,
-  WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
 import type {
   ConfigDefinition,

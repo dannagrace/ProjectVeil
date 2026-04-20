@@ -1,22 +1,10 @@
 import { randomUUID } from "node:crypto";
-import {
-  appendEventLogEntries,
-  DEFAULT_TUTORIAL_STEP,
-  getEquipmentDefinition,
-  getTierForDivision,
-  getTierForRating,
-  normalizeGuildState,
-  normalizeCosmeticInventory,
-  normalizeTextForModeration,
-  normalizeEloRating,
-  normalizeEventLogEntries,
-  normalizeEventLogQuery,
-  resolveCosmeticCatalog,
-  tryAddEquipmentToInventory,
-  type EventLogEntry,
-  type CosmeticId,
-  type GuildState
-} from "../../../packages/shared/src/index";
+import { getEquipmentDefinition, normalizeCosmeticInventory, resolveCosmeticCatalog, tryAddEquipmentToInventory } from "@veil/shared/economy";
+import { appendEventLogEntries, type EventLogEntry, normalizeEventLogEntries, normalizeEventLogQuery } from "@veil/shared/event-log";
+import type { CosmeticId, GuildState } from "@veil/shared/models";
+import { normalizeTextForModeration } from "@veil/shared/platform";
+import { DEFAULT_TUTORIAL_STEP, getTierForDivision } from "@veil/shared/progression";
+import { getTierForRating, normalizeEloRating, normalizeGuildState } from "@veil/shared/social";
 import {
   createPlayerAccountsFromWorldState,
   type GuildAuditLogCreateInput,

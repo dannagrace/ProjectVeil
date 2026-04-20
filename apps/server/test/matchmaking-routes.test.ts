@@ -2,17 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import {
-  applyEloMatchResult,
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  createMatchmakingHeroSnapshot,
-  type ClientMessage,
-  type HeroState,
-  type MatchmakingRequest,
-  type ServerMessage,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState, type WorldState } from "@veil/shared/models";
+import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
+import { applyEloMatchResult, createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import {

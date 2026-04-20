@@ -1,4 +1,4 @@
-import { normalizeEloRating, type PlayerTier } from "../../../packages/shared/src/index";
+import { normalizeEloRating, type PlayerTier } from "@veil/shared/social";
 
 export interface LeaderboardTierThreshold {
   tier: PlayerTier;

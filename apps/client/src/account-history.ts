@@ -1,18 +1,6 @@
-import {
-  buildAchievementUiItems,
-  buildPlayerBattleReportCenter,
-  groupAchievementUiItems,
-  buildBattleReplayTimeline,
-  createBattleReplayPlaybackState,
-  formatAchievementLabel,
-  formatWorldEventTypeLabel,
-  getLatestProgressedAchievement,
-  getLatestUnlockedAchievement,
-  type BattleReplayPlaybackState,
-  type BattleReplayStep,
-  type BattleReplayTimelineEntry,
-  type BattleReplayTimelineUnitChange
-} from "../../../packages/shared/src/index";
+import { type BattleReplayPlaybackState, type BattleReplayStep, type BattleReplayTimelineEntry, type BattleReplayTimelineUnitChange, buildBattleReplayTimeline, buildPlayerBattleReportCenter, createBattleReplayPlaybackState } from "@veil/shared/battle";
+import { formatAchievementLabel, formatWorldEventTypeLabel, getLatestProgressedAchievement, getLatestUnlockedAchievement } from "@veil/shared/event-log";
+import { buildAchievementUiItems, groupAchievementUiItems } from "@veil/shared/progression";
 import type { PlayerAccountProfile } from "./player-account";
 
 function escapeHtml(value: string): string {

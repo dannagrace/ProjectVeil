@@ -2,15 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import {
-  createWorldStateFromConfigs,
-  decodePlayerWorldView,
-  getDefaultMapObjectsConfig,
-  getDefaultWorldConfig,
-  queryEventLogEntries,
-  type ClientMessage,
-  type ServerMessage
-} from "../../../packages/shared/src/index";
+import { queryEventLogEntries } from "@veil/shared/event-log";
+import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
+import { createWorldStateFromConfigs, decodePlayerWorldView, getDefaultMapObjectsConfig, getDefaultWorldConfig } from "@veil/shared/world";
 import type { RoomPersistenceSnapshot } from "../src/index";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
 import {

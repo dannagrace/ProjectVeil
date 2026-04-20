@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { appendEventLogEntries, type EventLogEntry } from "../../../packages/shared/src/index";
+import { appendEventLogEntries, type EventLogEntry } from "@veil/shared/event-log";
 import { emitAnalyticsEvent } from "./analytics";
 import {
   AccountTokenDeliveryConfigurationError,
