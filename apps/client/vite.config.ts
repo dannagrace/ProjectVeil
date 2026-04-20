@@ -3,6 +3,11 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   root: resolve(__dirname),
+  resolve: {
+    alias: {
+      "@server": resolve(__dirname, "../server/src")
+    }
+  },
   preview: {
     host: "127.0.0.1",
     port: 4173,
