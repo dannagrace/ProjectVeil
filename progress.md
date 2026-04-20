@@ -2223,3 +2223,15 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts`
   - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
   - `npm run smoke:cocos:canonical-journey`
+
+- 同一轮继续把 `session lifecycle` 也抽进了 `root/`：
+  - `apps/cocos-client/assets/scripts/root/session-lifecycle.ts`
+    - 收拢 `connect / refreshSnapshot / hydrateLaunchIdentity / forced-upgrade / session epoch / session options / session teardown`
+- `apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - 对应生命周期方法继续改成轻量委托层，主文件从 `6486` 行继续降到 `6232` 行
+- 新增模块级测试：
+  - `apps/cocos-client/test/root-session-lifecycle.test.ts`
+- 本轮补充验证已通过：
+  - `npm run typecheck:cocos`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+  - `npm run smoke:cocos:canonical-journey`

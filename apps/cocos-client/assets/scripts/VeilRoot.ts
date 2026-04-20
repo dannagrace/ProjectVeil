@@ -237,19 +237,31 @@ import {
   ACCOUNT_REVIEW_PANEL_NODE_NAME,
   BATTLE_FEEDBACK_DURATION_MS,
   BATTLE_NODE_NAME,
+  bumpLobbyAccountEpochForRoot,
+  bumpSessionEpochForRoot,
   CAMPAIGN_PANEL_NODE_NAME,
   cloneSessionUpdate,
   collapseAdjacentEntries,
+  connectSessionForRoot,
+  createSessionOptionsForRoot,
   DEFAULT_MAP_HEIGHT_TILES,
   DEFAULT_MAP_WIDTH_TILES,
+  describeSessionErrorForRoot,
+  disposeCurrentSessionForRoot,
   EQUIPMENT_PANEL_NODE_NAME,
   FORCE_UPGRADE_MESSAGE,
   formatHeroStatBonus,
   formatResourceKindLabel,
   formatUpgradeCostLabel,
+  handleForcedUpgradeForRoot,
   HUD_NODE_NAME,
+  hydrateLaunchIdentityForRoot,
+  isActiveLobbyAccountEpochForRoot,
+  isActiveSessionEpochForRoot,
   LOBBY_NODE_NAME,
   MAP_NODE_NAME,
+  refreshSnapshotForRoot,
+  resetSessionViewportForRoot,
   resolveVeilRootRuntime,
   SETTINGS_BUTTON_NODE_NAME,
   SETTINGS_PANEL_NODE_NAME,
@@ -516,106 +528,15 @@ export class VeilRoot extends Component {
       this.hudActionBinding = false;
     }
 
-    const currentSession = this.session;
-    this.session = null;
-    if (currentSession) {
-      void currentSession.dispose();
-    }
+    void disposeCurrentSessionForRoot(this as unknown as Record<string, any>);
   }
 
   async connect(): Promise<void> {
-    if (this.session) {
-      this.pushLog("当前房间已经连接。");
-      this.renderView();
-      return;
-    }
-
-    this.diagnosticsConnectionStatus = "connecting";
-    this.pushLog(`正在连接 ${this.remoteUrl} ...`);
-    const replayed = resolveVeilRootRuntime().readStoredReplay(this.roomId, this.playerId);
-    if (replayed) {
-      this.applyReplayedSessionUpdate(replayed);
-      this.pushLog("已回放本地缓存，等待房间实时同步。");
-    }
-    this.renderView();
-
-    const sessionEpoch = this.bumpSessionEpoch();
-    this.upgradeRequired = false;
-    let nextSession: VeilCocosSession | null = null;
-    try {
-      nextSession = await resolveVeilRootRuntime().createSession(
-        this.roomId,
-        this.playerId,
-        this.seed,
-        this.createSessionOptions(sessionEpoch)
-      );
-      if (!this.isActiveSessionEpoch(sessionEpoch)) {
-        await nextSession.dispose().catch(() => undefined);
-        return;
-      }
-
-      this.session = nextSession;
-      this.trackClientAnalyticsEvent("session_start", {
-        roomId: this.roomId,
-        authMode: this.authMode,
-        platform: "wechat"
-      });
-      this.lastUpdate = await nextSession.snapshot();
-      if (!this.isActiveSessionEpoch(sessionEpoch)) {
-        await nextSession.dispose().catch(() => undefined);
-        return;
-      }
-
-      this.pushLog("房间快照已加载，点击地块即可移动。");
-      await this.applySessionUpdate(this.lastUpdate);
-      if (this.sessionSource === "remote") {
-        void this.refreshGameplayAccountProfile();
-      }
-    } catch (error) {
-      this.maybeReportSessionRuntimeError(error, "connect");
-      if (!this.isActiveSessionEpoch(sessionEpoch)) {
-        if (nextSession) {
-          await nextSession.dispose().catch(() => undefined);
-        }
-        return;
-      }
-
-      const failureMessage = this.describeSessionError(error, "连接房间失败。");
-      this.pushLog(failureMessage);
-      this.predictionStatus = failureMessage;
-      if (error instanceof Error && error.message === "upgrade_required") {
-        await this.handleForcedUpgrade(failureMessage);
-      }
-      if (this.session) {
-        await this.session.dispose().catch(() => undefined);
-        this.session = null;
-      }
-      this.renderView();
-    }
+    await connectSessionForRoot(this as unknown as Record<string, any>);
   }
 
   async refreshSnapshot(): Promise<void> {
-    if (!this.session) {
-      await this.connect();
-      return;
-    }
-
-    try {
-      await this.applySessionUpdate(await this.session.snapshot());
-      this.pushLog("房间快照已刷新。");
-      this.renderView();
-    } catch (error) {
-      this.maybeReportSessionRuntimeError(error, "refresh_snapshot");
-      const failureMessage = this.describeSessionError(error, "Snapshot refresh failed.");
-      if (error instanceof Error && error.message === "upgrade_required") {
-        await this.handleForcedUpgrade(failureMessage);
-        this.renderView();
-        return;
-      }
-      this.pushLog(failureMessage);
-      this.predictionStatus = failureMessage;
-      this.renderView();
-    }
+    await refreshSnapshotForRoot(this as unknown as Record<string, any>);
   }
 
   async advanceDay(): Promise<void> {
@@ -5331,78 +5252,19 @@ export class VeilRoot extends Component {
   }
 
   private async disposeCurrentSession(): Promise<void> {
-    this.bumpSessionEpoch();
-    this.stopMatchmakingPolling();
-    const currentSession = this.session;
-    this.session = null;
-    if (currentSession) {
-      await currentSession.dispose().catch(() => undefined);
-    }
+    await disposeCurrentSessionForRoot(this as unknown as Record<string, any>);
   }
 
   private resetSessionViewport(logLine: string): void {
-    this.lastUpdate = null;
-    this.pendingPrediction = null;
-    this.selectedBattleTargetId = null;
-    this.moveInFlight = false;
-    this.battleActionInFlight = false;
-    this.battleFeedback = null;
-    this.battlePresentation.reset();
-    this.predictionStatus = "";
-    this.inputDebug = "input waiting";
-    this.timelineEntries = [];
-    this.primaryClientTelemetry = [];
-    this.logLines = [logLine];
+    resetSessionViewportForRoot(this as unknown as Record<string, any>, logLine);
   }
 
   private async handleForcedUpgrade(failureMessage: string): Promise<void> {
-    this.upgradeRequired = true;
-    this.showLobby = true;
-    this.lobbyStatus = failureMessage;
-    this.resetSessionViewport(failureMessage);
-    this.predictionStatus = failureMessage;
-    const currentSession = this.session;
-    this.session = null;
-    if (currentSession) {
-      await currentSession.dispose().catch(() => undefined);
-    }
+    await handleForcedUpgradeForRoot(this as unknown as Record<string, any>, failureMessage);
   }
 
   private describeSessionError(error: unknown, fallback: string): string {
-    if (!(error instanceof Error)) {
-      return fallback;
-    }
-
-    if (error.message.endsWith("_timeout")) {
-      return "房间请求超时，请检查本地开发服务。";
-    }
-
-    if (error.message === "connect_failed" || error.message === "connect_timeout") {
-      return "房间连接失败，请检查本地开发服务。";
-    }
-
-    if (error.message === "room_left" || error.message === "session_unavailable") {
-      return "房间会话已失效，请点击刷新状态恢复。";
-    }
-
-    if (error.message === "upgrade_required") {
-      return FORCE_UPGRADE_MESSAGE;
-    }
-
-    if (
-      error.message === "unsupported_player_world_view_encoding" ||
-      error.message === "invalid_player_world_view_encoding_length" ||
-      error.message === "missing_player_world_view_base"
-    ) {
-      return "房间状态损坏，请重建房间或检查服务端同步。";
-    }
-
-    const formattedReason = formatSessionActionReason(error.message);
-    if (formattedReason !== error.message) {
-      return formattedReason;
-    }
-
-    return error.message || fallback;
+    return describeSessionErrorForRoot(error, fallback);
   }
 
   private pushSessionActionOutcome(
@@ -5421,75 +5283,23 @@ export class VeilRoot extends Component {
   }
 
   private bumpSessionEpoch(): number {
-    this.sessionEpoch += 1;
-    return this.sessionEpoch;
+    return bumpSessionEpochForRoot(this as unknown as Record<string, any>);
   }
 
   private bumpLobbyAccountEpoch(): number {
-    this.lobbyAccountEpoch += 1;
-    return this.lobbyAccountEpoch;
+    return bumpLobbyAccountEpochForRoot(this as unknown as Record<string, any>);
   }
 
   private isActiveSessionEpoch(epoch: number): boolean {
-    return epoch === this.sessionEpoch;
+    return isActiveSessionEpochForRoot(this as unknown as Record<string, any>, epoch);
   }
 
   private isActiveLobbyAccountEpoch(epoch: number): boolean {
-    return epoch === this.lobbyAccountEpoch;
+    return isActiveLobbyAccountEpochForRoot(this as unknown as Record<string, any>, epoch);
   }
 
   private createSessionOptions(epoch: number): VeilCocosSessionOptions {
-    return {
-      remoteUrl: this.remoteUrl,
-      getDisplayName: () => this.displayName || this.playerId,
-      getAuthToken: () => this.authToken,
-      getClientVersion: () => resolveCocosClientVersion(),
-      getClientChannel: () => (this.runtimePlatform === "wechat-game" ? "wechat" : "h5"),
-      onPushUpdate: (update) => {
-        if (!this.isActiveSessionEpoch(epoch)) {
-          return;
-        }
-
-        this.pushLog("已收到房间推送更新。");
-        void this.applySessionUpdate(update);
-      },
-      onServerMessage: (message) => {
-        if (!this.isActiveSessionEpoch(epoch)) {
-          return;
-        }
-
-        if (message.type === "COSMETIC_APPLIED") {
-          this.pushLog(
-            message.action === "emote"
-              ? `战斗表情：${message.playerId} 使用了 ${message.cosmeticId}`
-              : `外观同步：${message.playerId} ${message.action === "equipped" ? "装备" : "解锁"} ${message.cosmeticId}`
-          );
-          if (message.playerId === this.playerId && message.equippedCosmetics) {
-            this.lobbyAccountProfile = {
-              ...this.lobbyAccountProfile,
-              equippedCosmetics: {
-                ...this.lobbyAccountProfile.equippedCosmetics,
-                ...message.equippedCosmetics
-              }
-            };
-          }
-          this.renderView();
-          return;
-        }
-
-        if (message.type === "event.progress.update") {
-          this.pushLog(`赛季活动推进：${message.payload.objectiveId} +${message.payload.delta} 分`);
-          this.handleSeasonalEventProgressPush(message);
-        }
-      },
-      onConnectionEvent: (event) => {
-        if (!this.isActiveSessionEpoch(epoch)) {
-          return;
-        }
-
-        this.handleConnectionEvent(event);
-      }
-    };
+    return createSessionOptionsForRoot(this as unknown as Record<string, any>, epoch);
   }
 
   private hydrateRuntimePlatform(): void {
@@ -5571,71 +5381,7 @@ export class VeilRoot extends Component {
   }
 
   private hydrateLaunchIdentity(): void {
-    this.stopMatchmakingPolling();
-    this.updateMatchmakingStatus({ status: "idle" });
-    const storage = this.readWebStorage();
-    const launchIdentity = resolveCocosLaunchIdentity({
-      defaultRoomId: this.roomId,
-      defaultPlayerId: this.playerId,
-      defaultDisplayName: this.displayName,
-      search: this.readLaunchSearch(),
-      storedSession: readStoredCocosAuthSession(storage)
-    });
-    this.launchReferrerId = readLaunchReferrerId(this.readLaunchSearch());
-
-    if (launchIdentity.shouldOpenLobby) {
-      const storedSession = readStoredCocosAuthSession(storage);
-      const lobbyPreferences = createCocosLobbyPreferences(
-        {
-          ...(storedSession?.playerId ? { playerId: storedSession.playerId } : {}),
-          ...(this.roomId !== "test-room" ? { roomId: this.roomId } : {})
-        },
-        undefined,
-        storage
-      );
-      this.roomId = lobbyPreferences.roomId;
-      this.playerId = storedSession?.playerId ?? lobbyPreferences.playerId;
-      this.displayName =
-        storedSession?.playerId === this.playerId
-          ? storedSession.displayName
-          : readPreferredCocosDisplayName(this.playerId, storage);
-      this.authToken = storedSession?.playerId === this.playerId ? storedSession.token ?? null : null;
-      this.authMode = storedSession?.playerId === this.playerId ? storedSession.authMode : "guest";
-      this.authProvider = storedSession?.playerId === this.playerId ? storedSession.provider ?? "guest" : "guest";
-      this.loginId = storedSession?.playerId === this.playerId ? storedSession.loginId ?? "" : "";
-      this.sessionSource = storedSession?.playerId === this.playerId ? storedSession.source : "none";
-      this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
-      this.showLobby = true;
-      this.autoConnect = false;
-      this.lobbyStatus = storedSession
-        ? `已恢复${storedSession.source === "remote" ? "云端" : "本地"}${storedSession.authMode === "account" ? "正式账号" : "游客"}会话，可直接选房或继续修改房间。`
-        : this.runtimePlatform === "wechat-game"
-          ? "微信小游戏启动参数适配已就绪；当前仍走游客/账号会话，后续可在此处接入 wx.login()。"
-          : "请选择一个房间，或输入新的房间 ID 后直接开局。";
-      this.pushLog("Cocos Lobby 已待命。");
-      return;
-    }
-
-    this.roomId = launchIdentity.roomId;
-    this.playerId = launchIdentity.playerId;
-    this.displayName = launchIdentity.displayName;
-    this.authMode = launchIdentity.authMode;
-    this.authProvider = launchIdentity.authProvider;
-    this.loginId = launchIdentity.loginId ?? "";
-    this.authToken = launchIdentity.authToken;
-    this.sessionSource = launchIdentity.sessionSource;
-    this.commitAccountProfile(createFallbackCocosPlayerAccountProfile(this.playerId, this.roomId, this.displayName), false);
-
-    if (launchIdentity.usedStoredSession) {
-      this.pushLog(
-        `已复用${launchIdentity.sessionSource === "remote" ? "云端" : "本地"}${launchIdentity.authMode === "account" ? "正式账号" : "游客"}会话 ${launchIdentity.playerId}。`
-      );
-      return;
-    }
-
-    if (launchIdentity.roomId !== "test-room") {
-      this.pushLog(`已从启动参数载入房间 ${launchIdentity.roomId}。`);
-    }
+    hydrateLaunchIdentityForRoot(this as unknown as Record<string, any>);
   }
 
   private latestShareableBattleReplay() {
