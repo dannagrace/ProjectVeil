@@ -1,6 +1,7 @@
 import defaultBattleSkillsConfig from "../../../../../configs/battle-skills.json";
 import defaultBattleBalanceConfig from "../../../../../configs/battle-balance.json";
 import defaultBattlePassConfig from "../../../../../configs/battle-pass.json";
+import defaultBossEncounterTemplatesConfig from "../../../../../configs/boss-encounter-templates.json";
 import defaultBuildingUpgradeConfig from "../../../../../configs/building-upgrades.json";
 import defaultHeroSkillTreesConfig from "../../../../../configs/hero-skill-trees-full.json";
 import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-objects-contested-basin.json";
@@ -46,6 +47,8 @@ import type {
   BattleBalanceConfig,
   BattleSkillKind,
   BattleSkillTarget,
+  BossEncounterEnvironmentalEffectConfig,
+  BossEncounterTemplateCatalogConfig,
   BuildingUpgradeConfig,
   HeroSkillTreeConfig,
   MapObjectsConfig,
@@ -63,6 +66,9 @@ let runtimeUnitCatalog: UnitCatalogConfig = structuredClone(defaultUnitsConfig a
 let runtimeBattleSkillCatalog: BattleSkillCatalogConfig = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
 let runtimeBattleBalanceConfig: BattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
 let runtimeBattlePassConfig: BattlePassConfig = structuredClone(defaultBattlePassConfig as BattlePassConfig);
+let runtimeBossEncounterTemplates: BossEncounterTemplateCatalogConfig = structuredClone(
+  defaultBossEncounterTemplatesConfig as BossEncounterTemplateCatalogConfig
+);
 let runtimeBuildingUpgradeConfig: BuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
 let runtimeHeroSkillTree: HeroSkillTreeConfig = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 
@@ -135,6 +141,10 @@ function cloneBattleSkillCatalog(config: BattleSkillCatalogConfig): BattleSkillC
 }
 
 function cloneBattleBalanceConfig(config: BattleBalanceConfig): BattleBalanceConfig {
+  return structuredClone(config);
+}
+
+function cloneBossEncounterTemplateCatalog(config: BossEncounterTemplateCatalogConfig): BossEncounterTemplateCatalogConfig {
   return structuredClone(config);
 }
 
@@ -223,6 +233,56 @@ function isBattleSkillDelivery(value: unknown): value is "contact" | "ranged" {
 
 function isBattleStatusEffectId(value: unknown): value is string {
   return isNonEmptyString(value);
+}
+
+function validateBossEncounterEnvironmentalEffect(
+  effect: BossEncounterEnvironmentalEffectConfig,
+  path: string,
+  statusIds: Set<string>
+): void {
+  if (!Number.isInteger(effect.lane) || effect.lane < 0) {
+    throw new Error(`${path}.lane must be a non-negative integer`);
+  }
+  if (!isNonEmptyString(effect.name)) {
+    throw new Error(`${path}.name must be a non-empty string`);
+  }
+  if (!isNonEmptyString(effect.description)) {
+    throw new Error(`${path}.description must be a non-empty string`);
+  }
+
+  if (effect.kind === "blocker") {
+    if (!Number.isInteger(effect.durability) || effect.durability <= 0) {
+      throw new Error(`${path}.durability must be a positive integer`);
+    }
+    if (effect.maxDurability !== undefined && (!Number.isInteger(effect.maxDurability) || effect.maxDurability <= 0)) {
+      throw new Error(`${path}.maxDurability must be a positive integer when provided`);
+    }
+    return;
+  }
+
+  if (effect.effect !== "damage" && effect.effect !== "slow" && effect.effect !== "silence") {
+    throw new Error(`${path}.effect has invalid value ${String(effect.effect)}`);
+  }
+  if (!Number.isInteger(effect.damage) || effect.damage < 0) {
+    throw new Error(`${path}.damage must be a non-negative integer`);
+  }
+  if (!Number.isInteger(effect.charges) || effect.charges <= 0) {
+    throw new Error(`${path}.charges must be a positive integer`);
+  }
+  if (effect.grantedStatusId !== undefined && !statusIds.has(effect.grantedStatusId)) {
+    throw new Error(`${path}.grantedStatusId references unknown battle status ${effect.grantedStatusId}`);
+  }
+  if (
+    effect.triggeredByCamp !== undefined &&
+    effect.triggeredByCamp !== "attacker" &&
+    effect.triggeredByCamp !== "defender" &&
+    effect.triggeredByCamp !== "both"
+  ) {
+    throw new Error(`${path}.triggeredByCamp has invalid value ${String(effect.triggeredByCamp)}`);
+  }
+  if (effect.revealed !== undefined && typeof effect.revealed !== "boolean") {
+    throw new Error(`${path}.revealed must be boolean when provided`);
+  }
 }
 
 export function validateBattleBalanceConfig(
@@ -404,6 +464,113 @@ export function validateBattleSkillCatalog(config: BattleSkillCatalogConfig): vo
     }
 
     skillIds.add(skill.id);
+  }
+}
+
+export function validateBossEncounterTemplateCatalog(
+  config: BossEncounterTemplateCatalogConfig,
+  battleSkillCatalog: BattleSkillCatalogConfig = runtimeBattleSkillCatalog,
+  unitCatalog: UnitCatalogConfig = runtimeUnitCatalog
+): void {
+  if (!Array.isArray(config.templates) || config.templates.length === 0) {
+    throw new Error("Boss encounter template catalog must contain a non-empty templates array");
+  }
+
+  const skillIds = new Set(battleSkillCatalog.skills.map((skill) => skill.id));
+  const statusIds = new Set(battleSkillCatalog.statuses.map((status) => status.id));
+  const unitIds = new Set(unitCatalog.templates.map((template) => template.id));
+  const templateIds = new Set<string>();
+
+  for (const template of config.templates) {
+    if (!isNonEmptyString(template.id)) {
+      throw new Error("Boss encounter template id must be a non-empty string");
+    }
+    if (templateIds.has(template.id)) {
+      throw new Error(`Duplicate boss encounter template id: ${template.id}`);
+    }
+    if (!isNonEmptyString(template.name)) {
+      throw new Error(`Boss encounter template ${template.id} must define a name`);
+    }
+    if (template.bossUnitTemplateId !== undefined && !unitIds.has(template.bossUnitTemplateId)) {
+      throw new Error(
+        `Boss encounter template ${template.id} references unknown unit template ${template.bossUnitTemplateId}`
+      );
+    }
+    if (!Array.isArray(template.phases) || template.phases.length === 0) {
+      throw new Error(`Boss encounter template ${template.id} must define at least one phase`);
+    }
+
+    let previousThreshold = Number.POSITIVE_INFINITY;
+    const phaseIds = new Set<string>();
+    for (const [phaseIndex, phase] of template.phases.entries()) {
+      const phasePath = `Boss encounter template ${template.id} phase[${phaseIndex}]`;
+      if (!isNonEmptyString(phase.id)) {
+        throw new Error(`${phasePath} must define a non-empty id`);
+      }
+      if (phaseIds.has(phase.id)) {
+        throw new Error(`Duplicate boss encounter phase id ${phase.id} in template ${template.id}`);
+      }
+      if (!isFiniteNumber(phase.hpThreshold) || phase.hpThreshold <= 0 || phase.hpThreshold > 1) {
+        throw new Error(`${phasePath}.hpThreshold must be within (0, 1]`);
+      }
+      if (phase.hpThreshold >= previousThreshold) {
+        throw new Error(`${phasePath}.hpThreshold must be in descending order`);
+      }
+
+      const overrideSkillLists = [
+        { path: `${phasePath}.skillOverrides.replaceSkillIds`, skillIds: phase.skillOverrides?.replaceSkillIds },
+        { path: `${phasePath}.skillOverrides.addSkillIds`, skillIds: phase.skillOverrides?.addSkillIds },
+        { path: `${phasePath}.skillOverrides.removeSkillIds`, skillIds: phase.skillOverrides?.removeSkillIds }
+      ];
+      for (const entry of overrideSkillLists) {
+        for (const skillId of entry.skillIds ?? []) {
+          if (!skillIds.has(skillId)) {
+            throw new Error(`${entry.path} references unknown battle skill ${skillId}`);
+          }
+        }
+      }
+
+      for (const [abilityIndex, ability] of (phase.scriptedAbilities ?? []).entries()) {
+        const abilityPath = `${phasePath}.scriptedAbilities[${abilityIndex}]`;
+        if (!isNonEmptyString(ability.id)) {
+          throw new Error(`${abilityPath}.id must be a non-empty string`);
+        }
+        if (!skillIds.has(ability.skillId)) {
+          throw new Error(`${abilityPath}.skillId references unknown battle skill ${ability.skillId}`);
+        }
+        if (ability.timing !== "pre_turn" && ability.timing !== "post_turn") {
+          throw new Error(`${abilityPath}.timing has invalid value ${String(ability.timing)}`);
+        }
+        if (
+          ability.target !== "self" &&
+          ability.target !== "first_enemy" &&
+          ability.target !== "lowest_hp_enemy" &&
+          ability.target !== "lowest_hp_ally"
+        ) {
+          throw new Error(`${abilityPath}.target has invalid value ${String(ability.target)}`);
+        }
+        if (ability.oncePerRound !== undefined && typeof ability.oncePerRound !== "boolean") {
+          throw new Error(`${abilityPath}.oncePerRound must be boolean when provided`);
+        }
+      }
+
+      for (const [effectIndex, effect] of (phase.environmentalEffects ?? []).entries()) {
+        validateBossEncounterEnvironmentalEffect(
+          effect,
+          `${phasePath}.environmentalEffects[${effectIndex}]`,
+          statusIds
+        );
+      }
+
+      phaseIds.add(phase.id);
+      previousThreshold = phase.hpThreshold;
+    }
+
+    if (template.phases[0]?.hpThreshold !== 1) {
+      throw new Error(`Boss encounter template ${template.id} must start with a phase at hpThreshold 1`);
+    }
+
+    templateIds.add(template.id);
   }
 }
 
@@ -778,6 +945,12 @@ export function getBattlePassConfig(): BattlePassConfig {
   return structuredClone(runtimeBattlePassConfig);
 }
 
+export function getDefaultBossEncounterTemplateCatalog(): BossEncounterTemplateCatalogConfig {
+  const config = cloneBossEncounterTemplateCatalog(runtimeBossEncounterTemplates);
+  validateBossEncounterTemplateCatalog(config, runtimeBattleSkillCatalog, runtimeUnitCatalog);
+  return config;
+}
+
 export function getBuildingUpgradeConfig(): BuildingUpgradeConfig {
   const config = cloneBuildingUpgradeConfig(runtimeBuildingUpgradeConfig);
   validateBuildingUpgradeConfig(config);
@@ -1018,6 +1191,7 @@ export function resetRuntimeConfigs(): void {
   runtimeBattleSkillCatalog = structuredClone(defaultBattleSkillsConfig as BattleSkillCatalogConfig);
   runtimeBattleBalanceConfig = structuredClone(defaultBattleBalanceConfig as BattleBalanceConfig);
   runtimeBattlePassConfig = structuredClone(defaultBattlePassConfig as BattlePassConfig);
+  runtimeBossEncounterTemplates = structuredClone(defaultBossEncounterTemplatesConfig as BossEncounterTemplateCatalogConfig);
   runtimeBuildingUpgradeConfig = structuredClone(defaultBuildingUpgradeConfig as BuildingUpgradeConfig);
   runtimeHeroSkillTree = structuredClone(defaultHeroSkillTreesConfig as HeroSkillTreeConfig);
 }

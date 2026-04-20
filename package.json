@@ -54,7 +54,7 @@
     "check:issue33-assets": "node ./scripts/check-issue-33-art-staging.mjs",
     "test": "node --import tsx ./scripts/test-harness/cli.ts",
     "lint:cocos:panels": "node ./scripts/check-cocos-panel-boundaries.mjs && node ./scripts/audit-cocos-panel-view-models.mjs",
-    "lint:arch": "node ./scripts/check-shared-import-boundaries.mjs && npm run lint:cocos:panels && depcruise --config .dependency-cruiser.cjs apps packages/shared scripts tests",
+    "lint:arch": "node ./scripts/check-shared-import-boundaries.mjs && node ./scripts/check-project-shared-parity.mjs && npm run lint:cocos:panels && depcruise --config .dependency-cruiser.cjs apps packages/shared scripts tests",
     "lint:arch:report": "depcruise --config .dependency-cruiser.cjs --output-type err apps packages/shared scripts tests",
     "generate:cocos:panel": "node --import tsx ./scripts/generate-cocos-panel.ts",
     "typecheck": "node --import tsx ./scripts/ops/typecheck-cli.ts"

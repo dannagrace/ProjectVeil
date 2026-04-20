@@ -1,5 +1,8 @@
-import { applyBattleAction, getBattleOutcome, normalizeBattleState } from "./battle.ts";
-import type { BattleAction, BattleOutcome, BattleState, UnitStack } from "./models.ts";
+import { applyBattleAction, normalizeBattleState } from "./battle.ts";
+import type { ActionValidationFailure } from "./action-precheck.ts";
+import type { BattleAction, BattleState } from "./models.ts";
+import { getBattleOutcome } from "./battle.ts";
+import type { BattleOutcome, UnitStack } from "./models.ts";
 
 export type BattleReplayResult = "attacker_victory" | "defender_victory";
 export type BattleReplaySource = "player" | "automated";
@@ -9,6 +12,7 @@ export interface BattleReplayStep {
   index: number;
   source: BattleReplaySource;
   action: BattleAction;
+  rejection?: ActionValidationFailure;
 }
 
 export interface PlayerBattleReplaySummary {
@@ -23,6 +27,7 @@ export interface PlayerBattleReplaySummary {
   neutralArmyId?: string;
   startedAt: string;
   completedAt: string;
+  expiresAt?: string;
   initialState: BattleState;
   steps: BattleReplayStep[];
   result: BattleReplayResult;
@@ -402,13 +407,26 @@ function normalizeBattleReplayStep(step: Partial<BattleReplayStep> | null | unde
   return {
     index: Math.max(0, Math.floor(step?.index ?? fallbackIndex)),
     source: step?.source === "automated" ? "automated" : "player",
-    action: structuredClone(action as BattleAction)
+    action: structuredClone(action as BattleAction),
+    ...(step?.rejection &&
+    (step.rejection.scope === "battle" || step.rejection.scope === "world") &&
+    typeof step.rejection.actionType === "string" &&
+    typeof step.rejection.reason === "string"
+      ? {
+          rejection: {
+            scope: step.rejection.scope,
+            actionType: step.rejection.actionType,
+            reason: step.rejection.reason
+          }
+        }
+      : {})
   };
 }
 
 export function normalizePlayerBattleReplaySummaries(
   replays?: Partial<PlayerBattleReplaySummary>[] | null
 ): PlayerBattleReplaySummary[] {
+  const now = Date.now();
   return (replays ?? [])
     .map((replay) => {
       const id = replay?.id?.trim();
@@ -418,6 +436,7 @@ export function normalizePlayerBattleReplaySummaries(
       const heroId = replay?.heroId?.trim();
       const startedAt = normalizeTimestamp(replay?.startedAt);
       const completedAt = normalizeTimestamp(replay?.completedAt);
+      const expiresAt = normalizeTimestamp(replay?.expiresAt);
       const initialState = replay?.initialState;
       if (
         !id ||
@@ -452,12 +471,21 @@ export function normalizePlayerBattleReplaySummaries(
         ...(replay.neutralArmyId?.trim() ? { neutralArmyId: replay.neutralArmyId.trim() } : {}),
         startedAt,
         completedAt,
+        ...(expiresAt ? { expiresAt } : {}),
         initialState: cloneBattleState(initialState),
         steps,
         result: replay.result
       };
     })
     .filter((replay): replay is PlayerBattleReplaySummary => Boolean(replay))
+    .filter((replay) => {
+      if (!replay.expiresAt) {
+        return true;
+      }
+
+      const expiresAt = new Date(replay.expiresAt).getTime();
+      return !Number.isFinite(expiresAt) || expiresAt > now;
+    })
     .sort((left, right) => right.completedAt.localeCompare(left.completedAt) || left.id.localeCompare(right.id))
     .filter((replay, index, list) => index === list.findIndex((candidate) => candidate.id === replay.id));
 }
@@ -484,6 +512,7 @@ export function queryPlayerBattleReplaySummaries(
   query: PlayerBattleReplayQuery = {}
 ): PlayerBattleReplaySummary[] {
   const safeLimit = query.limit == null ? undefined : Math.max(1, Math.floor(query.limit));
+  const safeOffset = Math.max(0, Math.floor(query.offset ?? 0));
   const roomId = query.roomId?.trim();
   const battleId = query.battleId?.trim();
   const heroId = query.heroId?.trim();
@@ -499,6 +528,7 @@ export function queryPlayerBattleReplaySummaries(
     .filter((replay) => (opponentHeroId ? replay.opponentHeroId === opponentHeroId : true))
     .filter((replay) => (neutralArmyId ? replay.neutralArmyId === neutralArmyId : true))
     .filter((replay) => (query.result ? replay.result === query.result : true))
+    .slice(safeOffset)
     .slice(0, safeLimit);
 }
 

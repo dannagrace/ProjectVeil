@@ -1,3 +1,7 @@
+import type { PlayerTier, RankDivisionId } from "./matchmaking.ts";
+
+import type { DialogueLine, MissionObjective } from "./campaign.ts";
+
 export type TerrainType = "grass" | "dirt" | "sand" | "water" | "swamp";
 export type FogState = "hidden" | "explored" | "visible";
 export type ResourceKind = "gold" | "wood" | "ore";
@@ -6,10 +10,64 @@ export type BuildingKind = "recruitment_post" | "attribute_shrine" | "resource_m
 export type BuildingUpgradeTrackId = "castle" | "mine";
 export type ResourceLedger = Record<ResourceKind, number>;
 export type WorldResourceLedger = Record<string, ResourceLedger>;
+export type GuildRole = "owner" | "officer" | "member";
+export type GuildJoinRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type GuildInviteStatus = "pending" | "accepted" | "declined" | "revoked";
 
 export interface Vec2 {
   x: number;
   y: number;
+}
+
+export interface GuildMemberState {
+  playerId: string;
+  displayName: string;
+  role: GuildRole;
+  joinedAt: string;
+  invitedByPlayerId?: string;
+}
+
+export interface GuildJoinRequestState {
+  requestId: string;
+  playerId: string;
+  displayName: string;
+  requestedAt: string;
+  status: GuildJoinRequestStatus;
+  reviewedAt?: string;
+  reviewedByPlayerId?: string;
+  rejectionReason?: string;
+}
+
+export interface GuildInviteState {
+  inviteId: string;
+  playerId: string;
+  invitedByPlayerId: string;
+  createdAt: string;
+  status: GuildInviteStatus;
+  respondedAt?: string;
+}
+
+export interface GuildModerationState {
+  isHidden: boolean;
+  hiddenAt?: string;
+  hiddenByPlayerId?: string;
+  hiddenReason?: string;
+}
+
+export interface GuildState {
+  id: string;
+  name: string;
+  tag: string;
+  description?: string;
+  memberLimit: number;
+  level: number;
+  xp: number;
+  createdAt: string;
+  updatedAt: string;
+  moderation?: GuildModerationState;
+  members: GuildMemberState[];
+  joinRequests: GuildJoinRequestState[];
+  invites: GuildInviteState[];
 }
 
 export interface HeroStats {
@@ -22,6 +80,7 @@ export interface HeroStats {
 }
 
 export type HeroStatBonus = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge">;
+export type HeroAttributeBonuses = Pick<HeroStats, "attack" | "defense" | "power" | "knowledge" | "maxHp">;
 
 export type HeroSkillId = string;
 export type HeroSkillBranchId = string;
@@ -131,6 +190,7 @@ export interface HeroSkillRankConfig {
   rank: number;
   description: string;
   battleSkillIds?: BattleSkillId[];
+  statBonuses?: Partial<HeroAttributeBonuses>;
 }
 
 export interface HeroSkillConfig {
@@ -176,12 +236,47 @@ export interface BattleBalanceConfig {
   };
 }
 
+export interface SeasonRewardBracket {
+  topPercentile: number;
+  gems: number;
+  badge: string;
+}
+
 export interface SeasonRewardConfig {
-  bronze: number;
-  silver: number;
-  gold: number;
-  platinum: number;
-  diamond: number;
+  brackets: SeasonRewardBracket[];
+}
+
+export interface SeasonArchiveEntry {
+  seasonId: string;
+  rankPosition?: number;
+  totalPlayers?: number;
+  finalRating?: number;
+  peakRating?: number;
+  peakDivision: RankDivisionId;
+  finalDivision: RankDivisionId;
+  rewardTier: PlayerTier;
+  rankPercentile?: number;
+  rewardClaimed: boolean;
+  archivedAt: string;
+  rewardsGrantedAt?: string;
+}
+
+export interface WeeklyLeaderboardEntry {
+  playerId: string;
+  displayName: string;
+  wins: number;
+  weekStartsAt: string;
+  weekEndsAt: string;
+  rankDivision: RankDivisionId;
+}
+
+export interface RankedWeeklyProgress {
+  currentWeekStartsAt: string;
+  currentWeekBattles: number;
+  currentWeekWins: number;
+  previousWeekStartsAt?: string;
+  previousWeekBattles?: number;
+  previousWeekWins?: number;
 }
 
 export interface MovePoints {
@@ -216,7 +311,17 @@ export interface NotificationPreferences {
   turnReminder: boolean;
   groupChallenge: boolean;
   friendLeaderboard: boolean;
+  reengagement: boolean;
   updatedAt?: string;
+}
+
+export type MobilePushPlatform = "ios" | "android";
+
+export interface MobilePushTokenRegistration {
+  platform: MobilePushPlatform;
+  token: string;
+  registeredAt: string;
+  updatedAt: string;
 }
 
 export interface HeroProgression {
@@ -641,6 +746,69 @@ export interface BattleTrapState {
 
 export type BattleHazardState = BattleBlockerState | BattleTrapState;
 
+export interface BossEncounterPhaseSkillOverrides {
+  replaceSkillIds?: BattleSkillId[];
+  addSkillIds?: BattleSkillId[];
+  removeSkillIds?: BattleSkillId[];
+}
+
+export interface BossEncounterScriptedAbilityConfig {
+  id: string;
+  timing: "pre_turn" | "post_turn";
+  skillId: BattleSkillId;
+  target: "self" | "first_enemy" | "lowest_hp_enemy" | "lowest_hp_ally";
+  oncePerRound?: boolean;
+}
+
+export type BossEncounterEnvironmentalEffectConfig =
+  | {
+      kind: "blocker";
+      lane: number;
+      name: string;
+      description: string;
+      durability: number;
+      maxDurability?: number;
+    }
+  | {
+      kind: "trap";
+      lane: number;
+      effect: "damage" | "slow" | "silence";
+      name: string;
+      description: string;
+      damage: number;
+      charges: number;
+      grantedStatusId?: BattleStatusEffectId;
+      triggeredByCamp?: "attacker" | "defender" | "both";
+      revealed?: boolean;
+    };
+
+export interface BossEncounterPhaseConfig {
+  id: string;
+  hpThreshold: number;
+  skillOverrides?: BossEncounterPhaseSkillOverrides;
+  scriptedAbilities?: BossEncounterScriptedAbilityConfig[];
+  environmentalEffects?: BossEncounterEnvironmentalEffectConfig[];
+}
+
+export interface BossEncounterTemplate {
+  id: string;
+  name: string;
+  bossUnitTemplateId?: string;
+  phases: BossEncounterPhaseConfig[];
+}
+
+export interface BossEncounterTemplateCatalogConfig {
+  templates: BossEncounterTemplate[];
+}
+
+export interface BossEncounterState {
+  templateId: string;
+  bossUnitId: string;
+  activePhaseId: string;
+  maxBossHp: number;
+  triggeredAbilityKeys: string[];
+}
+
 export interface DeterministicRngState {
   seed: number;
   cursor: number;
@@ -662,6 +830,7 @@ export interface BattleState {
   defenderHeroId?: string;
   encounterPosition?: Vec2;
   battlefieldTerrain?: TerrainType;
+  bossEncounter?: BossEncounterState;
 }
 
 export type WorldAction =
@@ -1192,4 +1361,168 @@ export interface BattleStatusEffectConfig {
 export interface BattleSkillCatalogConfig {
   skills: BattleSkillConfig[];
   statuses: BattleStatusEffectConfig[];
+}
+
+export interface CampaignReward {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  cosmeticId?: CosmeticId;
+}
+
+export type CampaignUnlockRequirementType = "mission_complete" | "hero_level" | "rank_division";
+
+export interface CampaignUnlockRequirement {
+  type: CampaignUnlockRequirementType;
+  description: string;
+  satisfied?: boolean;
+  missionId?: string;
+  chapterId?: string;
+  minimumHeroLevel?: number;
+  minimumRankDivision?: RankDivisionId;
+}
+
+export interface CampaignMission {
+  id: string;
+  chapterId: string;
+  order: number;
+  mapId: string;
+  name: string;
+  description: string;
+  recommendedHeroLevel: number;
+  enemyArmyTemplateId: string;
+  enemyArmyCount: number;
+  enemyStatMultiplier: number;
+  bossEncounterName?: string;
+  bossTemplateId?: string;
+  unlockMissionId?: string;
+  introDialogue?: DialogueLine[];
+  midDialogue?: DialogueLine[];
+  outroDialogue?: DialogueLine[];
+  objectives: MissionObjective[];
+  reward: CampaignReward;
+}
+
+export interface CampaignMissionProgress {
+  missionId: string;
+  attempts: number;
+  completedAt?: string;
+  acknowledgedDialogueLineIds?: string[];
+}
+
+export interface CampaignProgressState {
+  missions: CampaignMissionProgress[];
+}
+
+export type CampaignMissionStatus = "locked" | "available" | "completed";
+
+export interface CampaignMissionState extends CampaignMissionProgress, CampaignMission {
+  status: CampaignMissionStatus;
+  unlockRequirements?: CampaignUnlockRequirement[];
+}
+
+export interface DailyDungeonReward {
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+}
+
+export interface DailyDungeonFloor {
+  floor: number;
+  recommendedHeroLevel: number;
+  enemyArmyTemplateId: string;
+  enemyArmyCount: number;
+  enemyStatMultiplier: number;
+  bossTemplateId?: string;
+  reward: DailyDungeonReward;
+}
+
+export interface DailyDungeonActiveWindow {
+  startDate: string;
+  endDate: string;
+}
+
+export interface DailyDungeonDefinition {
+  id: string;
+  name: string;
+  description: string;
+  attemptLimit: number;
+  activeWindow: DailyDungeonActiveWindow;
+  floors: DailyDungeonFloor[];
+}
+
+export interface DailyDungeonRunRecord {
+  runId: string;
+  dungeonId: string;
+  floor: number;
+  startedAt: string;
+  rewardClaimedAt?: string;
+}
+
+export interface DailyDungeonState {
+  dateKey: string;
+  attemptsUsed: number;
+  claimedRunIds: string[];
+  runs: DailyDungeonRunRecord[];
+}
+
+export type SeasonalEventActionType = "daily_dungeon_reward_claimed" | (string & {});
+export type SeasonalEventRewardKind = "gems" | "resources" | "badge" | "cosmetic";
+
+export interface SeasonalEventObjective {
+  id: string;
+  description: string;
+  actionType: SeasonalEventActionType;
+  points: number;
+  dungeonId?: string;
+}
+
+export interface SeasonalEventReward {
+  id: string;
+  name: string;
+  pointsRequired: number;
+  kind: SeasonalEventRewardKind;
+  gems?: number;
+  resources?: Partial<ResourceLedger>;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventLeaderboardRewardTier {
+  rankStart: number;
+  rankEnd: number;
+  title: string;
+  badge?: string;
+  cosmeticId?: string;
+}
+
+export interface SeasonalEventDefinition {
+  id: string;
+  name: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  durationDays: number;
+  bannerText: string;
+  objectives: SeasonalEventObjective[];
+  rewards: SeasonalEventReward[];
+  leaderboard: {
+    size: number;
+    rewardTiers: SeasonalEventLeaderboardRewardTier[];
+  };
+}
+
+export interface SeasonalEventState {
+  eventId: string;
+  points: number;
+  claimedRewardIds: string[];
+  appliedActionIds: string[];
+  lastUpdatedAt: string;
+}
+
+export interface EventLeaderboardEntry {
+  rank: number;
+  playerId: string;
+  displayName: string;
+  points: number;
+  lastUpdatedAt: string;
+  rewardPreview?: string;
 }

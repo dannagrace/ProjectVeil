@@ -12,6 +12,29 @@ import {
 } from "./models.ts";
 
 export const HERO_EQUIPMENT_INVENTORY_CAPACITY = 6;
+const EQUIPMENT_STAT_KEYS = ["attackPercent", "defensePercent", "power", "knowledge", "maxHp"] as const;
+
+export interface EquipmentSetDefinition {
+  setId: string;
+  name: string;
+  requiredCount: 2;
+  bonus: Partial<EquipmentStatBonuses>;
+}
+
+export const EQUIPMENT_SET_DEFINITIONS: EquipmentSetDefinition[] = [
+  {
+    setId: "warlord",
+    name: "战魁套装",
+    requiredCount: 2,
+    bonus: { attackPercent: 8, maxHp: 5 }
+  },
+  {
+    setId: "guardian",
+    name: "守护套装",
+    requiredCount: 2,
+    bonus: { defensePercent: 10, maxHp: 6 }
+  }
+];
 
 const DEFAULT_EQUIPMENT_CATALOG: EquipmentCatalogConfig = {
   entries: [
@@ -583,7 +606,19 @@ export interface HeroEquipmentSlotView {
 
 export interface HeroEquipmentLoadoutView {
   slots: HeroEquipmentSlotView[];
+  setBonuses: HeroEquipmentSetProgressView[];
   summary: HeroEquipmentBonusSummary;
+}
+
+export interface HeroEquipmentSetProgressView {
+  setId: string;
+  name: string;
+  piecesRequired: number;
+  equippedPieces: number;
+  active: boolean;
+  description: string;
+  bonusSummary: string;
+  specialEffectSummary: string | null;
 }
 
 export interface RolledEquipmentDrop {
@@ -610,7 +645,13 @@ function resolveEquipmentDefinition(id: string | undefined): EquipmentDefinition
 }
 
 function resolveActiveSetBonuses(resolvedItems: EquipmentDefinition[]): EquipmentSetBonusConfig[] {
-  const countsBySetId = resolvedItems.reduce<Record<string, number>>((counts, item) => {
+  const countsBySetId = countEquippedSetPieces(resolvedItems);
+
+  return SET_BONUSES.filter((entry) => (countsBySetId[entry.setId] ?? 0) >= entry.piecesRequired);
+}
+
+function countEquippedSetPieces(resolvedItems: EquipmentDefinition[]): Record<string, number> {
+  return resolvedItems.reduce<Record<string, number>>((counts, item) => {
     if (!item.setId) {
       return counts;
     }
@@ -618,8 +659,6 @@ function resolveActiveSetBonuses(resolvedItems: EquipmentDefinition[]): Equipmen
     counts[item.setId] = (counts[item.setId] ?? 0) + 1;
     return counts;
   }, {});
-
-  return SET_BONUSES.filter((entry) => (countsBySetId[entry.setId] ?? 0) >= entry.piecesRequired);
 }
 
 function percentageDelta(base: number, percent: number): number {
@@ -661,8 +700,47 @@ export function formatEquipmentBonusSummary(
   return parts.join(" / ") || "无属性加成";
 }
 
+function validateEquipmentBonusRecord(
+  bonuses: Partial<EquipmentStatBonuses>,
+  context: string
+): void {
+  for (const [key, value] of Object.entries(bonuses)) {
+    if (!EQUIPMENT_STAT_KEYS.includes(key as (typeof EQUIPMENT_STAT_KEYS)[number])) {
+      throw new Error(`${context} has unknown equipment stat bonus: ${key}`);
+    }
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`${context} bonus ${key} must be a finite number`);
+    }
+  }
+}
+
+export function validateEquipmentCatalog(config: EquipmentCatalogConfig): void {
+  const ids = new Set<string>();
+
+  for (const entry of config.entries) {
+    if (!entry.id.trim()) {
+      throw new Error("Equipment entry id must be a non-empty string");
+    }
+    if (ids.has(entry.id)) {
+      throw new Error(`Duplicate equipment entry id: ${entry.id}`);
+    }
+    if (entry.type !== "weapon" && entry.type !== "armor" && entry.type !== "accessory") {
+      throw new Error(`Equipment entry ${entry.id} has invalid type: ${String(entry.type)}`);
+    }
+    if (entry.rarity !== "common" && entry.rarity !== "rare" && entry.rarity !== "epic") {
+      throw new Error(`Equipment entry ${entry.id} has invalid rarity: ${String(entry.rarity)}`);
+    }
+    validateEquipmentBonusRecord(entry.bonuses, `Equipment entry ${entry.id}`);
+    ids.add(entry.id);
+  }
+
+  for (const setBonus of EQUIPMENT_SET_DEFINITIONS) {
+    validateEquipmentBonusRecord(setBonus.bonus, `Equipment set ${setBonus.setId}`);
+  }
+}
+
 export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
-  return {
+  const config = {
     entries: DEFAULT_EQUIPMENT_CATALOG.entries.map((entry) => ({
       ...entry,
       bonuses: { ...entry.bonuses },
@@ -670,6 +748,9 @@ export function getDefaultEquipmentCatalog(): EquipmentCatalogConfig {
       ...(entry.specialEffect ? { specialEffect: { ...entry.specialEffect } } : {})
     }))
   };
+
+  validateEquipmentCatalog(config);
+  return config;
 }
 
 export function getEquipmentDefinition(equipmentId: string): EquipmentDefinition | undefined {
@@ -851,6 +932,13 @@ export function createHeroEquipmentBonusSummary(
 export function createHeroEquipmentLoadoutView(
   hero: Pick<HeroState, "stats" | "loadout">
 ): HeroEquipmentLoadoutView {
+  const resolvedItems = [
+    resolveEquipmentDefinition(hero.loadout.equipment.weaponId),
+    resolveEquipmentDefinition(hero.loadout.equipment.armorId),
+    resolveEquipmentDefinition(hero.loadout.equipment.accessoryId)
+  ].filter((entry): entry is EquipmentDefinition => Boolean(entry));
+  const countsBySetId = countEquippedSetPieces(resolvedItems);
+
   return {
     slots: EQUIPMENT_SLOT_META.map(({ slot, label, key }) => {
       const itemId = hero.loadout.equipment[key];
@@ -895,6 +983,18 @@ export function createHeroEquipmentLoadoutView(
         specialEffectSummary: item.specialEffect ? `${item.specialEffect.name}: ${item.specialEffect.description}` : null
       };
     }),
+    setBonuses: SET_BONUSES.map((setBonus) => ({
+      setId: setBonus.setId,
+      name: setBonus.name,
+      piecesRequired: setBonus.piecesRequired,
+      equippedPieces: countsBySetId[setBonus.setId] ?? 0,
+      active: (countsBySetId[setBonus.setId] ?? 0) >= setBonus.piecesRequired,
+      description: setBonus.description,
+      bonusSummary: formatEquipmentBonusSummary(setBonus.bonuses),
+      specialEffectSummary: setBonus.specialEffect
+        ? `${setBonus.specialEffect.name}: ${setBonus.specialEffect.description}`
+        : null
+    })),
     summary: createHeroEquipmentBonusSummary(hero)
   };
 }

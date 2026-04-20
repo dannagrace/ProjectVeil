@@ -1,4 +1,5 @@
 import { createHeroEquipmentBonusSummary } from "./equipment.ts";
+import { createHeroSkillBonusSummary } from "./hero-skills.ts";
 import type { HeroState, PlayerWorldView } from "./models.ts";
 import { experienceRequiredForNextLevel, totalExperienceRequiredForLevel } from "./models.ts";
 
@@ -112,10 +113,11 @@ export function createHeroProgressMeterView(
 }
 
 export function createHeroAttributeBreakdown(
-  hero: Pick<HeroState, "id" | "stats" | "progression" | "loadout">,
+  hero: Pick<HeroState, "id" | "stats" | "progression" | "loadout" | "learnedSkills">,
   world?: Pick<PlayerWorldView, "map"> | null
 ): HeroAttributeBreakdownRow[] {
   const equipment = createHeroEquipmentBonusSummary(hero);
+  const skillBonuses = createHeroSkillBonusSummary(hero);
   const sources: HeroAttributeSourceSet = {
     progression: buildProgressionContribution(hero),
     buildings: buildBuildingContribution(world, hero.id),
@@ -126,7 +128,13 @@ export function createHeroAttributeBreakdown(
       knowledge: equipment.knowledge,
       maxHp: equipment.maxHp
     },
-    skills: createEmptyAttributeValues()
+    skills: {
+      attack: skillBonuses.attack,
+      defense: skillBonuses.defense,
+      power: skillBonuses.power,
+      knowledge: skillBonuses.knowledge,
+      maxHp: skillBonuses.maxHp
+    }
   };
 
   return ATTRIBUTE_ROWS.map(({ key, label }) => {
