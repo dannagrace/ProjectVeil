@@ -1,6 +1,6 @@
 # Cocos Release Evidence Template
 
-本模板现在以 `npm run release:cocos-rc:bundle` 生成的 candidate-level evidence bundle 为主，内部会先自动执行 `npm run release:cocos:primary-journey-evidence`，再复用 `npm run release:cocos-rc:snapshot` 作为 machine-readable JSON。`release:cocos:primary-journey-evidence` 是 primary client main path 的 canonical RC evidence source；release gate review、PR artifact、和 candidate dossier 都应直接引用它生成的 candidate+revision JSON / Markdown，而不是再补 ad hoc 截图或另起格式。目标是把 Cocos 主客户端的 canonical `Lobby -> room -> world explore -> first battle -> settlement -> reconnect/session recovery` 证据，与微信小游戏 RC 的补充证据收口到同一份可归档、可校验、可对比的快照里，并自动补齐可直接附到 CI artifact / PR 评论的 Markdown 摘要、检查清单与 blocker 记录。
+本模板现在以 `npm run release -- cocos-rc:bundle` 生成的 candidate-level evidence bundle 为主，内部会先自动执行 `npm run release -- cocos:primary-journey-evidence`，再复用 `npm run release -- cocos-rc:snapshot` 作为 machine-readable JSON。`release:cocos:primary-journey-evidence` 是 primary client main path 的 canonical RC evidence source；release gate review、PR artifact、和 candidate dossier 都应直接引用它生成的 candidate+revision JSON / Markdown，而不是再补 ad hoc 截图或另起格式。目标是把 Cocos 主客户端的 canonical `Lobby -> room -> world explore -> first battle -> settlement -> reconnect/session recovery` 证据，与微信小游戏 RC 的补充证据收口到同一份可归档、可校验、可对比的快照里，并自动补齐可直接附到 CI artifact / PR 评论的 Markdown 摘要、检查清单与 blocker 记录。
 
 相关文档：
 
@@ -26,7 +26,7 @@
 4. `artifacts/release-readiness/cocos-rc-evidence-bundle-<candidate>-<short-sha>.md`
    - 同一 bundle 的人类可读摘要，直接列出主链路 pass/fail/pending 状态
 5. `artifacts/release-readiness/cocos-rc-snapshot-<candidate>-<short-sha>.json`
-   - `npm run release:cocos-rc:snapshot` 生成并回填的结构化 RC 证据
+   - `npm run release -- cocos-rc:snapshot` 生成并回填的结构化 RC 证据
 6. `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.json`
    - candidate-scoped main-journey evidence gate，固定校验 primary journey evidence、RC snapshot、bundle manifest、checklist、blockers 是否仍绑定同一 revision，并把 presentation blockers 与 infrastructure failures 分开汇总
 7. `artifacts/release-readiness/cocos-main-journey-replay-gate-<candidate>-<short-sha>.md`
@@ -45,23 +45,23 @@
 1. 先跑自动化基线，并保留自动化快照：
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
 如需把额外的 Phase 1 布局一并纳入候选包证据，先补跑对应内容包与持久化验证：
 
 ```bash
-npm run validate:content-pack:all
-npm run test:phase1-release-persistence:frontier
+npm run validate -- content-pack:all
+npm test -- phase1-release-persistence:frontier
 ```
 
-若 reviewer 关注石岗分叉、岭桥或高地布局，则改为 `npm run test:phase1-release-persistence:stonewatch`、`npm run test:phase1-release-persistence:ridgeway` 或 `npm run test:phase1-release-persistence:highland`；这些产出的 JSON 都应与同一份 candidate evidence bundle 一起归档。
+若 reviewer 关注石岗分叉、岭桥或高地布局，则改为 `npm test -- phase1-release-persistence:stonewatch`、`npm test -- phase1-release-persistence:ridgeway` 或 `npm test -- phase1-release-persistence:highland`；这些产出的 JSON 都应与同一份 candidate evidence bundle 一起归档。
 
 2. 直接生成 candidate-level Cocos RC evidence bundle。该命令会自动先跑 primary journey evidence，再汇总成 RC snapshot：
 
 ```bash
-npm run release:cocos-rc:bundle -- \
+npm run release -- cocos-rc:bundle -- \
   --candidate rc-2026-03-29 \
   --build-surface creator_preview
 ```
@@ -69,7 +69,7 @@ npm run release:cocos-rc:bundle -- \
 3. 若目标面是微信小游戏，先完成 `verify` 与 `smoke`，再把 smoke 报告挂到同一份 bundle：
 
 ```bash
-npm run release:cocos-rc:bundle -- \
+npm run release -- cocos-rc:bundle -- \
   --candidate rc-2026-03-29 \
   --build-surface wechat_preview \
   --wechat-smoke-report artifacts/wechat-rc/codex.wechat.smoke-report.json \
@@ -79,7 +79,7 @@ npm run release:cocos-rc:bundle -- \
 4. 回填 bundle 内的 snapshot 后执行校验：
 
 ```bash
-npm run release:cocos-rc:snapshot -- \
+npm run release -- cocos-rc:snapshot -- \
   --output artifacts/release-readiness/cocos-rc-snapshot-rc-2026-03-29-<short-sha>.json \
   --check
 ```
@@ -174,7 +174,7 @@ Headless primary journey automation 默认补：
 - 生成命令：
 
 ```bash
-npm run release:cocos-rc:snapshot -- \
+npm run release -- cocos-rc:snapshot -- \
   --candidate rc-<date> \
   --build-surface creator_preview \
   --output artifacts/release-evidence/rc-<date>.json

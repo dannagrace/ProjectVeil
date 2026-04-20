@@ -19,11 +19,11 @@ function formatTimestamp(value: Date | string): string {
 
 function printUsage(): void {
   console.log("Usage:");
-  console.log("  npm run db:profiles:list -- --limit 20");
-  console.log("  npm run db:profiles:list -- --roomId test-room");
-  console.log("  npm run db:profiles:list -- --playerId player-1");
-  console.log("  npm run db:profiles:delete -- --roomId test-room --playerId player-1");
-  console.log("  npm run db:profiles:prune");
+  console.log("  npm run db -- profiles:list -- --limit 20");
+  console.log("  npm run db -- profiles:list -- --roomId test-room");
+  console.log("  npm run db -- profiles:list -- --playerId player-1");
+  console.log("  npm run db -- profiles:delete -- --roomId test-room --playerId player-1");
+  console.log("  npm run db -- profiles:prune");
 }
 
 async function main(): Promise<void> {
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
       const playerId = readFlag("--playerId");
       if (!roomId || !playerId) {
         throw new Error(
-          "Missing --roomId or --playerId. Example: npm run db:profiles:delete -- --roomId test-room --playerId player-1"
+          "Missing --roomId or --playerId. Example: npm run db -- profiles:delete -- --roomId test-room --playerId player-1"
         );
       }
 

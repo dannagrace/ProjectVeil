@@ -3,7 +3,7 @@
 `configs/launch-compliance.json` 是上线合规材料的单一登记源。上线前请把真实凭证写入配置，并使用：
 
 ```bash
-npm run release:launch-compliance:gate
+npm run release -- launch-compliance:gate
 ```
 
 来生成结构化 gate 报告。
@@ -46,6 +46,6 @@ npm run release:launch-compliance:gate
 ## 维护建议
 
 1. 每次 candidate rehearsal 前更新 `configs/launch-compliance.json`
-2. 运行 `npm run release:launch-compliance:gate`
+2. 运行 `npm run release -- launch-compliance:gate`
 3. 对 `WARN` 项补齐 owner 和时间；对 `FAIL` 项先处理再提审
 4. 在 `target-surface=wechat` 的 `release:gate:summary` 中检查合规 warning 是否被前置暴露

@@ -5,8 +5,8 @@
 这份文档配套：
 
 - `k8s/canary/`
-- `npm run release:production:rollback-drill`
-- `npm run release:gate:summary -- --target-surface wechat --stage production`
+- `npm run release -- production:rollback-drill`
+- `npm run release -- gate:summary -- --target-surface wechat --stage production`
 
 ## 目标
 
@@ -28,13 +28,13 @@
 先做一份本地模拟，确认命令参数与产物路径：
 
 ```bash
-npm run release:production:rollback-drill -- --candidate "$(git rev-parse HEAD)"
+npm run release -- production:rollback-drill -- --candidate "$(git rev-parse HEAD)"
 ```
 
 真正演练时，使用真实 smoke 并显式切到执行模式：
 
 ```bash
-npm run release:production:rollback-drill -- \
+npm run release -- production:rollback-drill -- \
   --candidate "$(git rev-parse HEAD)" \
   --mode execute \
   --image-tag "ghcr.io/dannagrace/projectveil-server:$(git rev-parse --short HEAD)" \
@@ -90,7 +90,7 @@ JSON 里会记录：
 当运行：
 
 ```bash
-npm run release:gate:summary -- --target-surface wechat --stage production
+npm run release -- gate:summary -- --target-surface wechat --stage production
 ```
 
 `release:gate:summary` 会把 production rollback drill 当成 required evidence。

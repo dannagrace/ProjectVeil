@@ -19,9 +19,9 @@ function formatTimestamp(value: Date | string): string {
 
 function printUsage(): void {
   console.log("Usage:");
-  console.log("  npm run db:snapshots:list -- --limit 20");
-  console.log("  npm run db:snapshots:delete -- --roomId test-room");
-  console.log("  npm run db:snapshots:prune");
+  console.log("  npm run db -- snapshots:list -- --limit 20");
+  console.log("  npm run db -- snapshots:delete -- --roomId test-room");
+  console.log("  npm run db -- snapshots:prune");
 }
 
 async function main(): Promise<void> {
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     if (command === "delete") {
       const roomId = readFlag("--roomId");
       if (!roomId) {
-        throw new Error("Missing --roomId. Example: npm run db:snapshots:delete -- --roomId test-room");
+        throw new Error("Missing --roomId. Example: npm run db -- snapshots:delete -- --roomId test-room");
       }
 
       await store.delete(roomId);

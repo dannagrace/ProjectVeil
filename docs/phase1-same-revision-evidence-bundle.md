@@ -1,6 +1,6 @@
 # Phase 1 Same-Revision Evidence Bundle
 
-`npm run release:phase1:same-revision-evidence-bundle` assembles the Phase 1 release packet for one candidate revision and emits one machine-readable manifest that links the required evidence artifacts.
+`npm run release -- phase1:same-revision-evidence-bundle` assembles the Phase 1 release packet for one candidate revision and emits one machine-readable manifest that links the required evidence artifacts.
 
 It is the candidate-scoped assembly command for the release owner path described in [`docs/same-revision-release-evidence-runbook.md`](./same-revision-release-evidence-runbook.md). The command does not replace manual approvals. It creates or reuses the candidate-scoped manual placeholder artifacts, validates same-revision coherence, and writes one manifest plus one Markdown summary in a stable bundle directory.
 
@@ -25,7 +25,7 @@ The manifest fails closed when a required artifact is missing, stale, or revisio
 Reuse already-generated candidate artifacts:
 
 ```bash
-npm run release:phase1:same-revision-evidence-bundle -- \
+npm run release -- phase1:same-revision-evidence-bundle -- \
   --candidate phase1-rc \
   --candidate-revision "$(git rev-parse HEAD)" \
   --target-surface h5 \
@@ -38,7 +38,7 @@ npm run release:phase1:same-revision-evidence-bundle -- \
 Let the command generate the automated artifacts it can own directly:
 
 ```bash
-npm run release:phase1:same-revision-evidence-bundle -- \
+npm run release -- phase1:same-revision-evidence-bundle -- \
   --candidate phase1-rc \
   --candidate-revision "$(git rev-parse HEAD)" \
   --target-surface wechat \
@@ -72,7 +72,7 @@ Use [`docs/phase1-release-evidence-drift-gate.md`](./phase1-release-evidence-dri
 1. Pin the candidate name and git revision.
 2. Run the bundle command with either explicit artifact paths or enough inputs for the command to generate them.
 3. Open `phase1-same-revision-evidence-bundle.md` for the reviewer summary.
-4. Generate or refresh `npm run release:phase1:candidate-dossier` and `npm run release:phase1:exit-audit` from the staged packet, then run `npm run release:phase1:exit-dossier-freshness-gate` against those outputs before attaching the packet to CI or the release PR.
+4. Generate or refresh `npm run release -- phase1:candidate-dossier` and `npm run release -- phase1:exit-audit` from the staged packet, then run `npm run release -- phase1:exit-dossier-freshness-gate` against those outputs before attaching the packet to CI or the release PR.
 5. If either report surfaces `stale`, `missing`, `revision_mismatch`, or linked-artifact drift, refresh the upstream artifact named in the finding instead of editing the report.
 6. Update the generated manual evidence owner ledger and, for WeChat, the runtime observability placeholder as reviewers complete manual sign-off.
 

@@ -1,6 +1,6 @@
 # Phase 1 Release Evidence Drift Gate
 
-`npm run release:phase1:evidence-drift-gate` is the CI-oriented guardrail for candidate-scoped Phase 1 release evidence drift.
+`npm run release -- phase1:evidence-drift-gate` is the CI-oriented guardrail for candidate-scoped Phase 1 release evidence drift.
 
 It reuses the machine-readable `phase1-same-revision-evidence-bundle` manifest as the base contract, then optionally layers in the runtime observability gate/evidence packet when GitHub Actions already captured target-environment runtime proof for the same candidate revision.
 
@@ -18,7 +18,7 @@ no longer agree on the same candidate or revision.
 Minimum CI invocation:
 
 ```bash
-npm run release:phase1:evidence-drift-gate -- \
+npm run release -- phase1:evidence-drift-gate -- \
   --candidate phase1-mainline \
   --candidate-revision "${GITHUB_SHA}" \
   --same-revision-bundle-manifest "${RUNNER_TEMP}/phase1-same-revision-evidence-bundle/phase1-same-revision-evidence-bundle-manifest.json"
@@ -27,7 +27,7 @@ npm run release:phase1:evidence-drift-gate -- \
 Recommended invocation when runtime observability evidence exists:
 
 ```bash
-npm run release:phase1:evidence-drift-gate -- \
+npm run release -- phase1:evidence-drift-gate -- \
   --candidate phase1-mainline \
   --candidate-revision "${GITHUB_SHA}" \
   --same-revision-bundle-manifest "${RUNNER_TEMP}/phase1-same-revision-evidence-bundle/phase1-same-revision-evidence-bundle-manifest.json" \
@@ -58,7 +58,7 @@ Recommended pattern inside a workflow that already built the Phase 1 packet:
 ```yaml
 - name: Build Phase 1 same-revision evidence bundle
   run: |
-    npm run release:phase1:same-revision-evidence-bundle -- \
+    npm run release -- phase1:same-revision-evidence-bundle -- \
       --candidate "${CANDIDATE_LABEL}" \
       --candidate-revision "${GITHUB_SHA}" \
       --target-surface h5 \
@@ -86,7 +86,7 @@ Recommended pattern inside a workflow that already built the Phase 1 packet:
       args+=(--runtime-observability-evidence "${RUNNER_TEMP}/runtime-observability-bundle/runtime-observability-evidence-${CANDIDATE_LABEL}-${GITHUB_SHA::7}.json")
     fi
 
-    npm run release:phase1:evidence-drift-gate -- "${args[@]}"
+    npm run release -- phase1:evidence-drift-gate -- "${args[@]}"
 ```
 
-If the workflow already uses `npm run release:phase1:candidate-rehearsal`, the rehearsal now runs this gate automatically and stages the JSON/Markdown outputs in the rehearsal bundle.
+If the workflow already uses `npm run release -- phase1:candidate-rehearsal`, the rehearsal now runs this gate automatically and stages the JSON/Markdown outputs in the rehearsal bundle.

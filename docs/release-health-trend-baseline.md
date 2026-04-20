@@ -1,8 +1,8 @@
 # Release Health Trend Baseline
 
-`npm run release:health:trend-baseline` summarizes the latest N `release-readiness-history` artifact directories into one concise baseline for maintainers.
+`npm run release -- health:trend-baseline` summarizes the latest N `release-readiness-history` artifact directories into one concise baseline for maintainers.
 
-`npm run release:health:trend-compare` reuses the same history window, but turns that baseline into one explicit candidate-vs-baseline delta report for CI, PR review, or release triage.
+`npm run release -- health:trend-compare` reuses the same history window, but turns that baseline into one explicit candidate-vs-baseline delta report for CI, PR review, or release triage.
 
 It is intended to answer three questions quickly:
 
@@ -22,7 +22,7 @@ Each candidate directory should contain the stable files produced by the `Releas
 You can provide directories explicitly:
 
 ```bash
-npm run release:health:trend-baseline -- \
+npm run release -- health:trend-baseline -- \
   --artifact-dir ./tmp/history/run-101 \
   --artifact-dir ./tmp/history/run-100 \
   --artifact-dir ./tmp/history/run-099 \
@@ -32,13 +32,13 @@ npm run release:health:trend-baseline -- \
 Or point the script at a cache root. By default it scans `artifacts/release-readiness-history-cache/` and reads each immediate child directory that contains the required summary files:
 
 ```bash
-npm run release:health:trend-baseline
+npm run release -- health:trend-baseline
 ```
 
 Override the cache root when needed:
 
 ```bash
-npm run release:health:trend-baseline -- \
+npm run release -- health:trend-baseline -- \
   --cache-dir ./tmp/release-readiness-history-cache \
   --limit 5
 ```
@@ -46,7 +46,7 @@ npm run release:health:trend-baseline -- \
 Generate the focused compare artifact instead of the broader trend baseline:
 
 ```bash
-npm run release:health:trend-compare -- \
+npm run release -- health:trend-compare -- \
   --cache-dir ./tmp/release-readiness-history-cache \
   --limit 5
 ```
@@ -133,7 +133,7 @@ gh run download 100 --repo dannagrace/ProjectVeil -n release-readiness-history -
 Then rebuild the baseline:
 
 ```bash
-npm run release:health:trend-baseline -- --limit 5
+npm run release -- health:trend-baseline -- --limit 5
 ```
 
 ## CI Regeneration
@@ -141,8 +141,8 @@ npm run release:health:trend-baseline -- --limit 5
 In GitHub Actions, reuse the existing `release-readiness-history` artifact instead of rebuilding raw evidence by hand:
 
 1. Download recent `release-readiness-history` artifacts into sibling directories under a workspace cache path.
-2. Run `npm run release:health:trend-baseline -- --cache-dir <that-path> --limit <n>`.
-3. Run `npm run release:health:trend-compare -- --cache-dir <that-path> --limit <n>` when CI or a PR comment needs the explicit current-candidate delta.
+2. Run `npm run release -- health:trend-baseline -- --cache-dir <that-path> --limit <n>`.
+3. Run `npm run release -- health:trend-compare -- --cache-dir <that-path> --limit <n>` when CI or a PR comment needs the explicit current-candidate delta.
 4. Attach the generated JSON / Markdown to the workflow summary, PR comment, or release notes bundle.
 
 This keeps the trend baseline aligned with the same normalized artifacts already used by `release:health:summary`, `release:gate:summary`, and `release:readiness:dashboard`.

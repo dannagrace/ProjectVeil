@@ -70,12 +70,12 @@ The repo's verification and release gates should stay asymmetric on purpose.
 ### What H5 gates prove
 
 - `apps/client` checks prove browser-shell behavior, debug affordances, and fast regression coverage.
-- `npm run typecheck:client:h5`, `npm run test:e2e:smoke`, and related H5 tests are the fast signal for lobby/browser regressions and shared reconnect semantics.
+- `npm run typecheck -- client:h5`, `npm test -- e2e:smoke`, and related H5 tests are the fast signal for lobby/browser regressions and shared reconnect semantics.
 - These checks are sufficient for H5-shell changes, but they do not prove the shipped runtime is healthy.
 
 ### What Cocos gates prove
 
-- `npm run typecheck:cocos`, `npm run smoke:cocos:canonical-journey`, `npm run check:wechat-build`, and the Cocos release-evidence flows prove the primary runtime can still carry the main player journey.
+- `npm run typecheck -- cocos`, `npm run smoke -- cocos:canonical-journey`, `npm run check:wechat-build`, and the Cocos release-evidence flows prove the primary runtime can still carry the main player journey.
 - Release-facing readiness, RC evidence, and WeChat packaging gates must point at `apps/cocos-client` outputs, not H5 screenshots or H5-only smoke runs.
 - If a change affects the canonical player journey, the merge/release plan should treat Cocos evidence as the decisive signal and H5 evidence as supporting diagnostics.
 

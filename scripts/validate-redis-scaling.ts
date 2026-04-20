@@ -45,7 +45,7 @@ function createRequest(playerId: string, enqueuedAt: string): MatchmakingRequest
 async function main(): Promise<void> {
   const redisUrl = readRedisUrl();
   if (!redisUrl) {
-    throw new Error("REDIS_URL is required. Example: REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling");
+    throw new Error("REDIS_URL is required. Example: REDIS_URL=redis://127.0.0.1:6379/0 npm run validate -- redis-scaling");
   }
 
   const keyPrefix = process.env.VEIL_REDIS_MATCHMAKING_PREFIX?.trim() || `veil:validate:${Date.now()}`;

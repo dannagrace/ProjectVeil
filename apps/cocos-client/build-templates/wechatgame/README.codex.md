@@ -30,5 +30,5 @@
 ## Follow-up
 - 在 Cocos Creator 的微信小游戏构建目标中执行正式导出。
 - 若资源需要分包，请把对应 Asset Bundle 的 Compression Type 设为 Mini Game Subpackage。
-- 导出后运行 `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` 校验注入配置与 4MB / 30MB 预算。
+- 导出后运行 `npm run validate -- wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` 校验注入配置与 4MB / 30MB 预算。
 - 把远程资源目录上传到 CDN 后，再在微信开发者工具中补齐域名白名单。

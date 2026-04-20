@@ -5,7 +5,7 @@
 The script does not replace the existing report producers:
 
 - `npm run perf:runtime:compare` still owns the thresholded runtime comparison against [`configs/runtime-regression-baseline.json`](/home/gpt/project/ProjectVeil/.worktrees/issue-344-0330-0131/configs/runtime-regression-baseline.json)
-- `npm run release:gate:summary` still owns the current release-gate snapshot
+- `npm run release -- gate:summary` still owns the current release-gate snapshot
 
 `ci:trend-summary` only compares those current reports against optional prior artifacts and emits stable machine-readable findings:
 

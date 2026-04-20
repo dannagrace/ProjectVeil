@@ -36,7 +36,7 @@ Optional environment:
   VEIL_RESTORE_DROP_DATABASE=1
   VEIL_RESTORE_SKIP_SCHEMA_VALIDATION=0
   VEIL_RESTORE_SKIP_REGRESSION=0
-  VEIL_RESTORE_VALIDATE_COMMAND='npm run test:phase1-release-persistence -- --storage mysql'
+  VEIL_RESTORE_VALIDATE_COMMAND='npm test -- phase1-release-persistence -- --storage mysql'
 EOF
   exit 0
 fi

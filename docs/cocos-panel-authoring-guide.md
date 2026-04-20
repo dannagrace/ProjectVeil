@@ -59,8 +59,8 @@ npm run generate:cocos:panel -- --name QuestTracker
 2. 给 model 补 focused unit tests
 3. 把 panel 改成只消费 model 输出
 4. 通过 `npm run lint:cocos:panels`
-5. 通过 `npm run typecheck:cocos`
-6. 跑 `npm run smoke:cocos:canonical-journey`
+5. 通过 `npm run typecheck -- cocos`
+6. 跑 `npm run smoke -- cocos:canonical-journey`
 
 ## 当前覆盖面
 

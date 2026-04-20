@@ -501,8 +501,8 @@ const CONFIG_RISK_RULES: Record<
     impactedModules: ["地图生成", "英雄出生点", "资源分布"],
     suggestedValidationActions: [
       "config-center 地图预览: 核对 seed 下地形/资源/出生点分布",
-      "npm run release:readiness:snapshot",
-      "npm run smoke:client:release-candidate"
+      "npm run release -- readiness:snapshot",
+      "npm run smoke -- client:release-candidate"
     ],
     recommendCanary: true,
     recommendRehearsal: true
@@ -513,8 +513,8 @@ const CONFIG_RISK_RULES: Record<
     impactedModules: ["地图 POI", "招募库存", "资源矿收益"],
     suggestedValidationActions: [
       "config-center 地图预览: 核对建筑/守军/资源点布局",
-      "npm run release:readiness:snapshot",
-      "npm run smoke:client:release-candidate"
+      "npm run release -- readiness:snapshot",
+      "npm run smoke -- client:release-candidate"
     ],
     recommendCanary: true,
     recommendRehearsal: false
@@ -524,9 +524,9 @@ const CONFIG_RISK_RULES: Record<
     title: "Units",
     impactedModules: ["单位数值", "招募库存", "战斗节奏"],
     suggestedValidationActions: [
-      "npm run validate:content-pack",
-      "npm run validate:battle",
-      "npm run smoke:client:release-candidate"
+      "npm run validate -- content-pack",
+      "npm run validate -- battle",
+      "npm run smoke -- client:release-candidate"
     ],
     recommendCanary: true,
     recommendRehearsal: false
@@ -536,9 +536,9 @@ const CONFIG_RISK_RULES: Record<
     title: "Battle skills",
     impactedModules: ["战斗技能", "状态效果", "伤害结算"],
     suggestedValidationActions: [
-      "npm run validate:content-pack",
-      "npm run validate:battle",
-      "npm run smoke:client:release-candidate"
+      "npm run validate -- content-pack",
+      "npm run validate -- battle",
+      "npm run smoke -- client:release-candidate"
     ],
     recommendCanary: true,
     recommendRehearsal: true
@@ -548,9 +548,9 @@ const CONFIG_RISK_RULES: Record<
     title: "Battle balance",
     impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
     suggestedValidationActions: [
-      "npm run validate:battle",
-      "npm run release:readiness:snapshot",
-      "npm run smoke:client:release-candidate"
+      "npm run validate -- battle",
+      "npm run release -- readiness:snapshot",
+      "npm run smoke -- client:release-candidate"
     ],
     recommendCanary: true,
     recommendRehearsal: true
@@ -2454,7 +2454,7 @@ export function buildConfigChangeRiskSummary(configCenterLibraryPath: string | u
 }
 
 function formatReleaseGateSummaryCommand(targetSurface: TargetSurface, stage: ReleaseStage): string {
-  return `npm run release:gate:summary -- --target-surface ${targetSurface}${stage === "production" ? " --stage production" : ""}`;
+  return `npm run release -- gate:summary -- --target-surface ${targetSurface}${stage === "production" ? " --stage production" : ""}`;
 }
 
 function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface, stage: ReleaseStage): string {
@@ -2465,19 +2465,19 @@ function buildReleaseGateNextStep(gate: GateResult, targetSurface: TargetSurface
     return `${sourceInstruction}, clear the failing or pending readiness checks, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "h5-release-candidate-smoke") {
-    return `${sourceInstruction}, rerun \`npm run smoke:client:release-candidate\`, then rerun \`${rerunCommand}\`.`;
+    return `${sourceInstruction}, rerun \`npm run smoke -- client:release-candidate\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "multiplayer-reconnect-soak") {
     return `${sourceInstruction}, rerun \`npm run stress:rooms:reconnect-soak\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "cocos-primary-client-reconnect-replay") {
-    return `${sourceInstruction}, rerun \`npm run release:cocos:rc-reconnect-replay -- --candidate <candidate>\`, then rerun \`${rerunCommand}\`.`;
+    return `${sourceInstruction}, rerun \`npm run release -- cocos:rc-reconnect-replay -- --candidate <candidate>\`, then rerun \`${rerunCommand}\`.`;
   }
   if (gate.id === "wechat-release") {
     const command =
       gate.source?.kind === "wechat-smoke-report"
-        ? "npm run smoke:wechat-release -- --check"
-        : "npm run validate:wechat-rc";
+        ? "npm run smoke -- wechat-release -- --check"
+        : "npm run validate -- wechat-rc";
     return `${sourceInstruction}, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`${rerunCommand}\`.`;
   }
   return `${sourceInstruction}, refresh the release evidence for one candidate revision, then rerun \`${rerunCommand}\`.`;
@@ -2504,7 +2504,7 @@ function buildSurfaceEvidenceNextStep(
     : "Open the failing target-surface evidence";
 
   if (evidence.id === "production-rollback-drill") {
-    return `${sourceInstruction}, rerun \`npm run release:production:rollback-drill -- --candidate <candidate> --mode execute --image-tag <image-tag>\`, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
+    return `${sourceInstruction}, rerun \`npm run release -- production:rollback-drill -- --candidate <candidate> --mode execute --image-tag <image-tag>\`, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
   }
 
   return `${sourceInstruction}, refresh the target-surface evidence, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`;
@@ -2617,7 +2617,7 @@ function buildReleaseGateTriage(
               impactedSurface: targetSurface,
               summary: `${entry.label} is not ready for external launch review: ${entry.summary}`,
               nextStep:
-                `Run \`npm run release:wechat:commercial-verification -- --artifacts-dir ${
+                `Run \`npm run release -- wechat:commercial-verification -- --artifacts-dir ${
                   inputs.wechatArtifactsDir ? relativeReportPath(inputs.wechatArtifactsDir) : "artifacts/wechat-release"
                 }\`, then rerun \`${formatReleaseGateSummaryCommand(targetSurface, stage)}\`.`,
               artifacts: createTriageArtifactReference(entry.label, entry.artifactPath)
@@ -2637,7 +2637,7 @@ function buildReleaseGateTriage(
                 launchCompliance.status === "missing"
                   ? `Launch compliance dossier is missing: ${launchCompliance.summary}`
                   : `Launch compliance dossier still needs follow-up: ${launchCompliance.summary}`,
-              nextStep: "Run `npm run release:launch-compliance:gate` and update the missing launch paperwork before promotion.",
+              nextStep: "Run `npm run release -- launch-compliance:gate` and update the missing launch paperwork before promotion.",
               artifacts: createTriageArtifactReference("Launch compliance dossier", launchCompliance.configPath)
             }
           ]

@@ -1,0 +1,770 @@
+{
+  "release": {
+    "commands": [
+      {
+        "name": "candidate-triage:digest",
+        "legacyScript": "release:candidate-triage:digest",
+        "runner": "node --import tsx ./scripts/candidate-revision-triage-digest.ts"
+      },
+      {
+        "name": "candidate:evidence-audit",
+        "legacyScript": "release:candidate:evidence-audit",
+        "runner": "node --import tsx ./scripts/same-candidate-evidence-audit.ts"
+      },
+      {
+        "name": "candidate:evidence:freshness-guard",
+        "legacyScript": "release:candidate:evidence:freshness-guard",
+        "runner": "node --import tsx ./scripts/candidate-evidence-freshness-guard.ts"
+      },
+      {
+        "name": "cocos-rc:bundle",
+        "legacyScript": "release:cocos-rc:bundle",
+        "runner": "node --import tsx ./scripts/cocos-rc-evidence-bundle.ts"
+      },
+      {
+        "name": "cocos-rc:snapshot",
+        "legacyScript": "release:cocos-rc:snapshot",
+        "runner": "node --import tsx ./scripts/cocos-release-candidate-snapshot.ts"
+      },
+      {
+        "name": "cocos:main-journey-replay-gate",
+        "legacyScript": "release:cocos:main-journey-replay-gate",
+        "runner": "node --import tsx ./scripts/cocos-main-journey-replay-gate.ts"
+      },
+      {
+        "name": "cocos:primary-diagnostics",
+        "legacyScript": "release:cocos:primary-diagnostics",
+        "runner": "node --import tsx ./scripts/cocos-primary-client-diagnostic-snapshots.ts"
+      },
+      {
+        "name": "cocos:primary-journey-evidence",
+        "legacyScript": "release:cocos:primary-journey-evidence",
+        "runner": "node --import tsx ./scripts/cocos-primary-client-journey-evidence.ts"
+      },
+      {
+        "name": "cocos:rc-reconnect-replay",
+        "legacyScript": "release:cocos:rc-reconnect-replay",
+        "runner": "node --import tsx ./scripts/cocos-rc-reconnect-replay.ts"
+      },
+      {
+        "name": "evidence:index",
+        "legacyScript": "release:evidence:index",
+        "runner": "node --import tsx ./scripts/release-evidence-index.ts"
+      },
+      {
+        "name": "evidence:lifecycle",
+        "legacyScript": "release:evidence:lifecycle",
+        "runner": "node --import tsx ./scripts/release-evidence-lifecycle.ts"
+      },
+      {
+        "name": "gate:summary",
+        "legacyScript": "release:gate:summary",
+        "runner": "node --import tsx ./scripts/release-gate-summary.ts"
+      },
+      {
+        "name": "go-no-go-packet",
+        "legacyScript": "release:go-no-go-packet",
+        "runner": "node --import tsx ./scripts/release-go-no-go-decision-packet.ts"
+      },
+      {
+        "name": "health:summary",
+        "legacyScript": "release:health:summary",
+        "runner": "node --import tsx ./scripts/release-health-summary.ts"
+      },
+      {
+        "name": "health:trend-baseline",
+        "legacyScript": "release:health:trend-baseline",
+        "runner": "node --import tsx ./scripts/release-health-trend-baseline.ts"
+      },
+      {
+        "name": "health:trend-compare",
+        "legacyScript": "release:health:trend-compare",
+        "runner": "node --import tsx ./scripts/release-health-trend-baseline.ts --compare-current"
+      },
+      {
+        "name": "launch-compliance:gate",
+        "legacyScript": "release:launch-compliance:gate",
+        "runner": "node --import tsx ./scripts/release-launch-compliance-gate.ts"
+      },
+      {
+        "name": "phase1:candidate-dossier",
+        "legacyScript": "release:phase1:candidate-dossier",
+        "runner": "node --import tsx ./scripts/phase1-candidate-dossier.ts"
+      },
+      {
+        "name": "phase1:candidate-rehearsal",
+        "legacyScript": "release:phase1:candidate-rehearsal",
+        "runner": "node --import tsx ./scripts/phase1-candidate-rehearsal.ts"
+      },
+      {
+        "name": "phase1:evidence-drift-gate",
+        "legacyScript": "release:phase1:evidence-drift-gate",
+        "runner": "node --import tsx ./scripts/phase1-release-evidence-drift-gate.ts"
+      },
+      {
+        "name": "phase1:exit-audit",
+        "legacyScript": "release:phase1:exit-audit",
+        "runner": "node --import tsx ./scripts/phase1-exit-audit.ts"
+      },
+      {
+        "name": "phase1:exit-dossier-freshness-gate",
+        "legacyScript": "release:phase1:exit-dossier-freshness-gate",
+        "runner": "node --import tsx ./scripts/phase1-exit-dossier-freshness-gate.ts"
+      },
+      {
+        "name": "phase1:same-revision-evidence-bundle",
+        "legacyScript": "release:phase1:same-revision-evidence-bundle",
+        "runner": "node --import tsx ./scripts/phase1-same-revision-evidence-bundle.ts"
+      },
+      {
+        "name": "pr-summary",
+        "legacyScript": "release:pr-summary",
+        "runner": "node --import tsx ./scripts/release-pr-comment.ts"
+      },
+      {
+        "name": "production:rollback-drill",
+        "legacyScript": "release:production:rollback-drill",
+        "runner": "node --import tsx ./scripts/release-production-rollback-drill.ts"
+      },
+      {
+        "name": "readiness:dashboard",
+        "legacyScript": "release:readiness:dashboard",
+        "runner": "node --import tsx ./scripts/release-readiness-dashboard.ts"
+      },
+      {
+        "name": "readiness:snapshot",
+        "legacyScript": "release:readiness:snapshot",
+        "runner": "node --import tsx ./scripts/release-readiness-snapshot.ts"
+      },
+      {
+        "name": "reconnect-soak",
+        "legacyScript": "release:reconnect-soak",
+        "runner": "node --import tsx ./scripts/release-candidate-reconnect-soak.ts"
+      },
+      {
+        "name": "runtime-observability:bundle",
+        "legacyScript": "release:runtime-observability:bundle",
+        "runner": "node --import tsx ./scripts/runtime-observability-bundle.ts"
+      },
+      {
+        "name": "runtime-observability:evidence",
+        "legacyScript": "release:runtime-observability:evidence",
+        "runner": "node --import tsx ./scripts/runtime-observability-evidence.ts"
+      },
+      {
+        "name": "runtime-observability:gate",
+        "legacyScript": "release:runtime-observability:gate",
+        "runner": "node --import tsx ./scripts/runtime-observability-gate.ts"
+      },
+      {
+        "name": "runtime:slo-summary",
+        "legacyScript": "release:runtime:slo-summary",
+        "runner": "node --import tsx ./scripts/runtime-slo-summary.ts"
+      },
+      {
+        "name": "same-candidate:evidence-audit",
+        "legacyScript": "release:same-candidate:evidence-audit",
+        "runner": "node --import tsx ./scripts/same-candidate-evidence-audit.ts"
+      },
+      {
+        "name": "wechat:assets-hotfix",
+        "legacyScript": "release:wechat:assets-hotfix",
+        "runner": "node --import tsx ./scripts/release-wechat-assets-hotfix.ts"
+      },
+      {
+        "name": "wechat:commercial-verification",
+        "legacyScript": "release:wechat:commercial-verification",
+        "runner": "node --import tsx ./scripts/wechat-commercial-verification.ts"
+      },
+      {
+        "name": "wechat:install-launch-evidence",
+        "legacyScript": "release:wechat:install-launch-evidence",
+        "runner": "node --import tsx ./scripts/wechat-package-install-launch-evidence.ts"
+      },
+      {
+        "name": "wechat:rehearsal",
+        "legacyScript": "release:wechat:rehearsal",
+        "runner": "node --import tsx ./scripts/wechat-release-rehearsal.ts"
+      }
+    ]
+  },
+  "validate": {
+    "commands": [
+      {
+        "name": "analytics-schema",
+        "legacyScript": "validate:analytics-schema",
+        "runner": "node --import tsx ./scripts/validate-analytics-schema.ts"
+      },
+      {
+        "name": "assets",
+        "legacyScript": "validate:assets",
+        "runner": "node --import tsx ./scripts/validate-assets.ts"
+      },
+      {
+        "name": "battle",
+        "legacyScript": "validate:battle",
+        "runner": "node --import tsx ./scripts/validate-battle-balance.ts"
+      },
+      {
+        "name": "content-pack",
+        "legacyScript": "validate:content-pack",
+        "runner": "node --import tsx ./scripts/validate-content-pack.ts"
+      },
+      {
+        "name": "content-pack:all",
+        "legacyScript": "validate:content-pack:all",
+        "runner": "npm run validate -- map-object-visuals && node --import tsx ./scripts/validate-content-pack.ts --map-pack frontier-basin --map-pack stonewatch-fork --map-pack ridgeway-crossing --map-pack highland-reach --map-pack amber-fields --map-pack ironpass-gorge --map-pack splitrock-canyon --map-pack bogfen-crossing --map-pack murkveil-delta --map-pack frostwatch-ridge --map-pack ashpeak-ascent --map-pack thornwall-divide --map-pack phase2 --map-pack phase2-frontier-expanded --map-pack phase2-verdant-vale"
+      },
+      {
+        "name": "content-smoke",
+        "legacyScript": "validate:content-smoke",
+        "runner": "node --import tsx ./scripts/content-smoke-gate.ts"
+      },
+      {
+        "name": "e2e:fixtures",
+        "legacyScript": "validate:e2e:fixtures",
+        "runner": "node --import tsx ./scripts/validate-e2e-config-fixtures.ts"
+      },
+      {
+        "name": "k8s-configmap",
+        "legacyScript": "validate:k8s-configmap",
+        "runner": "node --import tsx ./scripts/validate-k8s-configmap-placeholders.ts"
+      },
+      {
+        "name": "map-object-visuals",
+        "legacyScript": "validate:map-object-visuals",
+        "runner": "node --import tsx ./scripts/validate-map-object-visuals.ts"
+      },
+      {
+        "name": "production-env",
+        "legacyScript": "validate:production-env",
+        "runner": "node ./scripts/validate-production-env.mjs"
+      },
+      {
+        "name": "quickstart",
+        "legacyScript": "validate:quickstart",
+        "runner": "node ./scripts/validate-local-dev-quickstart.mjs"
+      },
+      {
+        "name": "quickstart:contract",
+        "legacyScript": "validate:quickstart:contract",
+        "runner": "node ./scripts/run-contributor-quickstart-contract.mjs"
+      },
+      {
+        "name": "redis-scaling",
+        "legacyScript": "validate:redis-scaling",
+        "runner": "node --import tsx ./scripts/validate-redis-scaling.ts"
+      },
+      {
+        "name": "season-reward-config",
+        "legacyScript": "validate:season-reward-config",
+        "runner": "node --import tsx ./scripts/validate-season-reward-config.ts"
+      },
+      {
+        "name": "wechat-build",
+        "legacyScript": "validate:wechat-build",
+        "runner": "node --import tsx ./scripts/validate-wechat-minigame-build.ts"
+      },
+      {
+        "name": "wechat-rc",
+        "legacyScript": "validate:wechat-rc",
+        "runner": "node --import tsx ./scripts/validate-wechat-release-candidate.ts"
+      }
+    ]
+  },
+  "smoke": {
+    "commands": [
+      {
+        "name": "ci",
+        "legacyScript": "smoke:ci",
+        "runner": "node ./scripts/smoke-ci.mjs"
+      },
+      {
+        "name": "client:boot-room",
+        "legacyScript": "smoke:client:boot-room",
+        "runner": "node --import tsx ./scripts/client-boot-room-smoke.ts"
+      },
+      {
+        "name": "client:release-candidate",
+        "legacyScript": "smoke:client:release-candidate",
+        "runner": "node --import tsx ./scripts/release-candidate-client-artifact-smoke.ts"
+      },
+      {
+        "name": "cocos:canonical-journey",
+        "legacyScript": "smoke:cocos:canonical-journey",
+        "runner": "node --import tsx ./scripts/cocos-primary-client-journey-evidence.ts"
+      },
+      {
+        "name": "wechat-release",
+        "legacyScript": "smoke:wechat-release",
+        "runner": "node --import tsx ./scripts/smoke-wechat-minigame-release.ts"
+      }
+    ]
+  },
+  "test": {
+    "commands": [
+      {
+        "name": "candidate-evidence-freshness-guard",
+        "legacyScript": "test:candidate-evidence-freshness-guard",
+        "runner": "node --import tsx --test ./scripts/test/candidate-evidence-freshness-guard.test.ts"
+      },
+      {
+        "name": "capacity-planning-report",
+        "legacyScript": "test:capacity-planning-report",
+        "runner": "node --import tsx --test ./scripts/test/capacity-planning-report.test.ts"
+      },
+      {
+        "name": "ci-trend-summary",
+        "legacyScript": "test:ci-trend-summary",
+        "runner": "node --import tsx --test ./scripts/test/publish-ci-trend-summary.test.ts"
+      },
+      {
+        "name": "client:config-center",
+        "legacyScript": "test:client:config-center",
+        "runner": "node --import tsx --test ./apps/client/test/config-center-controller.test.ts ./apps/client/test/config-center.test.ts ./apps/client/test/config-center-render.test.ts"
+      },
+      {
+        "name": "cocos-rc-reconnect-replay",
+        "legacyScript": "test:cocos-rc-reconnect-replay",
+        "runner": "node --import tsx --test ./scripts/test/cocos-rc-reconnect-replay.test.ts"
+      },
+      {
+        "name": "cocos:coverage",
+        "legacyScript": "test:cocos:coverage",
+        "runner": "node --import tsx ./scripts/ci-v8-coverage.ts --suite cocos-client"
+      },
+      {
+        "name": "cocos:primary-journey",
+        "legacyScript": "test:cocos:primary-journey",
+        "runner": "node --import tsx --test ./apps/cocos-client/test/cocos-primary-client-journey.test.ts"
+      },
+      {
+        "name": "cocos:runtime-smoke",
+        "legacyScript": "test:cocos:runtime-smoke",
+        "runner": "node --import tsx --test ./apps/cocos-client/test/cocos-primary-runtime-smoke.test.ts"
+      },
+      {
+        "name": "codex-branches",
+        "legacyScript": "test:codex-branches",
+        "runner": "node --import tsx --test ./scripts/test/codex-automation-branches.test.ts"
+      },
+      {
+        "name": "content-smoke-gate",
+        "legacyScript": "test:content-smoke-gate",
+        "runner": "node --import tsx --test ./scripts/test/content-smoke-gate.test.ts"
+      },
+      {
+        "name": "contracts",
+        "legacyScript": "test:contracts",
+        "runner": "node --import tsx --test ./packages/shared/test/client-payload-contracts.test.ts"
+      },
+      {
+        "name": "coverage:ci",
+        "legacyScript": "test:coverage:ci",
+        "runner": "node --import tsx ./scripts/ci-v8-coverage.ts"
+      },
+      {
+        "name": "db-backup",
+        "legacyScript": "test:db-backup",
+        "runner": "node --import tsx --test ./scripts/test/db-backup.test.ts"
+      },
+      {
+        "name": "db-restore-rehearsal",
+        "legacyScript": "test:db-restore-rehearsal",
+        "runner": "node --import tsx --test ./scripts/test/db-restore-rehearsal.test.ts"
+      },
+      {
+        "name": "db-restore-test",
+        "legacyScript": "test:db-restore-test",
+        "runner": "node --import tsx --test ./scripts/test/db-restore-test.test.ts"
+      },
+      {
+        "name": "e2e",
+        "legacyScript": "test:e2e",
+        "runner": "npm run validate -- e2e:fixtures && playwright test"
+      },
+      {
+        "name": "e2e:all",
+        "legacyScript": "test:e2e:all",
+        "runner": "npm test -- e2e && npm test -- e2e:multiplayer"
+      },
+      {
+        "name": "e2e:golden-path",
+        "legacyScript": "test:e2e:golden-path",
+        "runner": "npm run validate -- e2e:fixtures && playwright test ./tests/e2e/golden-path-player-journey.spec.ts --config=playwright.smoke.config.ts"
+      },
+      {
+        "name": "e2e:h5:connectivity",
+        "legacyScript": "test:e2e:h5:connectivity",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.h5-connectivity.config.ts"
+      },
+      {
+        "name": "e2e:headed",
+        "legacyScript": "test:e2e:headed",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --headed"
+      },
+      {
+        "name": "e2e:multiplayer",
+        "legacyScript": "test:e2e:multiplayer",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts"
+      },
+      {
+        "name": "e2e:multiplayer:headed",
+        "legacyScript": "test:e2e:multiplayer:headed",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts --headed"
+      },
+      {
+        "name": "e2e:multiplayer:smoke",
+        "legacyScript": "test:e2e:multiplayer:smoke",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.smoke.config.ts"
+      },
+      {
+        "name": "e2e:smoke",
+        "legacyScript": "test:e2e:smoke",
+        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.smoke.config.ts"
+      },
+      {
+        "name": "launch-compliance:gate",
+        "legacyScript": "test:launch-compliance:gate",
+        "runner": "node --import tsx --test ./scripts/test/release-launch-compliance-gate.test.ts"
+      },
+      {
+        "name": "minimal-validation-plan",
+        "legacyScript": "test:minimal-validation-plan",
+        "runner": "node --import tsx --test ./scripts/test/minimal-validation-plan.test.ts"
+      },
+      {
+        "name": "multiplayer-protocol-compatibility",
+        "legacyScript": "test:multiplayer-protocol-compatibility",
+        "runner": "node --import tsx ./scripts/multiplayer-protocol-compatibility.ts"
+      },
+      {
+        "name": "multiplayer-protocol-compatibility:unit",
+        "legacyScript": "test:multiplayer-protocol-compatibility:unit",
+        "runner": "node --import tsx --test ./scripts/test/multiplayer-protocol-compatibility.test.ts"
+      },
+      {
+        "name": "onboarding-funnel",
+        "legacyScript": "test:onboarding-funnel",
+        "runner": "node --import tsx --test ./scripts/test/onboarding-funnel-report.test.ts"
+      },
+      {
+        "name": "phase1-candidate-dossier",
+        "legacyScript": "test:phase1-candidate-dossier",
+        "runner": "node --import tsx --test ./scripts/test/phase1-candidate-dossier.test.ts"
+      },
+      {
+        "name": "phase1-candidate-rehearsal",
+        "legacyScript": "test:phase1-candidate-rehearsal",
+        "runner": "node --import tsx --test ./scripts/test/phase1-candidate-rehearsal.test.ts"
+      },
+      {
+        "name": "phase1-exit-dossier-freshness-gate",
+        "legacyScript": "test:phase1-exit-dossier-freshness-gate",
+        "runner": "node --import tsx --test ./scripts/test/phase1-exit-dossier-freshness-gate.test.ts"
+      },
+      {
+        "name": "phase1-release-evidence-drift-gate",
+        "legacyScript": "test:phase1-release-evidence-drift-gate",
+        "runner": "node --import tsx --test ./scripts/test/phase1-release-evidence-drift-gate.test.ts"
+      },
+      {
+        "name": "phase1-release-persistence",
+        "legacyScript": "test:phase1-release-persistence",
+        "runner": "node --import tsx ./scripts/phase1-release-persistence-regression.ts"
+      },
+      {
+        "name": "phase1-release-persistence:frontier",
+        "legacyScript": "test:phase1-release-persistence:frontier",
+        "runner": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack frontier-basin"
+      },
+      {
+        "name": "phase1-release-persistence:highland",
+        "legacyScript": "test:phase1-release-persistence:highland",
+        "runner": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack highland-reach"
+      },
+      {
+        "name": "phase1-release-persistence:ridgeway",
+        "legacyScript": "test:phase1-release-persistence:ridgeway",
+        "runner": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack ridgeway-crossing"
+      },
+      {
+        "name": "phase1-release-persistence:stonewatch",
+        "legacyScript": "test:phase1-release-persistence:stonewatch",
+        "runner": "node --import tsx ./scripts/phase1-release-persistence-regression.ts --map-pack stonewatch-fork"
+      },
+      {
+        "name": "phase1-same-revision-evidence-bundle",
+        "legacyScript": "test:phase1-same-revision-evidence-bundle",
+        "runner": "node --import tsx --test ./scripts/test/phase1-same-revision-evidence-bundle.test.ts"
+      },
+      {
+        "name": "player-names:scan",
+        "legacyScript": "test:player-names:scan",
+        "runner": "node --import tsx --test ./scripts/test/scan-player-display-names.test.ts"
+      },
+      {
+        "name": "release-candidate-manifest",
+        "legacyScript": "test:release-candidate-manifest",
+        "runner": "node --import tsx --test ./scripts/test/release-candidate-manifest.test.ts"
+      },
+      {
+        "name": "release-candidate-reconnect-soak",
+        "legacyScript": "test:release-candidate-reconnect-soak",
+        "runner": "node --import tsx --test ./scripts/test/release-candidate-reconnect-soak.test.ts"
+      },
+      {
+        "name": "release-evidence-lifecycle",
+        "legacyScript": "test:release-evidence-lifecycle",
+        "runner": "node --import tsx --test ./scripts/test/release-evidence-lifecycle.test.ts"
+      },
+      {
+        "name": "release-gate-summary",
+        "legacyScript": "test:release-gate-summary",
+        "runner": "node --import tsx --test ./scripts/test/release-gate-summary.test.ts"
+      },
+      {
+        "name": "release-go-no-go-packet",
+        "legacyScript": "test:release-go-no-go-packet",
+        "runner": "node --import tsx --test ./scripts/test/release-go-no-go-decision-packet.test.ts"
+      },
+      {
+        "name": "release-health-summary",
+        "legacyScript": "test:release-health-summary",
+        "runner": "node --import tsx --test ./scripts/test/release-health-summary.test.ts ./scripts/test/release-health-summary-cli.test.ts"
+      },
+      {
+        "name": "release-health-trend-baseline",
+        "legacyScript": "test:release-health-trend-baseline",
+        "runner": "node --import tsx --test ./scripts/test/release-health-trend-baseline.test.ts"
+      },
+      {
+        "name": "release-ops-ownership-matrix",
+        "legacyScript": "test:release-ops-ownership-matrix",
+        "runner": "node --import tsx --test ./scripts/test/release-ops-ownership-matrix.test.ts"
+      },
+      {
+        "name": "release-readiness-dashboard",
+        "legacyScript": "test:release-readiness-dashboard",
+        "runner": "node --import tsx --test ./scripts/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard.test.ts ./apps/cocos-client/test/release-readiness-dashboard-aggregation.test.ts"
+      },
+      {
+        "name": "release-script-inventory",
+        "legacyScript": "test:release-script-inventory",
+        "runner": "node --import tsx --test ./scripts/test/release-script-inventory.test.ts"
+      },
+      {
+        "name": "repo-doctor",
+        "legacyScript": "test:repo-doctor",
+        "runner": "node --import tsx --test ./scripts/test/repo-doctor.test.ts"
+      },
+      {
+        "name": "run-watchdog",
+        "legacyScript": "test:run-watchdog",
+        "runner": "node --import tsx --test ./scripts/test/run-watchdog.test.ts"
+      },
+      {
+        "name": "runtime-health-contract",
+        "legacyScript": "test:runtime-health-contract",
+        "runner": "node --import tsx --test ./scripts/test/runtime-health-contract.test.ts"
+      },
+      {
+        "name": "runtime-observability-gate",
+        "legacyScript": "test:runtime-observability-gate",
+        "runner": "node --import tsx --test ./scripts/test/runtime-observability-gate.test.ts"
+      },
+      {
+        "name": "runtime-observability:bundle",
+        "legacyScript": "test:runtime-observability:bundle",
+        "runner": "node --import tsx --test ./scripts/test/runtime-observability-bundle.test.ts"
+      },
+      {
+        "name": "runtime-observability:evidence",
+        "legacyScript": "test:runtime-observability:evidence",
+        "runner": "node --import tsx --test ./scripts/test/runtime-observability-evidence.test.ts"
+      },
+      {
+        "name": "runtime-regression",
+        "legacyScript": "test:runtime-regression",
+        "runner": "node --import tsx --test ./scripts/test/compare-runtime-regression.test.ts"
+      },
+      {
+        "name": "runtime-slo-summary",
+        "legacyScript": "test:runtime-slo-summary",
+        "runner": "node --import tsx --test ./scripts/test/runtime-slo-summary.test.ts"
+      },
+      {
+        "name": "same-candidate-evidence-audit",
+        "legacyScript": "test:same-candidate-evidence-audit",
+        "runner": "node --import tsx --test ./scripts/test/same-candidate-evidence-audit.test.ts"
+      },
+      {
+        "name": "shared",
+        "legacyScript": "test:shared",
+        "runner": "node --import tsx --test \"packages/shared/test/**/*.test.ts\""
+      },
+      {
+        "name": "smoke:ci",
+        "legacyScript": "test:smoke:ci",
+        "runner": "node --import tsx --test ./scripts/test/smoke-ci.test.ts"
+      },
+      {
+        "name": "sync-governance-matrix",
+        "legacyScript": "test:sync-governance-matrix",
+        "runner": "node --import tsx --test ./scripts/test/sync-governance-matrix.test.ts"
+      },
+      {
+        "name": "sync-governance:matrix",
+        "legacyScript": "test:sync-governance:matrix",
+        "runner": "node --import tsx ./scripts/sync-governance-matrix.ts"
+      },
+      {
+        "name": "validate-assets",
+        "legacyScript": "test:validate-assets",
+        "runner": "node --import tsx --test ./scripts/test/validate-assets.test.ts"
+      },
+      {
+        "name": "validate-map-object-visuals",
+        "legacyScript": "test:validate-map-object-visuals",
+        "runner": "node --import tsx --test ./scripts/test/validate-map-object-visuals.test.ts"
+      },
+      {
+        "name": "validate-production-env",
+        "legacyScript": "test:validate-production-env",
+        "runner": "node --import tsx --test ./scripts/test/validate-production-env.test.ts"
+      },
+      {
+        "name": "validate:k8s-configmap",
+        "legacyScript": "test:validate:k8s-configmap",
+        "runner": "node --import tsx --test ./scripts/test/validate-k8s-configmap-placeholders.test.ts"
+      },
+      {
+        "name": "wechat-assets-hotfix",
+        "legacyScript": "test:wechat-assets-hotfix",
+        "runner": "node --import tsx --test ./scripts/test/release-wechat-assets-hotfix.test.ts ./apps/cocos-client/test/cocos-wechat-hotfix.test.ts ./apps/cocos-client/test/cocos-wechat-build.test.ts"
+      },
+      {
+        "name": "wechat-commercial-verification",
+        "legacyScript": "test:wechat-commercial-verification",
+        "runner": "node --import tsx --test ./scripts/test/wechat-commercial-verification.test.ts"
+      }
+    ]
+  },
+  "db": {
+    "commands": [
+      {
+        "name": "init:mysql",
+        "legacyScript": "db:init:mysql",
+        "runner": "node --import tsx ./scripts/init-mysql.ts"
+      },
+      {
+        "name": "migrate",
+        "legacyScript": "db:migrate",
+        "runner": "node --import tsx ./scripts/migrate.ts"
+      },
+      {
+        "name": "migrate:rollback",
+        "legacyScript": "db:migrate:rollback",
+        "runner": "node --import tsx ./scripts/migrate-rollback.ts"
+      },
+      {
+        "name": "profiles:delete",
+        "legacyScript": "db:profiles:delete",
+        "runner": "node --import tsx ./scripts/manage-player-room-profiles.ts delete"
+      },
+      {
+        "name": "profiles:list",
+        "legacyScript": "db:profiles:list",
+        "runner": "node --import tsx ./scripts/manage-player-room-profiles.ts list"
+      },
+      {
+        "name": "profiles:prune",
+        "legacyScript": "db:profiles:prune",
+        "runner": "node --import tsx ./scripts/manage-player-room-profiles.ts prune"
+      },
+      {
+        "name": "restore:rehearsal",
+        "legacyScript": "db:restore:rehearsal",
+        "runner": "bash ./scripts/db-restore-rehearsal.sh"
+      },
+      {
+        "name": "restore:test",
+        "legacyScript": "db:restore:test",
+        "runner": "bash ./scripts/db-restore-test.sh"
+      },
+      {
+        "name": "snapshots:delete",
+        "legacyScript": "db:snapshots:delete",
+        "runner": "node --import tsx ./scripts/manage-room-snapshots.ts delete"
+      },
+      {
+        "name": "snapshots:list",
+        "legacyScript": "db:snapshots:list",
+        "runner": "node --import tsx ./scripts/manage-room-snapshots.ts list"
+      },
+      {
+        "name": "snapshots:prune",
+        "legacyScript": "db:snapshots:prune",
+        "runner": "node --import tsx ./scripts/manage-room-snapshots.ts prune"
+      }
+    ]
+  },
+  "typecheck": {
+    "commands": [
+      {
+        "name": "ci",
+        "legacyScript": "typecheck:ci",
+        "runner": "npm run typecheck -- shared && npm run typecheck -- server && npm run typecheck -- client:h5 && npm run typecheck -- cocos"
+      },
+      {
+        "name": "client",
+        "legacyScript": "typecheck:client",
+        "runner": "npm run typecheck -- cocos"
+      },
+      {
+        "name": "client:h5",
+        "legacyScript": "typecheck:client:h5",
+        "runner": "tsc -p apps/client/tsconfig.json --noEmit"
+      },
+      {
+        "name": "cocos",
+        "legacyScript": "typecheck:cocos",
+        "runner": "tsc -p apps/cocos-client/tsconfig.json --noEmit"
+      },
+      {
+        "name": "ops",
+        "legacyScript": "typecheck:ops",
+        "runner": "tsc -p tsconfig.ops-tooling.json --noEmit"
+      },
+      {
+        "name": "server",
+        "legacyScript": "typecheck:server",
+        "runner": "tsc -p apps/server/tsconfig.json --noEmit"
+      },
+      {
+        "name": "shared",
+        "legacyScript": "typecheck:shared",
+        "runner": "tsc -p packages/shared/tsconfig.json --noEmit"
+      }
+    ]
+  },
+  "dev": {
+    "commands": [
+      {
+        "name": "client",
+        "legacyScript": "dev:client",
+        "runner": "npm run dev -- client:h5"
+      },
+      {
+        "name": "client:h5",
+        "legacyScript": "dev:client:h5",
+        "runner": "vite --config apps/client/vite.config.ts"
+      },
+      {
+        "name": "server",
+        "legacyScript": "dev:server",
+        "runner": "node --import tsx ./apps/server/src/dev-server.ts"
+      }
+    ]
+  }
+}

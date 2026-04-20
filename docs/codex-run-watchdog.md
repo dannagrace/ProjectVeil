@@ -8,10 +8,10 @@ The watchdog is intentionally read-only. It inspects live processes, maps each c
 
 The command scans live processes and keeps only candidate validation or operator-inspection jobs such as:
 
-- `npm run validate:*`
-- `npm run test:e2e*` and raw `playwright test`
-- `npm run release:*` evidence-generation and soak commands
-- `npm run doctor` and `npm run validate:quickstart`
+- `npm run validate -- <command>`
+- `npm test -- e2e*` and raw `playwright test`
+- `npm run release -- <command>` evidence-generation and soak commands
+- `npm run doctor` and `npm run validate -- quickstart`
 - Codex or Claude sessions whose command line still contains validation/test intent
 
 Each job is matched to an expected window. A job that exceeds its window is marked `suspect`.

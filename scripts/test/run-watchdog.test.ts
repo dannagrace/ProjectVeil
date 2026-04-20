@@ -8,7 +8,7 @@ import {
 } from "../run-watchdog.ts";
 
 test("detectWatchRule identifies Playwright validation windows", () => {
-  const rule = detectWatchRule("npm run test:e2e:smoke");
+  const rule = detectWatchRule("npm test -- e2e:smoke");
 
   assert.deepEqual(rule, {
     id: "playwright-e2e",
@@ -18,7 +18,7 @@ test("detectWatchRule identifies Playwright validation windows", () => {
 });
 
 test("inferProcessIssueNumber prefers branch issue naming and falls back to command hints", () => {
-  assert.equal(inferProcessIssueNumber("codex/issue-998-run-watchdog", "npm run validate:content-pack"), 998);
+  assert.equal(inferProcessIssueNumber("codex/issue-998-run-watchdog", "npm run validate -- content-pack"), 998);
   assert.equal(inferProcessIssueNumber(null, "node ./tools/issue-777-check.js"), 777);
 });
 
@@ -29,21 +29,21 @@ test("buildRunWatchdogReport flags jobs beyond their expected window and maps pr
         pid: 1201,
         user: "operator",
         elapsedSeconds: 4_200,
-        command: "npm run validate:wechat-rc",
+        command: "npm run validate -- wechat-rc",
         cwd: "/srv/ProjectVeil/.worktrees/issue-998"
       },
       {
         pid: 1202,
         user: "operator",
         elapsedSeconds: 300,
-        command: "npm run validate:content-pack",
+        command: "npm run validate -- content-pack",
         cwd: "/srv/ProjectVeil/.worktrees/issue-999"
       },
       {
         pid: 1203,
         user: "operator",
         elapsedSeconds: 3_600,
-        command: "npm run dev:client",
+        command: "npm run dev -- client",
         cwd: "/srv/ProjectVeil"
       }
     ],
@@ -111,14 +111,14 @@ test("buildRunWatchdogReport respects repo scope filtering unless all repos is e
       pid: 2001,
       user: "operator",
       elapsedSeconds: 1_600,
-      command: "npm run validate:content-pack",
+      command: "npm run validate -- content-pack",
       cwd: "/srv/ProjectVeil"
     },
     {
       pid: 2002,
       user: "operator",
       elapsedSeconds: 1_600,
-      command: "npm run validate:content-pack",
+      command: "npm run validate -- content-pack",
       cwd: "/srv/OtherRepo"
     }
   ];

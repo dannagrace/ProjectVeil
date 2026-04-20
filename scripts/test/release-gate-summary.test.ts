@@ -1278,7 +1278,7 @@ test("buildReleaseGateSummaryReport reports blocked WeChat device evidence disti
     report.triage.blockers.map((entry) => entry.gateId),
     ["release-readiness", "wechat-release"]
   );
-  assert.match(report.triage.blockers[0]?.nextStep ?? "", /release:gate:summary -- --target-surface wechat/);
+  assert.match(report.triage.blockers[0]?.nextStep ?? "", /npm run release -- gate:summary -- --target-surface wechat/);
   assert.match(report.triage.blockers[1]?.summary ?? "", /blocked wechat/i);
   assert.match(report.gates[0]?.summary ?? "", /not release-ready/);
   assert.match(report.gates.find((entry) => entry.id === "wechat-release")?.summary ?? "", /blocked/i);
@@ -1971,6 +1971,6 @@ test("buildConfigChangeRiskSummary uses the latest applied publish audit and map
   assert.equal(summary.recommendCanary, true);
   assert.deepEqual(summary.changes?.map((change) => change.documentId), ["mapObjects", "units"]);
   assert.match(summary.changes?.[0]?.reason ?? "", /结构变更/);
-  assert.equal(summary.suggestedValidationActions?.includes("npm run validate:battle"), true);
+  assert.equal(summary.suggestedValidationActions?.includes("npm run validate -- battle"), true);
   assert.equal(summary.impactedModules?.includes("招募库存"), true);
 });

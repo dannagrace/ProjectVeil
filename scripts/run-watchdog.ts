@@ -96,7 +96,7 @@ const WATCH_RULES: WatchRule[] = [
     expectedWindowMinutes: 30,
     patterns: [
       /\bplaywright test\b/i,
-      /\bnpm run test:e2e(?::[a-z0-9:-]+)?\b/i
+      /\bnpm test -- e2e(?::[a-z0-9:-]+)?\b/i
     ]
   },
   {
@@ -104,7 +104,7 @@ const WATCH_RULES: WatchRule[] = [
     label: "Reconnect soak validation",
     expectedWindowMinutes: 90,
     patterns: [
-      /\bnpm run release:reconnect-soak\b/i,
+      /\bnpm run release -- reconnect-soak\b/i,
       /\bstress:rooms:reconnect-soak\b/i,
       /release-candidate-reconnect-soak/i
     ]
@@ -114,9 +114,9 @@ const WATCH_RULES: WatchRule[] = [
     label: "WeChat release validation",
     expectedWindowMinutes: 45,
     patterns: [
-      /\bnpm run validate:wechat-rc\b/i,
+      /\bnpm run validate -- wechat-rc\b/i,
       /\bnpm run check:wechat-build\b/i,
-      /\bnpm run smoke:wechat-release\b/i,
+      /\bnpm run smoke -- wechat-release\b/i,
       /validate-wechat-release-candidate/i
     ]
   },
@@ -125,7 +125,7 @@ const WATCH_RULES: WatchRule[] = [
     label: "Release evidence generation",
     expectedWindowMinutes: 60,
     patterns: [
-      /\bnpm run release:(?:phase1|gate|health|runtime|cocos|candidate|same-candidate|readiness)/i,
+      /\bnpm run release -- (?:phase1|gate|health|runtime|cocos|candidate|same-candidate|readiness)/i,
       /phase1-candidate-rehearsal/i,
       /release-readiness-dashboard/i
     ]
@@ -135,7 +135,7 @@ const WATCH_RULES: WatchRule[] = [
     label: "Validation script",
     expectedWindowMinutes: 20,
     patterns: [
-      /\bnpm run validate:[a-z0-9:-]+\b/i,
+      /\bnpm run validate -- [a-z0-9:-]+\b/i,
       /\/scripts\/validate-[^ ]+/i,
       /\bnode\b.*\bscripts\/validate-[^ ]+/i
     ]
@@ -147,7 +147,7 @@ const WATCH_RULES: WatchRule[] = [
     patterns: [
       /\bnpm run doctor\b/i,
       /repo-doctor\.mjs/i,
-      /\bnpm run validate:quickstart\b/i
+      /\bnpm run validate -- quickstart\b/i
     ]
   },
   {

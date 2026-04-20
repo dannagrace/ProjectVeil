@@ -38,7 +38,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run multiplayer Playwright suite
-        run: npm run test:e2e:multiplayer
+        run: npm test -- e2e:multiplayer
 
       - name: Upload multiplayer Playwright artifacts
         if: always()

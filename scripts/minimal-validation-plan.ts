@@ -74,31 +74,31 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "validate-quickstart",
     kind: "command",
-    command: "npm run validate:quickstart",
+    command: "npm run validate -- quickstart",
     summary: "Re-check contributor setup or local-dev boot assumptions when docs or runtime boot guidance changed."
   },
   {
     id: "typecheck-shared",
     kind: "command",
-    command: "npm run typecheck:shared",
+    command: "npm run typecheck -- shared",
     summary: "Typecheck shared gameplay logic and payload helpers."
   },
   {
     id: "test-shared",
     kind: "command",
-    command: "npm run test:shared",
+    command: "npm test -- shared",
     summary: "Run shared gameplay and contract-adjacent unit coverage."
   },
   {
     id: "test-contracts",
     kind: "command",
-    command: "npm run test:contracts",
+    command: "npm test -- contracts",
     summary: "Re-check shared payload or snapshot contracts when cross-runtime message shapes changed."
   },
   {
     id: "typecheck-server",
     kind: "command",
-    command: "npm run typecheck:server",
+    command: "npm run typecheck -- server",
     summary: "Typecheck the server runtime surface."
   },
   {
@@ -109,25 +109,25 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "typecheck-client-h5",
     kind: "command",
-    command: "npm run typecheck:client:h5",
+    command: "npm run typecheck -- client:h5",
     summary: "Typecheck the H5 shell and browser-facing client code."
   },
   {
     id: "test-e2e-smoke",
     kind: "command",
-    command: "npm run test:e2e:smoke",
+    command: "npm test -- e2e:smoke",
     summary: "Cover the baseline H5 smoke path."
   },
   {
     id: "test-e2e-h5-connectivity",
     kind: "command",
-    command: "npm run test:e2e:h5:connectivity",
+    command: "npm test -- e2e:h5:connectivity",
     summary: "Escalate when browser-to-server connectivity assumptions changed."
   },
   {
     id: "typecheck-cocos",
     kind: "command",
-    command: "npm run typecheck:cocos",
+    command: "npm run typecheck -- cocos",
     summary: "Typecheck the Cocos primary client."
   },
   {
@@ -146,43 +146,43 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "typecheck-ci",
     kind: "command",
-    command: "npm run typecheck:ci",
+    command: "npm run typecheck -- ci",
     summary: "Typecheck all major CI-covered surfaces."
   },
   {
     id: "validate-content-pack",
     kind: "command",
-    command: "npm run validate:content-pack",
+    command: "npm run validate -- content-pack",
     summary: "Validate shipped config/content inputs."
   },
   {
     id: "validate-content-pack-all",
     kind: "command",
-    command: "npm run validate:content-pack:all",
+    command: "npm run validate -- content-pack:all",
     summary: "Escalate when the change affects multiple shipped map packs."
   },
   {
     id: "validate-battle",
     kind: "command",
-    command: "npm run validate:battle",
+    command: "npm run validate -- battle",
     summary: "Validate balance, skills, or unit tuning changes."
   },
   {
     id: "test-phase1-release-persistence",
     kind: "command",
-    command: "npm run test:phase1-release-persistence",
+    command: "npm test -- phase1-release-persistence",
     summary: "Cover release-facing persistence or migration expectations."
   },
   {
     id: "validate-wechat-rc",
     kind: "command",
-    command: "npm run validate:wechat-rc",
+    command: "npm run validate -- wechat-rc",
     summary: "Validate WeChat release-candidate evidence when packaging or candidate assembly changed."
   },
   {
     id: "smoke-wechat-release",
     kind: "command",
-    command: "npm run smoke:wechat-release",
+    command: "npm run smoke -- wechat-release",
     summary: "Escalate when device/runtime smoke handling or WeChat release evidence changed."
   },
   {
@@ -194,19 +194,19 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "release-cocos-rc-bundle",
     kind: "command",
-    command: "npm run release:cocos-rc:bundle",
+    command: "npm run release -- cocos-rc:bundle",
     summary: "Rebuild Cocos release-candidate evidence when candidate bundle assembly changed."
   },
   {
     id: "release-readiness-dashboard",
     kind: "command",
-    command: "npm run release:readiness:dashboard",
+    command: "npm run release -- readiness:dashboard",
     summary: "Rebuild the operator-facing readiness dashboard when observability or release health rollups changed."
   },
   {
     id: "release-health-summary",
     kind: "command",
-    command: "npm run release:health:summary",
+    command: "npm run release -- health:summary",
     summary: "Refresh the top-level release health rollup when observability or gate semantics changed."
   },
   {
@@ -218,7 +218,7 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "test-coverage-ci",
     kind: "command",
-    command: "npm run test:coverage:ci",
+    command: "npm test -- coverage:ci",
     summary: "Escalate when repo-wide tooling or dependency changes widen the blast radius."
   }
 ];

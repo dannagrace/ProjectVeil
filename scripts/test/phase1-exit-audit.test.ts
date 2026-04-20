@@ -241,13 +241,13 @@ function writePassingArtifacts(workspace: string, revision: string): {
     summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
     checks: [
       { id: "npm-test", title: "Unit and integration regression", required: true, status: "passed", command: "npm test" },
-      { id: "typecheck-ci", required: true, status: "passed", command: "npm run typecheck:ci" },
-      { id: "e2e-smoke", required: true, status: "passed", command: "npm run test:e2e:smoke" },
+      { id: "typecheck-ci", required: true, status: "passed", command: "npm run typecheck -- ci" },
+      { id: "e2e-smoke", required: true, status: "passed", command: "npm test -- e2e:smoke" },
       {
         id: "e2e-multiplayer-smoke",
         required: true,
         status: "passed",
-        command: "npm run test:e2e:multiplayer:smoke"
+        command: "npm test -- e2e:multiplayer:smoke"
       },
       {
         id: "cocos-release-readiness",
@@ -458,13 +458,13 @@ test("phase1 exit audit distinguishes blocking failures from stale pending evide
     summary: { status: "failed", requiredFailed: 1, requiredPending: 0 },
     checks: [
       { id: "npm-test", required: true, status: "failed", command: "npm test" },
-      { id: "typecheck-ci", required: true, status: "passed", command: "npm run typecheck:ci" },
-      { id: "e2e-smoke", required: true, status: "passed", command: "npm run test:e2e:smoke" },
+      { id: "typecheck-ci", required: true, status: "passed", command: "npm run typecheck -- ci" },
+      { id: "e2e-smoke", required: true, status: "passed", command: "npm test -- e2e:smoke" },
       {
         id: "e2e-multiplayer-smoke",
         required: true,
         status: "passed",
-        command: "npm run test:e2e:multiplayer:smoke"
+        command: "npm test -- e2e:multiplayer:smoke"
       },
       {
         id: "cocos-release-readiness",

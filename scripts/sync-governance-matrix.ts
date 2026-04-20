@@ -84,7 +84,7 @@ interface SyncGovernanceMatrixReport {
   scenarios: SyncGovernanceScenarioResult[];
 }
 
-const FIXTURE_COMMAND = "npm run validate:e2e:fixtures";
+const FIXTURE_COMMAND = "npm run validate -- e2e:fixtures";
 const OUTPUT_TAIL_BYTES = 4000;
 const PLAYWRIGHT_REPORTER = "json";
 const SCENARIOS: SyncGovernanceScenarioDefinition[] = [

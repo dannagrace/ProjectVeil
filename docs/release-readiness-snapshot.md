@@ -1,25 +1,25 @@
 # Release Readiness Snapshot
 
-`npm run release:readiness:snapshot` generates a machine-readable snapshot for the current revision and records the release gate results in one place.
+`npm run release -- readiness:snapshot` generates a machine-readable snapshot for the current revision and records the release gate results in one place.
 
 If reviewers need the short Phase 1 hardening checklist that maps each remaining gap to its closure command, artifact, or manual sign-off, open [`docs/phase1-hardening-reviewer-checklist.md`](./phase1-hardening-reviewer-checklist.md).
 
-If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release:readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
+If you want a single human-readable Phase 1 dashboard on top of the snapshot plus runtime/WeChat/Cocos evidence, use `npm run release -- readiness:dashboard` and see `docs/release-readiness-dashboard.md`.
 
-If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release:gate:summary` and see `docs/release-gate-summary.md`.
+If you want a CI-oriented pass/fail summary that also folds in packaged H5 smoke and WeChat release evidence, use `npm run release -- gate:summary` and see `docs/release-gate-summary.md`.
 
 For config publishes, follow [`docs/config-deployment-safety.md`](./config-deployment-safety.md): prefer the 03:00-05:00 low-traffic window, verify active battles are drained or allow the runtime gate to defer the apply, and watch the config rollback window (`CONFIG_ROLLBACK_WINDOW_MS`, default `120000` ms) before treating the deploy as complete.
 
 The default automated checks are:
 
 - `npm test`
-- `npm run typecheck:ci`
-- `npm run test:e2e:smoke`
-- `npm run test:e2e:multiplayer:smoke`
-- `npm run validate:map-object-visuals`
-- `npm run test:phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json`
-- `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
-- `npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
+- `npm run typecheck -- ci`
+- `npm test -- e2e:smoke`
+- `npm test -- e2e:multiplayer:smoke`
+- `npm run validate -- map-object-visuals`
+- `npm test -- phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json`
+- `npm test -- sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json`
+- `npm test -- multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json`
 - `npm run check:cocos-release-readiness`
 
 The Phase 1 persistence regression intentionally keeps config/content validation tied to the same release-hardening story:
@@ -27,28 +27,28 @@ The Phase 1 persistence regression intentionally keeps config/content validation
 - it validates the shipped default `phase1` pack, all 12 additional Phase 1 presets, and both `phase2` validation presets
 - it exercises persistence-backed player/account/world carryover with representative resources, hero growth, replay history, and event history
 
-`npm run validate:map-object-visuals` now runs inside the default snapshot gate before downstream release aggregation. Treat any `FAIL` result as a release blocker: it means at least one shipped map object points at missing or mismatched visual coverage in `configs/object-visuals.json`, so a content/config update would otherwise ship with broken object presentation.
+`npm run validate -- map-object-visuals` now runs inside the default snapshot gate before downstream release aggregation. Treat any `FAIL` result as a release blocker: it means at least one shipped map object points at missing or mismatched visual coverage in `configs/object-visuals.json`, so a content/config update would otherwise ship with broken object presentation.
 
 For candidate review of the additional Phase 1 packs:
 
 - in Config Center, apply `layout_frontier_basin` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:frontier_basin]`
-- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:frontier`
+- for scripted verification, run `npm run validate -- content-pack:all` and `npm test -- phase1-release-persistence:frontier`
 - in Config Center, apply `layout_stonewatch_fork` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:stonewatch_fork]`
-- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:stonewatch`
+- for scripted verification, run `npm run validate -- content-pack:all` and `npm test -- phase1-release-persistence:stonewatch`
 
 For candidate review of the ridgeway Phase 1 pack:
 
 - in Config Center, apply `layout_ridgeway_crossing` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:ridgeway_crossing]`
-- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:ridgeway`
+- for scripted verification, run `npm run validate -- content-pack:all` and `npm test -- phase1-release-persistence:ridgeway`
 
 For candidate review of the highland Phase 1 pack:
 
 - in Config Center, apply `layout_highland_reach` to both `world` and `mapObjects`
 - for runtime/manual room checks, join a room whose id includes `[map:highland_reach]`
-- for scripted verification, run `npm run validate:content-pack:all` and `npm run test:phase1-release-persistence:highland`
+- for scripted verification, run `npm run validate -- content-pack:all` and `npm test -- phase1-release-persistence:highland`
 - expect materially different pacing from the baseline pack: `highland-reach` expands to a 10x10 board, mirrors gold pickups across both flanks, and puts four neutral contests around the central dirt corridor so scouting and route commitment matter earlier
 
 When `VEIL_MYSQL_*` is configured, the regression automatically targets MySQL. Without MySQL env it falls back to the in-memory store so contributors can still run the same flow locally, but release verification should expect the generated report to show `Storage: mysql`.
@@ -56,7 +56,7 @@ When `VEIL_MYSQL_*` is configured, the regression automatically targets MySQL. W
 For packaged H5 release-candidate validation, run:
 
 ```bash
-npm run smoke:client:release-candidate
+npm run smoke -- client:release-candidate
 ```
 
 That flow rebuilds `apps/client/dist`, serves the packaged artifact instead of the dev shell, exercises guest login plus cached-session room boot, and writes machine-readable evidence under `artifacts/release-readiness/`. Pass `--output <path>` when CI or a reviewer needs a stable artifact filename.
@@ -66,7 +66,7 @@ The snapshot also supports manual gates, so the same file can carry pending or c
 For candidate-scoped target-environment runtime review, prefer the bundle capture flow so reviewers get one environment packet with the staged evidence and gate verdicts:
 
 ```bash
-npm run release:runtime-observability:bundle -- \
+npm run release -- runtime-observability:bundle -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface <h5|wechat> \
@@ -82,7 +82,7 @@ When a candidate has more than one manual sign-off in flight, track ownership in
 When reviewers need one candidate-scoped freshness verdict across the snapshot, gate summary, Cocos RC bundle, runtime observability packet, owner ledger, and any applicable WeChat release evidence, run:
 
 ```bash
-npm run release:candidate:evidence-audit -- \
+npm run release -- candidate:evidence-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface <auto|h5|wechat> \
@@ -111,33 +111,33 @@ That check stays intentionally narrow: it only reads the latest release-readines
 Run the full automated snapshot and write the result under `artifacts/release-readiness/`:
 
 ```bash
-npm run release:readiness:snapshot
+npm run release -- readiness:snapshot
 ```
 
 Generate a pending template without executing the automated commands:
 
 ```bash
-npm run release:readiness:snapshot -- --no-run
+npm run release -- readiness:snapshot -- --no-run
 ```
 
 Merge in manual checks from a JSON file:
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
 Add a one-off pending manual check from the CLI:
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-check "wechat-device-smoke:WeChat device smoke report"
 ```
 
 Write to a specific file:
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --output artifacts/release-readiness/rc-2026-03-29.json
 ```
 
@@ -171,7 +171,7 @@ Example:
     "title": "WeChat device smoke report",
     "status": "pending",
     "required": true,
-    "notes": "Complete npm run smoke:wechat-release against the packaged RC build.",
+    "notes": "Complete npm run smoke -- wechat-release against the packaged RC build.",
     "evidence": [
       "docs/wechat-minigame-release.md"
     ]
@@ -227,13 +227,13 @@ Sample output:
       "id": "cocos-primary-journey",
       "kind": "automated",
       "status": "passed",
-      "command": "npm run smoke:cocos:canonical-journey"
+      "command": "npm run smoke -- cocos:canonical-journey"
     },
     {
       "id": "map-object-visuals",
       "kind": "automated",
       "status": "passed",
-      "command": "npm run validate:map-object-visuals"
+      "command": "npm run validate -- map-object-visuals"
     },
     {
       "id": "wechat-device-smoke",

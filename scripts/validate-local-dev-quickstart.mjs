@@ -79,7 +79,7 @@ async function verifyEndpoints() {
 
 export async function main() {
   assertSupportedRuntime({
-    commandName: "npm run validate:quickstart",
+    commandName: "npm run validate -- quickstart",
     repoRoot: rootDirPath
   });
 

@@ -71,7 +71,7 @@
 nvm use
 npm ci --no-audit --no-fund
 npm run doctor
-npm run validate:quickstart
+npm run validate -- quickstart
 ```
 
 `npm run doctor` 用来检查“机器/工具链是否就绪”：
@@ -81,38 +81,38 @@ npm run validate:quickstart
 - 按需检查可选流的工具与配置，例如 `npm run doctor -- --flow e2e --flow redis --flow mysql --flow release`
 - 输出下一步 remediation，而不是只报错退出
 
-`npm run validate:quickstart` 会做两件事：
+`npm run validate -- quickstart` 会做两件事：
 
 - 构建 H5 调试壳
 - 以默认内存存储启动本地服务，并校验 `health` / `auth-readiness` / `lobby` 接口
 
-维护者或 CI 如果要审计这条贡献者入口是否仍然可信，可运行 `npm run validate:quickstart:contract`。它会重新执行 `npm run doctor` 和 `npm run validate:quickstart`，同时把 stage 级 pass/fail、失败 remediation、以及对 README / `package.json` / quickstart validator 的对齐检查写到 `artifacts/release-readiness/` 下的 JSON + Markdown artifact。
+维护者或 CI 如果要审计这条贡献者入口是否仍然可信，可运行 `npm run validate -- quickstart:contract`。它会重新执行 `npm run doctor` 和 `npm run validate -- quickstart`，同时把 stage 级 pass/fail、失败 remediation、以及对 README / `package.json` / quickstart validator 的对齐检查写到 `artifacts/release-readiness/` 下的 JSON + Markdown artifact。
 
 可以把两者理解为：
 
 - `npm run doctor`：先看本机 prerequisites / 可选服务 / env 提示是否齐全
-- `npm run validate:quickstart`：在依赖装好后，真正验证仓库的最小 build + boot 路径
-- `npm run smoke:client:boot-room`：启动本地 server + H5 调试壳，确认客户端能完成 Lobby boot 并成功进入一个房间；适合本地冒烟或 CI 快速 sanity check
-- `npm run smoke:ci`：顺序执行 `doctor`、`validate:quickstart`、`smoke:client:boot-room`，并把 stage 级结果、日志路径和失败 remediation 收口成一个 JSON + Markdown 摘要；适合仓库级 smoke workflow 或本地复现 CI
+- `npm run validate -- quickstart`：在依赖装好后，真正验证仓库的最小 build + boot 路径
+- `npm run smoke -- client:boot-room`：启动本地 server + H5 调试壳，确认客户端能完成 Lobby boot 并成功进入一个房间；适合本地冒烟或 CI 快速 sanity check
+- `npm run smoke -- ci`：顺序执行 `doctor`、`validate:quickstart`、`smoke:client:boot-room`，并把 stage 级结果、日志路径和失败 remediation 收口成一个 JSON + Markdown 摘要；适合仓库级 smoke workflow 或本地复现 CI
 
 ### Repository Smoke CI
 
 仓库级 smoke workflow 的职责是用最低成本守住“贡献者最小可用路径”：
 
 - 安装依赖后固定执行 `npm run doctor`
-- 继续执行 `npm run validate:quickstart`
-- 最后执行 `npm run smoke:client:boot-room`
+- 继续执行 `npm run validate -- quickstart`
+- 最后执行 `npm run smoke -- client:boot-room`
 - 失败时上传 stage log、Markdown/JSON summary，以及 npm 调试日志，便于区分是依赖、server boot 还是 client boot / room join 回归
 
-默认触发场景是推送到 `main`、指向 `main` 的 PR，以及手动 `workflow_dispatch`。如果要在本地复现同一条门禁，可直接运行 `npm run smoke:ci`。
+默认触发场景是推送到 `main`、指向 `main` 的 PR，以及手动 `workflow_dispatch`。如果要在本地复现同一条门禁，可直接运行 `npm run smoke -- ci`。
 
 本地 Codex 会话如果把元数据写在仓库内，默认只允许落在仓库根目录的 `.codex`、`.codex-last-*.txt` 和 `.codex-runs/`。这些路径是本机临时产物，已被 `.gitignore` 排除，不应加入提交或作为发布证据目录使用。
 
 验证通过后，常用本地运行命令如下：
 
 ```bash
-npm run dev:server
-npm run dev:client:h5
+npm run dev -- server
+npm run dev -- client:h5
 ```
 
 默认地址：
@@ -125,7 +125,7 @@ npm run dev:client:h5
 
 服务端 HTTP 路由现在会为每个请求返回 `x-correlation-id`。排查失败请求时可直接复用调用方传入的同名 header，或从 5xx 响应 / 服务端错误日志 / `/api/runtime/diagnostic-snapshot` 里的 `requestId` 交叉定位同一次请求。
 
-如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db:migrate`。更多说明见 `docs/mysql-persistence.md`。
+如果你要启用 MySQL 持久化，再复制 `.env.example` 到 `.env`，填入 `VEIL_MYSQL_*`，然后执行 `npm run db -- migrate`。更多说明见 `docs/mysql-persistence.md`。
 
 如果你要把 MySQL 备份自动上传到兼容 S3 的对象存储，再补充 `VEIL_BACKUP_*`，执行 `./scripts/db-backup.sh` 做一次手动演练，并按 `ops/mysql-backup.cron.example` 安装每 6 小时备份一次、每周一次 `./scripts/db-restore-test.sh` 的 cron。服务端启动时会校验该 S3 目标是否可达，并把最近一次成功备份时间暴露为 Prometheus 指标 `veil_db_backup_last_success_timestamp`；恢复步骤见 `docs/db-restore-runbook.md`。
 
@@ -135,9 +135,9 @@ npm run dev:client:h5
 
 ```bash
 docker compose -f docker-compose.redis.yml up -d
-REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev:server
-REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev:server
-REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev -- server
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev -- server
+REDIS_URL=redis://127.0.0.1:6379/0 npm run validate -- redis-scaling
 ```
 
 未设置 `REDIS_URL` 时，服务端保持现有单进程本地行为不变。完整部署说明见 `docs/redis-colyseus-scaling.md`。
@@ -184,11 +184,11 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 ## 本地运行
 
 - 安装依赖：`npm ci --no-audit --no-fund`
-- 快速校验首条贡献路径：`npm run validate:quickstart`
-- 提交配置相关 PR 前先跑跨文件配置校验：`npm run validate:content-pack:all`（会先检查 13 个 Phase 1 地图包的对象视觉覆盖，再跑内容包一致性校验）
-- 本地 WebSocket 服务：`npm run dev:server`
+- 快速校验首条贡献路径：`npm run validate -- quickstart`
+- 提交配置相关 PR 前先跑跨文件配置校验：`npm run validate -- content-pack:all`（会先检查 13 个 Phase 1 地图包的对象视觉覆盖，再跑内容包一致性校验）
+- 本地 WebSocket 服务：`npm run dev -- server`
 - 仓库级 Node 单测入口：`npm test`
-- 配置中心编辑器回归：`npm run test:client:config-center`
+- 配置中心编辑器回归：`npm test -- client:config-center`
 - 运行时健康检查：`GET http://127.0.0.1:2567/api/runtime/health`
 - 鉴权就绪摘要：`GET http://127.0.0.1:2567/api/runtime/auth-readiness`
 - 运行时指标抓取：`GET http://127.0.0.1:2567/api/runtime/metrics`
@@ -196,77 +196,77 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - H5 / Cocos 存储 token 的 resume 失败会输出结构化控制台 warning（`[Network] WS resume failed...` / `[CocosNetwork] WS resume failed...`），对象里包含 `phase=resume`、`reason` 和 `retryingWithFreshJoin`
 - 终端逻辑演示：`npm run demo:flow`
 - 主客户端入口说明：`npm run client:primary`
-- Cocos 主客户端类型检查：`npm run typecheck:client`
-- Cocos canonical journey smoke：`npm run smoke:cocos:canonical-journey`（输出 `artifacts/release-readiness/` 下的结构化 JSON / Markdown / milestone diagnostics，并记录 stage pass/fail、timing 与 failure diagnostics；失败时打印具体 stage）
-- Cocos primary-client RC canonical evidence：`npm run release:cocos:primary-journey-evidence -- --candidate <candidate-name>`（Cocos 主客户端 release gate / RC review 的 canonical source，生成 candidate+revision 命名的 JSON / Markdown main-path evidence）
+- Cocos 主客户端类型检查：`npm run typecheck -- client`
+- Cocos canonical journey smoke：`npm run smoke -- cocos:canonical-journey`（输出 `artifacts/release-readiness/` 下的结构化 JSON / Markdown / milestone diagnostics，并记录 stage pass/fail、timing 与 failure diagnostics；失败时打印具体 stage）
+- Cocos primary-client RC canonical evidence：`npm run release -- cocos:primary-journey-evidence -- --candidate <candidate-name>`（Cocos 主客户端 release gate / RC review 的 canonical source，生成 candidate+revision 命名的 JSON / Markdown main-path evidence）
 - 微信小游戏模板刷新：`npm run prepare:wechat-build`
 - 微信小游戏 CI 同款校验：`npm run check:wechat-build`
-- 发布就绪快照：`npm run release:readiness:snapshot`
+- 发布就绪快照：`npm run release -- readiness:snapshot`
 - Same-revision 发布证据组装 runbook：`docs/same-revision-release-evidence-runbook.md`
 - Release evidence lifecycle / archive policy：`docs/release-evidence-lifecycle.md`
 - Candidate-scoped release evidence manifest：runtime observability bundle / candidate evidence audit 会自动 upsert `artifacts/release-readiness/candidate-evidence-manifest-<candidate>-<short-sha>.json|md`（reviewer front door；先打开这个 manifest，再顺着条目里的 artifact/source 跳到 bundle、gate、audit 与底层证据，而不是手工翻目录）
-- Release evidence lifecycle maintenance：`npm run release:evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2 [--apply]`（默认 dry-run，只产出 lifecycle JSON / Markdown 报告，列出当前 retained reviewer front doors、archive candidates 与过期 archive runs；加 `--apply` 后会把旧 artifact sets 移到 `artifacts/release-archive/runs/<timestamp>/`，同时不会再让现有 gate/dashboard 从 live 目录误读这些历史件）
-- Candidate-level 发布证据 freshness / consistency audit：`npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>`（输出 candidate-scoped JSON / Markdown 审计，汇总 blocking vs warning 结论，并校验 release snapshot、Cocos RC bundle 内联的 RC snapshot / primary-journey evidence、runtime observability evidence / gate、WeChat manual checks、owner ledger freshness；同一次运行还会在 `artifacts/release-readiness/` 额外生成 `candidate-evidence-owner-reminder-report-<candidate>-<short-sha>.json|md`、`candidate-evidence-freshness-history-<candidate>.json`，并自动更新同一 candidate 的 `candidate-evidence-manifest-<candidate>-<short-sha>.json|md`；推荐在当前 candidate 的证据产物生成完、最终 owner ping / sign-off 前执行，并在 RC review 时先打开该 manifest，再检查 history 文件是否持续变好或重复回归；兼容旧别名 `release:same-candidate:evidence-audit`）
-- 统一发布门禁汇总：`npm run release:gate:summary`
-- Candidate-scoped runtime observability bundle：`npm run release:runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url> [--include-room-lifecycle]`（推荐的 reviewer-facing capture flow；在 `artifacts/release-readiness/runtime-observability-bundle-<candidate>-<short-sha>/` 一次性输出 bundle JSON / Markdown，并归档对应的 runtime evidence + gate artifact；同一次运行会自动更新 candidate evidence manifest，把 bundle/evidence/gate 及其上游 endpoint/source 记到统一索引里；`--include-room-lifecycle` 会把 `/api/runtime/room-lifecycle-summary` 一并纳入候选环境包）
-- Candidate-scoped runtime observability evidence：`npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（底层原始抓取命令，抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，供 bundle / gate / dossier 复用）
-- Candidate-scoped runtime observability gate：`npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --capture-report <runtime-observability-evidence.json>`（基于已捕获的 runtime evidence 生成 pass/fail gate；也可直接传 `--server-url` 让 gate 即时采样）
-- Candidate-level reconnect soak：`npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`（输出 candidate+revision 命名的 reconnect soak JSON / Markdown，并供 release gate / dossier 直接引用）
-- 发布健康度聚合摘要：`npm run release:health:summary`
-- 最近候选包发布健康趋势基线：`npm run release:health:trend-baseline`
-- 当前候选包对比最近发布健康基线：`npm run release:health:trend-compare`
-- Phase 1 exit audit：`npm run release:phase1:exit-audit -- --candidate <candidate-name> --candidate-revision <git-sha> [--target-surface h5|wechat] [--output-dir artifacts/release-readiness/phase1-exit-audit-<candidate>-<git-sha>]`（把 `docs/phase1-maturity-scorecard.md` 的 8 条显式退出标准映射成一个 candidate-scoped `pass|fail|pending` JSON / Markdown 审计，并附上每条结论引用的源 artifact）
-- Phase 1 candidate dossier + single exit evidence gate：`npm run release:phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567] [--output-dir artifacts/release-dossiers/<candidate>-<git-sha>]`
-- Phase 1 release evidence drift gate：`npm run release:phase1:evidence-drift-gate -- --candidate <candidate-name> --candidate-revision <git-sha> --same-revision-bundle-manifest <phase1-bundle-manifest-json> [--runtime-observability-gate <runtime-gate-json>] [--runtime-observability-evidence <runtime-evidence-json>]`（适合 GitHub Actions 的非交互式 drift gate；发现 RC bundle / snapshot / owner ledger / runtime packet 引用不一致时直接退出非零）
-- Phase 1 same-revision exit dossier freshness gate：`npm run release:phase1:exit-dossier-freshness-gate -- --candidate <candidate-name> --candidate-revision <git-sha> [--dossier artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<git-sha>/phase1-candidate-dossier.json] [--exit-audit artifacts/release-readiness/phase1-exit-audit-<candidate>-<git-sha>.json]`（交叉校验 dossier、exit audit、release snapshot、gate summary 与 owner ledger 仍引用同一 candidate revision，并输出适合 CI / PR comment 的 JSON + Markdown）
-- 打包 H5 客户端 RC 冒烟：`npm run smoke:client:release-candidate`
-- 微信小游戏真实导出校验：`npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+- Release evidence lifecycle maintenance：`npm run release -- evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2 [--apply]`（默认 dry-run，只产出 lifecycle JSON / Markdown 报告，列出当前 retained reviewer front doors、archive candidates 与过期 archive runs；加 `--apply` 后会把旧 artifact sets 移到 `artifacts/release-archive/runs/<timestamp>/`，同时不会再让现有 gate/dashboard 从 live 目录误读这些历史件）
+- Candidate-level 发布证据 freshness / consistency audit：`npm run release -- candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>`（输出 candidate-scoped JSON / Markdown 审计，汇总 blocking vs warning 结论，并校验 release snapshot、Cocos RC bundle 内联的 RC snapshot / primary-journey evidence、runtime observability evidence / gate、WeChat manual checks、owner ledger freshness；同一次运行还会在 `artifacts/release-readiness/` 额外生成 `candidate-evidence-owner-reminder-report-<candidate>-<short-sha>.json|md`、`candidate-evidence-freshness-history-<candidate>.json`，并自动更新同一 candidate 的 `candidate-evidence-manifest-<candidate>-<short-sha>.json|md`；推荐在当前 candidate 的证据产物生成完、最终 owner ping / sign-off 前执行，并在 RC review 时先打开该 manifest，再检查 history 文件是否持续变好或重复回归；兼容旧别名 `release:same-candidate:evidence-audit`）
+- 统一发布门禁汇总：`npm run release -- gate:summary`
+- Candidate-scoped runtime observability bundle：`npm run release -- runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url> [--include-room-lifecycle]`（推荐的 reviewer-facing capture flow；在 `artifacts/release-readiness/runtime-observability-bundle-<candidate>-<short-sha>/` 一次性输出 bundle JSON / Markdown，并归档对应的 runtime evidence + gate artifact；同一次运行会自动更新 candidate evidence manifest，把 bundle/evidence/gate 及其上游 endpoint/source 记到统一索引里；`--include-room-lifecycle` 会把 `/api/runtime/room-lifecycle-summary` 一并纳入候选环境包）
+- Candidate-scoped runtime observability evidence：`npm run release -- runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`（底层原始抓取命令，抓取 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，供 bundle / gate / dossier 复用）
+- Candidate-scoped runtime observability gate：`npm run release -- runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --capture-report <runtime-observability-evidence.json>`（基于已捕获的 runtime evidence 生成 pass/fail gate；也可直接传 `--server-url` 让 gate 即时采样）
+- Candidate-level reconnect soak：`npm run release -- reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`（输出 candidate+revision 命名的 reconnect soak JSON / Markdown，并供 release gate / dossier 直接引用）
+- 发布健康度聚合摘要：`npm run release -- health:summary`
+- 最近候选包发布健康趋势基线：`npm run release -- health:trend-baseline`
+- 当前候选包对比最近发布健康基线：`npm run release -- health:trend-compare`
+- Phase 1 exit audit：`npm run release -- phase1:exit-audit -- --candidate <candidate-name> --candidate-revision <git-sha> [--target-surface h5|wechat] [--output-dir artifacts/release-readiness/phase1-exit-audit-<candidate>-<git-sha>]`（把 `docs/phase1-maturity-scorecard.md` 的 8 条显式退出标准映射成一个 candidate-scoped `pass|fail|pending` JSON / Markdown 审计，并附上每条结论引用的源 artifact）
+- Phase 1 candidate dossier + single exit evidence gate：`npm run release -- phase1:candidate-dossier -- --candidate <candidate-name> --candidate-revision <git-sha> [--server-url http://127.0.0.1:2567] [--output-dir artifacts/release-dossiers/<candidate>-<git-sha>]`
+- Phase 1 release evidence drift gate：`npm run release -- phase1:evidence-drift-gate -- --candidate <candidate-name> --candidate-revision <git-sha> --same-revision-bundle-manifest <phase1-bundle-manifest-json> [--runtime-observability-gate <runtime-gate-json>] [--runtime-observability-evidence <runtime-evidence-json>]`（适合 GitHub Actions 的非交互式 drift gate；发现 RC bundle / snapshot / owner ledger / runtime packet 引用不一致时直接退出非零）
+- Phase 1 same-revision exit dossier freshness gate：`npm run release -- phase1:exit-dossier-freshness-gate -- --candidate <candidate-name> --candidate-revision <git-sha> [--dossier artifacts/release-readiness/phase1-candidate-dossier-<candidate>-<git-sha>/phase1-candidate-dossier.json] [--exit-audit artifacts/release-readiness/phase1-exit-audit-<candidate>-<git-sha>.json]`（交叉校验 dossier、exit audit、release snapshot、gate summary 与 owner ledger 仍引用同一 candidate revision，并输出适合 CI / PR comment 的 JSON + Markdown）
+- 打包 H5 客户端 RC 冒烟：`npm run smoke -- client:release-candidate`
+- 微信小游戏真实导出校验：`npm run validate -- wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
 - 微信小游戏发布包产出：`npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir> --expect-exported-runtime [--source-revision <git-sha>]`
-- 微信小游戏 candidate install/launch 证据：`npm run release:wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`（输出 `codex.wechat.install-launch-evidence.json` + `.md`，记录 candidate、revision、environment、operator、timestamp、pass/fail，并供 `validate:wechat-rc` / release gate summary 引用）
-- 微信小游戏 RC artifact 聚合验收：`npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`（输出 `codex.wechat.rc-validation-report.json`、`codex.wechat.release-candidate-summary.json` 和 `.md`，并默认要求开发者工具真实导出复核、真机 runtime 复核、RC checklist）
-- 微信小游戏商运闭环验证：`npm run release:wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`（在 `validate:wechat-rc` 之上收口支付、订阅消息、埋点、合规与真机体验结论，输出 candidate-scoped JSON / Markdown 商运签核摘要）
-- 微信小游戏发布彩排：`npm run release:wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
-- Cocos RC candidate bundle：`npm run release:cocos-rc:bundle -- --candidate <candidate-name> [--build-surface creator_preview|wechat_preview|wechat_upload_candidate]`（自动补跑 primary-client canonical journey evidence，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 main-journey manifest、journey evidence / snapshot / checklist / blockers / JSON+Markdown bundle）
+- 微信小游戏 candidate install/launch 证据：`npm run release -- wechat:install-launch-evidence -- --artifacts-dir <release-artifacts-dir> --candidate <candidate-name> --environment <wechat-devtools|device-lab|qa-phone> --operator <name> --status <passed|failed> [--candidate-revision <git-sha>] [--summary <text>] [--evidence <path-or-note>]`（输出 `codex.wechat.install-launch-evidence.json` + `.md`，记录 candidate、revision、environment、operator、timestamp、pass/fail，并供 `validate:wechat-rc` / release gate summary 引用）
+- 微信小游戏 RC artifact 聚合验收：`npm run validate -- wechat-rc -- --artifacts-dir <release-artifacts-dir> [--expected-revision <git-sha>] [--version <wechat-version>] [--manual-checks docs/release-evidence/wechat-release-manual-review.example.json]`（输出 `codex.wechat.rc-validation-report.json`、`codex.wechat.release-candidate-summary.json` 和 `.md`，并默认要求开发者工具真实导出复核、真机 runtime 复核、RC checklist）
+- 微信小游戏商运闭环验证：`npm run release -- wechat:commercial-verification -- --artifacts-dir <release-artifacts-dir> [--checks docs/release-evidence/wechat-commercial-verification.example.json] [--candidate <candidate-name>] [--candidate-revision <git-sha>]`（在 `validate:wechat-rc` 之上收口支付、订阅消息、埋点、合规与真机体验结论，输出 candidate-scoped JSON / Markdown 商运签核摘要）
+- 微信小游戏发布彩排：`npm run release -- wechat:rehearsal -- --build-dir <wechatgame-build-dir> --artifacts-dir <release-artifacts-dir>`（顺序执行 prepare / package / verify / validate，并在 `artifacts/wechat-release/` 输出 JSON + Markdown 摘要）
+- Cocos RC candidate bundle：`npm run release -- cocos-rc:bundle -- --candidate <candidate-name> [--build-surface creator_preview|wechat_preview|wechat_upload_candidate]`（自动补跑 primary-client canonical journey evidence，并在 `artifacts/release-readiness/` 输出 candidate+revision 命名的 main-journey manifest、journey evidence / snapshot / checklist / blockers / JSON+Markdown bundle）
 - Cocos RC evidence consistency / freshness check：`node --import tsx ./scripts/cocos-rc-evidence-consistency-check.ts --candidate <candidate-name> [--expected-revision <git-sha>]`（校验 release-readiness snapshot、gate summary、primary journey evidence、RC snapshot、main-journey manifest、bundle manifest 是否仍对齐同一 candidate revision，并输出 JSON / Markdown 摘要）
 - Issue #33 开源素材 staging 校验：`npm run check:issue33-assets -- --require-pack`
 - GitHub Actions `wechat-build-validation` 会把发布归档与 sidecar 元数据作为 artifact `wechat-release-<sha>` 上传，便于提审前下载与回溯
 - 统一发布门禁汇总默认输出到 `artifacts/release-readiness/release-gate-summary-<short-sha>.json` 和 `.md`，用于 CI artifact、PR 评论或人工巡检；详情见 `docs/release-gate-summary.md`
-- H5 调试壳开发服务：`npm run dev:client:h5`
+- H5 调试壳开发服务：`npm run dev -- client:h5`
 - H5 调试壳构建验证：`npm run build:client:h5`
-- H5 调试壳类型检查：`npm run typecheck:client:h5`
+- H5 调试壳类型检查：`npm run typecheck -- client:h5`
 - H5 开发态诊断导出：
   `window.export_diagnostic_snapshot()` 返回稳定 JSON；
   `window.render_diagnostic_snapshot_to_text()` 返回与面板一致的紧凑文本摘要，便于自动化留档
-- H5 连接性 CI 冒烟：`npm run test:e2e:h5:connectivity`
-- 单命令客户端 boot + room join 冒烟：`npm run smoke:client:boot-room`
-- H5 Playwright 冒烟：`npm run test:e2e:smoke`
+- H5 连接性 CI 冒烟：`npm test -- e2e:h5:connectivity`
+- 单命令客户端 boot + room join 冒烟：`npm run smoke -- client:boot-room`
+- H5 Playwright 冒烟：`npm test -- e2e:smoke`
   当前覆盖 Lobby 入口与 reconnect predicted-state -> authoritative convergence canonical smoke
 - 打包 H5 客户端 RC 冒烟会把结构化结果写入 `artifacts/release-readiness/`
-- 多人联机 Playwright 冒烟：`npm run test:e2e:multiplayer:smoke`
-  默认覆盖多人同步基线与 PvP 遭遇反馈链路；若要复核 reconnect / 战后恢复分支，改跑 `npm run test:e2e:multiplayer -- pvp-reconnect-recovery` 或 `npm run test:e2e:multiplayer -- pvp-postbattle-reconnect`
-- 多人同步治理矩阵：`npm run test:sync-governance:matrix`（输出 `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`）
+- 多人联机 Playwright 冒烟：`npm test -- e2e:multiplayer:smoke`
+  默认覆盖多人同步基线与 PvP 遭遇反馈链路；若要复核 reconnect / 战后恢复分支，改跑 `npm test -- e2e:multiplayer -- pvp-reconnect-recovery` 或 `npm test -- e2e:multiplayer -- pvp-postbattle-reconnect`
+- 多人同步治理矩阵：`npm test -- sync-governance:matrix`（输出 `artifacts/release-readiness/sync-governance-matrix-<short-sha>.json`）
 - GitHub Actions `playwright-smoke` 会先等待 `health` / `auth-readiness` / `lobby rooms` readiness contract，再执行 H5 与多人冒烟；失败时会上传 Playwright trace / screenshot / video，以及 npm 调试日志，便于区分环境漂移和真实回归
-- PR 上的多人联机 smoke 现在保留为非阻塞诊断；若它失败，先看 artifact 里的 npm 日志与 Playwright trace，再本地复跑 `npm run test:e2e:multiplayer:smoke`
+- PR 上的多人联机 smoke 现在保留为非阻塞诊断；若它失败，先看 artifact 里的 npm 日志与 Playwright trace，再本地复跑 `npm test -- e2e:multiplayer:smoke`
 - `playwright-multiplayer` 全量多人回归改为 `main` 分支和手动触发运行，避免把长链路浏览器噪音直接混进 PR 合并信号
-- MySQL 首次初始化 / 升级：`npm run db:migrate`
-- MySQL 回滚上一版 schema：`npm run db:migrate:rollback`
-- `npm run db:init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
+- MySQL 首次初始化 / 升级：`npm run db -- migrate`
+- MySQL 回滚上一版 schema：`npm run db -- migrate:rollback`
+- `npm run db -- init:mysql` 现已委托给同一条迁移链路，不再走独立一次性建表逻辑
 - 并发房间压测：`npm run stress:rooms -- --rooms=120 --connect-concurrency=24 --action-concurrency=24`
 - 并发房间压测启动后，也可直接查看同进程观测面：`/api/runtime/health`、`/api/runtime/auth-readiness` 与 `/api/runtime/metrics`
-- 战斗平衡验证：`npm run validate:battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
-- 内容包一致性验证：`npm run validate:content-pack:all -- --report-path artifacts/content-pack-validation-report.json`（会先跑 `validate:map-object-visuals`，随后覆盖 `phase1`、全部 12 个额外 Phase 1 地图包，以及 `phase2` 的内容包校验）
+- 战斗平衡验证：`npm run validate -- battle -- --count=1000 --scenario=all --skill-config=configs/battle-skills-v1.1.json`
+- 内容包一致性验证：`npm run validate -- content-pack:all -- --report-path artifacts/content-pack-validation-report.json`（会先跑 `validate:map-object-visuals`，随后覆盖 `phase1`、全部 12 个额外 Phase 1 地图包，以及 `phase2` 的内容包校验）
 - Boss encounter 模板作者指南：`docs/boss-encounter-template-authoring.md`
-- Phase 1 持久化 + shipped content 回归：`npm run test:phase1-release-persistence`
-- Frontier Basin Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:frontier`
-- Stonewatch Fork Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:stonewatch`
-- Ridgeway Crossing Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:ridgeway`
-- Highland Reach Phase 1 内容包专项回归：`npm run test:phase1-release-persistence:highland`
-- 覆盖率 CI 同款校验：`npm run test:coverage:ci`
+- Phase 1 持久化 + shipped content 回归：`npm test -- phase1-release-persistence`
+- Frontier Basin Phase 1 内容包专项回归：`npm test -- phase1-release-persistence:frontier`
+- Stonewatch Fork Phase 1 内容包专项回归：`npm test -- phase1-release-persistence:stonewatch`
+- Ridgeway Crossing Phase 1 内容包专项回归：`npm test -- phase1-release-persistence:ridgeway`
+- Highland Reach Phase 1 内容包专项回归：`npm test -- phase1-release-persistence:highland`
+- 覆盖率 CI 同款校验：`npm test -- coverage:ci`
 - 覆盖率摘要：`.coverage/summary.md`
 - `npm test` 会通过 `git ls-files` 自动发现所有已检入仓库的 `*.test.ts` Node 测试文件并统一执行；新增此类测试时不需要手动维护根脚本列表。
 - 若测试没有被 `npm test` 自动拾取，先检查文件名是否为 `*.test.ts` 且已经 `git add`；`tests/e2e/**/*.spec.ts` 仍由 Playwright 入口负责，不属于根 `node:test` 流程。
-- 共享客户端载荷 contract 快照：`npm run test:contracts`
-- GitHub Actions `readme-script-gate` 会阻塞 `npm run validate:quickstart`、`npm run test:client:config-center` 与 `npm run test:contracts` 的回归；若其中任一 README 命令失效，失败日志会直接标出对应命令
+- 共享客户端载荷 contract 快照：`npm test -- contracts`
+- GitHub Actions `readme-script-gate` 会阻塞 `npm run validate -- quickstart`、`npm test -- client:config-center` 与 `npm test -- contracts` 的回归；若其中任一 README 命令失效，失败日志会直接标出对应命令
 - 并发房间压测会按 `world_progression / battle_settlement / reconnect` 三种场景分开跑数，并输出 CPU、内存、房间吞吐、动作吞吐等指标；可通过 `--scenarios=world_progression,reconnect` 等参数缩小范围
 - 当前客户端边界：`apps/cocos-client` 负责主玩法运行时；`apps/client` 只保留浏览器调试、配置联调和回归验证。
 - 主运行时 / H5 调试壳 contract：`docs/runtime-contract-cocos-h5.md`
@@ -321,7 +321,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
   - 保存 `world / mapObjects / units / battle-skills / battle-balance` 后，右侧会同步展示一份 impact summary，带出变更字段、影响模块、潜在风险提示和建议验证动作；发布审计历史也会保留同样的摘要，便于做配置变更评审
   - 导出除 JSON 注释版外，还支持带 `Meta / Schema / Fields` 工作表的 Excel，以及更轻量的字段清单 CSV
   - 当前编辑 `phase1-world.json` 时，右侧会即时生成一份地图样本预览；可切换预览 seed，对照查看地形、随机资源、保底资源、英雄与中立怪分布
-  - 配置中心编辑器回归入口见 `npm run test:client:config-center`，覆盖保存、校验、快照/差异与地图预览等高风险工作流
+  - 配置中心编辑器回归入口见 `npm test -- client:config-center`，覆盖保存、校验、快照/差异与地图预览等高风险工作流
   - 当前编辑 `battle-skills.json` 时，右侧会显示技能编辑器，可直接调整冷却、伤害倍率、目标类型、附加状态和状态持续参数，并同步回写 JSON 草稿
   - 当前编辑 `battle-balance.json` 时，右侧会显示战斗平衡编辑器，可直接调整伤害公式、路障/陷阱阈值、附加状态和 ELO K；非法值会在 Schema/语义校验里给出修复建议并阻止保存
 - H5 战斗面板现已补上“战术情报”区，会并排展示当前行动单位和已锁定目标的技能、状态、冷却与效果说明，便于直接核对配置是否符合预期。
@@ -340,7 +340,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 
 ## Coverage Policy
 
-`npm run test:coverage:ci` 是 coverage CI 的本地复现命令。它会按 `shared`、`server`、`client`、`cocos-client` 四个 scope 分开运行 `node:test`，并同时执行 line、branch、function 三类 floor 校验。
+`npm test -- coverage:ci` 是 coverage CI 的本地复现命令。它会按 `shared`、`server`、`client`、`cocos-client` 四个 scope 分开运行 `node:test`，并同时执行 line、branch、function 三类 floor 校验。
 
 当前 policy 是：
 
@@ -383,7 +383,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
 - `assets.json` 现已强制声明 `metadata`：每个被引用的资源路径都要带 `slot / stage / source`，用于追踪“当前占位图对应哪个稳定槽位、是否已经转正、来源是什么”。
 - `metadata.stage` 现已区分 `placeholder / prototype / production`，`metadata.source` 现已支持 `open-source`，便于把免费像素包的本地 staging 和仓库内预演资源分开审计。
 - issue #33 的免费素材接入约定见 `docs/issue-33-asset-integration.md`；本地未提交的素材包统一放在 `external-assets/issue-33-open-source`，通过 `npm run check:issue33-assets -- --require-pack` 校验完整性。
-- `npm run validate:assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
+- `npm run validate -- assets` 现在除了校验 schema 和文件存在性，也会拦截缺失元数据、重复槽位和游离元数据；后续正式美术替换可直接沿用同一套 manifest 规则补齐审计信息。
 - `units.json` 现已补上 `faction / rarity` 元数据，前端会自动挂载阵营与品质 badge，占位资源层已经具备继续细化正式 UI 的结构。
 - `battle-skills.json` 现已承载战斗技能与持续状态目录，shared 战斗结算会在创建战斗和执行技能时直接读取运行时配置，不再依赖硬编码技能表。
 - `battle-balance.json` 现已接入配置中心：支持可视化编辑伤害公式、遭遇战环境和 PVP ELO 参数，保存后会联动导出 JSON 并直接刷新 shared/runtime 读取链路；实时校验还会检查阈值范围以及陷阱状态是否与 `battle-skills.json` 对齐。

@@ -170,7 +170,7 @@ test("buildGoNoGoDecisionPacket aggregates candidate, gate, and manual review ev
         id: "manual:wechat-runtime-observability-signoff",
         summary: "Runtime observability sign-off is still pending for this candidate.",
         artifactPath: "artifacts/wechat-release/runtime-observability-signoff-phase1-rc-abc1234.md",
-        nextCommand: "Complete the runtime observability sign-off and rerun validate:wechat-rc."
+        nextCommand: "Complete the runtime observability sign-off and rerun npm run validate -- wechat-rc."
       }
     ]
   });
@@ -527,7 +527,7 @@ test("go/no-go packet CLI fails with an actionable error when the dossier is mis
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Phase 1 candidate dossier is missing/);
-  assert.match(result.stderr, /release:phase1:candidate-dossier/);
+  assert.match(result.stderr, /npm run release -- phase1:candidate-dossier/);
 });
 
 test("go/no-go packet CLI writes the default packet outputs", () => {

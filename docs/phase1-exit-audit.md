@@ -1,6 +1,6 @@
 # Phase 1 Exit Audit
 
-`npm run release:phase1:exit-audit` emits the single reviewer-facing Phase 1 exit call for one candidate revision.
+`npm run release -- phase1:exit-audit` emits the single reviewer-facing Phase 1 exit call for one candidate revision.
 
 The command reuses the existing Phase 1 evidence producers and turns the explicit exit criteria from [`docs/phase1-maturity-scorecard.md`](./phase1-maturity-scorecard.md) into first-class audited rows:
 
@@ -15,14 +15,14 @@ The command reuses the existing Phase 1 evidence producers and turns the explici
 
 Each row is reported as `pass`, `fail`, or `pending`, and each row links back to the exact source artifacts used for the decision. The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for release review / PR attachment.
 
-The exit audit also folds in the candidate-level evidence contract from `npm run release:candidate:evidence-audit`, so the Phase 1 call now fails closed when the same-candidate packet is inconsistent or when the manual evidence owner ledger still leaves required sign-offs in `pending` or `in-review`.
+The exit audit also folds in the candidate-level evidence contract from `npm run release -- candidate:evidence-audit`, so the Phase 1 call now fails closed when the same-candidate packet is inconsistent or when the manual evidence owner ledger still leaves required sign-offs in `pending` or `in-review`.
 
 ## Usage
 
 Use the latest local artifacts:
 
 ```bash
-npm run release:phase1:exit-audit -- \
+npm run release -- phase1:exit-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha>
 ```
@@ -30,7 +30,7 @@ npm run release:phase1:exit-audit -- \
 Pin the exact upstream artifacts when CI or a rehearsal job already produced stable paths:
 
 ```bash
-npm run release:phase1:exit-audit -- \
+npm run release -- phase1:exit-audit -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --target-surface wechat \
@@ -48,7 +48,7 @@ npm run release:phase1:exit-audit -- \
 Write into one stable candidate directory:
 
 ```bash
-npm run release:phase1:exit-audit -- \
+npm run release -- phase1:exit-audit -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --output-dir artifacts/release-readiness/phase1-exit-audit-phase1-wechat-rc-abc1234
@@ -71,7 +71,7 @@ If `--output-dir` is set, the command writes:
 When the release packet also includes the Phase 1 candidate dossier, run the dedicated same-revision gate immediately after both artifacts exist:
 
 ```bash
-npm run release:phase1:exit-dossier-freshness-gate -- \
+npm run release -- phase1:exit-dossier-freshness-gate -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --dossier artifacts/release-readiness/phase1-candidate-dossier-phase1-wechat-rc-abc1234/phase1-candidate-dossier.json \

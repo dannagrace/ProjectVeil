@@ -41,7 +41,7 @@ Create one copy per candidate under `artifacts/release-readiness/` or attach the
 - `Artifact path / link` should point at the exact JSON, Markdown, PR comment, or checklist file used during the release call.
 - `Notes / blocker context` should answer the handoff question directly: what is waiting, who is blocked, or why the item is `waived`.
 - The ledger does not replace the source artifacts. Keep the checklist, blocker register, smoke report, and sign-off files as the canonical proof; use the ledger only as the candidate-level ownership and freshness index.
-- `npm run release:gate:summary -- --manual-evidence-ledger <path>` reads both the header and the table rows. If a required row is stale, unowned, revision-drifted, `pending`, or `in-review`, the generated gate summary will surface that row directly in its triage output before the release call.
+- `npm run release -- gate:summary -- --manual-evidence-ledger <path>` reads both the header and the table rows. If a required row is stale, unowned, revision-drifted, `pending`, or `in-review`, the generated gate summary will surface that row directly in its triage output before the release call.
 
 ## When To Update It
 

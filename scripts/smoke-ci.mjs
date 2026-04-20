@@ -102,12 +102,12 @@ export function parseSmokeCiArgs(argv) {
 
 export function renderSmokeCiHelp() {
   return [
-    "Usage: npm run smoke:ci -- [--output <path>] [--markdown-output <path>] [--log-dir <dir>] [--github-step-summary <path>]",
+    "Usage: npm run smoke -- ci -- [--output <path>] [--markdown-output <path>] [--log-dir <dir>] [--github-step-summary <path>]",
     "",
     "Runs the repository smoke gate stages in order:",
     "  - npm run doctor",
-    "  - npm run validate:quickstart",
-    "  - npm run smoke:client:boot-room"
+    "  - npm run validate -- quickstart",
+    "  - npm run smoke -- client:boot-room"
   ].join("\n");
 }
 
@@ -279,7 +279,7 @@ export async function executeSmokeCi(options = {}, deps = {}) {
 
 export async function runSmokeCiCli(argv, deps = {}) {
   (deps.assertSupportedRuntimeImpl ?? assertSupportedRuntime)({
-    commandName: "npm run smoke:ci",
+    commandName: "npm run smoke -- ci",
     repoRoot
   });
 

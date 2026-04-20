@@ -23,7 +23,7 @@ Use the dedicated template at [`docs/release-evidence/wechat-runtime-observabili
 When possible, generate the candidate-scoped probe packet first with:
 
 ```bash
-npm run release:runtime-observability:evidence -- \
+npm run release -- runtime-observability:evidence -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface wechat \

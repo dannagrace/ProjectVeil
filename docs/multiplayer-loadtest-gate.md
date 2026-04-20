@@ -15,7 +15,7 @@
 1. 多人同步冒烟
 
 ```bash
-npm run test:e2e:multiplayer:smoke
+npm test -- e2e:multiplayer:smoke
 ```
 
 2. 多房间基线压测
@@ -130,7 +130,7 @@ npm run perf:runtime:compare
     "shortCommit": "<short>"
   },
   "commands": [
-    "npm run test:e2e:multiplayer:smoke",
+    "npm test -- e2e:multiplayer:smoke",
     "npm run stress:rooms -- --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150"
   ],
   "status": "passed | blocked | failed",
@@ -168,7 +168,7 @@ npm run perf:runtime:compare
 这份样例来自真实执行：
 
 - `npm run stress:rooms -- --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150`
-- `npm run test:e2e:multiplayer:smoke`
+- `npm test -- e2e:multiplayer:smoke`
 
 其中：
 

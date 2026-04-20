@@ -539,7 +539,7 @@ function buildReport(args: Args): CommercialVerificationReport {
       id: "technical-gate-missing",
       summary: "Missing WeChat candidate summary; run validate:wechat-rc before commercial verification.",
       artifactPath: effectiveWechatSummaryPath,
-      nextStep: "npm run validate:wechat-rc -- --artifacts-dir <release-artifacts-dir>"
+      nextStep: "npm run validate -- wechat-rc -- --artifacts-dir <release-artifacts-dir>"
     });
   } else if (!technicalGateReady) {
     blockers.push({

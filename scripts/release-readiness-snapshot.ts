@@ -105,50 +105,50 @@ const AUTOMATED_CHECKS: Array<Pick<ReleaseReadinessCheck, "id" | "title" | "comm
   {
     id: "typecheck-ci",
     title: "TypeScript CI typecheck",
-    command: "npm run typecheck:ci",
+    command: "npm run typecheck -- ci",
     required: true
   },
   {
     id: "e2e-smoke",
     title: "H5 smoke suite",
-    command: "npm run test:e2e:smoke",
+    command: "npm test -- e2e:smoke",
     required: true
   },
   {
     id: "e2e-multiplayer-smoke",
     title: "Multiplayer smoke suite",
-    command: "npm run test:e2e:multiplayer:smoke",
+    command: "npm test -- e2e:multiplayer:smoke",
     required: true
   },
   {
     id: "cocos-primary-journey",
     title: "Cocos primary journey regression",
-    command: "npm run smoke:cocos:canonical-journey",
+    command: "npm run smoke -- cocos:canonical-journey",
     required: true
   },
   {
     id: "map-object-visuals",
     title: "Map-object visual coverage",
-    command: "npm run validate:map-object-visuals",
+    command: "npm run validate -- map-object-visuals",
     required: true
   },
   {
     id: "phase1-release-persistence",
     title: "Phase 1 persistence and shipped content regression",
     command:
-      "npm run test:phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json",
+      "npm test -- phase1-release-persistence -- --output artifacts/release-readiness/phase1-release-persistence-regression.json",
     required: true
   },
   {
     id: "sync-governance-matrix",
     title: "Deterministic sync-governance matrix",
-    command: "npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",
+    command: "npm test -- sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json",
     required: true
   },
   {
     id: "multiplayer-protocol-compatibility",
     title: "Multiplayer protocol compatibility snapshot diff",
-    command: "npm run test:multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json",
+    command: "npm test -- multiplayer-protocol-compatibility -- --output artifacts/release-readiness/multiplayer-protocol-compatibility.json",
     required: true
   },
   {

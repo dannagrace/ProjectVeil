@@ -39,9 +39,9 @@ test("runtime preflight formats actionable remediation for unsupported Node/npm"
   });
 
   assert.equal(report.isSupported, false);
-  const output = formatUnsupportedRuntimeMessage("npm run validate:quickstart", report);
+  const output = formatUnsupportedRuntimeMessage("npm run validate -- quickstart", report);
 
-  assert.match(output, /Unsupported runtime for `npm run validate:quickstart`/);
+  assert.match(output, /Unsupported runtime for `npm run validate -- quickstart`/);
   assert.match(output, /README\.md prerequisites: Node\.js 22 LTS/);
   assert.match(output, /\.nvmrc: 22/);
   assert.match(output, /package\.json engines\.node: >=22 <25/);
@@ -49,5 +49,5 @@ test("runtime preflight formats actionable remediation for unsupported Node/npm"
   assert.match(output, /Current Node v20\.12\.2 does not satisfy package\.json engines\.node/);
   assert.match(output, /Current npm 9\.9\.0 does not satisfy package\.json engines\.npm/);
   assert.match(output, /Run `nvm use` from the repo root to switch to Node 22/);
-  assert.match(output, /Rerun `npm ci --no-audit --no-fund`, then retry `npm run validate:quickstart`/);
+  assert.match(output, /Rerun `npm ci --no-audit --no-fund`, then retry `npm run validate -- quickstart`/);
 });

@@ -41,7 +41,7 @@ jobs:
       - name: Run repository smoke gate
         run: |
           mkdir -p "${SMOKE_ARTIFACT_DIR}"
-          npm run smoke:ci -- \
+          npm run smoke -- ci -- \
             --output "${SMOKE_ARTIFACT_DIR}/smoke-ci-${GITHUB_SHA}.json" \
             --markdown-output "${SMOKE_ARTIFACT_DIR}/smoke-ci-${GITHUB_SHA}.md" \
             --log-dir "${SMOKE_ARTIFACT_DIR}/logs" \

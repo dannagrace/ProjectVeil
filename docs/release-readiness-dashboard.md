@@ -1,16 +1,16 @@
 # Phase 1 Release Readiness Dashboard
 
-`npm run release:readiness:dashboard` generates a single local report for the current Phase 1 gameplay release gates. It now promotes one Phase 1 `go/no-go` decision for a candidate/revision pair, including first-class `requiredFailed` / `requiredPending` counts, normalized blocker/warning drill-down, and linked artifact paths for quick audit. The report reuses existing evidence instead of redefining the workflow:
+`npm run release -- readiness:dashboard` generates a single local report for the current Phase 1 gameplay release gates. It now promotes one Phase 1 `go/no-go` decision for a candidate/revision pair, including first-class `requiredFailed` / `requiredPending` counts, normalized blocker/warning drill-down, and linked artifact paths for quick audit. The report reuses existing evidence instead of redefining the workflow:
 
-- `npm run release:readiness:snapshot` for automated regression/build gates
+- `npm run release -- readiness:snapshot` for automated regression/build gates
 - `GET /api/runtime/health`, `GET /api/runtime/auth-readiness`, `GET /api/runtime/metrics` for live server/auth posture
 - `npm run package:wechat-release` sidecar metadata for package validation
-- `npm run smoke:wechat-release` for device/quasi-device smoke evidence
-- `npm run release:cocos-rc:snapshot` for recent Cocos RC journey evidence
-- `npm run release:cocos:primary-diagnostics` for checkpointed primary-client runtime diagnostics evidence
+- `npm run smoke -- wechat-release` for device/quasi-device smoke evidence
+- `npm run release -- cocos-rc:snapshot` for recent Cocos RC journey evidence
+- `npm run release -- cocos:primary-diagnostics` for checkpointed primary-client runtime diagnostics evidence
 - `npm run stress:rooms:reconnect-soak` for reconnect soak + teardown evidence
-- `npm run test:phase1-release-persistence` for persistence + shipped content evidence
-- `npm run release:candidate:evidence-audit` for the candidate-scoped artifact-family consistency check under `artifacts/release-readiness/`
+- `npm test -- phase1-release-persistence` for persistence + shipped content evidence
+- `npm run release -- candidate:evidence-audit` for the candidate-scoped artifact-family consistency check under `artifacts/release-readiness/`
 
 If you need the faster maintainer-facing index of which command or doc owns each operational task, open [`docs/operational-entry-point-repo-map.md`](./operational-entry-point-repo-map.md).
 
@@ -21,13 +21,13 @@ The dashboard writes both JSON and Markdown so it works as a quick terminal summ
 Generate a report from the latest local evidence already under `artifacts/`:
 
 ```bash
-npm run release:readiness:dashboard
+npm run release -- readiness:dashboard
 ```
 
 Generate a candidate-scoped dashboard for one candidate/revision pair:
 
 ```bash
-npm run release:readiness:dashboard -- \
+npm run release -- readiness:dashboard -- \
   --candidate phase1-rc \
   --candidate-revision abc1234 \
   --server-url http://127.0.0.1:2567 \
@@ -43,7 +43,7 @@ npm run release:readiness:dashboard -- \
 Write to explicit output files:
 
 ```bash
-npm run release:readiness:dashboard -- \
+npm run release -- readiness:dashboard -- \
   --output artifacts/release-readiness/phase1-dashboard.json \
   --markdown-output artifacts/release-readiness/phase1-dashboard.md
 ```
@@ -51,13 +51,13 @@ npm run release:readiness:dashboard -- \
 If your evidence freshness window should be stricter or looser than the default 14 days:
 
 ```bash
-npm run release:readiness:dashboard -- --max-evidence-age-days 7
+npm run release -- readiness:dashboard -- --max-evidence-age-days 7
 ```
 
 If you want the report to pin all automated and manual evidence to one explicit candidate revision, pass:
 
 ```bash
-npm run release:readiness:dashboard -- --candidate <candidate-name> --candidate-revision <git-sha>
+npm run release -- readiness:dashboard -- --candidate <candidate-name> --candidate-revision <git-sha>
 ```
 
 When both `--candidate` and `--candidate-revision` are set, the command becomes the enforcing candidate-consistency check for the required local evidence set. It still writes the JSON + Markdown dashboard, but the dashboard now explicitly calls out when the same-candidate audit is missing or failing, and exits non-zero if any linked artifact:
@@ -112,7 +112,7 @@ After that, the report summarizes seven bounded gates:
 1. Refresh the automated gate evidence:
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
@@ -120,38 +120,38 @@ npm run release:readiness:snapshot -- \
 
 ```bash
 npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir artifacts/wechat-release --expect-exported-runtime
-npm run smoke:wechat-release -- --artifacts-dir artifacts/wechat-release
+npm run smoke -- wechat-release -- --artifacts-dir artifacts/wechat-release
 ```
 
 3. If validating a Cocos RC, refresh the RC journey snapshot:
 
 ```bash
-npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --output artifacts/release-evidence/<candidate-name>.json
+npm run release -- cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --output artifacts/release-evidence/<candidate-name>.json
 ```
 
 4. Refresh the primary-client diagnostic evidence artifact:
 
 ```bash
-npm run release:cocos:primary-diagnostics
+npm run release -- cocos:primary-diagnostics
 ```
 
 5. Refresh reconnect soak and persistence evidence when the RC scope touches room recovery or shipped content/persistence paths:
 
 ```bash
 npm run stress:rooms:reconnect-soak
-npm run test:phase1-release-persistence
+npm test -- phase1-release-persistence
 ```
 
 6. Start the local server if you want live runtime/auth evidence in the same report:
 
 ```bash
-npm run dev:server
+npm run dev -- server
 ```
 
 7. Run the candidate-level evidence audit for the pinned candidate pair:
 
 ```bash
-npm run release:candidate:evidence-audit -- \
+npm run release -- candidate:evidence-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface <h5|wechat>
@@ -160,7 +160,7 @@ npm run release:candidate:evidence-audit -- \
 8. Generate the dashboard:
 
 ```bash
-npm run release:readiness:dashboard -- \
+npm run release -- readiness:dashboard -- \
   --candidate <candidate-name> \
   --server-url http://127.0.0.1:2567 \
   --wechat-artifacts-dir artifacts/wechat-release \

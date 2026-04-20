@@ -7,7 +7,7 @@ Issue #1299 closes the gap between the existing local-dev Compose setup and a re
 - `docker-compose.prod.yml` runs MySQL, Redis, the server, and the H5 client with named volumes and restart policies.
 - `ops/env/production.env.example` defines the non-sensitive production env contract plus the Secrets Manager bootstrap settings.
 - `docs/ops/secrets-inventory.md` documents the managed secret bundle, service ownership, and rotation cadence.
-- `npm run validate:production-env -- --env-file ops/env/production.env` verifies that contract before any deploy.
+- `npm run validate -- production-env -- --env-file ops/env/production.env` verifies that contract before any deploy.
 
 This runbook assumes a VM or bare-metal host using Docker Compose. For zero-downtime deploys, run two identical app hosts behind the same L4/L7 load balancer and roll them one host at a time while both point at the same MySQL and Redis.
 
@@ -30,7 +30,7 @@ Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](
 4. Confirm the AWS secret payload includes every key listed in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
 5. Confirm `SENTRY_DSN` is present in `ops/env/production.env`; production startup now warns loudly when external error delivery is disabled.
 6. If this deploy should emit analytics events externally, confirm `ANALYTICS_SINK=http` is set in the runtime secret bundle and `ANALYTICS_ENDPOINT` is present in `ops/env/production.env`.
-7. Run `npm run validate:production-env -- --env-file ops/env/production.env`.
+7. Run `npm run validate -- production-env -- --env-file ops/env/production.env`.
 8. Confirm MySQL resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm migrate`
 9. Confirm Redis resolves from the deploy host:
@@ -58,7 +58,7 @@ Notes:
 
 1. Copy the repo to the host and create `ops/env/production.env`.
 2. Validate env configuration:
-   `npm run validate:production-env -- --env-file ops/env/production.env`
+   `npm run validate -- production-env -- --env-file ops/env/production.env`
 3. Build images:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env build`
 4. Start stateful services:
@@ -75,7 +75,7 @@ Notes:
 Single-host maintenance deploy:
 
 1. Pull the new release commit onto the host.
-2. Run `npm run validate:production-env -- --env-file ops/env/production.env`.
+2. Run `npm run validate -- production-env -- --env-file ops/env/production.env`.
 3. Rebuild images:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env build server client`
 4. Run migrations before switching traffic:
@@ -115,7 +115,7 @@ Rollback target: the previous known-good git SHA and image build.
 
 If both hosts are already on the bad release, roll them back one host at a time with the same drain procedure used for forward deploys.
 
-For the pre-release rehearsal path that proves this rollback still works on the current candidate, use [`docs/production-rollback-drill.md`](../production-rollback-drill.md) together with `npm run release:production:rollback-drill`.
+For the pre-release rehearsal path that proves this rollback still works on the current candidate, use [`docs/production-rollback-drill.md`](../production-rollback-drill.md) together with `npm run release -- production:rollback-drill`.
 
 ## 8. Post-Deploy Smoke Tests
 
