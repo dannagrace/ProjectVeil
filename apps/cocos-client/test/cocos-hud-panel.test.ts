@@ -302,6 +302,23 @@ test("VeilHudPanel renders a live turn timer label and flashes it red in the fin
   assert.ok(timerLabel.color.r > timerLabel.color.g, "expected warning tint in the final 10 seconds");
 });
 
+test("VeilHudPanel recovers when the cached turn timer label loses its node reference", () => {
+  const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
+  const state = createHudState();
+  state.update!.world.turnDeadlineAt = new Date(Date.now() + 30_000).toISOString();
+
+  component.render(state);
+
+  const cachedTimerLabel = (component as unknown as { turnTimerLabel: Label | null }).turnTimerLabel;
+  assert.ok(cachedTimerLabel);
+  (cachedTimerLabel as unknown as { node: null }).node = null;
+
+  assert.doesNotThrow(() => component.update());
+  const timerNode = findNode(node, "HudTurnTimer");
+  assert.ok(timerNode);
+  assert.equal(timerNode.active, true);
+});
+
 test("VeilHudPanel surfaces the current world focus ahead of lower-priority diagnostics", () => {
   const { component, node } = createComponentHarness(VeilHudPanel, { name: "HudPanelRoot", width: 320, height: 720 });
   const state = createHudState();

@@ -101,6 +101,7 @@ export {
 export { VeilMapBoard } from "../VeilMapBoard.ts";
 export { buildMapFeedbackEntriesFromUpdate, buildObjectPulseEntriesFromUpdate } from "../cocos-map-visuals.ts";
 export { getPlaceholderSpriteAssetUsageSummary } from "../cocos-placeholder-sprites.ts";
+export { formatHeroStatBonus, formatResourceKindLabel, formatUpgradeCostLabel } from "./formatters.ts";
 export {
   detectCocosRuntimePlatform,
   readCocosRuntimeLaunchSearch,
