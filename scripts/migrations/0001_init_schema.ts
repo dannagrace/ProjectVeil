@@ -3,7 +3,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_TABLE,
   MYSQL_PLAYER_ACCOUNT_UPDATED_AT_INDEX,
@@ -11,7 +11,7 @@ import {
   MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX,
   MYSQL_ROOM_SNAPSHOT_TABLE,
   MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   await ensureTableExists(

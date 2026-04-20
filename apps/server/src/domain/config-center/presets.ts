@@ -18,14 +18,14 @@ import frontierExpandedMapObjectsConfig from "../../../../../configs/phase2-map-
 import frontierExpandedWorldConfig from "../../../../../configs/phase2-frontier-expanded.json";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import { getDefaultMapObjectsConfig, getDefaultWorldConfig } from "@veil/shared/world";
-import type { ConfigDocumentId, ConfigPresetSummary } from "./types";
+import type { ConfigDocumentId, ConfigPresetSummary } from "@server/domain/config-center/types";
 import {
   BUILTIN_DIFFICULTY_PRESET_IDS,
   BUILTIN_MAP_OBJECT_LAYOUT_PRESETS,
   BUILTIN_WORLD_LAYOUT_PRESETS
-} from "./constants";
-import { normalizeJsonContent } from "./helpers";
-import { parseConfigDocument } from "./preview";
+} from "@server/domain/config-center/constants";
+import { normalizeJsonContent } from "@server/domain/config-center/helpers";
+import { parseConfigDocument } from "@server/domain/config-center/preview";
 
 export function buildBuiltinPresetSummary(id: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]): ConfigPresetSummary {
   const title = id === "easy" ? "Easy" : id === "normal" ? "Normal" : "Hard";

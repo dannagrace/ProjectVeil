@@ -9,7 +9,7 @@ import {
   getMinorProtectionDateKey,
   normalizeMinorProtectionBirthdate,
   readMinorProtectionConfig
-} from "../src/minor-protection";
+} from "@server/domain/ops/minor-protection";
 
 test("readMinorProtectionConfig uses defaults when env is empty", () => {
   const config = readMinorProtectionConfig({});

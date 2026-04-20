@@ -7,7 +7,7 @@ import {
   getAnalyticsPipelineSnapshot,
   registerAnalyticsRoutes,
   resetAnalyticsRuntimeDependencies
-} from "../src/analytics";
+} from "@server/domain/ops/analytics";
 
 afterEach(() => {
   resetAnalyticsRuntimeDependencies();

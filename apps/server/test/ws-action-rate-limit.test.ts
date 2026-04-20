@@ -3,9 +3,9 @@ import test from "node:test";
 import { ClientState, matchMaker, Server, WebSocketTransport } from "colyseus";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
-import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
-import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
+import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
+import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
 
 interface FakeClient {
   sessionId: string;

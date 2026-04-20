@@ -4,12 +4,12 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PAYMENT_RECEIPT_ORDER_ID_INDEX,
   MYSQL_PAYMENT_RECEIPT_PLAYER_VERIFIED_INDEX,
   MYSQL_PAYMENT_RECEIPT_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

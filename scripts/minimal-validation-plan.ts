@@ -627,7 +627,7 @@ function printHelp(): void {
   console.log("  npm run plan:validation:minimal -- --base origin/main --head HEAD");
   console.log("  npm run plan:validation:minimal -- --branch origin/main --markdown");
   console.log("  npm run plan:validation:minimal -- --pr 708");
-  console.log("  npm run plan:validation:minimal -- --path apps/server/src/observability.ts --path docs/wechat-runtime-observability-signoff.md");
+  console.log("  npm run plan:validation:minimal -- --path apps/server/src/domain/ops/observability.ts --path docs/wechat-runtime-observability-signoff.md");
 }
 
 function formatStep(step: ValidationPlanStep): string {

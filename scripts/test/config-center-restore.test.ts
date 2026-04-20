@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { FileSystemConfigCenterStore } from "../../apps/server/src/config-center";
+import { FileSystemConfigCenterStore } from "@server/config-center";
 
 const repoRoot = path.resolve(__dirname, "../..");
 

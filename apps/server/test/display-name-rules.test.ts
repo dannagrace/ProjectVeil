@@ -7,7 +7,7 @@ import {
   getDisplayNameRuleRuntimeSnapshot,
   loadDisplayNameValidationRules,
   resetDisplayNameRuleRuntimeDependencies
-} from "../src/display-name-rules";
+} from "@server/domain/account/display-name-rules";
 
 function withCleanState(t: TestContext): void {
   clearCachedDisplayNameRules();

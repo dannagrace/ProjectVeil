@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { registerLaunchRuntimeRoutes } from "../src/launch-runtime-routes";
+import { registerLaunchRuntimeRoutes } from "@server/transport/http/launch-runtime-routes";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 

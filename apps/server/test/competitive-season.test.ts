@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveCompetitiveProgression } from "../src/competitive-season";
-import type { PlayerAccountSnapshot } from "../src/persistence";
+import { resolveCompetitiveProgression } from "@server/domain/social/competitive-season";
+import type { PlayerAccountSnapshot } from "@server/persistence";
 
 function createAccount(overrides: Partial<PlayerAccountSnapshot> = {}): PlayerAccountSnapshot {
   return {

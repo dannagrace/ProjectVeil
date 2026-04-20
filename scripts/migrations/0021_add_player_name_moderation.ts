@@ -4,7 +4,7 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_NAME_HISTORY_NORMALIZED_CHANGED_INDEX,
   MYSQL_PLAYER_NAME_HISTORY_PLAYER_CHANGED_INDEX,
@@ -12,7 +12,7 @@ import {
   MYSQL_PLAYER_NAME_RESERVATION_NORMALIZED_INDEX,
   MYSQL_PLAYER_NAME_RESERVATION_TABLE,
   MYSQL_PLAYER_NAME_RESERVATION_UNTIL_INDEX
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   await ensureTableExists(

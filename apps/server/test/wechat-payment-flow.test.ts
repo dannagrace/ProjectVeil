@@ -7,18 +7,18 @@ import {
   flushAnalyticsEventsForTest,
   registerAnalyticsRoutes,
   resetAnalyticsRuntimeDependencies
-} from "../src/analytics";
-import { issueWechatMiniGameAuthSession, resetGuestAuthSessions } from "../src/auth";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+} from "@server/domain/ops/analytics";
+import { issueWechatMiniGameAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import {
   encryptWechatCallbackResourceForTest,
   registerWechatPayRoutes,
   signWechatCallbackForTest,
   type WechatPayRuntimeConfig
-} from "../src/adapters/wechat-pay";
-import type { ShopProduct } from "../src/shop";
+} from "@server/adapters/wechat-pay";
+import type { ShopProduct } from "@server/domain/economy/shop";
 
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   {

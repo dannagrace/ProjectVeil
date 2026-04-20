@@ -7,8 +7,8 @@ import {
   buildPlayerBattleReplaySummary,
   createBattleReplayCapture,
   finalizeBattleReplayCapture
-} from "../src/battle-replays";
-import type { PlayerAccountSnapshot } from "../src/persistence";
+} from "@server/domain/battle/battle-replays";
+import type { PlayerAccountSnapshot } from "@server/persistence";
 import { createEmptyBattleState, normalizePlayerBattleReplaySummaries } from "@veil/shared/battle";
 import type { BattleAction } from "@veil/shared/models";
 

@@ -7,12 +7,12 @@ import { type BattleState, type CosmeticId, type EquipmentId, type GuildState, t
 import { normalizeTextForModeration } from "@veil/shared/platform";
 import { DEFAULT_TUTORIAL_STEP, getRankDivisionForRating, normalizePlayerAccountReadModel, type PlayerAccountReadModel, type PlayerBanStatus, type PlayerMailboxGrant, type PlayerMailboxMessage, summarizePlayerMailbox } from "@veil/shared/progression";
 import { getTierForRating, normalizeEloRating, normalizeGuildState } from "@veil/shared/social";
-import { normalizeMobilePushTokenRegistrations } from "../../mobile-push-tokens";
+import { normalizeMobilePushTokenRegistrations } from "@server/domain/account/mobile-push-tokens";
 import {
   assertDisplayNameAvailableOrThrow,
   buildBannedAccountNameReservationExpiry,
   normalizeDisplayNameForLookup
-} from "../../display-name-rules";
+} from "@server/domain/account/display-name-rules";
 import {
   createTrackedMySqlPool,
   DEFAULT_MYSQL_POOL_CONNECTION_LIMIT,
@@ -21,8 +21,8 @@ import {
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
   type MySqlPoolConfig
-} from "../../infra/mysql-pool";
-import type { RoomPersistenceSnapshot } from "../../index";
+} from "@server/infra/mysql-pool";
+import type { RoomPersistenceSnapshot } from "@server/index";
 import {
   claimAllPlayerMailboxMessages,
   claimPlayerMailboxMessage,
@@ -35,41 +35,41 @@ import {
   type PlayerMailboxClaimResult,
   type PlayerMailboxDeliveryInput,
   type PlayerMailboxDeliveryResult
-} from "../../player-mailbox";
+} from "@server/domain/account/player-mailbox";
 import {
   applyBattlePassXp,
   resolveBattlePassConfig,
   resolveBattlePassTier,
   toBattlePassRewardGrant,
   type BattlePassRewardGrant
-} from "../../battle-pass";
-import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "../../competitive-season";
-import { readRuntimeSecret } from "../../runtime-secrets";
-import { computeSeasonReward, resolveSeasonRewardConfig } from "../../season-rewards";
+} from "@server/domain/economy/battle-pass";
+import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "@server/domain/social/competitive-season";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { computeSeasonReward, resolveSeasonRewardConfig } from "@server/domain/social/season-rewards";
 import {
   prunePlayerBattleReplaysForRetention,
   readBattleReplayRetentionPolicy
-} from "../../battle-replay-retention";
+} from "@server/domain/battle/battle-replay-retention";
 
 import {
   readBooleanFlag,
   readNonNegativeInteger,
   readOptionalPositiveNumber,
   readPositiveInteger
-} from "../env-readers";
+} from "@server/persistence/env-readers";
 
 import {
   formatTimestamp,
   normalizePlayerId,
   parseJsonColumn
-} from "../column-helpers";
+} from "@server/persistence/column-helpers";
 
 import {
   normalizeBattleSnapshotPlayerIds,
   normalizeBattleSnapshotStatus,
   toBattleSnapshotRecord,
   type BattleSnapshotRow
-} from "../battle-snapshots";
+} from "@server/persistence/battle-snapshots";
 
 import {
   type BattleSnapshotCompensation,
@@ -86,7 +86,7 @@ import {
   type SeasonListOptions,
   type SeasonSnapshot,
   type SnapshotRetentionPolicy
-} from "../types";
+} from "@server/persistence/types";
 export type {
   BattleSnapshotCompensation,
   BattleSnapshotInterruptedSettlementInput,
@@ -102,7 +102,7 @@ export type {
   SeasonListOptions,
   SeasonSnapshot,
   SnapshotRetentionPolicy
-} from "../types";
+} from "@server/persistence/types";
 
 
 
@@ -1255,8 +1255,8 @@ import {
   MYSQL_SUPPORT_TICKET_PLAYER_CREATED_INDEX,
   MYSQL_SUPPORT_TICKET_STATUS_CREATED_INDEX,
   MYSQL_SUPPORT_TICKET_TABLE
-} from "../mysql-tables";
-export * from "../mysql-tables";
+} from "@server/persistence/mysql-tables";
+export * from "@server/persistence/mysql-tables";
 import {
   DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
   DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
@@ -1269,7 +1269,7 @@ import {
   MAX_PLAYER_LOGIN_ID_LENGTH,
   MYSQL_DUPLICATE_ENTRY_ERRNO,
   MYSQL_DUPLICATE_ENTRY_ERROR_CODE
-} from "../defaults";
+} from "@server/persistence/defaults";
 export {
   DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
   DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
@@ -1279,7 +1279,7 @@ export {
   MAX_PLAYER_AVATAR_URL_LENGTH,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
   MAX_PLAYER_LOGIN_ID_LENGTH
-} from "../defaults";
+} from "@server/persistence/defaults";
 
 function timestampOf(value: Date | string): number {
   return (typeof value === "string" ? new Date(value) : value).getTime();

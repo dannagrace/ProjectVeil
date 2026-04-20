@@ -4,12 +4,12 @@ import {
   ensureColumnExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_TABLE,
   MYSQL_SEASON_REWARD_LOG_TABLE,
   MYSQL_SEASON_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

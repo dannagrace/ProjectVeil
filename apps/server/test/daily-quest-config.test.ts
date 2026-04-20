@@ -7,7 +7,7 @@ import {
   resetDailyQuestConfigRuntimeDependencies,
   validateDailyQuestConfigDocument,
   type DailyQuestConfigDocument
-} from "../src/daily-quest-config";
+} from "@server/domain/economy/daily-quest-config";
 
 function withCleanState(t: TestContext): void {
   resetDailyQuestConfigRuntimeDependencies();

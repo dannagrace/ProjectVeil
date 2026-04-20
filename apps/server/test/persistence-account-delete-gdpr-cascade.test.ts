@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MySqlRoomSnapshotStore, type PlayerAccountSnapshot } from "../src/persistence";
+import { MySqlRoomSnapshotStore, type PlayerAccountSnapshot } from "@server/persistence";
 
 function createExistingAccount(overrides: Partial<PlayerAccountSnapshot> = {}): PlayerAccountSnapshot {
   return {

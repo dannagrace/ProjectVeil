@@ -5,18 +5,18 @@ import { Server, WebSocketTransport } from "colyseus";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState, type WorldState } from "@veil/shared/models";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { applyEloMatchResult, createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
-import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   MatchmakingService,
   configureMatchmakingRuntimeDependencies,
   registerMatchmakingRoutes,
   resetMatchmakingRuntimeDependencies,
   resetMatchmakingService
-} from "../src/matchmaking";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { resetRuntimeObservability } from "../src/observability";
-import type { RoomSnapshotStore } from "../src/persistence";
+} from "@server/domain/social/matchmaking";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { resetRuntimeObservability } from "@server/domain/ops/observability";
+import type { RoomSnapshotStore } from "@server/persistence";
 
 function withEnvOverrides(overrides: Record<string, string | undefined>, cleanup: Array<() => void>): void {
   for (const [key, value] of Object.entries(overrides)) {

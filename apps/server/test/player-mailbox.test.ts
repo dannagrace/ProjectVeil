@@ -6,7 +6,7 @@ import {
   deliverPlayerMailboxMessage,
   normalizePlayerMailboxMessage,
   pruneExpiredPlayerMailboxMessages
-} from "../src/player-mailbox";
+} from "@server/domain/account/player-mailbox";
 
 test("mailbox delivery is idempotent per player message id and single-claim is idempotent", () => {
   const message = normalizePlayerMailboxMessage({

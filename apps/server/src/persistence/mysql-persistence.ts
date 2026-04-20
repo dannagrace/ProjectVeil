@@ -1,2 +1,2 @@
-export * from "./mysql/store";
-export { isPlayerBanActive } from "../domain/player-ban";
+export * from "@server/persistence/mysql/store";
+export { isPlayerBanActive } from "@server/domain/player-ban";

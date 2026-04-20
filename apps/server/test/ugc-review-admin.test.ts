@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import test, { type TestContext } from "node:test";
 
 import { normalizeGuildState } from "@veil/shared/social";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerUgcReviewAdminRoutes } from "../src/ugc-review-admin";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerUgcReviewAdminRoutes } from "@server/transport/http/ugc-review-admin";
 
 type RouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 

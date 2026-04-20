@@ -5,7 +5,7 @@ import {
   calculateBattleReplayExpiry,
   prunePlayerBattleReplaysForRetention,
   readBattleReplayRetentionPolicy
-} from "../src/battle-replay-retention";
+} from "@server/domain/battle/battle-replay-retention";
 import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
 
 function createReplay(overrides: Partial<PlayerBattleReplaySummary> = {}): PlayerBattleReplaySummary {

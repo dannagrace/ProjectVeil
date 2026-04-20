@@ -4,7 +4,7 @@ import {
   parseLeaderboardTierThresholdsConfigDocument,
   validateLeaderboardTierThresholdsConfigDocument,
   type LeaderboardTierThresholdsConfigDocument
-} from "../../leaderboard-tier-thresholds";
+} from "@server/domain/social/leaderboard-tier-thresholds";
 import type {
   ConfigCenterStore,
   ConfigDocumentId,
@@ -12,8 +12,8 @@ import type {
   RuntimeConfigDocumentId,
   ValidationIssue,
   ValidationReport
-} from "./types";
-import { RUNTIME_CONFIG_DOCUMENT_IDS } from "./constants";
+} from "@server/domain/config-center/types";
+import { RUNTIME_CONFIG_DOCUMENT_IDS } from "@server/domain/config-center/constants";
 import {
   buildSummary,
   detectSyntaxLine,
@@ -22,9 +22,9 @@ import {
   normalizeJsonContent,
   positionKey,
   pushIssue
-} from "./helpers";
-import { CONFIG_DOCUMENT_SCHEMAS, buildSchemaSummary, validateSchemaNode } from "./schemas";
-import { parseConfigDocument } from "./preview";
+} from "@server/domain/config-center/helpers";
+import { CONFIG_DOCUMENT_SCHEMAS, buildSchemaSummary, validateSchemaNode } from "@server/domain/config-center/schemas";
+import { parseConfigDocument } from "@server/domain/config-center/preview";
 
 export async function loadValidationDependencies(
   store: Pick<ConfigCenterStore, "loadDocument">,

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { issueGuestAuthSession } from "../src/auth";
-import { registerClientErrorRoutes } from "../src/client-error";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
+import { registerClientErrorRoutes } from "@server/domain/ops/client-error";
 
 interface TestResponse {
   statusCode: number;

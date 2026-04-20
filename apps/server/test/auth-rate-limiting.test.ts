@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hashAccountPassword, resetGuestAuthSessions, type GuestAuthSession } from "../src/auth";
-import { startDevServer, type DevServerRuntimeHandle } from "../src/dev-server";
+import { hashAccountPassword, resetGuestAuthSessions, type GuestAuthSession } from "@server/domain/account/auth";
+import { startDevServer, type DevServerRuntimeHandle } from "@server/infra/dev-server";
 import type {
   PlayerAccountAuthSessionInput,
   PlayerAccountAuthSnapshot,
@@ -11,7 +11,7 @@ import type {
   PlayerAccountSnapshot,
   PlayerAccountDeviceSessionSnapshot,
   PlayerEventHistorySnapshot
-} from "../src/persistence";
+} from "@server/persistence";
 
 type TestMiddleware = (
   request: AsyncIterable<Buffer> & {

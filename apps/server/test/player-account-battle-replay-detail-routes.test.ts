@@ -3,10 +3,10 @@ import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import { issueGuestAuthSession } from "../src/auth";
-import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
+import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -24,8 +24,8 @@ import type {
   PlayerAccountUnbanInput,
   PlayerBanHistoryRecord,
   RoomSnapshotStore
-} from "../src/persistence";
-import type { RoomPersistenceSnapshot } from "../src/index";
+} from "@server/persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
 import { createEmptyBattleState, type PlayerBattleReplaySummary } from "@veil/shared/battle";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 import type { BattleState } from "@veil/shared/models";

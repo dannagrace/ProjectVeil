@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
-import type { RoomPersistenceSnapshot } from "../src/index";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 
 function createReplaySummary(id: string): PlayerBattleReplaySummary {
   return {

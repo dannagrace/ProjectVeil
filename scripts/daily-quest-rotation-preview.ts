@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createDailyQuestRotationPreview } from "../apps/server/src/daily-quest-rotations.ts";
+import { createDailyQuestRotationPreview } from "../apps/server/src/domain/economy/daily-quest-rotations.ts";
 import type { FeatureFlags } from "../packages/shared/src/index.ts";
 
 interface Args {

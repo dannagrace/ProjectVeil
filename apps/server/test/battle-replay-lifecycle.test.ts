@@ -3,16 +3,16 @@ import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import { issueGuestAuthSession } from "../src/auth";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
 import {
   VeilColyseusRoom,
   configureRoomSnapshotStore,
   resetLobbyRoomRegistry
-} from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
-import { createRoom } from "../src/index";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
+import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "@server/persistence";
+import { createRoom } from "@server/index";
 import type { BattleReplayPlaybackState, PlayerBattleReplaySummary } from "@veil/shared/battle";
 import type { BattleState } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";

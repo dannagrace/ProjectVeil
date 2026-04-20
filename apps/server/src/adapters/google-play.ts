@@ -1,24 +1,24 @@
 import { createHash, createSign } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { emitAnalyticsEvent } from "../analytics";
-import { validateAuthSessionFromRequest } from "../auth";
+import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
+import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import {
   CallbackDeadLetterQueue,
   normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
   refreshPaymentGrantObservability as refreshSharedPaymentGrantObservability
-} from "../domain/payment/CallbackDeadLetterQueue";
+} from "@server/domain/payment/CallbackDeadLetterQueue";
 import {
   OrderIdempotencyStore,
   isAcceptedPaymentOrderStatus as isSharedAcceptedPaymentOrderStatus,
   isFinalizedPaymentOrderStatus as isSharedFinalizedPaymentOrderStatus,
   isPaymentOpsStoreReady as isSharedPaymentOpsStoreReady,
   isPaymentStoreReady as isSharedPaymentStoreReady
-} from "../domain/payment/OrderIdempotencyStore";
-import { PurchaseAuditLog } from "../domain/payment/PurchaseAuditLog";
-import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "../domain/payment/PaymentGateway";
-import type { PaymentGatewayRegistration } from "../domain/payment/PaymentGatewayRegistry";
-import type { PaymentOrderSnapshot, RoomSnapshotStore } from "../persistence";
-import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "../shop";
+} from "@server/domain/payment/OrderIdempotencyStore";
+import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
+import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "@server/domain/payment/PaymentGateway";
+import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
+import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
+import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
 interface HttpApp {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;

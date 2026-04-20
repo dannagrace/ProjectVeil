@@ -16,7 +16,7 @@ import {
   renderRuntimeSloSummaryText,
   resetRuntimeObservability,
   setAuthTokenDeliveryQueueLatency
-} from "../../apps/server/src/observability";
+} from "@server/domain/ops/observability";
 
 function seedRooms(count: number): void {
   for (let index = 0; index < count; index += 1) {

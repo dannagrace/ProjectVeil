@@ -5,9 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { getDefaultBattleSkillCatalog } from "@veil/shared/world";
-import { FileSystemConfigCenterStore } from "../src/config-center";
-import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
-import { buildConfigViewerPageForTest, registerConfigViewerRoutes } from "../src/config-viewer";
+import { FileSystemConfigCenterStore } from "@server/config-center";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
+import { buildConfigViewerPageForTest, registerConfigViewerRoutes } from "@server/transport/http/config-viewer";
 
 const WORLD_CONFIG = {
   width: 8,

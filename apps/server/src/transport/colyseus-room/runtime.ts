@@ -1,20 +1,20 @@
-import { configureConfigRuntimeStatusProvider } from "../../config-center";
+import { configureConfigRuntimeStatusProvider } from "@server/config-center";
 import {
   sendWechatSubscribeMessage
-} from "../../adapters/wechat-subscribe";
-import { sendMobilePushNotification } from "../../adapters/mobile-push";
-import type { RoomSnapshotStore } from "../../persistence";
-import type { VeilColyseusRoom } from "../../colyseus-room";
+} from "@server/adapters/wechat-subscribe";
+import { sendMobilePushNotification } from "@server/adapters/mobile-push";
+import type { RoomSnapshotStore } from "@server/persistence";
+import type { VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import type {
   LobbyRoomSummary,
   RoomRuntimeDependencies,
   RoomTimerHandle
-} from "./types";
-import { ZOMBIE_ROOM_CLEANUP_INTERVAL_MS } from "./constants";
+} from "@server/transport/colyseus-room/types";
+import { ZOMBIE_ROOM_CLEANUP_INTERVAL_MS } from "@server/transport/colyseus-room/constants";
 import {
   formatBackgroundTaskDetail,
   reportBackgroundTaskFailure
-} from "./error-reporting";
+} from "@server/transport/colyseus-room/error-reporting";
 
 export let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 export const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();

@@ -10,12 +10,12 @@ import {
   resetLobbyRoomRegistry,
   resetRoomRuntimeDependencies,
   runZombieRoomCleanup
-} from "../src/colyseus-room";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   buildPrometheusMetricsDocument,
   buildRoomLifecycleSummaryPayload,
   resetRuntimeObservability
-} from "../src/observability";
+} from "@server/domain/ops/observability";
 
 async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {
   await matchMaker.setup(

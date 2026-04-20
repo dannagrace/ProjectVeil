@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocketTransport } from "colyseus";
-import { issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
-import { registerGuildRoutes } from "../src/guilds";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import type { RoomSnapshotStore } from "../src/persistence";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { registerGuildRoutes } from "@server/domain/social/guilds";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import type { RoomSnapshotStore } from "@server/persistence";
 
 interface GuildRouteTestServer {
   shutdown(): Promise<void>;

@@ -5,8 +5,8 @@ import {
   getRequestCorrelationId,
   installHttpRequestObservability,
   REQUEST_CORRELATION_ID_HEADER
-} from "../src/http-request-context";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
+} from "@server/infra/http-request-context";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 interface TestLoggerEntry {
   message: string;

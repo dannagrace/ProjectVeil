@@ -8,14 +8,14 @@ import type {
   ConfigDiffPreviewRemovedEntry,
   ConfigDocumentId,
   ConfigImpactSummary
-} from "./types";
-import { BASE_SCHEMA_IMPACT, BASE_VALUE_IMPACT, CONFIG_IMPACT_RULES, CONFIG_RUNTIME_IMPACT } from "./constants";
+} from "@server/domain/config-center/types";
+import { BASE_SCHEMA_IMPACT, BASE_VALUE_IMPACT, CONFIG_IMPACT_RULES, CONFIG_RUNTIME_IMPACT } from "@server/domain/config-center/constants";
 import {
   classifyDiffKind,
   flattenConfigValue,
   parseJsonPath,
   uniqueStrings
-} from "./helpers";
+} from "@server/domain/config-center/helpers";
 import {
   CONFIG_DOCUMENT_SCHEMAS,
   describeSchemaPath,
@@ -23,7 +23,7 @@ import {
   isSchemaPathRequired,
   schemaNodeForPath,
   typeLabelForSchema
-} from "./schemas";
+} from "@server/domain/config-center/schemas";
 
 export function buildBlastRadius(id: ConfigDocumentId, kind: ConfigDiffChangeKind): string[] {
   const base = kind === "value" ? BASE_VALUE_IMPACT : BASE_SCHEMA_IMPACT;

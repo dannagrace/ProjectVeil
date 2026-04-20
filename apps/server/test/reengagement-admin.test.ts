@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test, { type TestContext } from "node:test";
 
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerReengagementAdminRoutes } from "../src/reengagement-admin";
-import type { RoomSnapshotStore } from "../src/persistence";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerReengagementAdminRoutes } from "@server/transport/http/reengagement-admin";
+import type { RoomSnapshotStore } from "@server/persistence";
 
 type RouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 

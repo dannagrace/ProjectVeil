@@ -5,8 +5,8 @@ import type { Client } from "colyseus";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState, type TileState, type WorldState } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
 import { decodePlayerWorldView } from "@veil/shared/world";
-import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "../src/colyseus-room";
-import { createRoom } from "../src/index";
+import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { createRoom } from "@server/index";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

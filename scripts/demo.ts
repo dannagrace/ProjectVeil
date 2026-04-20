@@ -1,4 +1,4 @@
-import { createRoom, type AuthoritativeWorldRoom } from "../apps/server/src/index";
+import { createRoom, type AuthoritativeWorldRoom } from "@server/index";
 
 function printSection(title: string, lines: string[]): void {
   console.log(`\n=== ${title} ===`);

@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { GuildState } from "@veil/shared/models";
 import { normalizeGuildState } from "@veil/shared/social";
-import { captureAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "../src/analytics";
-import { registerAdminRoutes } from "../src/admin-console";
-import { getActiveRoomInstances } from "../src/colyseus-room";
-import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "../src/persistence";
+import { captureAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "@server/domain/ops/analytics";
+import { registerAdminRoutes } from "@server/domain/ops/admin-console";
+import { getActiveRoomInstances } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "@server/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -2063,6 +2063,7 @@ test("admin maintenance mode route persists the current maintenance snapshot", a
   const handler = posts.get("/api/admin/maintenance-mode");
   assert.ok(handler);
 
+  const nextOpenAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   const response = createResponse();
   await handler(
     createRequest({
@@ -2074,7 +2075,7 @@ test("admin maintenance mode route persists the current maintenance snapshot", a
         enabled: true,
         title: "停服维护中",
         message: "预计 30 分钟后恢复开放。",
-        nextOpenAt: "2026-04-17T15:30:00.000Z",
+        nextOpenAt,
         whitelistPlayerIds: ["ops-player"],
         whitelistLoginIds: ["ops-login"]
       })
@@ -2098,7 +2099,7 @@ test("admin maintenance mode route persists the current maintenance snapshot", a
   assert.equal(payload.maintenanceMode.active, true);
   assert.equal(payload.maintenanceMode.blocked, true);
   assert.equal(payload.maintenanceMode.message, "预计 30 分钟后恢复开放。");
-  assert.equal(payload.maintenanceMode.nextOpenAt, "2026-04-17T15:30:00.000Z");
+  assert.equal(payload.maintenanceMode.nextOpenAt, nextOpenAt);
   assert.ok(payload.updatedAt);
 });
 

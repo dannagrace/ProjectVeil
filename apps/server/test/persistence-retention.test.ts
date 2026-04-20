@@ -9,14 +9,14 @@ import {
   isPlayerBanActive,
   readMySqlPersistenceConfig,
   snapshotHasExpired
-} from "../src/persistence";
+} from "@server/persistence";
 import {
   DEFAULT_MYSQL_POOL_CONNECTION_LIMIT,
   DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS,
   DEFAULT_MYSQL_POOL_MAX_IDLE,
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS
-} from "../src/infra/mysql-pool";
+} from "@server/infra/mysql-pool";
 
 test("mysql persistence config uses default snapshot retention policy", () => {
   const config = readMySqlPersistenceConfig({

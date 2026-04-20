@@ -1,10 +1,10 @@
-import { recordRuntimeErrorEvent } from "../../observability";
-import { captureServerError } from "../../error-monitoring";
+import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
+import { captureServerError } from "@server/domain/ops/error-monitoring";
 import {
   buildAuthoritativeRoomErrorContext,
   type AuthoritativeWorldRoom
-} from "../../index";
-import type { BackgroundTaskType } from "./types";
+} from "@server/index";
+import type { BackgroundTaskType } from "@server/transport/colyseus-room/types";
 
 export function formatBackgroundTaskDetail(taskType: BackgroundTaskType, error: unknown, extras: Record<string, string | number | null> = {}): string {
   const detailParts = [`task=${taskType}`];

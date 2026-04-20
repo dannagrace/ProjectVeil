@@ -4,12 +4,12 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_GUILD_MESSAGE_EXPIRES_AT_INDEX,
   MYSQL_GUILD_MESSAGE_GUILD_CREATED_INDEX,
   MYSQL_GUILD_MESSAGE_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

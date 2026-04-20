@@ -97,7 +97,7 @@ export async function main() {
     }
   }
 
-  const server = spawn("node", ["--import", "tsx", "./apps/server/src/dev-server.ts"], {
+  const server = spawn("node", ["--import", "tsx", "./apps/server/src/infra/dev-server.ts"], {
     cwd: rootDir,
     env: envWithoutMySql,
     stdio: "inherit"

@@ -1,4 +1,4 @@
-import { createRoom, type AuthoritativeWorldRoom } from "../../../apps/server/src/index";
+import { createRoom, type AuthoritativeWorldRoom } from "@server/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { classifyReconnectFailure, normalizeFeatureFlags, type ReconnectFailureReason } from "@veil/shared/platform";
 import { decodePlayerWorldView, listReachableTiles, planHeroMovement, replaceRuntimeConfigs } from "@veil/shared/world";

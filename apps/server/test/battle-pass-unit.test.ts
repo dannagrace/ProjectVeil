@@ -5,7 +5,7 @@ import {
   resolveBattlePassTierForXp,
   toBattlePassRewardGrant,
   type BattlePassConfig
-} from "../src/battle-pass";
+} from "@server/domain/economy/battle-pass";
 
 function createStubBattlePassConfig(overrides?: Partial<BattlePassConfig>): BattlePassConfig {
   return {

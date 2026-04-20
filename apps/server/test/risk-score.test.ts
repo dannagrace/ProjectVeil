@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildRiskQueue, reviewRiskQueueEntry, scoreRiskState } from "../src/risk-score";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { buildRiskQueue, reviewRiskQueueEntry, scoreRiskState } from "@server/domain/ops/risk-score";
 
 test("scoreRiskState prioritizes flagged status, alert reasons, and repeat opponents", () => {
   const score = scoreRiskState({

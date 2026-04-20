@@ -5,12 +5,12 @@ import type {
   BattleSnapshotCompensation,
   BattleSnapshotRecord,
   BattleSnapshotStatus
-} from "./types";
+} from "@server/persistence/types";
 import {
   formatTimestamp,
   normalizePlayerId,
   parseJsonColumn
-} from "./column-helpers";
+} from "@server/persistence/column-helpers";
 
 export interface BattleSnapshotRow extends RowDataPacket {
   room_id: string;

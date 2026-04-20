@@ -1,4 +1,4 @@
-import { resolveSeasonRewardConfig } from "../apps/server/src/season-rewards.ts";
+import { resolveSeasonRewardConfig } from "../apps/server/src/domain/social/season-rewards.ts";
 
 const config = resolveSeasonRewardConfig();
 console.log(

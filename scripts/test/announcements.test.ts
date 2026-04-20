@@ -5,7 +5,7 @@ import {
   normalizeLaunchRuntimeState,
   resolveActiveLaunchAnnouncements,
   resolveLaunchMaintenanceAccess
-} from "../../apps/server/src/launch-runtime-state.ts";
+} from "../../apps/server/src/domain/ops/launch-runtime-state.ts";
 
 test("resolveActiveLaunchAnnouncements returns only entries active for the current time window", () => {
   const state = normalizeLaunchRuntimeState({

@@ -1,1 +1,1 @@
-export * from "./persistence/mysql-persistence";
+export * from "@server/persistence/mysql-persistence";

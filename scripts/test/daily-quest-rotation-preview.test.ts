@@ -8,7 +8,7 @@ import {
   generateDailyQuestRotationPreviewArtifact,
   renderDailyQuestRotationPreviewMarkdown
 } from "../daily-quest-rotation-preview.ts";
-import { createDailyQuestRotationPreview } from "../../apps/server/src/daily-quest-rotations.ts";
+import { createDailyQuestRotationPreview } from "../../apps/server/src/domain/economy/daily-quest-rotations.ts";
 
 test("daily quest rotation preview renders the active and next scheduled rotations", () => {
   const preview = createDailyQuestRotationPreview(

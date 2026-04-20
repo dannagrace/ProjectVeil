@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { emitAnalyticsEvent } from "../../analytics";
-import { recordRuntimeErrorEvent } from "../../observability";
-import type { PaymentOrderSnapshot } from "../../persistence";
+import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
+import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
+import type { PaymentOrderSnapshot } from "@server/persistence";
 
 interface PurchaseAuditLogConfig {
   surface: string;

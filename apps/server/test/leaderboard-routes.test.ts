@@ -3,9 +3,9 @@ import { EventEmitter } from "node:events";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { addUtcDays, getUtcWeekStart } from "@veil/shared/progression";
-import { registerLeaderboardRoutes } from "../src/leaderboard";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
+import { registerLeaderboardRoutes } from "@server/domain/social/leaderboard";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 

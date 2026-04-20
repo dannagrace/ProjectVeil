@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
-import { loadDailyQuestConfig } from "../../apps/server/src/daily-quest-config.ts";
-import { rotateDailyQuests } from "../../apps/server/src/event-engine.ts";
+import { loadDailyQuestConfig } from "../../apps/server/src/domain/economy/daily-quest-config.ts";
+import { rotateDailyQuests } from "../../apps/server/src/domain/battle/event-engine.ts";
 import { expect, test } from "./fixtures";
 import {
   acceptLobbyPrivacyConsent,

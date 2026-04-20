@@ -4,11 +4,11 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_BATTLE_SNAPSHOT_STATUS_UPDATED_INDEX,
   MYSQL_BATTLE_SNAPSHOT_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   await ensureTableExists(

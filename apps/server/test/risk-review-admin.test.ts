@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test, { type TestContext } from "node:test";
 
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerRiskReviewAdminRoutes } from "../src/risk-review-admin";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerRiskReviewAdminRoutes } from "@server/transport/http/risk-review-admin";
 
 type RouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 

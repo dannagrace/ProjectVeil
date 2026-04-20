@@ -3,14 +3,14 @@ import { resolve } from "node:path";
 import type { Pool } from "mysql2/promise";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import { replaceRuntimeConfigs, type RuntimeConfigBundle } from "@veil/shared/world";
-import { parseLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
+import { parseLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import {
   MYSQL_CONFIG_DOCUMENT_TABLE,
   MYSQL_CONFIG_DOCUMENT_UPDATED_AT_INDEX,
   type MySqlPersistenceConfig,
   readMySqlPersistenceConfig
-} from "../../persistence";
-import { createTrackedMySqlPool } from "../../infra/mysql-pool";
+} from "@server/persistence";
+import { createTrackedMySqlPool } from "@server/infra/mysql-pool";
 import type {
   ConfigCenterStore,
   ConfigDocument,
@@ -33,7 +33,7 @@ import type {
   ParsedConfigDocument,
   RuntimeConfigDocumentId,
   ValidationReport
-} from "./types";
+} from "@server/domain/config-center/types";
 import {
   CONFIG_CENTER_LIBRARY_FILE,
   CONFIG_DEFINITIONS,
@@ -45,7 +45,7 @@ import {
   type ConfigSnapshotRecord,
   type ConfigStageDocumentRecord,
   type ConfigStageRecord
-} from "./constants";
+} from "@server/domain/config-center/constants";
 import {
   buildAutomaticSnapshotLabel,
   configDefinitionFor,
@@ -54,28 +54,28 @@ import {
   createId,
   formatTimestamp,
   normalizeJsonContent
-} from "./helpers";
+} from "@server/domain/config-center/helpers";
 import {
   buildConfigDiffEntries,
   buildConfigImpactSummary,
   createConfigDiffPreview
-} from "./diff";
-import { CONFIG_DOCUMENT_SCHEMAS, buildSchemaSummary } from "./schemas";
+} from "@server/domain/config-center/diff";
+import { CONFIG_DOCUMENT_SCHEMAS, buildSchemaSummary } from "@server/domain/config-center/schemas";
 import {
   buildCommentedJson,
   buildCsvForDocument,
   buildWorkbookForDocument,
   parseWorkbookToContent
-} from "./workbook";
+} from "@server/domain/config-center/workbook";
 import {
   getBuiltinPresetSummaries,
   resolveBuiltinPresetContent
-} from "./presets";
+} from "@server/domain/config-center/presets";
 import {
   buildRuntimeBundleWithParsedDocument,
   contentForDocumentId,
   parseConfigDocument
-} from "./preview";
+} from "@server/domain/config-center/preview";
 import {
   applyRuntimeBundle,
   assertRuntimeBundleHotReloadCompatible,
@@ -86,10 +86,10 @@ import {
   notifyConfigUpdateListeners,
   serializeBundleDocument,
   synchronizePendingRuntimeBundle
-} from "./runtime";
-import type { ConfigDefinition } from "./types";
-import { buildSummary, isRuntimeConfigDocumentId } from "./helpers";
-import { validateDocumentDetailed } from "./validators";
+} from "@server/domain/config-center/runtime";
+import type { ConfigDefinition } from "@server/domain/config-center/types";
+import { buildSummary, isRuntimeConfigDocumentId } from "@server/domain/config-center/helpers";
+import { validateDocumentDetailed } from "@server/domain/config-center/validators";
 
 export abstract class BaseConfigCenterStore implements ConfigCenterStore {
   abstract readonly mode: "filesystem" | "mysql";

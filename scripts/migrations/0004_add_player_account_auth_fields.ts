@@ -4,12 +4,12 @@ import {
   ensureColumnExists,
   ensureIndexExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_LOGIN_ID_INDEX,
   MYSQL_PLAYER_ACCOUNT_TABLE,
   MYSQL_PLAYER_ACCOUNT_WECHAT_OPEN_ID_INDEX
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

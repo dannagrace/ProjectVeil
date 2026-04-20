@@ -5,7 +5,7 @@ import {
   LEADERBOARD_REPEATED_OPPONENT_ALERT_THRESHOLD,
   LEADERBOARD_REPEATED_OPPONENT_ELO_GAIN_LIMIT,
   settleLeaderboardMatch
-} from "../src/leaderboard-anti-abuse";
+} from "@server/domain/social/leaderboard-anti-abuse";
 
 test("settleLeaderboardMatch caps winner gain at the daily ELO limit", () => {
   const result = settleLeaderboardMatch({

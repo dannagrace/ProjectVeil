@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import {
   resetWechatSubscribeRuntimeForTests,
   sendWechatSubscribeMessage
-} from "../src/adapters/wechat-subscribe";
+} from "@server/adapters/wechat-subscribe";
 
 test("sendWechatSubscribeMessage constructs the expected POST body", async () => {
   resetWechatSubscribeRuntimeForTests();

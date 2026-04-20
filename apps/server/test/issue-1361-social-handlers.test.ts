@@ -3,14 +3,14 @@ import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client as ColyseusClient } from "colyseus";
 import type { ServerMessage } from "@veil/shared/protocol";
-import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import {
   configureRoomSnapshotStore,
   resetLobbyRoomRegistry,
   resetRoomRuntimeDependencies,
   VeilColyseusRoom
-} from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 
 interface FakeClient extends ColyseusClient {
   sent: ServerMessage[];

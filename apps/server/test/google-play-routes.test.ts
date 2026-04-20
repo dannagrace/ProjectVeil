@@ -3,16 +3,16 @@ import { EventEmitter } from "node:events";
 import { generateKeyPairSync } from "node:crypto";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { issueAccountAuthSession } from "../src/auth";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
 import {
   createGooglePlayBillingVerificationAdapter,
   GooglePlayBillingVerificationError,
   registerGooglePlayRoutes,
   type GooglePlayBillingRuntimeConfig,
   type GoogleVerifiedProductPurchase
-} from "../src/adapters/google-play";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import type { ShopProduct } from "../src/shop";
+} from "@server/adapters/google-play";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import type { ShopProduct } from "@server/domain/economy/shop";
 
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   {

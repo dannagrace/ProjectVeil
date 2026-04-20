@@ -7,7 +7,7 @@ import {
   finalizeBattleReplayCapture,
   type CompletedBattleReplayCapture,
   type OngoingBattleReplayCapture
-} from "./battle-replays";
+} from "@server/domain/battle/battle-replays";
 
 export interface RoomSnapshot {
   roomId: string;

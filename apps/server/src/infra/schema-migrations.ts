@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createConnection, createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
-import { buildMySqlPoolOptions, type MySqlPoolConfig } from "./mysql-pool";
+import { buildMySqlPoolOptions, type MySqlPoolConfig } from "@server/infra/mysql-pool";
 
 export interface SchemaMigrationConfig {
   host: string;

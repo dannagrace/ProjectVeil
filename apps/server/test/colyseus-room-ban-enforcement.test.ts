@@ -7,8 +7,8 @@ import {
   VeilColyseusRoom,
   configureRoomSnapshotStore,
   resetLobbyRoomRegistry
-} from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

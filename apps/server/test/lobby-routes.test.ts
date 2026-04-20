@@ -8,8 +8,8 @@ import {
   resetLobbyRoomRegistry,
   type LobbyRoomSummary,
   VeilColyseusRoom
-} from "../src/colyseus-room";
-import { registerLobbyRoutes } from "../src/lobby";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { registerLobbyRoutes } from "@server/domain/social/lobby";
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));

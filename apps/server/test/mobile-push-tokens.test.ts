@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeMobilePushTokenRegistration, normalizeMobilePushTokenRegistrations } from "../src/mobile-push-tokens";
+import { normalizeMobilePushTokenRegistration, normalizeMobilePushTokenRegistrations } from "@server/domain/account/mobile-push-tokens";
 
 test("normalizeMobilePushTokenRegistration normalizes ios platform and trims token values", () => {
   assert.deepEqual(

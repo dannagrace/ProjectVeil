@@ -3,7 +3,7 @@ import test from "node:test";
 import Redis from "ioredis-mock";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState } from "@veil/shared/models";
 import { createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
-import { MatchmakingService, RedisMatchmakingService } from "../src/matchmaking";
+import { MatchmakingService, RedisMatchmakingService } from "@server/domain/social/matchmaking";
 
 function createHero(playerId: string, heroId: string): HeroState {
   return {

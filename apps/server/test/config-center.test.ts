@@ -13,10 +13,10 @@ import {
   flushPendingConfigUpdate,
   resetConfigCenterRuntimeDependencies,
   resetConfigHotReloadState
-} from "../src/config-center";
-import type { WorldConfigPreview } from "../src/config-center";
-import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "../src/leaderboard-tier-thresholds";
-import { recordRuntimeErrorEvent, resetRuntimeObservability } from "../src/observability";
+} from "@server/config-center";
+import type { WorldConfigPreview } from "@server/config-center";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
+import { recordRuntimeErrorEvent, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 const WORLD_CONFIG = {
   width: 8,

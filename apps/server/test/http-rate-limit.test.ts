@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { startDevServer } from "../src/dev-server";
-import { resetRuntimeObservability } from "../src/observability";
+import { startDevServer } from "@server/infra/dev-server";
+import { resetRuntimeObservability } from "@server/domain/ops/observability";
 
 function withEnvOverrides(
   overrides: Record<string, string>,

@@ -25,7 +25,7 @@ await build({
   absWorkingDir: repoRoot,
   bundle: true,
   entryPoints: {
-    "server/server": "apps/server/src/dev-server.ts",
+    "server/server": "apps/server/src/infra/dev-server.ts",
     "scripts/migrate": "scripts/migrate.ts",
     "scripts/migrate-rollback": "scripts/migrate-rollback.ts"
   },

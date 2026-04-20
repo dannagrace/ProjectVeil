@@ -21,21 +21,21 @@ import { createWorldStateFromConfigs, getBattleBalanceConfig, getDefaultBattleBa
 import {
   parseLeaderboardTierThresholdsConfigDocument,
   type LeaderboardTierThresholdsConfigDocument
-} from "../../leaderboard-tier-thresholds";
+} from "@server/domain/social/leaderboard-tier-thresholds";
 import type {
   ConfigDocumentId,
   ParsedConfigDocument,
   RuntimeConfigDocumentId,
   WorldConfigPreview,
   WorldConfigPreviewTile
-} from "./types";
+} from "@server/domain/config-center/types";
 import {
   createResourceCountRecord,
   createTerrainCountRecord,
   normalizePreviewSeed,
   positionKey
-} from "./helpers";
-import { buildRuntimeConfigBundle } from "./runtime";
+} from "@server/domain/config-center/helpers";
+import { buildRuntimeConfigBundle } from "@server/domain/config-center/runtime";
 
 export function parseConfigDocument(
   id: ConfigDocumentId,

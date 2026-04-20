@@ -6,7 +6,7 @@ import type {
   ConfigPublishAuditEvent,
   ConfigPublishHistoryEntry,
   ValidationReport
-} from "./types";
+} from "@server/domain/config-center/types";
 import type { RuntimeConfigBundle } from "@veil/shared/world";
 
 export const CONFIG_DEFINITIONS: ConfigDefinition[] = [

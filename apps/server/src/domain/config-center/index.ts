@@ -1,4 +1,4 @@
-export * from "./types";
+export * from "@server/domain/config-center/types";
 export {
   BUILTIN_DIFFICULTY_PRESET_IDS,
   BUILTIN_MAP_OBJECT_LAYOUT_PRESETS,
@@ -13,8 +13,8 @@ export {
   MAX_PUBLISH_HISTORY_ENTRIES,
   MAX_STAGE_DOCUMENTS,
   RUNTIME_CONFIG_DOCUMENT_IDS
-} from "./constants";
-export { createWorldConfigPreview } from "./preview";
+} from "@server/domain/config-center/constants";
+export { createWorldConfigPreview } from "@server/domain/config-center/preview";
 export {
   applyRuntimeBundle,
   clearConfigRollbackMonitor,
@@ -24,11 +24,11 @@ export {
   registerConfigUpdateListener,
   resetConfigCenterRuntimeDependencies,
   resetConfigHotReloadState
-} from "./runtime";
+} from "@server/domain/config-center/runtime";
 export {
   BaseConfigCenterStore,
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
   createConfiguredConfigCenterStore
-} from "./store";
-export { registerConfigCenterRoutes } from "./routes";
+} from "@server/domain/config-center/store";
+export { registerConfigCenterRoutes } from "@server/domain/config-center/routes";

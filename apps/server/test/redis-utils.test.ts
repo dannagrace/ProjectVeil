@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closeRedisResource, readRedisUrl } from "../src/infra/redis";
+import { closeRedisResource, readRedisUrl } from "@server/infra/redis";
 
 // readRedisUrl
 
