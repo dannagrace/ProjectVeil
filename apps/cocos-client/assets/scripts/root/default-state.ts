@@ -13,7 +13,7 @@ import {
 } from "../cocos-matchmaking-status.ts";
 import { cocosPresentationConfig } from "../cocos-presentation-config.ts";
 import { createClientPerfTelemetryMonitorState } from "../cocos-client-perf-telemetry.ts";
-import { createDefaultCocosSettingsView } from "../cocos-settings-panel.ts";
+import { createDefaultCocosSettingsView } from "../cocos-settings-panel-model.ts";
 import {
   resolveCocosLoginProviders,
   resolveCocosLoginRuntimeConfig

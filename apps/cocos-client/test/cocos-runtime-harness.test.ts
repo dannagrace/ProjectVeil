@@ -132,6 +132,7 @@ test("Cocos lifecycle harness cold-boots VeilRoot into the lobby before guest ro
         requestId: "cocos-req-1",
         roomId: "room-issue-1077",
         playerId: bootPlayerId,
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: bootPlayerId,
         authToken: "guest.issue-1077.token"
@@ -347,6 +348,7 @@ test("Cocos lifecycle harness replays cached local boot state before VeilRoot op
         requestId: "cocos-req-1",
         roomId: "room-local",
         playerId: "local-player",
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "本地旅人",
         authToken: "guest.local.token"
@@ -407,6 +409,7 @@ test("Cocos lifecycle harness recovers VeilRoot through VeilCocosSession reconne
         requestId: "cocos-req-1",
         roomId: "room-recover",
         playerId: "player-349",
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "Player 349"
       }
@@ -487,6 +490,7 @@ test("Cocos lifecycle harness hands lobby auth off into a live VeilRoot session"
         requestId: "cocos-req-1",
         roomId: "room-lobby",
         playerId: "account-player",
+        clientChannel: "h5",
         clientVersion: "1.0.3",
         displayName: "暮潮守望",
         authToken: "account.token"

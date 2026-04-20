@@ -1,7 +1,7 @@
 import { _decorator, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Node, Sprite, SpriteFrame, UIOpacity, UITransform, v3, view } from "cc";
 import type { PlayerTileView, SessionUpdate, Vec2 } from "./VeilCocosSession.ts";
 import { buildFogTileStyle, createTileLookup, FOG_TILE_STATES, fogEdgeMarkerForTile, resolveFogTileFrameKey } from "./cocos-map-visuals.ts";
-import { resolveCocosTileMarkerVisual, type CocosTileMarkerVisual } from "./cocos-object-visuals.ts";
+import { mapBoardTileKey, resolveMapBoardObjectMarker, type CocosTileMarkerVisual } from "./cocos-map-board-model.ts";
 import { VeilFogOverlay } from "./VeilFogOverlay.ts";
 import { VeilTilemapRenderer } from "./VeilTilemapRenderer.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
@@ -442,7 +442,7 @@ export class VeilMapBoard extends Component {
   }
 
   private tileKey(position: Vec2): string {
-    return `${position.x}-${position.y}`;
+    return mapBoardTileKey(position);
   }
 
   private findTile(position: Vec2): PlayerTileView | null {
@@ -770,7 +770,7 @@ export class VeilMapBoard extends Component {
   private renderObjectMarker(tile: PlayerTileView, width: number, height: number, usesTilemapRenderer: boolean): void {
     const hero = this.activeHero();
     const isOwnHeroTile = Boolean(hero && hero.position.x === tile.position.x && hero.position.y === tile.position.y);
-    const markerVisual = resolveCocosTileMarkerVisual(tile);
+    const markerVisual = resolveMapBoardObjectMarker(tile);
     const key = this.tileKey(tile.position);
 
     if (!markerVisual || tile.fog === "hidden" || isOwnHeroTile) {

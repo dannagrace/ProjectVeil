@@ -74,7 +74,7 @@ export const suites: CoverageSuite[] = [
   {
     name: "cocos-client",
     include: "apps/cocos-client/assets/scripts/**/*.ts",
-    lineThreshold: 55,
+    lineThreshold: 60,
     branchThreshold: 70,
     functionThreshold: 60,
     tests: ["apps/cocos-client/test/**/*.test.ts"],
@@ -82,12 +82,23 @@ export const suites: CoverageSuite[] = [
 ];
 
 async function main() {
+  const requestedSuites = readRequestedSuites(process.argv.slice(2));
+  const activeSuites = requestedSuites.length > 0
+    ? suites.filter((suite) => requestedSuites.includes(suite.name))
+    : suites;
+
+  if (requestedSuites.length > 0 && activeSuites.length !== requestedSuites.length) {
+    const knownSuites = new Set(activeSuites.map((suite) => suite.name));
+    const unknownSuites = requestedSuites.filter((suite) => !knownSuites.has(suite));
+    throw new Error(`Unknown coverage suite(s): ${unknownSuites.join(", ")}`);
+  }
+
   await rm(coverageRoot, { force: true, recursive: true });
   await mkdir(path.join(coverageRoot, "v8"), { recursive: true });
 
   const summaries: CoverageSummary[] = [];
 
-  for (const suite of suites) {
+  for (const suite of activeSuites) {
     const suiteCoverageDir = path.join(coverageRoot, "v8", suite.name);
     await mkdir(suiteCoverageDir, { recursive: true });
 
@@ -123,6 +134,22 @@ async function main() {
   }
 
   await writeSummary(summaries);
+}
+
+function readRequestedSuites(args: string[]): string[] {
+  const suites: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== "--suite") {
+      continue;
+    }
+    const suiteName = args[index + 1];
+    if (!suiteName) {
+      throw new Error("Missing coverage suite name after --suite");
+    }
+    suites.push(suiteName);
+    index += 1;
+  }
+  return suites;
 }
 
 function runNodeCommand(args: string[], env: NodeJS.ProcessEnv) {

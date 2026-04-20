@@ -2286,3 +2286,36 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `VeilRoot.ts < 800`
   - child modules `< 1000`
   - canonical journey smoke 绿
+
+- `#1564` 已完成 Cocos `View / ViewModel` 分层强制落地，并补齐 authoring tooling：
+  - 新增 panel view-model / wrapper：
+    - `apps/cocos-client/assets/scripts/cocos-campaign-panel-model.ts`
+    - `apps/cocos-client/assets/scripts/cocos-equipment-panel-model.ts`
+    - `apps/cocos-client/assets/scripts/cocos-hud-panel-model.ts`
+    - `apps/cocos-client/assets/scripts/cocos-progression-panel-model.ts`
+    - `apps/cocos-client/assets/scripts/cocos-settings-panel-model.ts`
+    - `apps/cocos-client/assets/scripts/cocos-timeline-panel-model.ts`
+  - 迁移到 model 层的重点面板：
+    - `VeilHudPanel.ts`
+    - `VeilEquipmentPanel.ts`
+    - `VeilTimelinePanel.ts`
+    - `cocos-settings-panel.ts`
+    - `VeilMapBoard.ts`
+  - 新增 authoring / boundary tooling：
+    - `scripts/cocos-panel-authoring-registry.mjs`
+    - `scripts/check-cocos-panel-boundaries.mjs`
+    - `scripts/audit-cocos-panel-view-models.mjs`
+    - `scripts/generate-cocos-panel.ts`
+    - `docs/cocos-panel-authoring-guide.md`
+  - `package.json`
+    - 新增 `lint:cocos:panels`
+    - 新增 `generate:cocos:panel`
+    - 新增 `test:cocos:coverage`
+  - 当前面板覆盖率已经达到 `9/9 = 100%`，高于 issue 要求的 `>= 80%`
+  - Cocos coverage 门禁已经提升到 `60%`，本轮实测 `all files line coverage = 78.54%`
+  - 本轮补充验证已通过：
+    - `npm run typecheck:cocos`
+    - `npm run lint:cocos:panels`
+    - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/cocos-timeline-panel-model.test.ts ./apps/cocos-client/test/cocos-equipment-panel-model.test.ts ./apps/cocos-client/test/cocos-hud-panel-model.test.ts ./apps/cocos-client/test/cocos-settings-panel.test.ts ./apps/cocos-client/test/cocos-hud-panel.test.ts ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-battle-panel-model.test.ts ./apps/cocos-client/test/cocos-map-board-model.test.ts`
+    - `npm run test:cocos:coverage`
+    - `npm run smoke:cocos:canonical-journey`

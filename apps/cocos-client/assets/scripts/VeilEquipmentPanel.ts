@@ -1,22 +1,18 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform } from "cc";
-import type { EventLogEntry } from "./project-shared/index.ts";
-import type { HeroView } from "./VeilCocosSession.ts";
 import {
-  buildEquipmentInspectItems,
-  buildInventorySummaryView,
-  buildHeroEquipmentActionRows,
-  formatEquipmentInspectLines,
-  formatEquipmentSlotLabel,
-  formatLootSpotlightLines,
-  formatEquipmentOverviewLines,
-  formatEquipmentStatSummary,
-  formatRecentLootLines,
-  type CocosEquipmentInventoryFilter,
-  type CocosEquipmentInventorySort,
-  type CocosEquipmentActionRow,
-  type CocosEquipmentInspectItem
+  buildEquipmentPanelInspectButtonName,
+  buildEquipmentPanelViewModel,
+  type EquipmentPanelActionDescriptor,
+  type VeilEquipmentPanelRenderState
+} from "./cocos-equipment-panel-model.ts";
+import type {
+  CocosEquipmentInventoryFilter,
+  CocosEquipmentInventorySort,
+  CocosEquipmentInspectItem
 } from "./cocos-hero-equipment.ts";
 import { assignUiLayer } from "./cocos-ui-layer.ts";
+
+export type { VeilEquipmentPanelRenderState } from "./cocos-equipment-panel-model.ts";
 
 const { ccclass } = _decorator;
 const H_ALIGN_LEFT = 0;
@@ -39,22 +35,10 @@ interface EquipmentPanelButtonTone {
 }
 
 interface EquipmentPanelButtonState {
-  name: string;
+  key: string;
   label: string;
   callback: (() => void) | null;
   tone: "default" | "equip" | "unequip" | "inspect";
-}
-
-export interface VeilEquipmentPanelRenderState {
-  hero: HeroView | null;
-  recentEventLog: EventLogEntry[];
-  recentSessionEvents?: Array<{
-    type: "hero.equipmentFound";
-    heroId: string;
-    equipmentName: string;
-    rarity: "common" | "rare" | "epic";
-    overflowed?: boolean;
-  }>;
 }
 
 export interface VeilEquipmentPanelOptions {
@@ -63,45 +47,43 @@ export interface VeilEquipmentPanelOptions {
   onUnequipItem?: (slot: "weapon" | "armor" | "accessory") => void;
 }
 
-function buildInspectButtonName(item: CocosEquipmentInspectItem): string {
-  return `EquipmentPanelInspect-${item.source}-${item.slot}-${item.itemId}`;
-}
-
 function buildActionButtons(
   inspectItems: CocosEquipmentInspectItem[],
-  rows: CocosEquipmentActionRow[],
+  descriptors: EquipmentPanelActionDescriptor[],
   onInspectItem: (item: CocosEquipmentInspectItem) => void,
   onEquipItem: VeilEquipmentPanelOptions["onEquipItem"],
   onUnequipItem: VeilEquipmentPanelOptions["onUnequipItem"]
 ): EquipmentPanelButtonState[] {
-  const buttons: EquipmentPanelButtonState[] = inspectItems.map((item) => ({
-    name: buildInspectButtonName(item),
-    label: `查看 ${item.slotLabel} ${item.name}${item.source === "inventory" && item.count > 1 ? ` x${item.count}` : ""}`,
-    tone: "inspect",
-    callback: () => onInspectItem(item)
-  }));
-
-  for (const row of rows) {
-    for (const item of row.inventory) {
-      buttons.push({
-        name: `EquipmentPanelAction-${row.slot}-${item.itemId}`,
-        label: `${row.label} 装备 ${item.name}${item.count > 1 ? ` x${item.count}` : ""}`,
-        tone: "equip",
-        callback: onEquipItem ? () => onEquipItem(row.slot, item.itemId) : null
-      });
+  return descriptors.map((descriptor) => {
+    if (descriptor.kind === "inspect") {
+      const item = inspectItems.find((candidate) => buildEquipmentPanelInspectButtonName(candidate) === descriptor.key) ?? null;
+      return {
+        key: descriptor.key,
+        label: descriptor.label,
+        tone: "inspect" as const,
+        callback: item ? () => onInspectItem(item) : null
+      };
     }
 
-    if (row.itemId) {
-      buttons.push({
-        name: `EquipmentPanelAction-${row.slot}-unequip`,
-        label: `${row.label} 卸下 ${row.itemName}`,
-        tone: "unequip",
-        callback: onUnequipItem ? () => onUnequipItem(row.slot) : null
-      });
+    if (descriptor.kind === "equip") {
+      const slot = descriptor.slot;
+      const itemId = descriptor.itemId;
+      return {
+        key: descriptor.key,
+        label: descriptor.label,
+        tone: "equip" as const,
+        callback: onEquipItem && slot && itemId ? () => onEquipItem(slot, itemId) : null
+      };
     }
-  }
 
-  return buttons;
+    const slot = descriptor.slot;
+    return {
+      key: descriptor.key,
+      label: descriptor.label,
+      tone: "unequip" as const,
+      callback: onUnequipItem && slot ? () => onUnequipItem(slot) : null
+    };
+  });
 }
 
 @ccclass("ProjectVeilEquipmentPanel")
@@ -111,7 +93,7 @@ export class VeilEquipmentPanel extends Component {
   private onUnequipItem: VeilEquipmentPanelOptions["onUnequipItem"];
   private currentState: VeilEquipmentPanelRenderState | null = null;
   private inspectedItemId: string | null = null;
-  private inspectedItemSource: CocosEquipmentInspectItem["source"] | null = null;
+  private inspectedItemSource: "equipped" | "inventory" | null = null;
   private inventoryFilter: CocosEquipmentInventoryFilter = "all";
   private inventorySort: CocosEquipmentInventorySort = "slot";
 
@@ -127,37 +109,22 @@ export class VeilEquipmentPanel extends Component {
     const width = transform.width || 420;
     const height = transform.height || 520;
     const contentWidth = width - 30;
-    const hero = state.hero;
-    const rows = buildHeroEquipmentActionRows(hero);
-    const inspectItems = buildEquipmentInspectItems(hero);
-    const selectedInspectItem = this.resolveInspectedItem(inspectItems);
-    const inventoryView = buildInventorySummaryView(hero, {
-      filter: this.inventoryFilter,
-      sort: this.inventorySort
+    const model = buildEquipmentPanelViewModel(state, {
+      inspectedItemId: this.inspectedItemId,
+      inspectedItemSource: this.inspectedItemSource,
+      inventoryFilter: this.inventoryFilter,
+      inventorySort: this.inventorySort
     });
+    const hero = model.hero;
     const buttons = buildActionButtons(
-      inspectItems,
-      rows,
+      model.inspectItems,
+      model.actionDescriptors,
       (item) => this.inspectItem(item),
       this.onEquipItem,
       this.onUnequipItem
     );
-    const bonusSummary = formatEquipmentStatSummary(hero);
-    const loadoutLines = formatEquipmentOverviewLines(hero);
-    const inventoryLines = inventoryView.lines;
-    const inspectLines = formatEquipmentInspectLines(selectedInspectItem);
-    const spotlightLines = formatLootSpotlightLines(
-      state.recentSessionEvents ?? [],
-      hero?.id,
-      hero?.name
-    );
-    const lootLines = formatRecentLootLines(
-      state.recentEventLog,
-      hero?.id,
-      3,
-      state.recentSessionEvents ?? [],
-      hero?.name
-    );
+    this.inspectedItemId = model.selectedInspectItem?.itemId ?? null;
+    this.inspectedItemSource = model.selectedInspectItem?.source ?? null;
 
     let cursorY = height / 2 - 16;
     this.syncChrome(width, height);
@@ -171,8 +138,8 @@ export class VeilEquipmentPanel extends Component {
       [
         hero ? `${hero.name} 的装备背包` : "装备背包",
         hero ? `可查看已穿戴装备、背包物品与最近战利品。` : "等待英雄快照同步。",
-        bonusSummary.length > 0
-          ? `总加成 ${bonusSummary.map((entry) => `${entry.label} +${entry.value}`).join(" / ")}`
+        model.bonusSummary.length > 0
+          ? `总加成 ${model.bonusSummary.map((entry) => `${entry.label} +${entry.value}`).join(" / ")}`
           : "总加成 当前无额外属性"
       ],
       {
@@ -206,7 +173,7 @@ export class VeilEquipmentPanel extends Component {
       60,
       [
         "筛选与排序",
-        `筛选 当前 ${this.describeInventoryFilter(this.inventoryFilter)} · 排序 当前 ${this.describeInventorySort(this.inventorySort)}`
+        `筛选 当前 ${model.inventoryFilterLabel} · 排序 当前 ${model.inventorySortLabel}`
       ],
       {
         fill: CARD_FILL,
@@ -228,7 +195,7 @@ export class VeilEquipmentPanel extends Component {
         cursorY,
         contentWidth,
         76,
-        spotlightLines,
+        model.spotlightLines,
         {
           fill: CARD_HIGHLIGHT_FILL,
           stroke: new Color(244, 236, 208, 82)
@@ -244,8 +211,8 @@ export class VeilEquipmentPanel extends Component {
       0,
       cursorY,
       contentWidth,
-      Math.max(112, 34 + loadoutLines.length * 16),
-      ["穿戴配置", ...loadoutLines],
+      Math.max(112, 34 + model.loadoutLines.length * 16),
+      ["穿戴配置", ...model.loadoutLines],
       {
         fill: CARD_FILL,
         stroke: new Color(220, 230, 244, 56)
@@ -260,8 +227,8 @@ export class VeilEquipmentPanel extends Component {
       0,
       cursorY,
       contentWidth,
-      Math.max(122, 34 + inventoryLines.length * 16),
-      ["背包清单", ...inventoryLines],
+      Math.max(122, 34 + model.inventoryLines.length * 16),
+      ["背包清单", ...model.inventoryLines],
       {
         fill: CARD_FILL,
         stroke: new Color(220, 230, 244, 56)
@@ -276,8 +243,8 @@ export class VeilEquipmentPanel extends Component {
       0,
       cursorY,
       contentWidth,
-      Math.max(96, 34 + inspectLines.length * 16),
-      ["物品详情", ...inspectLines],
+      Math.max(96, 34 + model.inspectLines.length * 16),
+      ["物品详情", ...model.inspectLines],
       {
         fill: CARD_HIGHLIGHT_FILL,
         stroke: new Color(244, 236, 208, 82)
@@ -292,8 +259,8 @@ export class VeilEquipmentPanel extends Component {
       0,
       cursorY,
       contentWidth,
-      Math.max(94, 34 + lootLines.length * 16),
-      ["最近战利品", ...lootLines],
+      Math.max(94, 34 + model.lootLines.length * 16),
+      ["最近战利品", ...model.lootLines],
       {
         fill: CARD_FILL,
         stroke: new Color(220, 230, 244, 56)
@@ -326,28 +293,6 @@ export class VeilEquipmentPanel extends Component {
     if (this.currentState) {
       this.render(this.currentState);
     }
-  }
-
-  private resolveInspectedItem(items: CocosEquipmentInspectItem[]): CocosEquipmentInspectItem | null {
-    const matchedItem = items.find(
-      (item) => item.itemId === this.inspectedItemId && item.source === this.inspectedItemSource
-    );
-    if (matchedItem) {
-      return matchedItem;
-    }
-
-    const [nextItem] = items;
-    this.inspectedItemId = nextItem?.itemId ?? null;
-    this.inspectedItemSource = nextItem?.source ?? null;
-    return nextItem ?? null;
-  }
-
-  private describeInventoryFilter(filter: CocosEquipmentInventoryFilter): string {
-    return filter === "all" ? "全部" : formatEquipmentSlotLabel(filter);
-  }
-
-  private describeInventorySort(sort: CocosEquipmentInventorySort): string {
-    return sort === "slot" ? "槽位" : sort === "rarity" ? "稀有度" : "名称";
   }
 
   private syncChrome(width: number, height: number): void {
@@ -489,7 +434,7 @@ export class VeilEquipmentPanel extends Component {
       ? buttons
       : [
           {
-            name: "EquipmentPanelAction-empty",
+            key: "EquipmentPanelAction-empty",
             label: "当前没有可执行的装备操作",
             callback: null,
             tone: "default" as const
@@ -514,7 +459,7 @@ export class VeilEquipmentPanel extends Component {
               ? CARD_HIGHLIGHT_FILL
               : BUTTON_FILL;
       this.renderButton(
-        button.name,
+        button.key,
         centerX,
         centerY,
         buttonWidth,
@@ -531,7 +476,7 @@ export class VeilEquipmentPanel extends Component {
     for (const child of this.node.children) {
       if (
         (child.name.startsWith("EquipmentPanelAction-") || child.name.startsWith("EquipmentPanelInspect-")) &&
-        !actionButtons.some((button) => button.name === child.name)
+        !actionButtons.some((button) => button.key === child.name)
       ) {
         child.active = false;
       }
