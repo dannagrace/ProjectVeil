@@ -1,5 +1,5 @@
 import objectVisuals from "../../../configs/object-visuals.json";
-import type { PlayerTileView } from "../../../packages/shared/src/index";
+import type { PlayerTileView } from "@veil/shared/models";
 import { buildingAsset, markerAsset, resourceAsset } from "./assets";
 
 type FactionKey = "crown" | "wild" | "shadow";

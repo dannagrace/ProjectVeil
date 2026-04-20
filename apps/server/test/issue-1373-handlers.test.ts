@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client as ColyseusClient } from "colyseus";
-import type { ServerMessage } from "../../../packages/shared/src/index";
+import type { ServerMessage } from "@veil/shared/protocol";
 import { configureAnalyticsRuntimeDependencies, flushAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "../src/analytics";
 import { issueAccountAuthSession } from "../src/auth";
 import {

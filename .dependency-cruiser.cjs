@@ -85,6 +85,7 @@ module.exports = {
           "(^|/)package(-lock)?\\.json$",
           "apps/cocos-client/assets/scripts/",
           "apps/cocos-client/build-templates/",
+          "apps/cocos-client/temp/",
           "apps/cocos-client/tooling/",
           "apps/server/src/index\\.ts$",
           "apps/client/src/",
@@ -116,6 +117,7 @@ module.exports = {
         "artifacts/",
         "apps/cocos-client/assets/scripts/",
         "apps/cocos-client/build-templates/",
+        "apps/cocos-client/temp/",
         "apps/cocos-client/tooling/",
         "apps/cocos-client/test/",
         "apps/cocos-client/resources/"

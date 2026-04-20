@@ -1,6 +1,6 @@
 import seasonRewardsDocument from "../../../configs/season-rewards.json";
 import seasonRewardSchemaDocument from "../../../configs/schemas/season-rewards.schema.json";
-import { type SeasonRewardBracket, type SeasonRewardConfig } from "../../../packages/shared/src/index";
+import type { SeasonRewardBracket, SeasonRewardConfig } from "@veil/shared/models";
 
 export interface ResolvedSeasonRewardConfig extends SeasonRewardConfig {}
 

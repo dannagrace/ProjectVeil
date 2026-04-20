@@ -16,15 +16,8 @@ import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-ob
 import contestedBasinWorldConfig from "../../../../../configs/phase2-contested-basin.json";
 import frontierExpandedMapObjectsConfig from "../../../../../configs/phase2-map-objects-frontier-expanded.json";
 import frontierExpandedWorldConfig from "../../../../../configs/phase2-frontier-expanded.json";
-import {
-  getDefaultMapObjectsConfig,
-  getDefaultWorldConfig,
-  type BattleBalanceConfig,
-  type BattleSkillCatalogConfig,
-  type MapObjectsConfig,
-  type UnitCatalogConfig,
-  type WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { getDefaultMapObjectsConfig, getDefaultWorldConfig } from "@veil/shared/world";
 import type { ConfigDocumentId, ConfigPresetSummary } from "./types";
 import {
   BUILTIN_DIFFICULTY_PRESET_IDS,

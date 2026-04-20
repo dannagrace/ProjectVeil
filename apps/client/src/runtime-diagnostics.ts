@@ -1,12 +1,5 @@
-import {
-  BattleState,
-  PlayerWorldView,
-  RuntimeDiagnosticsConnectionStatus,
-  RuntimeDiagnosticsErrorEvent,
-  RuntimeDiagnosticsMode,
-  RuntimeDiagnosticsSnapshot,
-  summarizeRuntimeDiagnosticsErrors
-} from "../../../packages/shared/src/index";
+import { BattleState, PlayerWorldView } from "@veil/shared/models";
+import { RuntimeDiagnosticsConnectionStatus, RuntimeDiagnosticsErrorEvent, RuntimeDiagnosticsMode, RuntimeDiagnosticsSnapshot, summarizeRuntimeDiagnosticsErrors } from "@veil/shared/platform";
 import type { PlayerAccountProfile } from "./player-account";
 
 type WorldHero = PlayerWorldView["ownHeroes"][number];

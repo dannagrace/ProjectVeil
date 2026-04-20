@@ -1,13 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import {
-  findDisplayNameModerationViolation,
-  normalizeTextForModeration,
-  type DisplayNameValidationRules,
-  type GuildChatMessage,
-  type GuildMemberState,
-  type GuildState
-} from "../../../packages/shared/src/index";
+import type { GuildMemberState, GuildState } from "@veil/shared/models";
+import { type DisplayNameValidationRules, findDisplayNameModerationViolation, normalizeTextForModeration } from "@veil/shared/platform";
+import type { GuildChatMessage } from "@veil/shared/social";
 import type { AdminAuditActorRole, AdminAuditLogRecord, AdminAuditAction, PlayerAccountSnapshot, RoomSnapshotStore } from "./persistence";
 import { loadDisplayNameValidationRules } from "./display-name-rules";
 import { normalizePlayerMailboxMessage } from "./player-mailbox";

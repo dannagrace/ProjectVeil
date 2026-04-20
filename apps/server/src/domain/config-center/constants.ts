@@ -7,7 +7,7 @@ import type {
   ConfigPublishHistoryEntry,
   ValidationReport
 } from "./types";
-import type { RuntimeConfigBundle } from "../../../../../packages/shared/src/index";
+import type { RuntimeConfigBundle } from "@veil/shared/world";
 
 export const CONFIG_DEFINITIONS: ConfigDefinition[] = [
   {

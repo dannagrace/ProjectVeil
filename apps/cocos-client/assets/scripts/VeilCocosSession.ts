@@ -1,5 +1,5 @@
 import { sys } from "cc";
-import { classifyReconnectFailure, type ReconnectFailureReason } from "../../../../packages/shared/src/index.ts";
+import { classifyReconnectFailure, type ReconnectFailureReason } from "@veil/shared/platform";
 import { resolveCocosClientVersion } from "./cocos-client-version.ts";
 import type { EquipmentType } from "./project-shared/index.ts";
 import { buildCocosAuthHeaders, resolveCocosApiBaseUrl } from "./cocos-lobby.ts";

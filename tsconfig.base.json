@@ -15,7 +15,15 @@
     "exactOptionalPropertyTypes": true,
     "baseUrl": ".",
     "paths": {
-      "cc": ["packages/cc-runtime-stub/index.js"]
+      "cc": ["packages/cc-runtime-stub/index.js"],
+      "@veil/shared": ["packages/shared/src/index.ts"],
+      "@veil/shared/battle": ["packages/shared/src/barrels/battle.ts"],
+      "@veil/shared/world": ["packages/shared/src/barrels/world.ts"],
+      "@veil/shared/progression": ["packages/shared/src/barrels/progression.ts"],
+      "@veil/shared/economy": ["packages/shared/src/barrels/economy.ts"],
+      "@veil/shared/social": ["packages/shared/src/barrels/social.ts"],
+      "@veil/shared/platform": ["packages/shared/src/barrels/platform.ts"],
+      "@veil/shared/*": ["packages/shared/src/*.ts", "packages/shared/src/*/index.ts"]
     }
   }
 }

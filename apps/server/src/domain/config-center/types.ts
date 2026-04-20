@@ -1,15 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
-import type {
-  BattleBalanceConfig,
-  BattleSkillCatalogConfig,
-  ContentPackValidationReport,
-  MapObjectsConfig,
-  ResourceKind,
-  RuntimeConfigBundle,
-  TerrainType,
-  UnitCatalogConfig,
-  WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import type { ContentPackValidationReport, RuntimeConfigBundle } from "@veil/shared/world";
 import type { LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
 
 export type ConfigDocumentId =

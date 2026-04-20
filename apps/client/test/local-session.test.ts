@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
-import { DEFAULT_FEATURE_FLAGS, type ServerMessage } from "../../../packages/shared/src/index";
+import { DEFAULT_FEATURE_FLAGS } from "@veil/shared/platform";
+import type { ServerMessage } from "@veil/shared/protocol";
 import {
   getReconnectionStorageKey,
   getSessionReplayStorageKey,

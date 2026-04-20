@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dailyQuestsDocument from "../../../configs/daily-quests.json";
-import type { DailyQuestDefinition } from "../../../packages/shared/src/index";
+import type { DailyQuestDefinition } from "@veil/shared/progression";
 
 export type DailyQuestTier = "common" | "rare" | "epic";
 

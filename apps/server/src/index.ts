@@ -1,28 +1,6 @@
-import {
-  applyBattleAction,
-  applyBattleOutcomeToWorld,
-  createActionValidationFailure,
-  createHeroBattleState,
-  createNeutralBattleState,
-  filterWorldEventsForPlayer,
-  createPlayerWorldView,
-  createInitialWorldState,
-  getBattleOutcome,
-  normalizeHeroState,
-  pickAutomatedBattleAction,
-  precheckBattleAction,
-  precheckWorldAction,
-  resolveWorldAction,
-  type ActionValidationFailure,
-  type BattleState,
-  type MovementPlan,
-  type PlayerWorldView,
-  type BattleAction,
-  type BattleOutcome,
-  type WorldAction,
-  type WorldEvent,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import { type ActionValidationFailure, applyBattleAction, createActionValidationFailure, createHeroBattleState, createNeutralBattleState, getBattleOutcome, pickAutomatedBattleAction, precheckBattleAction } from "@veil/shared/battle";
+import { type BattleAction, type BattleOutcome, type BattleState, type MovementPlan, normalizeHeroState, type PlayerWorldView, type WorldAction, type WorldEvent, type WorldState } from "@veil/shared/models";
+import { applyBattleOutcomeToWorld, createInitialWorldState, createPlayerWorldView, filterWorldEventsForPlayer, precheckWorldAction, resolveWorldAction } from "@veil/shared/world";
 import {
   appendBattleReplayStep,
   createBattleReplayCapture,

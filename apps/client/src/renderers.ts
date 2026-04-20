@@ -1,4 +1,4 @@
-import type { BattleState, HeroState, PlayerTileView, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { BattleState, HeroState, PlayerTileView, PlayerWorldView } from "@veil/shared/models";
 
 function terrainSymbol(tile: PlayerTileView): string {
   if (tile.fog === "hidden") {

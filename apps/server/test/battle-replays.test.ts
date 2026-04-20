@@ -8,12 +8,9 @@ import {
   createBattleReplayCapture,
   finalizeBattleReplayCapture
 } from "../src/battle-replays";
-import {
-  createEmptyBattleState,
-  normalizePlayerBattleReplaySummaries,
-  type BattleAction,
-  type PlayerAccountSnapshot
-} from "../../../packages/shared/src/index";
+import type { PlayerAccountSnapshot } from "../src/persistence";
+import { createEmptyBattleState, normalizePlayerBattleReplaySummaries } from "@veil/shared/battle";
+import type { BattleAction } from "@veil/shared/models";
 
 function createBattleState(overrides: {
   id?: string;

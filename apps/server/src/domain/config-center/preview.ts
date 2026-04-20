@@ -16,28 +16,8 @@ import contestedBasinMapObjectsConfig from "../../../../../configs/phase2-map-ob
 import contestedBasinWorldConfig from "../../../../../configs/phase2-contested-basin.json";
 import frontierExpandedMapObjectsConfig from "../../../../../configs/phase2-map-objects-frontier-expanded.json";
 import frontierExpandedWorldConfig from "../../../../../configs/phase2-frontier-expanded.json";
-import {
-  createWorldStateFromConfigs,
-  getBattleBalanceConfig,
-  getDefaultBattleBalanceConfig,
-  getDefaultBattleSkillCatalog,
-  getDefaultMapObjectsConfig,
-  getDefaultUnitCatalog,
-  getDefaultWorldConfig,
-  validateBattleBalanceConfig,
-  validateBattleSkillCatalog,
-  validateMapObjectsConfig,
-  validateUnitCatalog,
-  validateWorldConfig,
-  type BattleBalanceConfig,
-  type BattleSkillCatalogConfig,
-  type MapObjectsConfig,
-  type ResourceKind,
-  type RuntimeConfigBundle,
-  type TerrainType,
-  type UnitCatalogConfig,
-  type WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { createWorldStateFromConfigs, getBattleBalanceConfig, getDefaultBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultMapObjectsConfig, getDefaultUnitCatalog, getDefaultWorldConfig, type RuntimeConfigBundle, validateBattleBalanceConfig, validateBattleSkillCatalog, validateMapObjectsConfig, validateUnitCatalog, validateWorldConfig } from "@veil/shared/world";
 import {
   parseLeaderboardTierThresholdsConfigDocument,
   type LeaderboardTierThresholdsConfigDocument

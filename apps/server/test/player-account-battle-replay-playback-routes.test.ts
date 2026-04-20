@@ -22,12 +22,8 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import {
-  createEmptyBattleState,
-  queryEventLogEntries,
-  type BattleReplayPlaybackState,
-  type PlayerBattleReplaySummary
-} from "../../../packages/shared/src/index";
+import { type BattleReplayPlaybackState, createEmptyBattleState, type PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { queryEventLogEntries } from "@veil/shared/event-log";
 
 class MemoryPlayerAccountStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();

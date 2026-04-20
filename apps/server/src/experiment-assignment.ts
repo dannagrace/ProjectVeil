@@ -1,10 +1,4 @@
-import {
-  normalizeFeatureFlagConfigDocument,
-  type AnalyticsEvent,
-  type ExperimentAssignment,
-  type ExperimentDefinition,
-  type FeatureFlagConfigDocument
-} from "../../../packages/shared/src/index";
+import { type AnalyticsEvent, type ExperimentAssignment, type ExperimentDefinition, type FeatureFlagConfigDocument, normalizeFeatureFlagConfigDocument } from "@veil/shared/platform";
 
 export interface ExperimentAssignmentSubject {
   playerId: string;

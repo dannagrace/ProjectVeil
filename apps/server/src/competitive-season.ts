@@ -1,20 +1,6 @@
-import {
-  addUtcDays,
-  didPlayerWinReplay,
-  getRankDivisionForRating,
-  getRankDivisionIndex,
-  getPreviousRankDivision,
-  getPromotionSeriesTargetDivision,
-  getSoftDecayDivision,
-  getTierForDivision,
-  getTierFloorDivision,
-  getUtcWeekStart,
-  rollRankedWeeklyProgress,
-  resolveRankedSeasonConfig,
-  shouldApplyWeeklyDivisionDecay,
-  type PlayerBattleReplaySummary,
-  type RankDivisionId
-} from "../../../packages/shared/src/index";
+import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { addUtcDays, didPlayerWinReplay, getPreviousRankDivision, getPromotionSeriesTargetDivision, getRankDivisionForRating, getRankDivisionIndex, getSoftDecayDivision, getTierFloorDivision, getTierForDivision, getUtcWeekStart, resolveRankedSeasonConfig, rollRankedWeeklyProgress, shouldApplyWeeklyDivisionDecay } from "@veil/shared/progression";
+import type { RankDivisionId } from "@veil/shared/social";
 import type { PlayerAccountSnapshot, PlayerAccountProgressPatch } from "./persistence";
 
 function uniqueNewReplays(

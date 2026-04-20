@@ -1,4 +1,5 @@
-import { canSkipTutorial, type TutorialProgressAction } from "../../../packages/shared/src/index";
+import { canSkipTutorial } from "@veil/shared/progression";
+import type { TutorialProgressAction } from "@veil/shared/protocol";
 
 export function normalizeTutorialProgressAction(input: unknown, currentStep?: number | null): TutorialProgressAction {
   const raw = input as Partial<TutorialProgressAction> | null | undefined;

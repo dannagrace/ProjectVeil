@@ -1,13 +1,19 @@
 {
-  "name": "@project-veil/shared",
+  "name": "@veil/shared",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./battle": "./src/barrels/battle.ts",
+    "./world": "./src/barrels/world.ts",
+    "./progression": "./src/barrels/progression.ts",
+    "./economy": "./src/barrels/economy.ts",
+    "./social": "./src/barrels/social.ts",
+    "./platform": "./src/barrels/platform.ts",
+    "./*": "./src/*.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }
-

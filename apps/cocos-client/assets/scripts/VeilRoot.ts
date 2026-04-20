@@ -222,18 +222,9 @@ import {
   recordClientPerfFrame,
   type ClientPerfRuntimeMetadata
 } from "./cocos-client-perf-telemetry.ts";
-import {
-  describeAccountAuthFailure,
-  normalizeTutorialStep,
-  type StructuredErrorCode,
-  type TutorialProgressAction,
-  type PrimaryClientTelemetryEvent,
-  type RuntimeDiagnosticsConnectionStatus,
-  validateAccountLifecycleConfirm,
-  validateAccountLifecycleRequest,
-  validateAccountPassword,
-  validatePrivacyConsentAccepted
-} from "../../../../packages/shared/src/index.ts";
+import { describeAccountAuthFailure, type PrimaryClientTelemetryEvent, type RuntimeDiagnosticsConnectionStatus, type StructuredErrorCode, validateAccountLifecycleConfirm, validateAccountLifecycleRequest, validateAccountPassword, validatePrivacyConsentAccepted } from "@veil/shared/platform";
+import { normalizeTutorialStep } from "@veil/shared/progression";
+import type { TutorialProgressAction } from "@veil/shared/protocol";
 import {
   createCocosWechatPaymentOrder,
   requestCocosWechatPayment,

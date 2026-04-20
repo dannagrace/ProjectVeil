@@ -1,47 +1,11 @@
-import {
-  DEFAULT_FEATURE_FLAGS,
-  buildAchievementUiItems,
-  groupAchievementUiItems,
-  buildRuntimeDiagnosticsTriageView,
-  describeAccountAuthFailure,
-  renderRuntimeDiagnosticsSnapshotText,
-  createBattleReplayPlaybackState,
-  createHeroSkillTreeView,
-  createHeroAttributeBreakdown,
-  createHeroEquipmentLoadoutView,
-  createHeroProgressMeterView,
-  experienceRequiredForNextLevel,
-  formatEquipmentBonusSummary,
-  formatEquipmentRarityLabel,
-  getDefaultBattleSkillCatalog,
-  getEquipmentDefinition,
-  normalizeDailyQuestBoard,
-  pauseBattleReplayPlayback,
-  predictPlayerWorldAction,
-  playBattleReplayPlayback,
-  resetBattleReplayPlayback,
-  stepBattleReplayPlayback,
-  tickBattleReplayPlayback,
-  totalExperienceRequiredForLevel,
-  serializeRuntimeDiagnosticsSnapshot,
-  type BattleReplayPlaybackState,
-  type PlayerBattleReplaySummary,
-  type BattleAction,
-  type BattleState,
-  type EquipmentType,
-  type MovementPlan,
-  type PlayerReportReason,
-  type PlayerTileView,
-  type PlayerWorldView,
-  type RuntimeDiagnosticsConnectionStatus,
-  type RuntimeDiagnosticsTriageSection,
-  type DailyQuestBoard,
-  type FeatureFlags,
-  validateAccountLifecycleConfirm,
-  validateAccountLifecycleRequest,
-  validateAccountPassword,
-  validatePrivacyConsentAccepted
-} from "../../../packages/shared/src/index";
+import { type BattleReplayPlaybackState, createBattleReplayPlaybackState, pauseBattleReplayPlayback, playBattleReplayPlayback, type PlayerBattleReplaySummary, resetBattleReplayPlayback, stepBattleReplayPlayback, tickBattleReplayPlayback } from "@veil/shared/battle";
+import { createHeroEquipmentLoadoutView, formatEquipmentBonusSummary, formatEquipmentRarityLabel, getEquipmentDefinition } from "@veil/shared/economy";
+import { createHeroSkillTreeView } from "@veil/shared/hero-skills";
+import { type BattleAction, type BattleState, type EquipmentType, experienceRequiredForNextLevel, type MovementPlan, type PlayerTileView, type PlayerWorldView, totalExperienceRequiredForLevel } from "@veil/shared/models";
+import { buildRuntimeDiagnosticsTriageView, DEFAULT_FEATURE_FLAGS, describeAccountAuthFailure, type FeatureFlags, renderRuntimeDiagnosticsSnapshotText, type RuntimeDiagnosticsConnectionStatus, type RuntimeDiagnosticsTriageSection, serializeRuntimeDiagnosticsSnapshot, validateAccountLifecycleConfirm, validateAccountLifecycleRequest, validateAccountPassword, validatePrivacyConsentAccepted } from "@veil/shared/platform";
+import { buildAchievementUiItems, createHeroAttributeBreakdown, createHeroProgressMeterView, type DailyQuestBoard, groupAchievementUiItems, normalizeDailyQuestBoard } from "@veil/shared/progression";
+import type { PlayerReportReason } from "@veil/shared/protocol";
+import { getDefaultBattleSkillCatalog, predictPlayerWorldAction } from "@veil/shared/world";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
 import {

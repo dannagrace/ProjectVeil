@@ -1,25 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  appendEventLogEntries,
-  applyBattleReplayPlaybackCommand,
-  buildPlayerBattleReportCenter,
-  buildPlayerProgressionSnapshot,
-  DEFAULT_TUTORIAL_STEP,
-  findPlayerBattleReplaySummary,
-  getRankDivisionForRating,
-  getAchievementDefinitions,
-  isTutorialComplete,
-  normalizeCosmeticInventory,
-  normalizeAchievementProgressQuery,
-  normalizeEventLogQuery,
-  queryPlayerBattleReplaySummaries,
-  queryAchievementProgress,
-  queryEventLogEntries,
-  summarizePlayerMailbox,
-  type BattleReplayPlaybackCommand,
-  type PlayerBattleReplaySummary,
-  type SeasonalEventState
-} from "../../../packages/shared/src/index";
+import { applyBattleReplayPlaybackCommand, type BattleReplayPlaybackCommand, buildPlayerBattleReportCenter, findPlayerBattleReplaySummary, type PlayerBattleReplaySummary, queryPlayerBattleReplaySummaries } from "@veil/shared/battle";
+import { normalizeCosmeticInventory } from "@veil/shared/economy";
+import { appendEventLogEntries, buildPlayerProgressionSnapshot, getAchievementDefinitions, normalizeAchievementProgressQuery, normalizeEventLogQuery, queryAchievementProgress, queryEventLogEntries } from "@veil/shared/event-log";
+import type { SeasonalEventState } from "@veil/shared/models";
+import { DEFAULT_TUTORIAL_STEP, getRankDivisionForRating, isTutorialComplete, summarizePlayerMailbox } from "@veil/shared/progression";
 import {
   createDailyQuestClaimEventLogEntry,
   loadDailyQuestBoard

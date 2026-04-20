@@ -8,7 +8,7 @@ import {
   renderRecentAccountEvents,
   renderRecentBattleReplays
 } from "../src/account-history";
-import { createBattleReplayPlaybackState, stepBattleReplayPlayback } from "../../../packages/shared/src/index";
+import { createBattleReplayPlaybackState, stepBattleReplayPlayback } from "@veil/shared/battle";
 import type { PlayerAccountProfile } from "../src/player-account";
 
 function createProfile(): PlayerAccountProfile {

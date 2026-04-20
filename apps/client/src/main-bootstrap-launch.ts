@@ -1,4 +1,4 @@
-import type { RuntimeDiagnosticsConnectionStatus } from "../../../packages/shared/src/index";
+import type { RuntimeDiagnosticsConnectionStatus } from "@veil/shared/platform";
 import { syncH5PlayerAccountProfile } from "./main-boot";
 import { launchH5ClientApp } from "./main-launch";
 import type { SessionUpdate } from "./local-session";

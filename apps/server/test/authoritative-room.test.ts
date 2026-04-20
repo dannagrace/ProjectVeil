@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDemoBattleState } from "../../../packages/shared/src/index";
+import { createDemoBattleState } from "@veil/shared/battle";
 import { createRoom } from "../src/index";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
 

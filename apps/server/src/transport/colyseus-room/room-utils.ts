@@ -1,10 +1,6 @@
 import type { Client as ColyseusClient } from "colyseus";
-import {
-  DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
-  normalizeClientVersion,
-  type ServerMessage,
-  type SessionStatePayload
-} from "../../../../../packages/shared/src/index";
+import { DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, normalizeClientVersion } from "@veil/shared/platform";
+import type { ServerMessage, SessionStatePayload } from "@veil/shared/protocol";
 import { resolveMinimumSupportedClientVersion } from "../../feature-flags";
 import type { RoomPersistenceSnapshot } from "../../index";
 import type { RoomSnapshotStore } from "../../persistence";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import type { AnalyticsEvent } from "../../../packages/shared/src/analytics-events";
+import type { AnalyticsEvent } from "@veil/shared/platform";
 import {
   flushAnalyticsEventsForTest,
   registerAnalyticsRoutes,

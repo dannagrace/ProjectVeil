@@ -1,7 +1,4 @@
-import {
-  normalizePlayerBattleReplaySummaries,
-  type PlayerBattleReplaySummary
-} from "../../../packages/shared/src/index";
+import { normalizePlayerBattleReplaySummaries, type PlayerBattleReplaySummary } from "@veil/shared/battle";
 
 export const DEFAULT_BATTLE_REPLAY_TTL_DAYS = 90;
 export const DEFAULT_BATTLE_REPLAY_MAX_BYTES = 512 * 1024;

@@ -6,29 +6,10 @@ import {
   storeAuthSession,
   type StoredAuthSession
 } from "./auth-session";
-import {
-  restoreBattleReplayPlaybackState,
-  normalizePlayerBattleReportCenter,
-  type BattleReplayPlaybackCommand,
-  type BattleReplayPlaybackState,
-  type AchievementProgressQuery,
-  type PlayerBattleReportCenter,
-  type PlayerBattleReplayQuery,
-  findPlayerBattleReplaySummary,
-  normalizePlayerProgressionSnapshot,
-  normalizePlayerAccountReadModel,
-  normalizeExperimentAssignments,
-  queryPlayerBattleReplaySummaries,
-  queryAchievementProgress,
-  normalizeEventLogEntries,
-  type EventLogQuery,
-  type EventLogEntry,
-  type ExperimentAssignment,
-  type PlayerAccountReadModel,
-  type PlayerBattleReplaySummary,
-  type PlayerAchievementProgress,
-  type PlayerProgressionSnapshot
-} from "../../../packages/shared/src/index";
+import { type BattleReplayPlaybackCommand, type BattleReplayPlaybackState, findPlayerBattleReplaySummary, normalizePlayerBattleReportCenter, type PlayerBattleReplayQuery, type PlayerBattleReplaySummary, type PlayerBattleReportCenter, queryPlayerBattleReplaySummaries, restoreBattleReplayPlaybackState } from "@veil/shared/battle";
+import { type AchievementProgressQuery, type EventLogEntry, type EventLogQuery, normalizeEventLogEntries, normalizePlayerProgressionSnapshot, type PlayerAchievementProgress, type PlayerProgressionSnapshot, queryAchievementProgress } from "@veil/shared/event-log";
+import { type ExperimentAssignment, normalizeExperimentAssignments } from "@veil/shared/platform";
+import { normalizePlayerAccountReadModel, type PlayerAccountReadModel } from "@veil/shared/progression";
 
 const PLAYER_ACCOUNT_PREFIX = "project-veil:player-account";
 const PLAYER_ACCOUNT_REQUEST_TIMEOUT_MS = 1200;

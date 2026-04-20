@@ -1,4 +1,5 @@
-import { applyEloMatchResult, type LeaderboardAbuseState, type LeaderboardModerationState } from "../../../packages/shared/src/index";
+import type { LeaderboardAbuseState, LeaderboardModerationState } from "@veil/shared/progression";
+import { applyEloMatchResult } from "@veil/shared/social";
 
 export const LEADERBOARD_DAILY_ELO_GAIN_LIMIT = 120;
 export const LEADERBOARD_REPEATED_OPPONENT_ELO_GAIN_LIMIT = 40;

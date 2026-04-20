@@ -4,12 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import * as XLSX from "xlsx";
-import {
-  getBattleBalanceConfig,
-  getDefaultBattleSkillCatalog,
-  getDefaultWorldConfig,
-  resetRuntimeConfigs
-} from "../../../packages/shared/src/index";
+import { getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs } from "@veil/shared/world";
 import {
   configureConfigCenterRuntimeDependencies,
   configureConfigRuntimeStatusProvider,

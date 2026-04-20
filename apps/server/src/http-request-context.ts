@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RuntimeDiagnosticsFeatureArea } from "../../../packages/shared/src/index";
+import type { RuntimeDiagnosticsFeatureArea } from "@veil/shared/platform";
 import { recordRuntimeErrorEvent } from "./observability";
 
 export const REQUEST_CORRELATION_ID_HEADER = "x-correlation-id";

@@ -1,15 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  buildRuntimeDiagnosticsErrorEvent,
-  renderRuntimeDiagnosticsSnapshotText,
-  summarizeRuntimeDiagnosticsErrors,
-  type FeatureFlagAuditEntry,
-  type FeatureFlagKey,
-  type FeatureFlagRolloutPolicy,
-  type ReconnectFailureReason,
-  type RuntimeDiagnosticsErrorEvent,
-  type RuntimeDiagnosticsSnapshot
-} from "../../../packages/shared/src/index";
+import { buildRuntimeDiagnosticsErrorEvent, type FeatureFlagAuditEntry, type FeatureFlagKey, type FeatureFlagRolloutPolicy, type ReconnectFailureReason, renderRuntimeDiagnosticsSnapshotText, type RuntimeDiagnosticsErrorEvent, type RuntimeDiagnosticsSnapshot, summarizeRuntimeDiagnosticsErrors } from "@veil/shared/platform";
 import { getFeatureFlagRuntimeSnapshot, getRuntimeKillSwitchSnapshot, listFeatureFlagRuntimeSummaries } from "./feature-flags";
 import type { LeaderboardAlertEvent } from "./leaderboard-anti-abuse";
 import {

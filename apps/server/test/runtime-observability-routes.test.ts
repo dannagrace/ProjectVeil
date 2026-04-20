@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { registerAnalyticsRoutes } from "../src/analytics";
 import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";

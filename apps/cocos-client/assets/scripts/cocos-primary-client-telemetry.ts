@@ -1,10 +1,4 @@
-import {
-  createAnalyticsEvent,
-  type AnalyticsEvent,
-  type AnalyticsEventName,
-  type PrimaryClientTelemetryEvent,
-  type PrimaryClientTelemetryStatus
-} from "../../../../packages/shared/src/index.ts";
+import { type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent, type PrimaryClientTelemetryEvent, type PrimaryClientTelemetryStatus } from "@veil/shared/platform";
 import type { SessionUpdate, WorldEvent } from "./VeilCocosSession.ts";
 import type { EquipmentType } from "./project-shared/index.ts";
 import { resolveCocosApiBaseUrl } from "./cocos-lobby.ts";

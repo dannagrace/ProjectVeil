@@ -2,15 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
-import {
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  decodePlayerWorldView,
-  type HeroState,
-  type ServerMessage,
-  type TileState,
-  type WorldState
-} from "../../../packages/shared/src/index";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState, type TileState, type WorldState } from "@veil/shared/models";
+import type { ServerMessage } from "@veil/shared/protocol";
+import { decodePlayerWorldView } from "@veil/shared/world";
 import { VeilColyseusRoom, configureRoomSnapshotStore, resetLobbyRoomRegistry } from "../src/colyseus-room";
 import { createRoom } from "../src/index";
 

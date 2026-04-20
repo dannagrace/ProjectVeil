@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { summarizeLatestBattleReplay } from "../assets/scripts/cocos-battle-report";
-import type { PlayerBattleReplaySummary } from "../../../packages/shared/src/index";
+import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
 
 function createBattleState() {
   return {

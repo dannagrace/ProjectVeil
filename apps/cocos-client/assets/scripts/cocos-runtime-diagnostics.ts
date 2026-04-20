@@ -2,15 +2,7 @@ import {
   buildCocosAccountLifecycleReadinessView,
   type CocosAccountLifecycleDraft
 } from "./cocos-account-lifecycle.ts";
-import {
-  summarizeRuntimeDiagnosticsErrors,
-  type PrimaryClientTelemetryEvent,
-  buildRuntimeDiagnosticsTriageView,
-  type RuntimeDiagnosticsConnectionStatus,
-  type RuntimeDiagnosticsErrorEvent,
-  type RuntimeDiagnosticsMode,
-  type RuntimeDiagnosticsSnapshot
-} from "../../../../packages/shared/src/index.ts";
+import { buildRuntimeDiagnosticsTriageView, type PrimaryClientTelemetryEvent, type RuntimeDiagnosticsConnectionStatus, type RuntimeDiagnosticsErrorEvent, type RuntimeDiagnosticsMode, type RuntimeDiagnosticsSnapshot, summarizeRuntimeDiagnosticsErrors } from "@veil/shared/platform";
 import type { CocosPlayerAccountProfile } from "./cocos-lobby.ts";
 import type { SessionUpdate } from "./VeilCocosSession.ts";
 

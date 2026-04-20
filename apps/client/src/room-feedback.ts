@@ -1,4 +1,5 @@
-import type { BattleState, CocosBattleFeedbackTone, MovementPlan, PlayerWorldView } from "../../../packages/shared/src/index";
+import type { CocosBattleFeedbackTone } from "@veil/shared/battle";
+import type { BattleState, MovementPlan, PlayerWorldView } from "@veil/shared/models";
 import type { SessionUpdate } from "./local-session";
 
 interface BattleSettlementSummaryLike {

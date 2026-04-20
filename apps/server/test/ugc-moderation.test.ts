@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
-import { normalizeGuildState } from "../../../packages/shared/src/index";
+import { normalizeGuildState } from "@veil/shared/social";
 import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { appendUgcCandidateKeyword, buildUgcReviewQueue, resolveUgcReviewEntry, scoreUgcContent } from "../src/ugc-moderation";
 

@@ -9,7 +9,7 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
-import type { ClientMessage, ServerMessage } from "../../../packages/shared/src/index";
+import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
 import {
   configureAnalyticsRuntimeDependencies,
@@ -51,7 +51,7 @@ import type {
   RoomSnapshotStore
 } from "../src/persistence";
 import type { RoomPersistenceSnapshot } from "../src/index";
-import { queryEventLogEntries } from "../../../packages/shared/src/index";
+import { queryEventLogEntries } from "@veil/shared/event-log";
 
 class MemoryAuthStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();

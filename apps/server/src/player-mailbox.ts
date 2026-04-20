@@ -1,16 +1,7 @@
-import {
-  getEquipmentDefinition,
-  resolveCosmeticCatalog,
-  summarizePlayerMailbox,
-  isPlayerMailboxMessageExpired,
-  type CosmeticId,
-  type EquipmentId,
-  type EventLogEntry,
-  type PlayerMailboxGrant,
-  type PlayerMailboxMessage,
-  type PlayerMailboxSummary,
-  type ResourceLedger
-} from "../../../packages/shared/src/index";
+import { getEquipmentDefinition, resolveCosmeticCatalog } from "@veil/shared/economy";
+import type { EventLogEntry } from "@veil/shared/event-log";
+import type { CosmeticId, EquipmentId, ResourceLedger } from "@veil/shared/models";
+import { isPlayerMailboxMessageExpired, type PlayerMailboxGrant, type PlayerMailboxMessage, type PlayerMailboxSummary, summarizePlayerMailbox } from "@veil/shared/progression";
 
 export interface NormalizedMailboxGrant {
   gems: number;

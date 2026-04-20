@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Redis from "ioredis-mock";
-import {
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression,
-  createMatchmakingHeroSnapshot,
-  type HeroState,
-  type MatchmakingRequest
-} from "../../../packages/shared/src/index";
+import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState } from "@veil/shared/models";
+import { createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
 import { MatchmakingService, RedisMatchmakingService } from "../src/matchmaking";
 
 function createHero(playerId: string, heroId: string): HeroState {

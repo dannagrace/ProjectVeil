@@ -1,4 +1,4 @@
-import type { MobilePushPlatform, MobilePushTokenRegistration } from "../../../packages/shared/src/index";
+import type { MobilePushPlatform, MobilePushTokenRegistration } from "@veil/shared/models";
 
 const MAX_PUSH_TOKEN_LENGTH = 4096;
 

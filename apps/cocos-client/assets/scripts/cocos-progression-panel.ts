@@ -1,12 +1,6 @@
 import { getBattlePassConfig, type BattlePassRewardConfig, type BattlePassTierConfig } from "./project-shared/world-config.ts";
 import dailyDungeonsConfigDocument from "../../../../configs/daily-dungeons.json";
-import type {
-  DailyDungeonDefinition,
-  DailyDungeonReward,
-  DailyDungeonRunRecord,
-  EventLeaderboardEntry,
-  SeasonalEventReward
-} from "../../../../packages/shared/src/index.ts";
+import type { DailyDungeonDefinition, DailyDungeonReward, DailyDungeonRunRecord, EventLeaderboardEntry, SeasonalEventReward } from "@veil/shared/models";
 
 export interface CocosSeasonProgress {
   battlePassEnabled: boolean;

@@ -9,7 +9,7 @@ import {
   flushClientAnalyticsEventsForTest,
   resetClientAnalyticsRuntimeDependencies
 } from "../assets/scripts/cocos-primary-client-telemetry.ts";
-import type { PrimaryClientTelemetryEvent } from "../../../packages/shared/src/index.ts";
+import type { PrimaryClientTelemetryEvent } from "@veil/shared/platform";
 import { createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 
 afterEach(() => {

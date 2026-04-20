@@ -1,37 +1,13 @@
 import { CloseCode } from "@colyseus/shared-types";
 import { Room, type Client as ColyseusClient } from "colyseus";
-import {
-  classifyReconnectFailure,
-  DEFAULT_MIN_SUPPORTED_CLIENT_VERSION,
-  DEFAULT_TUTORIAL_STEP,
-  isClientVersionSupported,
-  createInitialWorldState,
-  createPlayerWorldView,
-  encodePlayerWorldView,
-  filterWorldEventsForPlayer,
-  getBattleBalanceConfig,
-  listReachableTilesInPlayerView,
-  normalizeClientVersion,
-  normalizeEloRating,
-  planPlayerViewMovement,
-  validateWorldAction,
-  resolveCosmeticCatalog,
-  normalizeCosmeticInventory,
-  type FriendLeaderboardEntry,
-  type GroupChallenge,
-  type ActionValidationFailure,
-  type PlayerWorldView,
-  type PlayerBattleReplaySummary,
-  type ClientMessage,
-  type FeatureFlags,
-  type MovementPlan,
-  type SessionStateReason,
-  type ServerMessage,
-  type SessionStatePayload,
-  type WorldEvent,
-  type WorldAction,
-  type BattleAction
-} from "../../../packages/shared/src/index";
+import type { ActionValidationFailure, PlayerBattleReplaySummary } from "@veil/shared/battle";
+import { normalizeCosmeticInventory, resolveCosmeticCatalog } from "@veil/shared/economy";
+import type { BattleAction, FriendLeaderboardEntry, GroupChallenge, MovementPlan, PlayerWorldView, WorldAction, WorldEvent } from "@veil/shared/models";
+import { classifyReconnectFailure, DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, type FeatureFlags, isClientVersionSupported, normalizeClientVersion } from "@veil/shared/platform";
+import { DEFAULT_TUTORIAL_STEP } from "@veil/shared/progression";
+import type { ClientMessage, ServerMessage, SessionStatePayload, SessionStateReason } from "@veil/shared/protocol";
+import { normalizeEloRating } from "@veil/shared/social";
+import { createInitialWorldState, createPlayerWorldView, encodePlayerWorldView, filterWorldEventsForPlayer, getBattleBalanceConfig, listReachableTilesInPlayerView, planPlayerViewMovement, validateWorldAction } from "@veil/shared/world";
 import { emitAnalyticsEvent } from "./analytics";
 import { resolveMinimumSupportedClientVersion } from "./feature-flags";
 import {

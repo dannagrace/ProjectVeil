@@ -14,11 +14,7 @@ import {
   resetClientAnalyticsRuntimeDependencies
 } from "../assets/scripts/cocos-primary-client-telemetry.ts";
 import { VeilRoot } from "../assets/scripts/VeilRoot.ts";
-import {
-  ANALYTICS_EVENT_CATALOG,
-  type AnalyticsEvent,
-  type AnalyticsEventName
-} from "../../../packages/shared/src/index.ts";
+import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName } from "@veil/shared/platform";
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";

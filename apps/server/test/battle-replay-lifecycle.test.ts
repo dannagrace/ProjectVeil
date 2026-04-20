@@ -13,12 +13,9 @@ import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import type { PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
 import { createRoom } from "../src/index";
-import type {
-  BattleReplayPlaybackState,
-  BattleState,
-  PlayerBattleReplaySummary,
-  ServerMessage
-} from "../../../packages/shared/src/index";
+import type { BattleReplayPlaybackState, PlayerBattleReplaySummary } from "@veil/shared/battle";
+import type { BattleState } from "@veil/shared/models";
+import type { ServerMessage } from "@veil/shared/protocol";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

@@ -13,7 +13,7 @@ import {
   inventoryItemsForSlot
 } from "../assets/scripts/cocos-hero-equipment";
 import type { HeroView } from "../assets/scripts/VeilCocosSession";
-import type { EventLogEntry } from "../../../packages/shared/src/index";
+import type { EventLogEntry } from "@veil/shared/event-log";
 
 function createHero(overrides?: Partial<HeroView>): HeroView {
   return {

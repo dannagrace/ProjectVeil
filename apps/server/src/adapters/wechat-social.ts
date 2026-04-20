@@ -1,10 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import type {
-  FriendLeaderboardEntry,
-  GroupChallenge,
-  GroupChallengeType,
-  NotificationPreferences
-} from "../../../../packages/shared/src/index";
+import type { FriendLeaderboardEntry, GroupChallenge, GroupChallengeType, NotificationPreferences } from "@veil/shared/models";
 import type { PlayerAccountSnapshot } from "../persistence";
 
 export const GROUP_CHALLENGE_TTL_MS = 24 * 60 * 60 * 1000;

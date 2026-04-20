@@ -1,19 +1,5 @@
-import {
-  getBattleBalanceConfig,
-  getDefaultBattleBalanceConfig,
-  getDefaultBattleSkillCatalog,
-  getDefaultMapObjectsConfig,
-  getDefaultUnitCatalog,
-  getDefaultWorldConfig,
-  validateContentPackConsistency,
-  type BattleBalanceConfig,
-  type BattleSkillCatalogConfig,
-  type ContentPackValidationReport,
-  type MapObjectsConfig,
-  type RuntimeConfigBundle,
-  type UnitCatalogConfig,
-  type WorldGenerationConfig
-} from "../../../../../packages/shared/src/index";
+import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { type ContentPackValidationReport, getBattleBalanceConfig, getDefaultBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultMapObjectsConfig, getDefaultUnitCatalog, getDefaultWorldConfig, type RuntimeConfigBundle, validateContentPackConsistency } from "@veil/shared/world";
 import {
   parseLeaderboardTierThresholdsConfigDocument,
   validateLeaderboardTierThresholdsConfigDocument,

@@ -7,10 +7,7 @@ import type { RoomPersistenceSnapshot } from "../src/index";
 import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
 import { registerPlayerAccountRoutes } from "../src/player-accounts";
 import { registerShopRoutes, type ShopProduct } from "../src/shop";
-import {
-  createDefaultHeroLoadout,
-  createDefaultHeroProgression
-} from "../../../packages/shared/src/index";
+import { createDefaultHeroLoadout, createDefaultHeroProgression } from "@veil/shared/models";
 
 function createBattlePassWorldSnapshot(): RoomPersistenceSnapshot {
   return {

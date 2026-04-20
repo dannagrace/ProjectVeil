@@ -1,17 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import dailyQuestRotationsDocument from "../../../configs/daily-quest-rotations.json";
-import {
-  DEFAULT_DAILY_QUEST_ROTATION_CONFIG,
-  findNextDailyQuestRotation,
-  normalizeDailyQuestRotationConfigDocument,
-  selectDailyQuestRotationForDate,
-  summarizeDailyQuestRotation,
-  validateDailyQuestRotationConfigDocument,
-  type DailyQuestRotationConfigDocument,
-  type DailyQuestRotationDefinition,
-  type FeatureFlags
-} from "../../../packages/shared/src/index";
+import type { FeatureFlags } from "@veil/shared/platform";
+import { type DailyQuestRotationConfigDocument, type DailyQuestRotationDefinition, DEFAULT_DAILY_QUEST_ROTATION_CONFIG, findNextDailyQuestRotation, normalizeDailyQuestRotationConfigDocument, selectDailyQuestRotationForDate, summarizeDailyQuestRotation, validateDailyQuestRotationConfigDocument } from "@veil/shared/progression";
 
 const DEFAULT_DAILY_QUEST_ROTATIONS_PATH = path.resolve(process.cwd(), "configs/daily-quest-rotations.json");
 

@@ -26,13 +26,8 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
-import type {
-  CampaignMissionState,
-  CampaignReward,
-  CampaignUnlockRequirement,
-  DailyDungeonDefinition,
-  DailyDungeonRunRecord
-} from "../../../../packages/shared/src/index.ts";
+import type { ExperimentAssignment } from "@veil/shared/platform";
+import type { CampaignMissionState, CampaignReward, CampaignUnlockRequirement, DailyDungeonDefinition, DailyDungeonRunRecord } from "@veil/shared/models";
 import type {
   CocosDailyDungeonSummary,
   CocosSeasonProgress
@@ -65,6 +60,7 @@ export interface CocosLobbyRoomSummary {
 }
 
 export interface CocosPlayerAccountProfile extends PlayerAccountReadModel {
+  experiments?: ExperimentAssignment[];
   recentBattleReplays: PlayerBattleReplaySummary[];
   source: "remote" | "local";
 }

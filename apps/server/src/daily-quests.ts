@@ -1,11 +1,6 @@
-import {
-  buildDailyQuestBoard,
-  createEmptyDailyQuestReward,
-  type DailyQuestBoard,
-  type DailyQuestDefinition,
-  type EventLogEntry,
-  type FeatureFlags
-} from "../../../packages/shared/src/index";
+import type { EventLogEntry } from "@veil/shared/event-log";
+import type { FeatureFlags } from "@veil/shared/platform";
+import { buildDailyQuestBoard, createEmptyDailyQuestReward, type DailyQuestBoard, type DailyQuestDefinition } from "@veil/shared/progression";
 import { emitAnalyticsEvent } from "./analytics";
 import { loadDailyQuestConfig, type DailyQuestConfigDefinition } from "./daily-quest-config";
 import { rotateDailyQuests } from "./event-engine";
