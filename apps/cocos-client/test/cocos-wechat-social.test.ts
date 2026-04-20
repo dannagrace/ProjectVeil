@@ -133,6 +133,7 @@ test("normalizeCocosNotificationPreferences defaults missing categories to enabl
     turnReminder: true,
     groupChallenge: true,
     friendLeaderboard: true,
+    reengagement: true,
     updatedAt: "2026-04-05T08:00:00.000Z"
   });
 });
