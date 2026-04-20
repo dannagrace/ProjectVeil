@@ -86,7 +86,8 @@ interface ReleaseCandidateClientArtifactSmokeReport {
 
 const BUILD_COMMAND = "npm run build:client:h5";
 const FIXTURE_COMMAND = "npm run validate -- e2e:fixtures";
-const PLAYWRIGHT_COMMAND = "npx playwright test --config=playwright.release-candidate-artifact-smoke.config.ts --reporter=json";
+const PLAYWRIGHT_COMMAND =
+  "VEIL_PLAYWRIGHT_CLIENT_MODE=preview npx playwright test --project=release-candidate-artifact-smoke --reporter=json";
 const OUTPUT_TAIL_BYTES = 4000;
 const REQUIRED_CASE_TITLES = [
   "rc-artifact: guest login reaches lobby and room boot",

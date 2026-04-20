@@ -41,7 +41,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run H5 smoke tests
-        run: npm test -- e2e:smoke
+        run: npm run validate -- e2e:fixtures && npx playwright test --project=smoke
 
       - name: Upload H5 Playwright artifacts
         if: always()
@@ -91,7 +91,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run multiplayer smoke tests
-        run: npm test -- e2e:multiplayer:smoke
+        run: npm run validate -- e2e:fixtures && npx playwright test --project=multiplayer-smoke
 
       - name: Upload multiplayer Playwright artifacts
         if: always()
