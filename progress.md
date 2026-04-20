@@ -2258,3 +2258,31 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:cocos`
   - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-render-state-composer.test.ts ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
   - `npm run smoke:cocos:canonical-journey`
+
+- 本轮最终把 `VeilRoot` 收成了真正的薄壳，并补完了剩余 `root/` bundle：
+  - 新增：
+    - `apps/cocos-client/assets/scripts/root/default-state.ts`
+    - `apps/cocos-client/assets/scripts/root/deps.ts`
+    - `apps/cocos-client/assets/scripts/root/view-layout.ts`
+    - `apps/cocos-client/assets/scripts/root/prefetch-scheduler.ts`
+    - `apps/cocos-client/assets/scripts/root/lobby-progression.ts`
+    - `apps/cocos-client/assets/scripts/root/report-review.ts`
+    - `apps/cocos-client/assets/scripts/root/world-battle-actions.ts`
+    - `apps/cocos-client/assets/scripts/root/battle-session-update.ts`
+    - `apps/cocos-client/assets/scripts/root/lobby-matchmaking.ts`
+    - `apps/cocos-client/assets/scripts/root/account-settings.ts`
+    - `apps/cocos-client/assets/scripts/root/runtime-integration.ts`
+  - `apps/cocos-client/assets/scripts/VeilRoot.ts`
+    - 现在只保留 `@property`、组件生命周期、`connect/refreshSnapshot` 和 bundle 安装，主文件已降到 `152` 行
+  - `root/` 下所有子模块都已经压在 `<1000` 行，scene 文件无改动
+- 这轮顺手修掉了 bundle 拆分后的运行时挂载问题：
+  - `VeilRoot` 改成用 property descriptors 安装各个 method bundle，而不是直接 `Object.assign` class prototype
+  - 补齐了 `runtime / matchmaking / progression / battle / settings / layout` 这些拆分文件遗漏的 helper imports
+- 最终验证已通过：
+  - `npm run typecheck:cocos`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/root-render-state-composer.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+  - `npm run smoke:cocos:canonical-journey`
+- `#1561` 现在已经满足关闭条件：
+  - `VeilRoot.ts < 800`
+  - child modules `< 1000`
+  - canonical journey smoke 绿
