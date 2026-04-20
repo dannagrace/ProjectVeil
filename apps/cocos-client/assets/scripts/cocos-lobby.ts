@@ -26,8 +26,14 @@ import {
   type PlayerAchievementProgress,
   type TutorialProgressAction
 } from "./project-shared/index.ts";
-import type { ExperimentAssignment } from "@veil/shared/platform";
-import type { CampaignMissionState, CampaignReward, CampaignUnlockRequirement, DailyDungeonDefinition, DailyDungeonRunRecord } from "@veil/shared/models";
+import type { ExperimentAssignment } from "./project-shared/feature-flags.ts";
+import type {
+  CampaignMissionState,
+  CampaignReward,
+  CampaignUnlockRequirement,
+  DailyDungeonDefinition,
+  DailyDungeonRunRecord
+} from "./project-shared/models.ts";
 import type {
   CocosDailyDungeonSummary,
   CocosSeasonProgress

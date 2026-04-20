@@ -191,12 +191,20 @@ export {
   recordClientPerfFrame,
   type ClientPerfRuntimeMetadata
 } from "../cocos-client-perf-telemetry.ts";
-export { describeAccountAuthFailure, type PrimaryClientTelemetryEvent, type RuntimeDiagnosticsConnectionStatus, type StructuredErrorCode, validateAccountLifecycleConfirm, validateAccountLifecycleRequest, validateAccountPassword, validatePrivacyConsentAccepted } from "@veil/shared/platform";
-export type { TutorialProgressAction } from "@veil/shared/protocol";
+export {
+  describeAccountAuthFailure,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest,
+  validateAccountPassword,
+  validatePrivacyConsentAccepted
+} from "../project-shared/auth-ui.ts";
+export type { PrimaryClientTelemetryEvent, RuntimeDiagnosticsConnectionStatus } from "../project-shared/runtime-diagnostics.ts";
+export type { StructuredErrorCode } from "../project-shared/error-codes.ts";
+export type { TutorialProgressAction } from "../project-shared/protocol.ts";
 export {
   createCocosWechatPaymentOrder,
   requestCocosWechatPayment,
   verifyCocosWechatPayment,
   type CocosWechatPaymentRuntimeLike
 } from "../cocos-wechat-payment.ts";
-export { normalizeTutorialStep } from "@veil/shared/progression";
+export { normalizeTutorialStep } from "../project-shared/tutorial.ts";

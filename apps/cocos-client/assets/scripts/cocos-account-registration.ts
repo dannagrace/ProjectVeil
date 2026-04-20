@@ -1,4 +1,8 @@
-import { type AccountLifecycleValidationError, validateAccountLifecycleConfirm, validateAccountLifecycleRequest } from "@veil/shared/platform";
+import {
+  type AccountLifecycleValidationError,
+  validateAccountLifecycleConfirm,
+  validateAccountLifecycleRequest
+} from "./project-shared/auth-ui.ts";
 import {
   buildCocosAccountLifecyclePanelView,
   type CocosAccountLifecycleDraft,

@@ -1,5 +1,5 @@
 import assetConfigJson from "../../../../configs/assets.json";
-import { type AssetStage, parseAssetConfig, summarizeAssetMetadata } from "@veil/shared/assets-config";
+import { type AssetStage, parseAssetConfig, summarizeAssetMetadata } from "./project-shared/assets-config.ts";
 import {
   cocosPresentationConfig,
   type CocosAnimationDeliveryMode,

@@ -1,5 +1,5 @@
-import { getDefaultBossEncounterTemplateCatalog } from "@veil/shared/world";
-import type { BossEncounterPhaseConfig } from "@veil/shared/models";
+import { getDefaultBossEncounterTemplateCatalog } from "./project-shared/world-config.ts";
+import type { BossEncounterPhaseConfig } from "./project-shared/models.ts";
 import type { BattleState } from "./VeilCocosSession.ts";
 
 export interface CocosBossPhaseDescriptor {

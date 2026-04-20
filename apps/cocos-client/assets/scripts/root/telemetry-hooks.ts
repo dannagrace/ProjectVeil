@@ -6,7 +6,8 @@ import {
   emitClientAnalyticsEvent,
   type ClientAnalyticsContext
 } from "../cocos-primary-client-telemetry.ts";
-import type { PrimaryClientTelemetryEvent, StructuredErrorCode } from "@veil/shared/platform";
+import type { PrimaryClientTelemetryEvent } from "../project-shared/runtime-diagnostics.ts";
+import type { StructuredErrorCode } from "../project-shared/error-codes.ts";
 import type { GlobalErrorBoundaryEvent } from "./types";
 
 type RootTelemetryEventName =

@@ -8,17 +8,21 @@ export const SHARED_ROOT_RELATIVE_PATH = "packages/shared/src";
 export const PROJECT_SHARED_ROOT_RELATIVE_PATH = "apps/cocos-client/assets/scripts/project-shared";
 
 export const PROJECT_SHARED_ROOT_ENTRYPOINT_FILES = [
+  "analytics-events.ts",
   "achievement-ui.ts",
   "action-precheck.ts",
   "assets-config.ts",
+  "auth-ui.ts",
   "battle-replay.ts",
   "battle-report.ts",
   "battle.ts",
+  "client-version.ts",
   "config-cross-file-validation.ts",
   "cosmetics.ts",
   "daily-quests.ts",
   "deterministic-rng.ts",
   "equipment.ts",
+  "error-codes.ts",
   "event-log.ts",
   "feedback.ts",
   "hero-progression.ts",
@@ -28,6 +32,8 @@ export const PROJECT_SHARED_ROOT_ENTRYPOINT_FILES = [
   "models.ts",
   "player-account.ts",
   "protocol.ts",
+  "reconnect-observability.ts",
+  "runtime-diagnostics.ts",
   "tutorial.ts",
   "world-config.ts"
 ];

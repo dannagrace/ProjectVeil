@@ -1,5 +1,5 @@
-import { normalizeTutorialStep } from "@veil/shared/progression";
-import type { TutorialProgressAction } from "@veil/shared/protocol";
+import { normalizeTutorialStep } from "../project-shared/tutorial.ts";
+import type { TutorialProgressAction } from "../project-shared/protocol.ts";
 import type { CocosCampaignSummary, CocosPlayerAccountProfile } from "../cocos-lobby.ts";
 import type { TutorialOverlayView } from "../VeilTutorialOverlay.ts";
 import { resolveCampaignPanelMission } from "../cocos-campaign-panel.ts";
