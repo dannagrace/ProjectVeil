@@ -504,16 +504,26 @@ export class VeilHudPanel extends Component {
   }
 
   private refreshTurnTimerLabel(): void {
-    const label = this.turnTimerLabel ?? this.ensureTurnTimerLabel();
+    const cachedLabel = this.turnTimerLabel;
+    const cachedNode = cachedLabel?.node ?? null;
+    const label =
+      cachedLabel && cachedNode && (cachedNode as { isValid?: boolean }).isValid !== false
+        ? cachedLabel
+        : this.ensureTurnTimerLabel();
+    this.turnTimerLabel = label;
+    const labelNode = label?.node ?? null;
+    if (!labelNode || (labelNode as { isValid?: boolean }).isValid === false) {
+      return;
+    }
     const deadlineAt = this.currentState?.update?.world.turnDeadlineAt ?? null;
     if (!deadlineAt) {
-      label.node.active = false;
+      labelNode.active = false;
       return;
     }
 
     const deadlineMs = Date.parse(deadlineAt);
     if (Number.isNaN(deadlineMs)) {
-      label.node.active = false;
+      labelNode.active = false;
       return;
     }
 
@@ -523,8 +533,8 @@ export class VeilHudPanel extends Component {
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = remainingSeconds % 60;
     const inWarningWindow = remainingMs <= 10_000;
-    label.node.active = true;
-    label.node.setPosition(transform.width / 2 - 82, transform.height / 2 - 62, 3);
+    labelNode.active = true;
+    labelNode.setPosition(transform.width / 2 - 82, transform.height / 2 - 62, 3);
     label.string = `倒计时 ${minutes}:${seconds.toString().padStart(2, "0")}`;
     label.color = inWarningWindow && Math.floor(Date.now() / 250) % 2 === 0 ? HUD_TIMER_WARNING : inWarningWindow ? HUD_TIMER_WARNING_SOFT : HUD_ACCENT;
   }
