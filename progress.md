@@ -2235,3 +2235,14 @@ Original prompt: 你先学习下当前项目并给出开发的计划
   - `npm run typecheck:cocos`
   - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
   - `npm run smoke:cocos:canonical-journey`
+
+- 同一轮继续把 `gameplay panel orchestration` 抽进了 `root/`：
+  - `apps/cocos-client/assets/scripts/root/panel-orchestration.ts`
+    - 收拢 `campaign / battle pass / daily dungeon / seasonal event / account review / equipment` 的 panel 渲染、切换和主线任务动作
+- `apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - 对应 panel 方法已经改成轻量委托层，主文件从 `6232` 行继续降到 `5661` 行
+- 新增模块级测试：
+  - `apps/cocos-client/test/root-panel-orchestration.test.ts`
+- 本轮补充验证已通过：
+  - `npm run typecheck:cocos`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`

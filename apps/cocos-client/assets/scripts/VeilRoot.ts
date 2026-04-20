@@ -26,17 +26,11 @@ import {
   type CocosAccountReviewState
 } from "./cocos-account-review.ts";
 import {
-  attemptCocosDailyDungeonFloor,
-  completeCocosCampaignMission,
   loadCocosCampaignSummary,
-  claimCocosSeasonTier,
-  claimCocosDailyDungeonRunReward,
   claimCocosDailyQuest,
   claimAllCocosMailboxMessages,
   claimCocosMailboxMessage,
   submitCocosSupportTicket,
-  type CocosCampaignMissionCompleteResult,
-  type CocosCampaignMissionStartResult,
   type CocosCampaignSummary,
   type CocosLaunchAnnouncement,
   type CocosMaintenanceModeSnapshot,
@@ -47,8 +41,6 @@ import {
   createCocosGuestPlayerId,
   loadCocosAnnouncements,
   loadCocosBattleReplayHistoryPage,
-  loadCocosActiveSeasonalEvents,
-  loadCocosDailyDungeon,
   createCocosLobbyPreferences,
   loadCocosLobbyRooms,
   loadCocosMaintenanceMode,
@@ -56,7 +48,6 @@ import {
   loadCocosPlayerAchievementProgress,
   loadCocosPlayerEventHistory,
   loadCocosPlayerProgressionSnapshot,
-  loadCocosSeasonProgress,
   loginCocosGuestAuthSession,
   loginCocosWechatAuthSession,
   logoutCurrentCocosAuthSession,
@@ -68,7 +59,6 @@ import {
   requestCocosPasswordRecovery,
   resolveCocosConfigCenterUrl,
   saveCocosLobbyPreferences,
-  startCocosCampaignMission,
   submitCocosSeasonalEventProgress,
   syncCurrentCocosAuthSession,
   updateCocosTutorialProgress,
@@ -162,11 +152,8 @@ import {
   type CocosAuthProvider
 } from "./cocos-session-launch.ts";
 import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
-import { buildCocosEventLeaderboardPanelView } from "./cocos-event-leaderboard-panel.ts";
 import { resolveCocosClientVersion } from "./cocos-client-version.ts";
 import {
-  buildCocosBattlePassPanelView,
-  buildCocosDailyDungeonPanelView,
   type CocosDailyDungeonSummary,
   type CocosSeasonProgress
 } from "./cocos-progression-panel.ts";
@@ -204,10 +191,7 @@ import { buildCocosWorldFocusView } from "./cocos-world-focus.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
 import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
-import {
-  type CocosCampaignDialogueState,
-  resolveCampaignPanelMission
-} from "./cocos-campaign-panel.ts";
+import { type CocosCampaignDialogueState } from "./cocos-campaign-panel.ts";
 import {
   buildPrimaryClientTelemetryFromUpdate,
   createPrimaryClientTelemetryEvent,
@@ -244,8 +228,12 @@ import {
   collapseAdjacentEntries,
   connectSessionForRoot,
   createSessionOptionsForRoot,
+  claimGameplayDailyDungeonRunForRoot,
+  claimGameplaySeasonTierForRoot,
+  completeGameplayCampaignMissionForRoot,
   DEFAULT_MAP_HEIGHT_TILES,
   DEFAULT_MAP_WIDTH_TILES,
+  describeCampaignErrorForRoot,
   describeSessionErrorForRoot,
   disposeCurrentSessionForRoot,
   EQUIPMENT_PANEL_NODE_NAME,
@@ -260,14 +248,37 @@ import {
   isActiveSessionEpochForRoot,
   LOBBY_NODE_NAME,
   MAP_NODE_NAME,
+  openLobbyPvePanelForRoot,
+  purchaseGameplaySeasonPremiumForRoot,
   refreshSnapshotForRoot,
+  refreshActiveSeasonalEventForRoot,
+  refreshDailyDungeonPanelForRoot,
+  refreshGameplayCampaignForRoot,
+  refreshSeasonProgressForRoot,
+  renderGameplayAccountReviewPanelForRoot,
+  renderGameplayCampaignPanelForRoot,
+  renderGameplayEquipmentPanelForRoot,
+  resolveSelectedGameplayCampaignMissionForRoot,
   resetSessionViewportForRoot,
   resolveVeilRootRuntime,
   SETTINGS_BUTTON_NODE_NAME,
   SETTINGS_PANEL_NODE_NAME,
+  selectGameplayCampaignMissionForRoot,
+  snapshotSeasonProgressFromProfileForRoot,
+  startGameplayCampaignDialogueForRoot,
+  startGameplayCampaignMissionForRoot,
+  syncGameplayCampaignSelectionForRoot,
   TIMELINE_NODE_NAME,
+  toggleGameplayAccountReviewPanelForRoot,
+  toggleGameplayBattlePassPanelForRoot,
+  toggleGameplayCampaignPanelForRoot,
+  toggleGameplayDailyDungeonPanelForRoot,
+  toggleGameplayEquipmentPanelForRoot,
+  toggleGameplaySeasonalEventPanelForRoot,
   TUTORIAL_OVERLAY_NODE_NAME,
   advanceTutorialFlowForRoot,
+  advanceGameplayCampaignDialogueForRoot,
+  attemptGameplayDailyDungeonFloorForRoot,
   type BattleSettlementSnapshot,
   bindGlobalErrorBoundaryForRoot,
   buildTutorialOverlayViewForRoot,
@@ -1534,102 +1545,15 @@ export class VeilRoot extends Component {
   }
 
   private renderGameplayEquipmentPanel(): void {
-    const panelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
-    if (!panelNode) {
-      return;
-    }
-
-    if (!this.gameplayEquipmentPanelOpen) {
-      panelNode.active = false;
-      return;
-    }
-
-    panelNode.active = true;
-    this.gameplayEquipmentPanel?.render({
-      hero: this.activeHero(),
-      recentEventLog: this.lobbyAccountProfile.recentEventLog,
-      recentSessionEvents: (this.lastUpdate?.events ?? []).filter(
-        (event): event is Extract<NonNullable<SessionUpdate["events"]>[number], { type: "hero.equipmentFound" }> =>
-          event.type === "hero.equipmentFound"
-      )
-    });
+    renderGameplayEquipmentPanelForRoot(this as unknown as Record<string, any>);
   }
 
   private renderGameplayCampaignPanel(): void {
-    const panelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
-    if (!panelNode) {
-      return;
-    }
-
-    if (!this.gameplayCampaignPanelOpen) {
-      panelNode.active = false;
-      return;
-    }
-
-    panelNode.active = true;
-    this.gameplayCampaignPanel?.render({
-      campaign: this.gameplayCampaign,
-      selectedMissionId: this.gameplayCampaignSelectedMissionId,
-      activeMissionId: this.gameplayCampaignActiveMissionId,
-      dialogue: this.gameplayCampaignDialogue,
-      statusMessage: this.gameplayCampaignStatus,
-      loading: this.gameplayCampaignLoading,
-      pendingAction: this.gameplayCampaignPendingAction
-    });
+    renderGameplayCampaignPanelForRoot(this as unknown as Record<string, any>);
   }
 
   private renderGameplayAccountReviewPanel(): void {
-    const panelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
-    if (!panelNode) {
-      return;
-    }
-
-    if (!this.gameplayAccountReviewPanelOpen && !this.gameplayBattlePassPanelOpen && !this.gameplayDailyDungeonPanelOpen && !this.gameplaySeasonalEventPanelOpen) {
-      panelNode.active = false;
-      return;
-    }
-
-    panelNode.active = true;
-    if (this.gameplayDailyDungeonPanelOpen) {
-      this.gameplayAccountReviewPanel?.render({
-        dailyDungeon: buildCocosDailyDungeonPanelView({
-          dailyDungeon: this.dailyDungeonSummary,
-          activeEvent: null,
-          seasonProgress: this.seasonProgress,
-          currentPlayerId: this.playerId,
-          pendingFloor: this.pendingDailyDungeonFloor,
-          pendingClaimRunId: this.pendingDailyDungeonClaimRunId,
-          statusLabel: this.dailyDungeonStatus
-        })
-      });
-      return;
-    }
-    if (this.gameplayBattlePassPanelOpen) {
-      this.gameplayAccountReviewPanel?.render({
-        battlePass: buildCocosBattlePassPanelView({
-          progress: this.seasonProgress,
-          pendingClaimTier: this.pendingSeasonClaimTier,
-          pendingPremiumPurchase: this.seasonPremiumPurchaseInFlight,
-          statusLabel: this.seasonProgressStatus
-        })
-      });
-      return;
-    }
-
-    if (this.gameplaySeasonalEventPanelOpen) {
-      this.gameplayAccountReviewPanel?.render({
-        eventLeaderboard: buildCocosEventLeaderboardPanelView({
-          event: this.activeSeasonalEvent,
-          playerId: this.playerId,
-          statusLabel: this.seasonalEventStatus
-        })
-      });
-      return;
-    }
-
-    this.gameplayAccountReviewPanel?.render({
-      page: buildCocosAccountReviewPage(this.lobbyAccountReviewState)
-    });
+    renderGameplayAccountReviewPanelForRoot(this as unknown as Record<string, any>);
   }
 
   private formatLobbyVaultSummary(): string {
@@ -2101,221 +2025,39 @@ export class VeilRoot extends Component {
   }
 
   private async toggleGameplayAccountReviewPanel(forceOpen?: boolean): Promise<void> {
-    const nextOpen = forceOpen ?? !this.gameplayAccountReviewPanelOpen;
-    this.gameplayBattlePassPanelOpen = false;
-    this.gameplayDailyDungeonPanelOpen = false;
-    this.gameplaySeasonalEventPanelOpen = false;
-    this.gameplayCampaignPanelOpen = false;
-    this.gameplayAccountReviewPanelOpen = nextOpen;
-    if (!nextOpen) {
-      this.renderView();
-      return;
-    }
-
-    this.renderView();
-    await this.refreshActiveAccountReviewSection();
+    await toggleGameplayAccountReviewPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private async toggleGameplayBattlePassPanel(forceOpen?: boolean): Promise<void> {
-    if (this.lastUpdate?.featureFlags?.battle_pass_enabled !== true) {
-      this.gameplayBattlePassPanelOpen = false;
-      this.seasonProgressStatus = "battle_pass_enabled = false";
-      this.renderView();
-      return;
-    }
-
-    const nextOpen = forceOpen ?? !this.gameplayBattlePassPanelOpen;
-    this.gameplayAccountReviewPanelOpen = false;
-    this.gameplayDailyDungeonPanelOpen = false;
-    this.gameplaySeasonalEventPanelOpen = false;
-    this.gameplayCampaignPanelOpen = false;
-    this.gameplayBattlePassPanelOpen = nextOpen;
-    if (!nextOpen) {
-      this.renderView();
-      return;
-    }
-
-    this.announceGameplayPanelSwitch("成长目标", "正在同步赛季通行证、长期成长与下一解锁目标。");
-    this.seasonProgress = this.snapshotSeasonProgressFromProfile();
-    this.renderView();
-    await this.refreshSeasonProgress();
+    await toggleGameplayBattlePassPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private async toggleGameplayDailyDungeonPanel(forceOpen?: boolean): Promise<void> {
-    const nextOpen = forceOpen ?? !this.gameplayDailyDungeonPanelOpen;
-    this.gameplayAccountReviewPanelOpen = false;
-    this.gameplayBattlePassPanelOpen = false;
-    this.gameplaySeasonalEventPanelOpen = false;
-    this.gameplayCampaignPanelOpen = false;
-    this.gameplayDailyDungeonPanelOpen = nextOpen;
-    if (!nextOpen) {
-      this.renderView();
-      return;
-    }
-
-    this.announceGameplayPanelSwitch("今日地城", "正在同步今日轮换、剩余次数与可领取奖励。");
-    this.renderView();
-    await this.refreshDailyDungeonPanel();
+    await toggleGameplayDailyDungeonPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private async openLobbyPvePanel(target: "campaign" | "daily-dungeon" | "battle-pass"): Promise<void> {
-    if (this.authMode !== "account" || !this.authToken) {
-      this.lobbyStatus = target === "campaign"
-        ? "主线章节需要正式账号会话。"
-        : target === "daily-dungeon"
-          ? "每日地城需要正式账号会话。"
-          : "赛季通行证需要正式账号会话。";
-      this.renderView();
-      return;
-    }
-
-    if (this.showLobby) {
-      await this.enterLobbyRoom();
-      if (this.showLobby) {
-        return;
-      }
-    }
-
-    if (target === "campaign") {
-      await this.toggleGameplayCampaignPanel(true);
-      return;
-    }
-
-    if (target === "battle-pass") {
-      await this.toggleGameplayBattlePassPanel(true);
-      return;
-    }
-
-    await this.toggleGameplayDailyDungeonPanel(true);
+    await openLobbyPvePanelForRoot(this as unknown as Record<string, any>, target);
   }
 
   private async refreshDailyDungeonPanel(successStatus?: string): Promise<void> {
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    if (!authSession?.token) {
-      this.dailyDungeonSummary = null;
-
-      this.dailyDungeonStatus = "每日地城需要有效账号会话。";
-      this.renderView();
-      return;
-    }
-
-    this.dailyDungeonStatus = "正在同步每日地城...";
-    this.dailyDungeonLoading = true;
-    this.renderView();
-    let dailyDungeon: CocosDailyDungeonSummary | null = null;
-    try {
-      dailyDungeon = await resolveVeilRootRuntime().loadDailyDungeon(this.remoteUrl, {
-        storage,
-        authSession,
-        throwOnError: true
-      });
-    } catch (error) {
-      this.dailyDungeonSummary = null;
-
-      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_unavailable";
-      this.renderView();
-      return;
-    } finally {
-      this.dailyDungeonLoading = false;
-    }
-
-    this.dailyDungeonSummary = dailyDungeon;
-    if (successStatus?.trim()) {
-      this.dailyDungeonStatus = successStatus.trim();
-    } else if (!dailyDungeon) {
-      this.dailyDungeonStatus = "当前无法读取每日地城配置。";
-    } else {
-      this.dailyDungeonStatus = `剩余 ${dailyDungeon.attemptsRemaining} 次挑战。`;
-    }
-    this.renderView();
+    await refreshDailyDungeonPanelForRoot(this as unknown as Record<string, any>, successStatus);
   }
 
   private async toggleGameplaySeasonalEventPanel(forceOpen?: boolean): Promise<void> {
-    const nextOpen = forceOpen ?? !this.gameplaySeasonalEventPanelOpen;
-    this.gameplayAccountReviewPanelOpen = false;
-    this.gameplayBattlePassPanelOpen = false;
-    this.gameplayDailyDungeonPanelOpen = false;
-    this.gameplayCampaignPanelOpen = false;
-    this.gameplaySeasonalEventPanelOpen = nextOpen;
-    if (!nextOpen) {
-      this.renderView();
-      return;
-    }
-
-    this.renderView();
-    await this.refreshActiveSeasonalEvent();
+    await toggleGameplaySeasonalEventPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private snapshotSeasonProgressFromProfile(): CocosSeasonProgress {
-    return {
-      battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
-      seasonXp: Math.max(0, Math.floor(this.lobbyAccountProfile.seasonXp ?? 0)),
-      seasonPassTier: Math.max(1, Math.floor(this.lobbyAccountProfile.seasonPassTier ?? 1)),
-      seasonPassPremium: this.lobbyAccountProfile.seasonPassPremium === true,
-      seasonPassClaimedTiers: this.lobbyAccountProfile.seasonPassClaimedTiers ?? []
-    };
+    return snapshotSeasonProgressFromProfileForRoot(this as unknown as Record<string, any>);
   }
 
   private async refreshSeasonProgress(): Promise<void> {
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    if (!authSession?.token) {
-      this.seasonProgressStatus = "赛季进度需要有效账号会话。";
-      this.renderView();
-      return;
-    }
-
-    this.seasonProgressStatus = "正在同步赛季进度...";
-    this.renderView();
-    try {
-      this.seasonProgress = await resolveVeilRootRuntime().loadSeasonProgress(this.remoteUrl, {
-        storage,
-        authSession,
-        throwOnError: true
-      });
-      this.seasonProgressStatus = this.seasonProgress.seasonPassPremium
-        ? "高级通行证已激活，可领取高级轨道奖励。"
-        : "点击金色按钮可购买高级通行证。";
-    } catch (error) {
-      this.seasonProgressStatus = error instanceof Error ? error.message : "season_progress_unavailable";
-    }
-    this.renderView();
+    await refreshSeasonProgressForRoot(this as unknown as Record<string, any>);
   }
 
   private async refreshActiveSeasonalEvent(): Promise<void> {
-    if (!this.remoteUrl?.trim()) {
-      this.activeSeasonalEvent = null;
-      this.seasonalEventStatus = "赛季活动服务地址未配置。";
-      this.renderView();
-      return;
-    }
-
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    if (!authSession?.token) {
-      this.activeSeasonalEvent = null;
-      this.seasonalEventStatus = "赛季活动需要有效账号会话。";
-      this.renderView();
-      return;
-    }
-
-    this.seasonalEventStatus = "正在同步赛季活动...";
-    this.renderView();
-    try {
-      const [event] = await resolveVeilRootRuntime().loadActiveSeasonalEvents(this.remoteUrl, {
-        storage,
-        authSession,
-        throwOnError: true
-      });
-      this.activeSeasonalEvent = event ?? null;
-      this.seasonalEventStatus = event
-        ? `已同步 ${event.name} · 当前积分 ${event.player.points}`
-        : "当前没有进行中的赛季活动。";
-    } catch (error) {
-      this.seasonalEventStatus = error instanceof Error ? error.message : "seasonal_event_unavailable";
-    }
-    this.renderView();
+    await refreshActiveSeasonalEventForRoot(this as unknown as Record<string, any>);
   }
 
   private async submitBattleProgressForActiveEvents(update: SessionUpdate): Promise<void> {
@@ -2441,392 +2183,63 @@ export class VeilRoot extends Component {
   }
 
   private async claimGameplaySeasonTier(tier: number): Promise<void> {
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    if (!authSession?.token || this.pendingSeasonClaimTier != null) {
-      return;
-    }
-
-    this.pendingSeasonClaimTier = Math.max(1, Math.floor(tier));
-    this.seasonProgressStatus = `正在领取 T${this.pendingSeasonClaimTier} 奖励...`;
-    this.renderView();
-    try {
-      await resolveVeilRootRuntime().claimSeasonTier(this.remoteUrl, this.pendingSeasonClaimTier, {
-        storage,
-        authSession
-      });
-      await this.refreshLobbyAccountProfile();
-      await this.refreshSeasonProgress();
-      this.seasonProgressStatus = `T${this.pendingSeasonClaimTier} 奖励已领取。`;
-    } catch (error) {
-      this.seasonProgressStatus = error instanceof Error ? error.message : "season_claim_failed";
-    } finally {
-      this.pendingSeasonClaimTier = null;
-      this.renderView();
-    }
+    await claimGameplaySeasonTierForRoot(this as unknown as Record<string, any>, tier);
   }
 
   private async purchaseGameplaySeasonPremium(): Promise<void> {
-    if (this.seasonPremiumPurchaseInFlight) {
-      return;
-    }
-
-    const premiumProduct =
-      this.lobbyShopProducts.find((entry) => entry.type === "season_pass_premium" && entry.enabled)
-      ?? this.lobbyShopProducts.find((entry) => entry.productId === "season-pass-premium");
-    if (!premiumProduct) {
-      this.seasonProgressStatus = "未找到高级通行证商品配置。";
-      this.renderView();
-      return;
-    }
-
-    this.seasonPremiumPurchaseInFlight = true;
-    this.pendingShopProductId = premiumProduct.productId;
-    this.seasonProgressStatus = `正在购买 ${premiumProduct.name}...`;
-    this.renderView();
-    try {
-      this.trackPurchaseInitiated(premiumProduct, "battle_pass");
-      await resolveVeilRootRuntime().purchaseShopProduct(this.remoteUrl, premiumProduct.productId, {
-        getAuthToken: () => this.authToken
-      });
-      await this.refreshLobbyAccountProfile();
-      await this.refreshSeasonProgress();
-      this.seasonProgressStatus = "高级通行证已解锁。";
-    } catch (error) {
-      this.seasonProgressStatus = this.describeShopError(error);
-    } finally {
-      this.seasonPremiumPurchaseInFlight = false;
-      this.pendingShopProductId = null;
-      this.renderView();
-    }
+    await purchaseGameplaySeasonPremiumForRoot(this as unknown as Record<string, any>);
   }
 
   private async attemptGameplayDailyDungeonFloor(floor: number): Promise<void> {
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    if (!authSession?.token || this.pendingDailyDungeonFloor != null || this.pendingDailyDungeonClaimRunId != null) {
-      return;
-    }
-
-    this.pendingDailyDungeonFloor = Math.max(1, Math.floor(floor));
-    this.dailyDungeonStatus = `正在记录第 ${this.pendingDailyDungeonFloor} 层挑战...`;
-    this.renderView();
-    try {
-      await resolveVeilRootRuntime().attemptDailyDungeonFloor(this.remoteUrl, this.pendingDailyDungeonFloor, {
-        storage,
-        authSession
-      });
-      await this.refreshLobbyAccountProfile();
-      await this.refreshDailyDungeonPanel(`第 ${this.pendingDailyDungeonFloor} 层挑战已记录，可领取对应奖励。`);
-    } catch (error) {
-      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_attempt_failed";
-    } finally {
-      this.pendingDailyDungeonFloor = null;
-      this.renderView();
-    }
+    await attemptGameplayDailyDungeonFloorForRoot(this as unknown as Record<string, any>, floor);
   }
 
   private async claimGameplayDailyDungeonRun(runId: string): Promise<void> {
-    const storage = this.readWebStorage();
-    const authSession = this.currentLobbyAuthSession();
-    const normalizedRunId = runId.trim();
-    if (!authSession?.token || !normalizedRunId || this.pendingDailyDungeonFloor != null || this.pendingDailyDungeonClaimRunId != null) {
-      return;
-    }
-
-    this.pendingDailyDungeonClaimRunId = normalizedRunId;
-    this.dailyDungeonStatus = "正在领取每日地城奖励...";
-    this.renderView();
-    try {
-      await resolveVeilRootRuntime().claimDailyDungeonRunReward(this.remoteUrl, normalizedRunId, {
-        storage,
-        authSession
-      });
-      await this.refreshLobbyAccountProfile();
-      await this.refreshDailyDungeonPanel("每日地城奖励已领取，活动积分已刷新。");
-    } catch (error) {
-      this.dailyDungeonStatus = error instanceof Error ? error.message : "daily_dungeon_claim_failed";
-    } finally {
-      this.pendingDailyDungeonClaimRunId = null;
-      this.renderView();
-    }
+    await claimGameplayDailyDungeonRunForRoot(this as unknown as Record<string, any>, runId);
   }
 
   private toggleGameplayEquipmentPanel(forceOpen?: boolean): void {
-    this.gameplayEquipmentPanelOpen = forceOpen ?? !this.gameplayEquipmentPanelOpen;
-    if (this.gameplayEquipmentPanelOpen) {
-      this.gameplayCampaignPanelOpen = false;
-      this.announceGameplayPanelSwitch("装备背包", "可以整理战利品、查看穿戴收益并准备下一次推进。");
-    }
-    this.renderView();
+    toggleGameplayEquipmentPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private async toggleGameplayCampaignPanel(forceOpen?: boolean): Promise<void> {
-    const nextOpen = forceOpen ?? !this.gameplayCampaignPanelOpen;
-    this.gameplayCampaignPanelOpen = nextOpen;
-    if (!nextOpen) {
-      this.gameplayCampaignDialogue = null;
-      this.gameplayCampaignPendingAction = null;
-      this.renderView();
-      return;
-    }
-
-    this.gameplayAccountReviewPanelOpen = false;
-    this.gameplayBattlePassPanelOpen = false;
-    this.gameplaySeasonalEventPanelOpen = false;
-    this.gameplayEquipmentPanelOpen = false;
-    this.announceGameplayPanelSwitch("主线任务", "正在同步当前章节、下一任务和路线建议。");
-    this.renderView();
-    await this.refreshGameplayCampaign();
+    await toggleGameplayCampaignPanelForRoot(this as unknown as Record<string, any>, forceOpen);
   }
 
   private resolveSelectedGameplayCampaignMission() {
-    return resolveCampaignPanelMission(
-      this.gameplayCampaign,
-      this.gameplayCampaignSelectedMissionId,
-      this.gameplayCampaignActiveMissionId
-    );
+    return resolveSelectedGameplayCampaignMissionForRoot(this as unknown as Record<string, any>);
   }
 
   private syncGameplayCampaignSelection(preferredMissionId?: string | null): void {
-    const missions = this.gameplayCampaign?.missions ?? [];
-    const preferredId = preferredMissionId?.trim() || null;
-    const campaignNextMissionId = this.gameplayCampaign?.nextMissionId ?? null;
-    const nextMissionId =
-      (preferredId && missions.find((mission) => mission.id === preferredId)?.id)
-      ?? (this.gameplayCampaignActiveMissionId && missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId)?.id)
-      ?? (campaignNextMissionId && missions.find((mission) => mission.id === campaignNextMissionId)?.id)
-      ?? missions[0]?.id
-      ?? null;
-    this.gameplayCampaignSelectedMissionId = nextMissionId;
+    syncGameplayCampaignSelectionForRoot(this as unknown as Record<string, any>, preferredMissionId);
   }
 
   private selectGameplayCampaignMission(direction: "previous" | "next" | "next-available"): void {
-    const missions = this.gameplayCampaign?.missions ?? [];
-    if (missions.length === 0) {
-      return;
-    }
-
-    if (direction === "next-available") {
-      const nextAvailableMissionId = this.gameplayCampaign?.nextMissionId;
-      if (nextAvailableMissionId) {
-        this.gameplayCampaignSelectedMissionId = nextAvailableMissionId;
-        this.gameplayCampaignDialogue = null;
-        this.renderView();
-      }
-      return;
-    }
-
-    const selectedMission = this.resolveSelectedGameplayCampaignMission();
-    const currentIndex = selectedMission ? missions.findIndex((mission) => mission.id === selectedMission.id) : 0;
-    if (currentIndex < 0) {
-      return;
-    }
-
-    const nextIndex = direction === "previous" ? Math.max(0, currentIndex - 1) : Math.min(missions.length - 1, currentIndex + 1);
-    this.gameplayCampaignSelectedMissionId = missions[nextIndex]?.id ?? this.gameplayCampaignSelectedMissionId;
-    this.gameplayCampaignDialogue = null;
-    this.renderView();
+    selectGameplayCampaignMissionForRoot(this as unknown as Record<string, any>, direction);
   }
 
   private async refreshGameplayCampaign(preferredMissionId?: string | null): Promise<void> {
-    if (!this.authToken || this.authMode !== "account") {
-      this.gameplayCampaign = null;
-      this.gameplayCampaignSelectedMissionId = null;
-      this.gameplayCampaignActiveMissionId = null;
-      this.gameplayCampaignDialogue = null;
-      this.gameplayCampaignStatus = "战役模式需要正式账号会话。";
-      this.renderView();
-      return;
-    }
-
-    this.gameplayCampaignLoading = true;
-    this.gameplayCampaignStatus = "正在同步战役任务...";
-    this.renderView();
-    try {
-      this.gameplayCampaign = await resolveVeilRootRuntime().loadCampaignSummary(this.remoteUrl, {
-        authSession: this.authToken
-          ? {
-              token: this.authToken,
-              playerId: this.playerId,
-              displayName: this.displayName || this.playerId,
-              authMode: this.authMode,
-              provider: this.authProvider,
-              ...(this.loginId ? { loginId: this.loginId } : {}),
-              source: "remote"
-            }
-          : null
-      });
-      if (this.gameplayCampaignActiveMissionId) {
-        const activeMission = this.gameplayCampaign.missions.find((mission) => mission.id === this.gameplayCampaignActiveMissionId) ?? null;
-        if (!activeMission || activeMission.status === "completed") {
-          this.gameplayCampaignActiveMissionId = null;
-          this.gameplayCampaignDialogue = null;
-        }
-      }
-      this.syncGameplayCampaignSelection(preferredMissionId);
-      this.gameplayCampaignStatus =
-        this.gameplayCampaign.nextMissionId
-          ? `下一可用任务 ${this.gameplayCampaign.nextMissionId}`
-          : "当前战役线已全部完成。";
-    } catch (error) {
-      this.gameplayCampaignStatus = this.describeCampaignError(error);
-    } finally {
-      this.gameplayCampaignLoading = false;
-      this.renderView();
-    }
+    await refreshGameplayCampaignForRoot(this as unknown as Record<string, any>, preferredMissionId);
   }
 
   private startGameplayCampaignDialogue(missionId: string, sequence: "intro" | "outro"): void {
-    this.gameplayCampaignDialogue = {
-      missionId,
-      sequence,
-      lineIndex: 0
-    };
+    startGameplayCampaignDialogueForRoot(this as unknown as Record<string, any>, missionId, sequence);
   }
 
   private advanceGameplayCampaignDialogue(): void {
-    const dialogue = this.gameplayCampaignDialogue;
-    if (!dialogue) {
-      return;
-    }
-
-    const mission = this.gameplayCampaign?.missions.find((entry) => entry.id === dialogue.missionId) ?? null;
-    const lines = dialogue.sequence === "outro" ? mission?.outroDialogue ?? [] : mission?.introDialogue ?? [];
-    const currentLine = lines[Math.min(Math.max(0, dialogue.lineIndex), lines.length - 1)] ?? null;
-    if (currentLine && this.session) {
-      void this.session.acknowledgeCampaignDialogue(dialogue.missionId, dialogue.sequence, currentLine.id).catch(() => undefined);
-    }
-    if (lines.length === 0 || dialogue.lineIndex >= lines.length - 1) {
-      this.gameplayCampaignDialogue = null;
-      if (dialogue.sequence === "outro") {
-        this.gameplayCampaignActiveMissionId = null;
-        this.syncGameplayCampaignSelection(this.gameplayCampaign?.nextMissionId);
-        this.gameplayCampaignStatus = mission ? `${mission.name} 已完成并结算。` : "任务已完成。";
-      } else {
-        this.gameplayCampaignPanelOpen = false;
-        this.gameplayCampaignStatus = mission ? `${mission.name} 已进入执行阶段。` : "任务已开始。";
-      }
-      this.renderView();
-      return;
-    }
-
-    this.gameplayCampaignDialogue = {
-      ...dialogue,
-      lineIndex: dialogue.lineIndex + 1
-    };
-    this.renderView();
+    advanceGameplayCampaignDialogueForRoot(this as unknown as Record<string, any>);
   }
 
   private async startGameplayCampaignMission(): Promise<void> {
-    const mission = this.resolveSelectedGameplayCampaignMission();
-    if (!mission || !this.authToken || this.authMode !== "account") {
-      return;
-    }
-
-    this.gameplayCampaignPendingAction = "start";
-    this.gameplayCampaignStatus = `正在启动 ${mission.name}...`;
-    this.renderView();
-    try {
-      const result: CocosCampaignMissionStartResult = await resolveVeilRootRuntime().startCampaignMission(
-        this.remoteUrl,
-        mission.chapterId,
-        mission.id,
-        {
-          authSession: {
-            token: this.authToken,
-            playerId: this.playerId,
-            displayName: this.displayName || this.playerId,
-            authMode: this.authMode,
-            provider: this.authProvider,
-            ...(this.loginId ? { loginId: this.loginId } : {}),
-            source: "remote"
-          }
-        }
-      );
-      this.gameplayCampaignActiveMissionId = result.mission.id;
-      this.gameplayCampaignSelectedMissionId = result.mission.id;
-      if ((result.mission.introDialogue?.length ?? 0) > 0) {
-        this.startGameplayCampaignDialogue(result.mission.id, "intro");
-      } else {
-        this.gameplayCampaignDialogue = null;
-        this.gameplayCampaignPanelOpen = false;
-      }
-      this.trackClientAnalyticsEvent("mission_started", {
-        campaignId: result.mission.chapterId,
-        missionId: result.mission.id,
-        mapId: result.mission.mapId,
-        chapterOrder: Number.parseInt(result.mission.chapterId.replace(/^chapter/i, ""), 10) || 1
-      });
-      await this.refreshGameplayCampaign(result.mission.id);
-      this.gameplayCampaignStatus =
-        (result.mission.introDialogue?.length ?? 0) > 0
-          ? `${result.mission.name} 开场对话已载入。`
-          : `${result.mission.name} 已开始。`;
-    } catch (error) {
-      this.gameplayCampaignStatus = this.describeCampaignError(error);
-    } finally {
-      this.gameplayCampaignPendingAction = null;
-      this.renderView();
-    }
+    await startGameplayCampaignMissionForRoot(this as unknown as Record<string, any>);
   }
 
   private async completeGameplayCampaignMission(): Promise<void> {
-    const mission = this.resolveSelectedGameplayCampaignMission();
-    if (!mission || !this.authToken || this.authMode !== "account" || this.gameplayCampaignActiveMissionId !== mission.id) {
-      return;
-    }
-
-    this.gameplayCampaignPendingAction = "complete";
-    this.gameplayCampaignStatus = `正在提交 ${mission.name} 结算...`;
-    this.renderView();
-    try {
-      const result: CocosCampaignMissionCompleteResult = await resolveVeilRootRuntime().completeCampaignMission(this.remoteUrl, mission.id, {
-        authSession: {
-          token: this.authToken,
-          playerId: this.playerId,
-          displayName: this.displayName || this.playerId,
-          authMode: this.authMode,
-          provider: this.authProvider,
-          ...(this.loginId ? { loginId: this.loginId } : {}),
-          source: "remote"
-        }
-      });
-      this.gameplayCampaign = result.campaign;
-      this.gameplayCampaignSelectedMissionId = result.mission.id;
-      if ((result.mission.outroDialogue?.length ?? 0) > 0) {
-        this.startGameplayCampaignDialogue(result.mission.id, "outro");
-        this.gameplayCampaignStatus = `${result.mission.name} 结算完成，进入收尾对话。`;
-      } else {
-        this.gameplayCampaignActiveMissionId = null;
-        this.syncGameplayCampaignSelection(result.campaign.nextMissionId);
-        this.gameplayCampaignStatus = `${result.mission.name} 已完成。`;
-      }
-    } catch (error) {
-      this.gameplayCampaignStatus = this.describeCampaignError(error);
-    } finally {
-      this.gameplayCampaignPendingAction = null;
-      this.renderView();
-    }
+    await completeGameplayCampaignMissionForRoot(this as unknown as Record<string, any>);
   }
 
   private describeCampaignError(error: unknown): string {
-    if (!(error instanceof Error)) {
-      return "战役请求失败。";
-    }
-    if (error.message.includes("campaign_mission_locked")) {
-      return "任务尚未解锁，请先满足章节条件。";
-    }
-    if (error.message.includes("campaign_mission_already_completed")) {
-      return "任务已完成，无需重复结算。";
-    }
-    if (error.message.includes("campaign_persistence_unavailable")) {
-      return "服务端未启用战役持久化。";
-    }
-    if (error.message.includes("cocos_request_failed:401:")) {
-      return "战役会话已过期，请重新登录正式账号。";
-    }
-    return error.message || "战役请求失败。";
+    return describeCampaignErrorForRoot(error);
   }
 
   private syncGameplayCampaignBattleOutcome(update: SessionUpdate): void {
