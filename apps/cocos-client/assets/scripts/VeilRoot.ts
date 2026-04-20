@@ -1,10 +1,5 @@
 import { _decorator, Camera, Canvas, Color, Component, EventMouse, EventTouch, Graphics, input, Input, Label, Layers, Node, sys, UITransform, view } from "cc";
-import {
-  getBuildingUpgradeConfig,
-  getEquipmentDefinition,
-  getRuntimeConfigBundleForRoom,
-  type EquipmentType
-} from "./project-shared/index.ts";
+import { getBuildingUpgradeConfig, getEquipmentDefinition, type EquipmentType } from "./project-shared/index.ts";
 import {
   type BattleAction,
   type LeaderboardEntry,
@@ -18,13 +13,7 @@ import {
   type SessionUpdate,
   type Vec2
 } from "./VeilCocosSession.ts";
-import {
-  buildCocosAccountReviewPage,
-  createCocosAccountReviewState,
-  transitionCocosAccountReviewState,
-  type CocosAccountReviewSection,
-  type CocosAccountReviewState
-} from "./cocos-account-review.ts";
+import { createCocosAccountReviewState, transitionCocosAccountReviewState, type CocosAccountReviewSection, type CocosAccountReviewState } from "./cocos-account-review.ts";
 import {
   loadCocosCampaignSummary,
   claimCocosDailyQuest,
@@ -151,7 +140,7 @@ import {
   resolveCocosLaunchIdentity,
   type CocosAuthProvider
 } from "./cocos-session-launch.ts";
-import { buildCocosShopPanelView, type ShopProduct } from "./cocos-shop-panel.ts";
+import { type ShopProduct } from "./cocos-shop-panel.ts";
 import { resolveCocosClientVersion } from "./cocos-client-version.ts";
 import {
   type CocosDailyDungeonSummary,
@@ -164,7 +153,6 @@ import { VeilCampaignPanel } from "./VeilCampaignPanel.ts";
 import { VeilTutorialOverlay, type TutorialOverlayView } from "./VeilTutorialOverlay.ts";
 import { formatEquipmentActionReason, formatEquipmentSlotLabel } from "./cocos-hero-equipment.ts";
 import { type CocosBattleFeedbackView } from "./cocos-battle-feedback.ts";
-import { buildLobbySkillPanelView, toLobbySkillPanelHeroState } from "./cocos-lobby-skill-panel.ts";
 import {
   createCocosBattlePresentationController,
   type CocosBattlePresentationState
@@ -186,10 +174,7 @@ import {
   type CocosSettingsPanelUpdate,
   type CocosSettingsPanelView
 } from "./cocos-settings-panel.ts";
-import { buildCocosRuntimeTriageSummaryLines } from "./cocos-runtime-diagnostics.ts";
-import { buildCocosWorldFocusView } from "./cocos-world-focus.ts";
 import { cocosPresentationConfig } from "./cocos-presentation-config.ts";
-import { cocosPresentationReadiness } from "./cocos-presentation-readiness.ts";
 import { getPixelSpriteLoadStatus, loadPixelSpriteAssets } from "./cocos-pixel-sprites.ts";
 import { type CocosCampaignDialogueState } from "./cocos-campaign-panel.ts";
 import {
@@ -228,6 +213,9 @@ import {
   collapseAdjacentEntries,
   connectSessionForRoot,
   createSessionOptionsForRoot,
+  buildBattleSettlementRecoveryStateForRoot,
+  buildHudPresentationStateForRoot,
+  buildHudSessionIndicatorsForRoot,
   claimGameplayDailyDungeonRunForRoot,
   claimGameplaySeasonTierForRoot,
   completeGameplayCampaignMissionForRoot,
@@ -255,6 +243,7 @@ import {
   refreshDailyDungeonPanelForRoot,
   refreshGameplayCampaignForRoot,
   refreshSeasonProgressForRoot,
+  renderViewForRoot,
   renderGameplayAccountReviewPanelForRoot,
   renderGameplayCampaignPanelForRoot,
   renderGameplayEquipmentPanelForRoot,
@@ -1309,239 +1298,7 @@ export class VeilRoot extends Component {
   }
 
   private renderView(): void {
-    if (this.levelUpNotice && this.levelUpNotice.expiresAt <= Date.now()) {
-      this.levelUpNotice = null;
-    }
-    if (this.achievementNotice && this.achievementNotice.expiresAt <= Date.now()) {
-      this.achievementNotice = null;
-    }
-    if (this.battleFeedback && this.battleFeedback.expiresAt <= Date.now()) {
-      this.battleFeedback = null;
-    }
-
-    this.ensurePixelSpriteGroup("boot");
-    if (this.lastUpdate?.battle) {
-      this.ensurePixelSpriteGroup("battle");
-    }
-
-    this.syncMusicScene();
-
-    this.updateLayout();
-    const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
-    const hudNode = this.node.getChildByName(HUD_NODE_NAME);
-    const mapNode = this.node.getChildByName(MAP_NODE_NAME);
-    const battleNode = this.node.getChildByName(BATTLE_NODE_NAME);
-    const timelineNode = this.node.getChildByName(TIMELINE_NODE_NAME);
-    const tutorialOverlayNode = this.node.getChildByName(TUTORIAL_OVERLAY_NODE_NAME);
-    const accountReviewPanelNode = this.node.getChildByName(ACCOUNT_REVIEW_PANEL_NODE_NAME);
-    const equipmentPanelNode = this.node.getChildByName(EQUIPMENT_PANEL_NODE_NAME);
-    const campaignPanelNode = this.node.getChildByName(CAMPAIGN_PANEL_NODE_NAME);
-    const settingsPanelNode = this.node.getChildByName(SETTINGS_PANEL_NODE_NAME);
-    const settingsButtonNode = this.node.getChildByName(SETTINGS_BUTTON_NODE_NAME);
-    const showingGame = !this.showLobby;
-
-    if (lobbyNode) {
-      lobbyNode.active = this.showLobby;
-    }
-    if (hudNode) {
-      hudNode.active = showingGame;
-    }
-    if (mapNode) {
-      mapNode.active = showingGame;
-    }
-    if (battleNode) {
-      battleNode.active = showingGame;
-    }
-    if (timelineNode) {
-      timelineNode.active = showingGame;
-    }
-    if (accountReviewPanelNode) {
-      accountReviewPanelNode.active =
-        showingGame && (this.gameplayAccountReviewPanelOpen || this.gameplayBattlePassPanelOpen || this.gameplayDailyDungeonPanelOpen || this.gameplaySeasonalEventPanelOpen);
-    }
-    if (equipmentPanelNode) {
-      equipmentPanelNode.active = showingGame && this.gameplayEquipmentPanelOpen;
-    }
-    if (campaignPanelNode) {
-      campaignPanelNode.active = this.gameplayCampaignPanelOpen;
-    }
-    if (settingsPanelNode) {
-      settingsPanelNode.active = this.settingsView.open;
-    }
-    if (settingsButtonNode) {
-      settingsButtonNode.active = true;
-    }
-    if (tutorialOverlayNode) {
-      tutorialOverlayNode.active = false;
-    }
-
-    if (this.showLobby) {
-      const activeHero = this.activeHero();
-      const runtimeBundle = this.lastUpdate
-        ? getRuntimeConfigBundleForRoom(this.lastUpdate.world.meta.roomId, this.lastUpdate.world.meta.seed)
-        : null;
-      this.lobbyPanel?.render({
-        playerId: this.playerId,
-        displayName: this.displayName || this.playerId,
-        roomId: this.roomId,
-        authMode: this.authMode,
-        loginId: this.loginId,
-        privacyConsentAccepted: this.privacyConsentAccepted,
-        loginHint: this.describeLobbyLoginHint(),
-        loginActionLabel: this.primaryLoginProvider().label,
-        shareHint: this.describeLobbyShareHint(),
-        vaultSummary: this.formatLobbyVaultSummary(),
-        account: this.lobbyAccountProfile,
-        campaign: this.gameplayCampaign,
-        campaignStatus: this.gameplayCampaignStatus,
-        dailyDungeon: this.dailyDungeonSummary,
-        dailyDungeonStatus: this.dailyDungeonStatus,
-        accountReview: buildCocosAccountReviewPage(this.lobbyAccountReviewState),
-        battleReplayItems: this.lobbyAccountReviewState.battleReplays.items,
-        battleReplaySectionStatus: this.lobbyAccountReviewState.battleReplays.status,
-        battleReplaySectionError: this.lobbyAccountReviewState.battleReplays.errorMessage,
-        selectedBattleReplayId: this.lobbyAccountReviewState.selectedBattleReplayId,
-        leaderboardEntries: this.lobbyLeaderboardEntries,
-        leaderboardStatus: this.lobbyLeaderboardStatus,
-        leaderboardError: this.lobbyLeaderboardError,
-        sessionSource: this.sessionSource,
-        loading: this.lobbyLoading,
-        entering: this.lobbyEntering,
-        status: this.lobbyStatus,
-        announcements: this.lobbyAnnouncements,
-        maintenanceMode: this.lobbyMaintenanceMode,
-        matchmaking: this.matchmakingView,
-        matchmakingSearching: this.isMatchmakingActive(),
-        matchmakingBusy: this.lobbyEntering || this.matchmakingJoinInFlight,
-        rooms: this.lobbyRooms,
-        accountFlow: this.buildActiveAccountFlowPanelView(),
-        presentationReadiness: cocosPresentationReadiness,
-        activeHero,
-        lobbySkillPanel: activeHero && runtimeBundle
-          ? buildLobbySkillPanelView(toLobbySkillPanelHeroState(activeHero), runtimeBundle)
-          : null,
-        battleActive: Boolean(this.lastUpdate?.battle),
-        skillPanelBusy: this.moveInFlight || this.battleActionInFlight,
-        shop: buildCocosShopPanelView({
-          products: this.lobbyShopProducts,
-          gemBalance: this.lobbyAccountProfile.gems ?? 0,
-          pendingProductId: this.pendingShopProductId,
-          experiments: this.lobbyAccountProfile.experiments ?? [],
-          ownedCosmeticIds: this.lobbyAccountProfile.cosmeticInventory?.ownedIds ?? [],
-          seasonPassPremiumOwned: this.lobbyAccountProfile.seasonPassPremium === true,
-          ...(this.lobbyAccountProfile.equippedCosmetics ? { equippedCosmetics: this.lobbyAccountProfile.equippedCosmetics } : {})
-        }),
-        shopStatus: this.lobbyShopStatus,
-        shopLoading: this.lobbyShopLoading,
-        seasonProgress: this.seasonProgress,
-        activeSeasonalEvent: this.activeSeasonalEvent,
-        dailyQuestClaimingId: this.dailyQuestClaimingId,
-        mailboxClaimingMessageId: this.mailboxClaimingMessageId,
-        mailboxClaimAllBusy: this.mailboxClaimAllInFlight
-      });
-      const tutorialOverlayView = this.buildTutorialOverlayView();
-      if (tutorialOverlayView) {
-        tutorialOverlayNode && (tutorialOverlayNode.active = true);
-        this.tutorialOverlay?.render(tutorialOverlayView);
-      } else {
-        this.tutorialOverlay?.render(null);
-      }
-      this.renderSettingsOverlay();
-      return;
-    }
-
-    this.hudPanel?.render({
-      roomId: this.roomId,
-      playerId: this.playerId,
-      displayName: this.displayName || this.playerId,
-      account: this.lobbyAccountProfile,
-      authMode: this.authMode,
-      loginId: this.loginId,
-      sessionSource: this.sessionSource,
-      remoteUrl: this.remoteUrl,
-      update: this.lastUpdate,
-      moveInFlight: this.moveInFlight,
-      predictionStatus: this.predictionStatus,
-      sessionIndicators: this.buildHudSessionIndicators(),
-      inputDebug: this.inputDebug,
-      runtimeHealth: this.describeRuntimeMemoryHealth(),
-      triageSummaryLines: buildCocosRuntimeTriageSummaryLines({
-        devOnly: true,
-        mode: this.lastUpdate?.battle ? "battle" : "world",
-        roomId: this.roomId,
-        playerId: this.playerId,
-        connectionStatus: this.diagnosticsConnectionStatus,
-        lastUpdateSource: this.lastRoomUpdateSource,
-        lastUpdateReason: this.lastRoomUpdateReason,
-        lastUpdateAt: this.lastRoomUpdateAtMs,
-        update: this.lastUpdate,
-        account: this.lobbyAccountProfile,
-        timelineEntries: this.timelineEntries,
-        logLines: this.logLines,
-        predictionStatus: this.predictionStatus,
-        recoverySummary: this.predictionStatus.includes("回放缓存状态") ? this.predictionStatus : null,
-        primaryClientTelemetry: this.primaryClientTelemetry
-      }),
-      levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
-      achievementNotice: this.achievementNotice
-        ? { title: this.achievementNotice.title, detail: this.achievementNotice.detail }
-        : null,
-      reporting: {
-        open: this.reportDialogOpen,
-        available: Boolean(this.resolveReportTarget()),
-        targetLabel: this.resolveReportTarget()?.name ?? null,
-        status: this.reportStatusMessage,
-        submitting: this.reportSubmitting
-      },
-      surrendering: {
-        open: this.surrenderDialogOpen,
-        available: this.isSurrenderAvailable(),
-        targetLabel: this.resolveSurrenderTarget()?.name ?? null,
-        status: this.surrenderStatusMessage,
-        submitting: this.surrenderSubmitting
-      },
-      sharing: {
-        available: this.canShareLatestBattleResult()
-      },
-      battlePassEnabled: this.lastUpdate?.featureFlags?.battle_pass_enabled === true,
-      seasonalEventAvailable: this.activeSeasonalEvent != null,
-      interaction: this.buildHudInteractionState(),
-      presentation: this.buildHudPresentationState(),
-      worldFocus: buildCocosWorldFocusView({
-        update: this.lastUpdate,
-        interaction: this.buildHudInteractionState(),
-        predictionStatus: this.predictionStatus,
-        levelUpNotice: this.levelUpNotice ? { title: this.levelUpNotice.title, detail: this.levelUpNotice.detail } : null,
-        account: this.lobbyAccountProfile
-      })
-    });
-    const tutorialOverlayView = this.buildTutorialOverlayView();
-    if (tutorialOverlayView) {
-      tutorialOverlayNode && (tutorialOverlayNode.active = true);
-      this.tutorialOverlay?.render(tutorialOverlayView);
-    } else {
-      this.tutorialOverlay?.render(null);
-    }
-    this.renderSettingsOverlay();
-    this.mapBoard?.render(this.lastUpdate);
-    this.battlePanel?.render({
-      update: this.lastUpdate,
-      timelineEntries: this.timelineEntries,
-      controlledCamp: this.controlledBattleCamp(),
-      selectedTargetId: this.selectedBattleTargetId,
-      actionPending: this.battleActionInFlight,
-      feedback: this.battleFeedback,
-      presentationState: this.battlePresentation.getState(),
-      recovery: this.buildBattleSettlementRecoveryState(),
-      connectionStatus: this.diagnosticsConnectionStatus,
-      predictionStatus: this.predictionStatus
-    });
-    this.timelinePanel?.render({
-      entries: this.timelineEntries
-    });
-    this.renderGameplayEquipmentPanel();
-    this.renderGameplayCampaignPanel();
-    this.renderGameplayAccountReviewPanel();
+    renderViewForRoot(this as unknown as Record<string, any>);
   }
 
   private renderGameplayEquipmentPanel(): void {
@@ -5462,56 +5219,7 @@ export class VeilRoot extends Component {
     tone: CocosBattleFeedbackView["tone"];
     summaryLines: string[];
   } | null {
-    if (!this.lastBattleSettlementSnapshot || this.lastUpdate?.battle) {
-      return null;
-    }
-
-    const recoverySummaryLines = [
-      `最近结算：${this.lastBattleSettlementSnapshot.label}`,
-      ...this.lastBattleSettlementSnapshot.summaryLines
-    ];
-
-    if (this.diagnosticsConnectionStatus === "reconnecting") {
-      return {
-        title: "结算恢复中",
-        detail: "已保留最近一次结算摘要，正在等待权威房间确认奖励、战利品与英雄同步；不会重复发放奖励。",
-        badge: "RECOVER",
-        tone: "neutral",
-        summaryLines: recoverySummaryLines
-      };
-    }
-
-    if (this.lastRoomUpdateSource === "replay" && this.lastRoomUpdateReason === "cached_snapshot") {
-      return {
-        title: "结算快照回放中",
-        detail: "当前面板正在展示本地缓存的结算快照，等待服务端权威状态完成覆盖。",
-        badge: "REPLAY",
-        tone: "neutral",
-        summaryLines: recoverySummaryLines
-      };
-    }
-
-    if (this.diagnosticsConnectionStatus === "reconnect_failed") {
-      return {
-        title: "结算快照回补中",
-        detail: "重连失败后已转入快照回补；当前结算摘要仅作恢复提示，最终奖励与装备状态仍以服务端快照为准。",
-        badge: "FALLBACK",
-        tone: "neutral",
-        summaryLines: recoverySummaryLines
-      };
-    }
-
-    if (this.lastUpdate?.reason?.includes("reconnect.restore")) {
-      return {
-        title: "结算已恢复",
-        detail: "权威房间已恢复，以下结算摘要与战后状态已重新对齐到服务端快照。",
-        badge: "RESUMED",
-        tone: "victory",
-        summaryLines: recoverySummaryLines
-      };
-    }
-
-    return null;
+    return buildBattleSettlementRecoveryStateForRoot(this as unknown as Record<string, any>);
   }
 
   private captureBattleSettlementSnapshot(
@@ -5535,49 +5243,7 @@ export class VeilRoot extends Component {
   }
 
   private buildHudSessionIndicators(): VeilHudRenderState["sessionIndicators"] {
-    const indicators: VeilHudRenderState["sessionIndicators"] = [];
-    const replayingCachedSnapshot =
-      this.lastRoomUpdateSource === "replay" && this.lastRoomUpdateReason === "cached_snapshot";
-    const activePvpBattle = this.lastUpdate?.battle?.defenderHeroId
-      ? {
-          sessionId: `${this.lastUpdate.world.meta.roomId}/${this.lastUpdate.battle.id}`
-        }
-      : null;
-
-    if (this.diagnosticsConnectionStatus === "reconnecting") {
-      indicators.push({
-        kind: "reconnecting",
-        label: activePvpBattle ? "PVP 重连中" : "重连中",
-        detail: activePvpBattle
-          ? `正在恢复 ${activePvpBattle.sessionId} 的对手归属、当前回合与权威房间状态。`
-          : "正在尝试恢复与权威房间的连接。"
-      });
-    }
-
-    if (replayingCachedSnapshot) {
-      indicators.push({
-        kind: "replaying_cached_snapshot",
-        label: "缓存快照回放",
-        detail: "当前 HUD 正在展示本地缓存的上一份会话快照。"
-      });
-      indicators.push({
-        kind: "awaiting_authoritative_resync",
-        label: "等待权威重同步",
-        detail: "请等待服务端权威快照覆盖当前回放状态。"
-      });
-    }
-
-    if (this.diagnosticsConnectionStatus === "reconnect_failed") {
-      indicators.push({
-        kind: "degraded_offline_fallback",
-        label: activePvpBattle ? "PVP 快照回补" : "降级/离线回退",
-        detail: activePvpBattle
-          ? `最近一次 ${activePvpBattle.sessionId} 重连失败，客户端正依赖回退路径恢复当前对抗结果。`
-          : "最近一次重连失败，客户端正依赖回退路径维持会话。"
-      });
-    }
-
-    return indicators;
+    return buildHudSessionIndicatorsForRoot(this as unknown as Record<string, any>);
   }
 
   private applyPrediction(action: CocosWorldAction, status: string): void {
@@ -5633,11 +5299,7 @@ export class VeilRoot extends Component {
   }
 
   private buildHudPresentationState(): VeilHudRenderState["presentation"] {
-    return {
-      audio: this.audioRuntime.getState(),
-      pixelAssets: getPixelSpriteLoadStatus(),
-      readiness: cocosPresentationReadiness
-    };
+    return buildHudPresentationStateForRoot(this as unknown as Record<string, any>);
   }
 
 }

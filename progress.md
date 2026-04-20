@@ -2246,3 +2246,15 @@ Original prompt: 你先学习下当前项目并给出开发的计划
 - 本轮补充验证已通过：
   - `npm run typecheck:cocos`
   - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+
+- 同一轮继续把 `render state composer` 抽进了 `root/`：
+  - `apps/cocos-client/assets/scripts/root/render-state-composer.ts`
+    - 收拢 `renderView` 本体，以及 `HUD session indicators / battle settlement recovery / HUD presentation` 这组渲染输入拼装逻辑
+- `apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - 对应渲染与恢复状态方法已经改成轻量委托层，主文件从 `5645` 行继续降到 `5307` 行
+- 新增模块级测试：
+  - `apps/cocos-client/test/root-render-state-composer.test.ts`
+- 本轮补充验证已通过：
+  - `npm run typecheck:cocos`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-render-state-composer.test.ts ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/root-session-lifecycle.test.ts ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+  - `npm run smoke:cocos:canonical-journey`
