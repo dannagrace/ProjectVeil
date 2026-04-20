@@ -26,8 +26,8 @@ docker compose -f docker-compose.redis.yml up -d
 两个节点只要共享同一个 `REDIS_URL`，就会共享 Colyseus 房间发现与匹配队列：
 
 ```bash
-REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev:server
-REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev:server
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2567 npm run dev -- server
+REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev -- server
 ```
 
 说明：
@@ -41,7 +41,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 PORT=2568 npm run dev:server
 如果本机或环境里已经有 Redis，可直接运行：
 
 ```bash
-REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling
+REDIS_URL=redis://127.0.0.1:6379/0 npm run validate -- redis-scaling
 ```
 
 该脚本会创建两个独立的 matchmaking service 实例，并验证：

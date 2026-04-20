@@ -198,8 +198,8 @@ test("buildWechatMinigameTemplateArtifacts emits merge-friendly template files a
   assert.match(artifacts.releaseChecklistMarkdown, /https:\/\/socket\.example\.com/);
   assert.match(artifacts.releaseChecklistMarkdown, /wss:\/\/socket\.example\.com/);
   assert.match(artifacts.releaseChecklistMarkdown, /当前配置已覆盖已知/);
-  assert.match(artifacts.releaseChecklistMarkdown, /validate:wechat-build/);
-  assert.match(artifacts.releaseChecklistMarkdown, /release:wechat:assets-hotfix/);
+  assert.match(artifacts.releaseChecklistMarkdown, /npm run validate -- wechat-build/);
+  assert.match(artifacts.releaseChecklistMarkdown, /npm run release -- wechat:assets-hotfix/);
 });
 
 test("buildWechatMinigameDomainCoverage derives runtime request and socket origins from remoteUrl", () => {

@@ -34,13 +34,13 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Typecheck
-        run: npm run typecheck:ci
+        run: npm run typecheck -- ci
 
       - name: Validate content-pack consistency
-        run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+        run: npm run validate -- content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
 
       - name: Test With V8 Coverage
-        run: npm run test:coverage:ci
+        run: npm test -- coverage:ci
 
       - name: Capture runtime regression artifact
         if: always()
@@ -127,7 +127,7 @@ jobs:
 
       - name: Refresh WeChat candidate summary for rehearsal
         run: |
-          npm run validate:wechat-rc -- \
+          npm run validate -- wechat-rc -- \
             --artifacts-dir "${WECHAT_RELEASE_ARTIFACTS_DIR}" \
             --expected-revision "${GITHUB_SHA}"
 
@@ -165,7 +165,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Run packaged client RC smoke
-        run: npm run smoke:client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
+        run: npm run smoke -- client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
 
       - name: Upload packaged client RC smoke artifacts
         if: always()
@@ -247,7 +247,7 @@ jobs:
             args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
           fi
 
-          npm run release:phase1:candidate-rehearsal -- "${args[@]}"
+          npm run release -- phase1:candidate-rehearsal -- "${args[@]}"
 
       - name: Publish concise step summary
         if: always()

@@ -29,7 +29,7 @@ For the same candidate revision, keep this checklist next to the existing RC evi
 Generate the candidate-scoped artifact with:
 
 ```bash
-npm run release:cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>
+npm run release -- cocos-rc:bundle -- --candidate <candidate-name> --build-surface <surface>
 ```
 
 That command now emits:

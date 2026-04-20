@@ -8,7 +8,7 @@
 ## 当前命令
 
 ```bash
-npm run test:sync-governance:matrix
+npm test -- sync-governance:matrix
 ```
 
 默认会运行固定的 Playwright 场景，并把 JSON artifact 写到：
@@ -18,7 +18,7 @@ npm run test:sync-governance:matrix
 如果要和 release snapshot 使用同一个稳定文件名：
 
 ```bash
-npm run test:sync-governance:matrix -- \
+npm test -- sync-governance:matrix -- \
   --output artifacts/release-readiness/sync-governance-matrix.json
 ```
 
@@ -42,4 +42,4 @@ npm run test:sync-governance:matrix -- \
 - 总通过 / 失败 / 跳过数
 - 每个治理场景的 `id / category / risk / status / durationMs`
 
-`npm run release:readiness:snapshot` 已把这份矩阵作为必过自动化检查之一，因此 release/readiness 会明确暴露同步治理结果，而不再只显示多人 smoke。
+`npm run release -- readiness:snapshot` 已把这份矩阵作为必过自动化检查之一，因此 release/readiness 会明确暴露同步治理结果，而不再只显示多人 smoke。

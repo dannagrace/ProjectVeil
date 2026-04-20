@@ -320,31 +320,31 @@ This gives us a safe recovery window after server restarts without letting `room
 
 The repository now uses versioned migrations under `scripts/migrations/`.
 
-- Apply pending migrations: `npm run db:migrate`
-- Roll back the most recent migration: `npm run db:migrate:rollback`
-- Fresh setup alias: `npm run db:init:mysql`
+- Apply pending migrations: `npm run db -- migrate`
+- Roll back the most recent migration: `npm run db -- migrate:rollback`
+- Fresh setup alias: `npm run db -- init:mysql`
 
 `db:init:mysql` now delegates to the same migration runner used for upgrades, so fresh installs and existing environments follow a single schema path. The runner records applied versions in `schema_migrations` with `id`, `name`, and `applied_at`.
 
-If the dev server starts with `VEIL_MYSQL_*` configured but the schema is behind, it logs a warning and falls back to local in-memory room persistence plus filesystem config storage instead of mutating the database implicitly. Run `npm run db:migrate` first for MySQL-backed startup.
+If the dev server starts with `VEIL_MYSQL_*` configured but the schema is behind, it logs a warning and falls back to local in-memory room persistence plus filesystem config storage instead of mutating the database implicitly. Run `npm run db -- migrate` first for MySQL-backed startup.
 
 ## Manual Operations
 
 The repository includes manual room snapshot management commands:
 
-- `npm run db:snapshots:list -- --limit 20`
-- `npm run db:snapshots:delete -- --roomId test-room`
-- `npm run db:snapshots:prune`
+- `npm run db -- snapshots:list -- --limit 20`
+- `npm run db -- snapshots:delete -- --roomId test-room`
+- `npm run db -- snapshots:prune`
 
 These commands are useful when you want to inspect retained rooms, delete a specific room snapshot, or force a cleanup immediately.
 
 The repository also includes manual player profile management commands:
 
-- `npm run db:profiles:list -- --limit 20`
-- `npm run db:profiles:list -- --roomId test-room`
-- `npm run db:profiles:list -- --playerId player-1`
-- `npm run db:profiles:delete -- --roomId test-room --playerId player-1`
-- `npm run db:profiles:prune`
+- `npm run db -- profiles:list -- --limit 20`
+- `npm run db -- profiles:list -- --roomId test-room`
+- `npm run db -- profiles:list -- --playerId player-1`
+- `npm run db -- profiles:delete -- --roomId test-room --playerId player-1`
+- `npm run db -- profiles:prune`
 
 These commands are useful when you want to inspect retained per-player room progress, delete a specific player profile row, or force profile cleanup immediately.
 
@@ -443,7 +443,7 @@ RESTORE_MYSQL_PORT=3306 \
 RESTORE_MYSQL_USER=root \
 RESTORE_MYSQL_PASSWORD=change_me \
 RESTORE_MYSQL_DATABASE=project_veil_restore \
-npm run db:restore:rehearsal
+npm run db -- restore:rehearsal
 ```
 
 For the automated weekly drill that always selects the latest available backup, run:
@@ -454,10 +454,10 @@ RESTORE_MYSQL_PORT=3306 \
 RESTORE_MYSQL_USER=root \
 RESTORE_MYSQL_PASSWORD=change_me \
 RESTORE_MYSQL_DATABASE=project_veil_restore_test \
-npm run db:restore:test
+npm run db -- restore:test
 ```
 
-That flow downloads the archive and `.sha256`, verifies integrity before touching MySQL, restores into the target schema, runs the table-count sanity query, and then executes `npm run test:phase1-release-persistence -- --storage mysql` against the recovered instance unless `VEIL_RESTORE_SKIP_REGRESSION=1`.
+That flow downloads the archive and `.sha256`, verifies integrity before touching MySQL, restores into the target schema, runs the table-count sanity query, and then executes `npm test -- phase1-release-persistence -- --storage mysql` against the recovered instance unless `VEIL_RESTORE_SKIP_REGRESSION=1`.
 
 ## MySQL Alerting
 
@@ -469,11 +469,11 @@ Replication lag alerting depends on your MySQL exporter exposing `mysql_slave_st
 
 Use the Phase 1 release regression when you need one bounded proof that MySQL persistence and shipped config/content data are healthy together:
 
-- Local/default mode: `npm run test:phase1-release-persistence`
-- Additional Phase 1 pack (`frontier-basin`): `npm run test:phase1-release-persistence:frontier`
-- Additional Phase 1 pack (`stonewatch-fork`): `npm run test:phase1-release-persistence:stonewatch`
-- Second Phase 1 pack (`ridgeway-crossing`): `npm run test:phase1-release-persistence:ridgeway`
-- Additional shipped Phase 1 pack (`highland-reach`): `npm run test:phase1-release-persistence:highland`
-- Release-target MySQL mode: `npm run test:phase1-release-persistence -- --storage mysql`
+- Local/default mode: `npm test -- phase1-release-persistence`
+- Additional Phase 1 pack (`frontier-basin`): `npm test -- phase1-release-persistence:frontier`
+- Additional Phase 1 pack (`stonewatch-fork`): `npm test -- phase1-release-persistence:stonewatch`
+- Second Phase 1 pack (`ridgeway-crossing`): `npm test -- phase1-release-persistence:ridgeway`
+- Additional shipped Phase 1 pack (`highland-reach`): `npm test -- phase1-release-persistence:highland`
+- Release-target MySQL mode: `npm test -- phase1-release-persistence -- --storage mysql`
 
 The command writes a JSON artifact under `artifacts/release-readiness/`, validates the shipped Phase 1 content packs, saves representative player/account/world progression through the persistence store, and verifies fresh-room hydration still restores long-term account + hero data while resetting room-local position/readiness. Pass `--map-pack frontier-basin`, `--map-pack stonewatch-fork`, `--map-pack ridgeway-crossing`, or `--map-pack highland-reach` when you need the persistence proof on one of the alternate Phase 1 layouts without changing the validation bundle.

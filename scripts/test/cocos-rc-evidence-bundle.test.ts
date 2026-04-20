@@ -250,7 +250,7 @@ test("release:cocos-rc:bundle generates candidate-scoped summary, snapshot, and 
   assert.match(checklistMarkdown, /Recorded at: `2026-/);
   assert.match(checklistMarkdown, /cocos-rc-snapshot-rc-issue-507-/);
   assert.match(checklistMarkdown, /## Auto-Filled Main-Journey Evidence/);
-  assert.match(checklistMarkdown, /Canonical regeneration command: `npm run release:cocos-rc:bundle -- --candidate rc-issue-507 --build-surface wechat_preview`/);
+  assert.match(checklistMarkdown, /Canonical regeneration command: `npm run release -- cocos-rc:bundle -- --candidate rc-issue-507 --build-surface wechat_preview`/);
   assert.match(checklistMarkdown, /### Canonical Journey Snapshot/);
   assert.match(checklistMarkdown, /### Required Evidence Snapshot/);
   assert.doesNotMatch(checklistMarkdown, /<YYYY-MM-DDTHH:MM:SSZ>|<recorded-at>|<short-sha>/);

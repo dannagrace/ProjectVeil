@@ -275,7 +275,7 @@ jobs:
           if [[ -d "${HISTORY_DIR}/wechat-release" ]]; then
             args+=(--wechat-artifacts-dir "${HISTORY_DIR}/wechat-release")
           fi
-          npm run release:gate:summary -- "${args[@]}"
+          npm run release -- gate:summary -- "${args[@]}"
 
       - name: Build release readiness dashboard
         env:
@@ -290,7 +290,7 @@ jobs:
           if [[ -d "${HISTORY_DIR}/wechat-release" ]]; then
             args+=(--wechat-artifacts-dir "${HISTORY_DIR}/wechat-release")
           fi
-          npm run release:readiness:dashboard -- "${args[@]}"
+          npm run release -- readiness:dashboard -- "${args[@]}"
 
       - name: Build CI trend summary
         run: |
@@ -357,7 +357,7 @@ jobs:
           if [[ -f "${HISTORY_DIR}/coverage/summary.json" ]]; then
             args+=(--coverage-summary "${HISTORY_DIR}/coverage/summary.json")
           fi
-          npm run release:health:summary -- "${args[@]}"
+          npm run release -- health:summary -- "${args[@]}"
 
       - name: Publish concise step summary
         if: always()

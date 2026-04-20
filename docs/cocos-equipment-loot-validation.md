@@ -44,7 +44,7 @@
 
 - Scripted smoke: `node --import tsx --test apps/cocos-client/test/cocos-primary-client-journey.test.ts`
 
-1. Start the server with `npm run dev:server`.
+1. Start the server with `npm run dev -- server`.
 2. Open `apps/cocos-client` in Cocos Creator 3.8.x and preview a scene with `VeilRoot`.
 3. Enter a room and move until you trigger at least one neutral battle.
 4. Win a battle that grants equipment.

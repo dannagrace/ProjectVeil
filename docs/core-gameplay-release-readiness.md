@@ -12,17 +12,17 @@
 
 - Phase 1 成熟度记分卡：`docs/phase1-maturity-scorecard.md`
 - 基础测试回归：`npm test`
-- 类型检查：`npm run typecheck:ci`
-- H5 / Lobby 冒烟：`npm run test:e2e:smoke`
-- 多人同步冒烟：`npm run test:e2e:multiplayer:smoke`
+- 类型检查：`npm run typecheck -- ci`
+- H5 / Lobby 冒烟：`npm test -- e2e:smoke`
+- 多人同步冒烟：`npm test -- e2e:multiplayer:smoke`
 - 统一断线恢复门禁：`docs/reconnect-smoke-gate.md`
 - Cocos PvP 遭遇生命周期：`docs/cocos-pvp-encounter-lifecycle.md`
 - 多人放量基线：`docs/multiplayer-loadtest-gate.md`
 - 长时 reconnect soak：`docs/reconnect-soak-gate.md`
 - Cocos 资源 + 微信小游戏构建门禁：`npm run check:cocos-release-readiness`
-- 发布就绪快照：`npm run release:readiness:snapshot`
-- Phase 1 发布就绪看板：`npm run release:readiness:dashboard`
-- Cocos RC 证据快照：`npm run release:cocos-rc:snapshot`
+- 发布就绪快照：`npm run release -- readiness:snapshot`
+- Phase 1 发布就绪看板：`npm run release -- readiness:dashboard`
+- Cocos RC 证据快照：`npm run release -- cocos-rc:snapshot`
 - Cocos 发布证据模板：`docs/cocos-release-evidence-template.md`
 - Cocos Phase 1 占位 / fallback 表现签核（含 maintained fallback inventory）：`docs/cocos-phase1-presentation-signoff.md`
 - Cocos / WeChat RC 检查清单模板：`docs/release-evidence/cocos-wechat-rc-checklist.template.md`
@@ -39,11 +39,11 @@
 
 建议在每次 release candidate 上记录状态：`pass / partial / fail / n/a`，并附上证据链接、执行人和日期。对于 Cocos / WeChat RC，再额外固定两份人类可读附件：一份 checklist，一份 blocker register。
 
-如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release:readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release:cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据；人工 reviewer 则复用 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 和 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，不要在 issue 或 PR 中重新发明字段。
+如果希望把自动化门禁和人工门禁统一收口成一个结构化记录，可执行 `npm run release -- readiness:snapshot -- --manual-checks docs/release-readiness-manual-checks.example.json`，生成当前 revision 的快照并保留 pending manual check。Cocos 主链路证据则统一用 `npm run release -- cocos-rc:snapshot` 生成单独的 RC 快照，并在同一份 JSON 中回填 Creator 预览或微信 RC 证据；人工 reviewer 则复用 `docs/release-evidence/cocos-wechat-rc-checklist.template.md` 和 `docs/release-evidence/cocos-wechat-rc-blockers.template.md`，不要在 issue 或 PR 中重新发明字段。
 
 对于 WeChat release candidate / shipping candidate，再额外固定一份 `docs/release-evidence/wechat-runtime-observability-signoff.template.md` 的回填结果，用来记录同一 candidate revision 的 runtime health / diagnostics / metrics 签核；不要只在 PR 评论里写“ops 已看过”。
 
-如果希望把这些已有证据再压成单份本地总览，可执行 `npm run release:readiness:dashboard`。它会复用最新的 release snapshot、WeChat package / smoke evidence、Cocos RC snapshot，并可选探测 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，输出一份 `pass / warn / fail` 的 Phase 1 看板。
+如果希望把这些已有证据再压成单份本地总览，可执行 `npm run release -- readiness:dashboard`。它会复用最新的 release snapshot、WeChat package / smoke evidence、Cocos RC snapshot，并可选探测 `/api/runtime/health`、`/api/runtime/auth-readiness`、`/api/runtime/metrics`，输出一份 `pass / warn / fail` 的 Phase 1 看板。
 
 ## 必过用户旅程
 
@@ -71,7 +71,7 @@
 - [ ] reconnect 验收必须复用 [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 的唯一场景和最小成功信号，而不是只写“重连成功”。
 - [ ] wider playtest 前必须复用 [`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md) 中固定的 smoke + `stress:rooms` 命令组合、阈值、回退动作和重跑触发条件。
 - [ ] shipping / release candidate 前，任何涉及房间状态、reconnect、战斗或快照恢复的改动都必须额外通过 [`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md) 中的长时 reconnect soak。
-- [ ] shipping / release candidate 前，至少要有一条当前 `npm run test:phase1-release-persistence` 记录，同时证明目标持久化路径与 shipped config/content 校验一起通过。
+- [ ] shipping / release candidate 前，至少要有一条当前 `npm test -- phase1-release-persistence` 记录，同时证明目标持久化路径与 shipped config/content 校验一起通过。
 - [ ] 失败路径可读：非法 action、超时、会话失效时，客户端能收到明确错误而不是静默卡死。
 
 `P1 follow-up`
@@ -82,8 +82,8 @@
 建议证据：
 
 - `npm test`
-- `npm run test:e2e:multiplayer:smoke`
-- `npm run test:phase1-release-persistence`
+- `npm test -- e2e:multiplayer:smoke`
+- `npm test -- phase1-release-persistence`
 - wider playtest 前必跑：[`docs/multiplayer-loadtest-gate.md`](./multiplayer-loadtest-gate.md)
 - shipping / RC 前必跑：[`docs/reconnect-soak-gate.md`](./reconnect-soak-gate.md)
 
@@ -105,9 +105,9 @@
 
 建议证据：
 
-- `npm run test:e2e:smoke`
+- `npm test -- e2e:smoke`
 - [`docs/reconnect-smoke-gate.md`](./reconnect-smoke-gate.md) 中定义的 reconnect 证据
-- 必要时补跑：`npm run test:e2e`
+- 必要时补跑：`npm test -- e2e`
 
 ### 3. Cocos 主客户端体验面
 
@@ -127,9 +127,9 @@
 建议证据：
 
 - `npm test`
-- `npm run smoke:cocos:canonical-journey`
+- `npm run smoke -- cocos:canonical-journey`
 - `npm run check:cocos-release-readiness`
-- `npm run release:cocos-rc:snapshot -- --output <snapshot-path>`
+- `npm run release -- cocos-rc:snapshot -- --output <snapshot-path>`
 - `docs/cocos-phase1-presentation-signoff.md`
 - `docs/release-evidence/cocos-wechat-rc-checklist.template.md`
 - `docs/release-evidence/cocos-wechat-rc-blockers.template.md`
@@ -154,8 +154,8 @@
 建议证据：
 
 - `npm test`
-- `npm run release:runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`
-- `npm run release:runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --capture-report <runtime-observability-evidence.json>`
+- `npm run release -- runtime-observability:evidence -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>`
+- `npm run release -- runtime-observability:gate -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --capture-report <runtime-observability-evidence.json>`
 - 手动抓取：`GET /api/runtime/health`
 - 手动抓取：`GET /api/runtime/auth-readiness`
 - 手动抓取：`GET /api/runtime/metrics`
@@ -187,7 +187,7 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
   - 首场战斗反馈统一到正式动画 / 音频方案
 - `Cocos 主链路发布证据`
   - 固定一条 Lobby -> 进房 -> 战斗 -> 重连 -> 返回世界的验收脚本
-  - 使用 `npm run release:cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
+  - 使用 `npm run release -- cocos-rc:snapshot` 产出统一 evidence，并参考 `docs/release-evidence/cocos-rc-snapshot.example.json` 回填
   - 同步复制 RC checklist 与 blocker 模板，避免 PR 中只看到截图没有结论
 - `多人放量门禁`
   - 复用 `docs/multiplayer-loadtest-gate.md`
@@ -198,8 +198,8 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 
 ## 建议执行顺序
 
-1. 先跑 `npm run typecheck:ci` 和 `npm test`，确认 shared/server/client 基线未坏。
-2. 再跑 `npm run test:e2e:smoke` 与 `npm run test:e2e:multiplayer:smoke`，确认 H5 回归面和多人主链路。
+1. 先跑 `npm run typecheck -- ci` 和 `npm test`，确认 shared/server/client 基线未坏。
+2. 再跑 `npm test -- e2e:smoke` 与 `npm test -- e2e:multiplayer:smoke`，确认 H5 回归面和多人主链路。
 3. 若候选包涉及微信小游戏，再跑 `npm run check:cocos-release-readiness`，并按微信发布文档回填真实 smoke 报告。
 4. 用本清单逐项标记 `pass / partial / fail`，只要存在 `P0 blocker = fail`，该候选版本就不应进入更广范围测试。
 
@@ -207,9 +207,9 @@ H5 冒烟和多人 Playwright 已经比较成熟，但真实发布面是 `apps/c
 
 用于验证 issue #208 这类“多人遭遇进入 / 结算 / 回到地图”反馈是否仍然完整可读。
 
-1. 启动本地房间与 H5 调试壳：`npm run dev:server`、`npm run dev:client`
-2. 跑 PR 级 PvP 反馈回归：`npm run test:e2e:multiplayer:smoke`
-3. 若改动触及恢复 / 战后结算，再补跑：`npm run test:e2e:multiplayer -- pvp-postbattle-reconnect`
+1. 启动本地房间与 H5 调试壳：`npm run dev -- server`、`npm run dev -- client`
+2. 跑 PR 级 PvP 反馈回归：`npm test -- e2e:multiplayer:smoke`
+3. 若改动触及恢复 / 战后结算，再补跑：`npm test -- e2e:multiplayer -- pvp-postbattle-reconnect`
 4. 若只想快速校验文案分支，补跑单测：`node --import tsx --test ./apps/client/test/room-feedback.test.ts`
 
 成功信号：

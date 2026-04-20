@@ -38,7 +38,7 @@ test("release-readiness-snapshot includes map-object visuals as a required autom
   assert.equal(mapObjectVisuals.kind, "automated");
   assert.equal(mapObjectVisuals.required, true);
   assert.equal(mapObjectVisuals.status, "pending");
-  assert.equal(mapObjectVisuals.command, "npm run validate:map-object-visuals");
+  assert.equal(mapObjectVisuals.command, "npm run validate -- map-object-visuals");
   assert.equal(snapshot.summary.status, "pending");
   assert.equal(snapshot.summary.pending, snapshot.summary.total);
 });

@@ -68,13 +68,13 @@ const README_FIXTURE = `### 5-Minute Setup
 nvm use
 npm ci --no-audit --no-fund
 npm run doctor
-npm run validate:quickstart
+npm run validate -- quickstart
 \`\`\`
 
-\`npm run validate:quickstart\` builds the H5 debug shell and checks health / auth-readiness / lobby endpoints.
+\`npm run validate -- quickstart\` builds the H5 debug shell and checks health / auth-readiness / lobby endpoints.
 
 \`\`\`bash
-npm run dev:client:h5
+npm run dev -- client:h5
 \`\`\`
 
 - H5 debug shell: \`http://127.0.0.1:5173/\`
@@ -239,8 +239,8 @@ test("quickstart contract markdown renders stage remediation and runtime context
         status: "failed",
         summary: "validation failed",
         remediation: "Repair the validator.",
-        details: ["Command: `npm run validate:quickstart`"],
-        command: "npm run validate:quickstart",
+        details: ["Command: `npm run validate -- quickstart`"],
+        command: "npm run validate -- quickstart",
         exitCode: 1,
         durationMs: 42,
         stderrTail: "boom"

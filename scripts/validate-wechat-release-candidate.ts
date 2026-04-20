@@ -701,7 +701,7 @@ function buildCandidateSummary(
       id: "smoke-report-missing",
       summary: "Candidate summary is blocked until codex.wechat.smoke-report.json is generated and validated for the same revision.",
       artifactPath: smokeCheck.artifactPath,
-      nextCommand: "npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
+      nextCommand: "npm run smoke -- wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
     });
   } else if (smokeReport) {
     if (smokeFreshness === "missing_timestamp") {
@@ -721,7 +721,7 @@ function buildCandidateSummary(
         id: "smoke-report-stale",
         summary: `Smoke report is stale: ${smokeReport.execution.executedAt} is older than 24h for this RC summary.`,
         artifactPath: smokeCheck.artifactPath,
-        nextCommand: "npm run smoke:wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
+        nextCommand: "npm run smoke -- wechat-release -- --artifacts-dir <release-artifacts-dir> --check [--expected-revision <git-sha>]"
       });
     }
   }

@@ -16,7 +16,7 @@
     "title": "WeChat device smoke report",
     "status": "pending",
     "required": true,
-    "notes": "Run npm run smoke:wechat-release against the packaged RC artifact and attach the completed report.",
+    "notes": "Run npm run smoke -- wechat-release against the packaged RC artifact and attach the completed report.",
     "evidence": [
       "docs/wechat-minigame-release.md"
     ]

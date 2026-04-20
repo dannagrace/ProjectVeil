@@ -123,24 +123,24 @@ Practical rule: only set `grantedStatusId` when the chosen `effect` needs a pers
 Validate the default shipped bundle:
 
 ```bash
-npm run validate:content-pack
+npm run validate -- content-pack
 ```
 
 Validate all shipped map-pack presets when the change should be treated as release-facing config breadth:
 
 ```bash
-npm run validate:content-pack:all
+npm run validate -- content-pack:all
 ```
 
 Write a machine-readable report for review notes or CI-like inspection:
 
 ```bash
-npm run validate:content-pack -- --report-path artifacts/release-readiness/content-pack-validation.json
+npm run validate -- content-pack -- --report-path artifacts/release-readiness/content-pack-validation.json
 ```
 
 ## What The Validator Checks
 
-`npm run validate:content-pack` performs two layers that matter for boss encounter authoring:
+`npm run validate -- content-pack` performs two layers that matter for boss encounter authoring:
 
 - Document validation for shipped world, units, skills, map objects, and battle balance bundles
 - Global authoring validation for hero skills, daily dungeons, equipment, and `bossTemplates`

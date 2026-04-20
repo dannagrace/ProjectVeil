@@ -525,7 +525,7 @@ function resolveDossierPath(args: Args): string {
     return requireExistingFile(
       args.dossierPath,
       "Phase 1 candidate dossier",
-      "Run `npm run release:phase1:candidate-dossier -- --candidate <candidate> --candidate-revision <git-sha>` or pass a valid `--dossier <path>`."
+      "Run `npm run release -- phase1:candidate-dossier -- --candidate <candidate> --candidate-revision <git-sha>` or pass a valid `--dossier <path>`."
     );
   }
 
@@ -546,7 +546,7 @@ function resolveDossierPath(args: Args): string {
   }
 
   fail(
-    "Phase 1 candidate dossier is required. Run `npm run release:phase1:candidate-dossier -- --candidate <candidate> --candidate-revision <git-sha>` or pass `--dossier <path>`."
+    "Phase 1 candidate dossier is required. Run `npm run release -- phase1:candidate-dossier -- --candidate <candidate> --candidate-revision <git-sha>` or pass `--dossier <path>`."
   );
 }
 
@@ -555,7 +555,7 @@ function resolveReleaseGateSummaryPath(args: Args): string {
     return requireExistingFile(
       args.releaseGateSummaryPath,
       "Release gate summary",
-      "Run `npm run release:gate:summary -- --target-surface wechat` or pass a valid `--release-gate-summary <path>`."
+      "Run `npm run release -- gate:summary -- --target-surface wechat` or pass a valid `--release-gate-summary <path>`."
     );
   }
 
@@ -575,7 +575,7 @@ function resolveReleaseGateSummaryPath(args: Args): string {
   }
 
   fail(
-    "Release gate summary is required. Run `npm run release:gate:summary -- --target-surface wechat` or pass `--release-gate-summary <path>`."
+    "Release gate summary is required. Run `npm run release -- gate:summary -- --target-surface wechat` or pass `--release-gate-summary <path>`."
   );
 }
 
@@ -588,7 +588,7 @@ function resolveWechatCandidateSummaryPath(
     return requireExistingFile(
       args.wechatCandidateSummaryPath,
       "WeChat release candidate summary",
-      "Run `npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release --expected-revision <git-sha>` or pass a valid `--wechat-candidate-summary <path>`."
+      "Run `npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release --expected-revision <git-sha>` or pass a valid `--wechat-candidate-summary <path>`."
     );
   }
 
@@ -608,7 +608,7 @@ function resolveWechatCandidateSummaryPath(
 
   if (dossier.candidate.targetSurface === "wechat") {
     fail(
-      "WeChat release candidate summary is required for a WeChat go/no-go packet. Run `npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release --expected-revision <git-sha>` or pass `--wechat-candidate-summary <path>`."
+      "WeChat release candidate summary is required for a WeChat go/no-go packet. Run `npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release --expected-revision <git-sha>` or pass `--wechat-candidate-summary <path>`."
     );
   }
 

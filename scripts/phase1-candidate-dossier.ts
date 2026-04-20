@@ -957,7 +957,7 @@ function buildSnapshotSection(
       summary: "Release readiness snapshot artifact is missing.",
       artifactPath: snapshotPath,
       freshness: "unknown",
-      details: ["Run npm run release:readiness:snapshot for the candidate revision."],
+      details: ["Run npm run release -- readiness:snapshot for the candidate revision."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1062,7 +1062,7 @@ function buildCocosSection(bundlePath: string | undefined, candidateRevision: st
       summary: "Cocos RC bundle manifest is missing.",
       artifactPath: bundlePath,
       freshness: "unknown",
-      details: ["Run npm run release:cocos-rc:bundle for the candidate."],
+      details: ["Run npm run release -- cocos-rc:bundle for the candidate."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1410,7 +1410,7 @@ function buildWechatSection(
     result: required ? "pending" : "pending",
     summary: "No WeChat candidate summary, RC validation, or smoke report was selected.",
     freshness: "unknown",
-    details: ["Run npm run validate:wechat-rc or produce codex.wechat.release-candidate-summary.json for this candidate."],
+    details: ["Run npm run validate -- wechat-rc or produce codex.wechat.release-candidate-summary.json for this candidate."],
     evidence: [],
     acceptedRisks: []
   };
@@ -1426,7 +1426,7 @@ function buildPersistenceSection(persistencePath: string | undefined, candidateR
       summary: "Phase 1 persistence evidence is missing, so the verified storage mode is not visible for this candidate.",
       artifactPath: persistencePath,
       freshness: "unknown",
-      details: ["Run npm run test:phase1-release-persistence for the candidate revision on the intended storage mode."],
+      details: ["Run npm test -- phase1-release-persistence for the candidate revision on the intended storage mode."],
       evidence: [],
       acceptedRisks: []
     };
@@ -1517,7 +1517,7 @@ function buildReconnectSoakSection(reconnectSoakPath: string | undefined, candid
       summary: "Reconnect soak artifact is missing.",
       artifactPath: reconnectSoakPath,
       freshness: "unknown",
-      details: ["Run npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>."],
+      details: ["Run npm run release -- reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>."],
       evidence: [],
       acceptedRisks: []
     };

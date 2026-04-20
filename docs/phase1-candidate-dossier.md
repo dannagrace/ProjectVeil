@@ -1,26 +1,26 @@
 # Phase 1 Candidate Dossier
 
-`npm run release:phase1:candidate-dossier` folds the current Phase 1 exit evidence for one candidate revision into a single JSON dossier plus a Markdown attachment.
+`npm run release -- phase1:candidate-dossier` folds the current Phase 1 exit evidence for one candidate revision into a single JSON dossier plus a Markdown attachment.
 
 It now also emits one explicit candidate-level `Phase 1 exit evidence gate` so reviewers can make the final pass/pending/fail call from one object instead of re-interpreting each evidence section by hand.
 
-If reviewers need the eight explicit scorecard exit criteria as first-class `pass|fail|pending` rows instead of the dossier's broader section-level gate, use [`docs/phase1-exit-audit.md`](./phase1-exit-audit.md) and `npm run release:phase1:exit-audit`.
+If reviewers need the eight explicit scorecard exit criteria as first-class `pass|fail|pending` rows instead of the dossier's broader section-level gate, use [`docs/phase1-exit-audit.md`](./phase1-exit-audit.md) and `npm run release -- phase1:exit-audit`.
 
 The same run also emits a smaller runtime observability dossier that keeps the target-environment runtime probes and reconnect/session-recovery evidence in one reviewer-facing artifact for the same candidate revision.
 
-For release-time target-environment enforcement, first capture `npm run release:runtime-observability:evidence`, then evaluate it with `npm run release:runtime-observability:gate`. The dossier can still sample the live endpoints directly with `--server-url`, but the preferred release-review flow is to reuse a previously written gate report with `--runtime-observability-gate` so the same candidate-scoped runtime evidence is visible to every reviewer.
+For release-time target-environment enforcement, first capture `npm run release -- runtime-observability:evidence`, then evaluate it with `npm run release -- runtime-observability:gate`. The dossier can still sample the live endpoints directly with `--server-url`, but the preferred release-review flow is to reuse a previously written gate report with `--runtime-observability-gate` so the same candidate-scoped runtime evidence is visible to every reviewer.
 
 The Markdown artifact is the canonical reviewer-facing attachment for one candidate revision: it records the candidate metadata, selected evidence inputs, the single Phase 1 exit gate decision, and the per-section drill-down in one place.
 
 The command stays intentionally thin and reuses the existing evidence producers:
 
-- `npm run release:readiness:snapshot`
-- `npm run release:cocos-rc:bundle`
-- `npm run validate:wechat-rc` / `codex.wechat.release-candidate-summary.json`
-- `npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`
-- `npm run test:phase1-release-persistence`
-- `npm run release:gate:summary`
-- `npm run release:health:summary`
+- `npm run release -- readiness:snapshot`
+- `npm run release -- cocos-rc:bundle`
+- `npm run validate -- wechat-rc` / `codex.wechat.release-candidate-summary.json`
+- `npm run release -- reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>`
+- `npm test -- phase1-release-persistence`
+- `npm run release -- gate:summary`
+- `npm run release -- health:summary`
 - `GET /api/runtime/health`
 - `GET /api/runtime/auth-readiness`
 - `GET /api/runtime/metrics`
@@ -30,7 +30,7 @@ The command stays intentionally thin and reuses the existing evidence producers:
 Use the latest local artifacts and sample live runtime evidence:
 
 ```bash
-npm run release:phase1:candidate-dossier -- \
+npm run release -- phase1:candidate-dossier -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --server-url http://127.0.0.1:2567
@@ -39,21 +39,21 @@ npm run release:phase1:candidate-dossier -- \
 Reuse a stable runtime gate artifact instead of probing the environment a second time:
 
 ```bash
-npm run release:runtime-observability:evidence -- \
+npm run release -- runtime-observability:evidence -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --target-surface wechat \
   --target-environment release-staging \
   --server-url https://veil-staging.example.com
 
-npm run release:runtime-observability:gate -- \
+npm run release -- runtime-observability:gate -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --target-surface wechat \
   --target-environment release-staging \
   --capture-report artifacts/release-readiness/runtime-observability-evidence-phase1-wechat-rc-abc1234.json
 
-npm run release:phase1:candidate-dossier -- \
+npm run release -- phase1:candidate-dossier -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --runtime-observability-gate artifacts/release-readiness/runtime-observability-gate-phase1-wechat-rc-abc1234.json
@@ -62,7 +62,7 @@ npm run release:phase1:candidate-dossier -- \
 Pin explicit artifact paths when CI already produced stable filenames:
 
 ```bash
-npm run release:phase1:candidate-dossier -- \
+npm run release -- phase1:candidate-dossier -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --snapshot artifacts/release-readiness/release-readiness-abc1234.json \
@@ -76,7 +76,7 @@ npm run release:phase1:candidate-dossier -- \
 Write to explicit output files:
 
 ```bash
-npm run release:phase1:candidate-dossier -- \
+npm run release -- phase1:candidate-dossier -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --output artifacts/release-readiness/phase1-candidate-dossier.json \
@@ -86,7 +86,7 @@ npm run release:phase1:candidate-dossier -- \
 Write the dossier bundle into one stable candidate directory:
 
 ```bash
-npm run release:phase1:candidate-dossier -- \
+npm run release -- phase1:candidate-dossier -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --output-dir artifacts/release-dossiers/phase1-wechat-rc-abc1234
@@ -128,6 +128,6 @@ The dossier surfaces:
 
 The JSON artifact is intended for CI/automation, and the Markdown artifact is intended for PR/release review so reviewers do not need to stitch Phase 1 exit evidence together by hand.
 
-After writing the dossier and the paired exit audit, use `npm run release:phase1:exit-dossier-freshness-gate` to prove the dossier, exit audit, release snapshot, release gate summary, and manual owner ledger still point at the same candidate revision before posting the packet to CI or the release PR.
+After writing the dossier and the paired exit audit, use `npm run release -- phase1:exit-dossier-freshness-gate` to prove the dossier, exit audit, release snapshot, release gate summary, and manual owner ledger still point at the same candidate revision before posting the packet to CI or the release PR.
 
 For the scheduled and `main`-branch automation that refreshes this dossier together with its prerequisite artifact set, see [`docs/phase1-candidate-rehearsal.md`](./phase1-candidate-rehearsal.md).

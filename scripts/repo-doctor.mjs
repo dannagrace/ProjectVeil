@@ -302,7 +302,7 @@ function collectE2EChecks(context) {
         "fail",
         "No installed Playwright browser binaries were detected.",
         [],
-        ["Run `npx playwright install --with-deps chromium` before `npm run test:e2e:smoke`."]
+        ["Run `npx playwright install --with-deps chromium` before `npm test -- e2e:smoke`."]
       )
     );
     return checks;
@@ -358,7 +358,7 @@ function collectRedisChecks(context) {
           : [],
         [
           "Install Redis locally, or install Docker Compose support and run `docker compose -f docker-compose.redis.yml up -d`.",
-          "After Redis is available, rerun `REDIS_URL=redis://127.0.0.1:6379/0 npm run validate:redis-scaling`."
+          "After Redis is available, rerun `REDIS_URL=redis://127.0.0.1:6379/0 npm run validate -- redis-scaling`."
         ]
       )
     );
@@ -371,7 +371,7 @@ function collectRedisChecks(context) {
       "info",
       "Redis-backed Colyseus scaling only activates when `REDIS_URL` is set.",
       ["Without `REDIS_URL`, the dev server stays on the single-process in-memory path."],
-      ["Use the same `REDIS_URL` for both server nodes before running `npm run validate:redis-scaling`."]
+      ["Use the same `REDIS_URL` for both server nodes before running `npm run validate -- redis-scaling`."]
     )
   );
 
@@ -396,7 +396,7 @@ function collectMySqlChecks(context) {
         "warn",
         `MySQL persistence is not fully configured in .env (${missingMysqlKeys.join(", ")} missing).`,
         [],
-        ["Copy `.env.example` to `.env`, fill the `VEIL_MYSQL_*` values, then run `npm run db:migrate`."]
+        ["Copy `.env.example` to `.env`, fill the `VEIL_MYSQL_*` values, then run `npm run db -- migrate`."]
       )
     );
   } else {
@@ -406,7 +406,7 @@ function collectMySqlChecks(context) {
         "MySQL persistence env",
         "pass",
         "The required `VEIL_MYSQL_*` connection settings are present in .env.",
-        ["Run `npm run db:migrate` before starting the server in MySQL-backed mode."]
+        ["Run `npm run db -- migrate` before starting the server in MySQL-backed mode."]
       )
     );
   }

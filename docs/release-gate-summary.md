@@ -1,19 +1,19 @@
 # Release Gate Summary
 
-`npm run release:gate:summary` aggregates the existing release signals into one CI-friendly JSON file plus a Markdown summary for PR comments, workflow artifacts, or manual review.
+`npm run release -- gate:summary` aggregates the existing release signals into one CI-friendly JSON file plus a Markdown summary for PR comments, workflow artifacts, or manual review.
 
 For the short reviewer-facing checklist of the remaining Phase 1 hardening gaps, use [`docs/phase1-hardening-reviewer-checklist.md`](./phase1-hardening-reviewer-checklist.md).
 
 It intentionally reuses the current evidence instead of introducing a parallel gate system:
 
-- `npm run release:readiness:snapshot` for the baseline regression/build gate state
-- `npm run smoke:client:release-candidate` for packaged H5 smoke evidence
-- `npm run release:reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>` for candidate-scoped reconnect soak evidence plus room cleanup evidence
-- `npm run release:cocos:rc-reconnect-replay -- --candidate <candidate-name>` for candidate-scoped Cocos 主客户端 resume / fresh join fallback replay evidence
-- `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` for WeChat release evidence
+- `npm run release -- readiness:snapshot` for the baseline regression/build gate state
+- `npm run smoke -- client:release-candidate` for packaged H5 smoke evidence
+- `npm run release -- reconnect-soak -- --candidate <candidate-name> --candidate-revision <git-sha>` for candidate-scoped reconnect soak evidence plus room cleanup evidence
+- `npm run release -- cocos:rc-reconnect-replay -- --candidate <candidate-name>` for candidate-scoped Cocos 主客户端 resume / fresh join fallback replay evidence
+- `npm run validate -- wechat-rc` or `npm run smoke -- wechat-release -- --check` for WeChat release evidence
 - `configs/.config-center-library.json` for the latest applied config-center publish audit and config change risk summary
 
-Because the snapshot now executes `npm run validate:map-object-visuals` as a required automated check, the top-level release gate will also fail when shipped map objects reference missing visual definitions or coverage in `configs/object-visuals.json`.
+Because the snapshot now executes `npm run validate -- map-object-visuals` as a required automated check, the top-level release gate will also fail when shipped map objects reference missing visual definitions or coverage in `configs/object-visuals.json`.
 
 The summary now also records one explicit `targetSurface` contract. That contract is what makes `H5 passed` different from `WeChat passed`: WeChat release decisions now require a current `codex.wechat.release-candidate-summary.json` plus fresh manual/runtime review metadata, while H5-only release decisions can mark the WeChat gate as advisory.
 
@@ -26,7 +26,7 @@ When the target surface is `wechat`, the summary also auto-discovers the latest 
 Use the latest local artifacts under `artifacts/release-readiness/` and `artifacts/wechat-release/`:
 
 ```bash
-npm run release:gate:summary
+npm run release -- gate:summary
 ```
 
 When the current working set lives inside a candidate rehearsal bundle rather than the top-level artifact roots, the command now also scans nested directories under `artifacts/release-readiness/` and reuses the newest matching snapshot / H5 smoke / reconnect soak / Cocos reconnect replay / WeChat evidence set from that bundle.
@@ -34,17 +34,17 @@ When the current working set lives inside a candidate rehearsal bundle rather th
 Pick the release target surface explicitly when needed:
 
 ```bash
-npm run release:gate:summary -- --target-surface wechat
+npm run release -- gate:summary -- --target-surface wechat
 ```
 
 ```bash
-npm run release:gate:summary -- --target-surface h5
+npm run release -- gate:summary -- --target-surface h5
 ```
 
 Point at explicit artifact paths when CI already produced stable filenames:
 
 ```bash
-npm run release:gate:summary -- \
+npm run release -- gate:summary -- \
   --snapshot artifacts/release-readiness/release-readiness-2026-03-29T08-12-04.512Z.json \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-abc1234-2026-03-29T08-15-10.000Z.json \
   --reconnect-soak artifacts/release-readiness/colyseus-reconnect-soak-summary-phase1-rc-abc1234.json \
@@ -57,7 +57,7 @@ npm run release:gate:summary -- \
 Write to explicit output files:
 
 ```bash
-npm run release:gate:summary -- \
+npm run release -- gate:summary -- \
   --output artifacts/release-readiness/release-gate-summary.json \
   --markdown-output artifacts/release-readiness/release-gate-summary.md
 ```
@@ -88,7 +88,7 @@ The summary contains six release dimensions when the Cocos reconnect replay arti
 
 - `release-readiness`
   - Fails when the snapshot is missing, when the snapshot summary is not `passed`, or when any required snapshot check is `failed` or `pending`.
-  - That includes `npm run validate:map-object-visuals`, so missing sprite/visual coverage now blocks release promotion through the same snapshot gate instead of relying on reviewers to run it separately.
+  - That includes `npm run validate -- map-object-visuals`, so missing sprite/visual coverage now blocks release promotion through the same snapshot gate instead of relying on reviewers to run it separately.
 - `h5-release-candidate-smoke`
   - Fails when the packaged H5 smoke report is missing, the smoke execution status is not `passed`, or any smoke case failed.
 - `multiplayer-reconnect-soak`
@@ -143,7 +143,7 @@ Those row-level findings are promoted into both the `Target Surface Contract` an
 For `wechat`, the generated Markdown `Selected Inputs` section also records the currently selected commercial-verification artifact path, and the `Warnings` section will call out missing or blocked external-launch verification. Use that warning as the trigger to run:
 
 ```bash
-npm run release:wechat:commercial-verification -- --artifacts-dir <wechat-artifacts-dir>
+npm run release -- wechat:commercial-verification -- --artifacts-dir <wechat-artifacts-dir>
 ```
 
 That warning stays advisory on purpose: it is there to prevent a technically green RC packet from being mistaken for an externally launch-ready packet.
@@ -184,12 +184,12 @@ This section is advisory by design: it does not change the pass/fail semantics o
 Recommended pre-release flow for planners and developers:
 
 1. In config-center, stage and publish the config bundle so the latest publish audit is recorded in `configs/.config-center-library.json`.
-2. Run `npm run release:gate:summary` and inspect the `Config Change Risk Summary` in the generated JSON or Markdown.
+2. Run `npm run release -- gate:summary` and inspect the `Config Change Risk Summary` in the generated JSON or Markdown.
 3. Execute the suggested validation commands listed in that section. Common actions include:
-   - `npm run validate:content-pack`
-   - `npm run validate:battle`
-   - `npm run release:readiness:snapshot`
-   - `npm run smoke:client:release-candidate`
+   - `npm run validate -- content-pack`
+   - `npm run validate -- battle`
+   - `npm run release -- readiness:snapshot`
+   - `npm run smoke -- client:release-candidate`
 4. If the summary recommends gray release / canary or rehearsal, include that decision and supporting evidence in the release PR.
 
 Use this as the handoff bridge between config-center history and the release gate report: the config publish audit explains what changed, and the release summary explains what evidence should exist before the change ships.
@@ -199,9 +199,9 @@ Use this as the handoff bridge between config-center history and the release gat
 When `phase1-evidence-consistency` fails, refresh the evidence for one candidate revision instead of mixing old and new artifacts in place:
 
 1. Pick the target Git revision and keep it fixed for the whole refresh pass.
-2. Re-run `npm run release:readiness:snapshot` for that revision and keep the resulting JSON path.
-3. Re-run `npm run smoke:client:release-candidate` for the same revision and keep the resulting H5 smoke path.
-4. Re-run `npm run validate:wechat-rc` or `npm run smoke:wechat-release -- --check` against the WeChat artifacts built from that same revision.
-5. Re-run `npm run release:gate:summary -- --snapshot <snapshot-json> --h5-smoke <h5-smoke-json> --wechat-artifacts-dir <wechat-artifacts-dir>` so the summary compares the exact refreshed paths instead of whichever files happen to be newest.
+2. Re-run `npm run release -- readiness:snapshot` for that revision and keep the resulting JSON path.
+3. Re-run `npm run smoke -- client:release-candidate` for the same revision and keep the resulting H5 smoke path.
+4. Re-run `npm run validate -- wechat-rc` or `npm run smoke -- wechat-release -- --check` against the WeChat artifacts built from that same revision.
+5. Re-run `npm run release -- gate:summary -- --snapshot <snapshot-json> --h5-smoke <h5-smoke-json> --wechat-artifacts-dir <wechat-artifacts-dir>` so the summary compares the exact refreshed paths instead of whichever files happen to be newest.
 
 If the report still shows timestamp drift or a candidate/path mismatch, delete or archive the stale artifact set before regenerating the summary. The goal is one candidate revision, one coherent evidence packet.

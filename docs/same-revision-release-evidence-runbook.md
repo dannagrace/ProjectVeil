@@ -2,7 +2,7 @@
 
 Use this maintainer runbook when one release decision must be backed by one candidate revision, not by the newest mix of artifacts in `artifacts/`.
 
-For the automated candidate-scoped assembly path, start with [`docs/phase1-same-revision-evidence-bundle.md`](./phase1-same-revision-evidence-bundle.md) and `npm run release:phase1:same-revision-evidence-bundle`. The rest of this runbook remains the detailed operator sequence and review checklist behind that command.
+For the automated candidate-scoped assembly path, start with [`docs/phase1-same-revision-evidence-bundle.md`](./phase1-same-revision-evidence-bundle.md) and `npm run release -- phase1:same-revision-evidence-bundle`. The rest of this runbook remains the detailed operator sequence and review checklist behind that command.
 
 It does not redefine release gates. It sequences the existing commands and artifacts already described in:
 
@@ -20,8 +20,8 @@ It does not redefine release gates. It sequences the existing commands and artif
 Before a reviewer or release owner opens individual packet artifacts, start from the candidate-scoped manifest instead of manually browsing `artifacts/`:
 
 ```bash
-npm run release:runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>
-npm run release:candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>
+npm run release -- runtime-observability:bundle -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <h5|wechat> --target-environment <env-name> --server-url <base-url>
+npm run release -- candidate:evidence-audit -- --candidate <candidate-name> --candidate-revision <git-sha> --target-surface <auto|h5|wechat>
 ```
 
 Those commands automatically upsert:
@@ -37,9 +37,9 @@ Use the manifest as the release-call front door:
 
 ## Checked-Out Revision Index
 
-`npm run release:evidence:index` is still useful, but it is now the secondary checked-out-revision inventory after the candidate manifest.
+`npm run release -- evidence:index` is still useful, but it is now the secondary checked-out-revision inventory after the candidate manifest.
 
-For lifecycle governance, run `npm run release:evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2` before pruning old packets. The report tells reviewers which live front-door artifacts are still current and which stale sets can be archived without polluting the active release directories.
+For lifecycle governance, run `npm run release -- evidence:lifecycle -- --retention-days 14 --archive-retention-days 90 --keep-latest-per-family 2` before pruning old packets. The report tells reviewers which live front-door artifacts are still current and which stale sets can be archived without polluting the active release directories.
 
 It scans the current `artifacts/release-readiness/` and `artifacts/wechat-release/` working set, then writes:
 
@@ -91,17 +91,17 @@ Rule of thumb: automated summaries may reuse lower-level artifacts from the same
 | Step | H5 target surface | WeChat target surface |
 | --- | --- | --- |
 | Pin candidate name and revision | Required | Required |
-| `npm run release:readiness:snapshot` | Required | Required |
+| `npm run release -- readiness:snapshot` | Required | Required |
 | Manual evidence owner ledger | Required | Required |
-| `npm run release:gate:summary -- --target-surface <surface>` | Required | Required |
-| `npm run release:candidate:evidence-audit -- --candidate <candidate> --candidate-revision <git-sha> --target-surface <auto\|h5\|wechat>` | Required | Required |
-| `npm run release:readiness:dashboard -- --candidate <candidate> --candidate-revision <git-sha>` | Required | Required |
-| `npm run release:cocos-rc:bundle` | Required for the primary Cocos client evidence packet | Required |
-| `npm run validate:wechat-rc` or `npm run release:wechat:rehearsal` | Optional | Required |
-| `npm run smoke:wechat-release -- --check` evidence | Optional | Required |
+| `npm run release -- gate:summary -- --target-surface <surface>` | Required | Required |
+| `npm run release -- candidate:evidence-audit -- --candidate <candidate> --candidate-revision <git-sha> --target-surface <auto\|h5\|wechat>` | Required | Required |
+| `npm run release -- readiness:dashboard -- --candidate <candidate> --candidate-revision <git-sha>` | Required | Required |
+| `npm run release -- cocos-rc:bundle` | Required for the primary Cocos client evidence packet | Required |
+| `npm run validate -- wechat-rc` or `npm run release -- wechat:rehearsal` | Optional | Required |
+| `npm run smoke -- wechat-release -- --check` evidence | Optional | Required |
 | Runtime observability sign-off | Optional unless the release owner explicitly requires live runtime review | Required |
-| `npm run release:reconnect-soak` | Required when reconnect / room recovery is in scope, or when the release packet expects reconnect evidence | Same rule |
-| `npm run test:phase1-release-persistence` and map-pack variants | Required when persistence, storage mode, or shipped Phase 1 packs changed | Same rule |
+| `npm run release -- reconnect-soak` | Required when reconnect / room recovery is in scope, or when the release packet expects reconnect evidence | Same rule |
+| `npm test -- phase1-release-persistence` and map-pack variants | Required when persistence, storage mode, or shipped Phase 1 packs changed | Same rule |
 
 ## Assembly Sequence
 
@@ -115,7 +115,7 @@ git rev-parse --short HEAD
 2. Generate the baseline automated snapshot for that revision.
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
 ```
 
@@ -148,7 +148,7 @@ At minimum, create rows for:
 Reconnect / room recovery scope:
 
 ```bash
-npm run release:reconnect-soak -- \
+npm run release -- reconnect-soak -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha>
 ```
@@ -156,7 +156,7 @@ npm run release:reconnect-soak -- \
 Persistence / shipped Phase 1 content scope:
 
 ```bash
-npm run test:phase1-release-persistence -- \
+npm test -- phase1-release-persistence -- \
   --output artifacts/release-readiness/phase1-release-persistence-regression.json
 ```
 
@@ -165,7 +165,7 @@ When the candidate ships `frontier-basin`, `stonewatch-fork`, `ridgeway-crossing
 5. Generate the Cocos primary-client candidate bundle for the same revision.
 
 ```bash
-npm run release:cocos-rc:bundle -- \
+npm run release -- cocos-rc:bundle -- \
   --candidate <candidate-name> \
   --build-surface <creator_preview|wechat_preview> \
   --release-readiness-snapshot <snapshot-json>
@@ -174,7 +174,7 @@ npm run release:cocos-rc:bundle -- \
 If the target surface is WeChat, pass the current smoke report path too:
 
 ```bash
-npm run release:cocos-rc:bundle -- \
+npm run release -- cocos-rc:bundle -- \
   --candidate <candidate-name> \
   --build-surface wechat_preview \
   --wechat-smoke-report artifacts/wechat-release/codex.wechat.smoke-report.json \
@@ -190,7 +190,7 @@ After reviewing or editing the checklist / blockers files, update the matching r
 If the package/smoke/manual-review artifacts already exist for the same revision, validate them:
 
 ```bash
-npm run validate:wechat-rc -- \
+npm run validate -- wechat-rc -- \
   --artifacts-dir artifacts/wechat-release \
   --expected-revision <git-sha> \
   --require-smoke-report \
@@ -200,7 +200,7 @@ npm run validate:wechat-rc -- \
 If you need one end-to-end regeneration pass for the same revision, use rehearsal instead:
 
 ```bash
-npm run release:wechat:rehearsal -- \
+npm run release -- wechat:rehearsal -- \
   --build-dir <wechatgame-build-dir> \
   --artifacts-dir artifacts/wechat-release \
   --source-revision <git-sha> \
@@ -230,7 +230,7 @@ Confirm the sign-off records the same revision, target environment, reviewer, an
 H5 example:
 
 ```bash
-npm run release:gate:summary -- \
+npm run release -- gate:summary -- \
   --target-surface h5 \
   --snapshot <snapshot-json> \
   --manual-evidence-ledger <owner-ledger-md>
@@ -239,7 +239,7 @@ npm run release:gate:summary -- \
 WeChat example:
 
 ```bash
-npm run release:gate:summary -- \
+npm run release -- gate:summary -- \
   --target-surface wechat \
   --snapshot <snapshot-json> \
   --manual-evidence-ledger <owner-ledger-md> \
@@ -251,7 +251,7 @@ Add `--reconnect-soak <path>` when reconnect evidence is part of the packet and 
 9. Run the candidate-level evidence audit against the pinned artifact family.
 
 ```bash
-npm run release:candidate:evidence-audit -- \
+npm run release -- candidate:evidence-audit -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --target-surface <h5|wechat> \
@@ -268,7 +268,7 @@ Keep the emitted JSON / Markdown pair with the rest of the packet under `artifac
 10. Run the candidate-level dashboard as the final reviewer summary.
 
 ```bash
-npm run release:readiness:dashboard -- \
+npm run release -- readiness:dashboard -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --wechat-artifacts-dir artifacts/wechat-release
@@ -277,7 +277,7 @@ npm run release:readiness:dashboard -- \
 11. Run the dedicated Phase 1 dossier freshness gate before attaching the packet to CI or the release PR.
 
 ```bash
-npm run release:phase1:exit-dossier-freshness-gate -- \
+npm run release -- phase1:exit-dossier-freshness-gate -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha> \
   --dossier <phase1-candidate-dossier-json> \
@@ -294,7 +294,7 @@ Add `--server-url <url>` when you want the dashboard to probe the live candidate
 12. Build the maintainer-facing decision packet when the underlying evidence is coherent.
 
 ```bash
-npm run release:go-no-go-packet -- \
+npm run release -- go-no-go-packet -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha>
 ```

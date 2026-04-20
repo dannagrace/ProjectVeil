@@ -15,7 +15,7 @@ export function runContributorQuickstartContractCli(
   }
 ) {
   deps.assertSupportedRuntimeImpl({
-    commandName: "npm run validate:quickstart:contract",
+    commandName: "npm run validate -- quickstart:contract",
     repoRoot
   });
 

@@ -1,6 +1,6 @@
 # Content Pack Validation
 
-`npm run validate:content-pack` validates the shipped default content pack, and `npm run validate:content-pack:all` first runs the Phase 1 map-object visual coverage precheck before extending the same content-pack checks across the additional shipped map-pack presets.
+`npm run validate -- content-pack` validates the shipped default content pack, and `npm run validate -- content-pack:all` first runs the Phase 1 map-object visual coverage precheck before extending the same content-pack checks across the additional shipped map-pack presets.
 
 The validator is intended to fail before runtime when authored config would otherwise be silently normalized or only break after archive hydration, equipment reconciliation, or reward application.
 
@@ -11,38 +11,38 @@ If you are editing boss encounter templates, use [`docs/boss-encounter-template-
 Run the default shipped bundle:
 
 ```bash
-npm run validate:content-pack
+npm run validate -- content-pack
 ```
 
 Run every shipped bundle:
 
 ```bash
-npm run validate:content-pack:all
+npm run validate -- content-pack:all
 ```
 
 Run just the Phase 1 map-object visual coverage audit:
 
 ```bash
-npm run validate:map-object-visuals
+npm run validate -- map-object-visuals
 ```
 
 Write a machine-readable report artifact:
 
 ```bash
-npm run validate:content-pack -- --report-path artifacts/release-readiness/content-pack-validation.json
+npm run validate -- content-pack -- --report-path artifacts/release-readiness/content-pack-validation.json
 ```
 
 Target an alternate preset while editing one pack:
 
 ```bash
-npm run validate:content-pack -- --map-pack ridgeway-crossing
+npm run validate -- content-pack -- --map-pack ridgeway-crossing
 ```
 
 For the shipped `highland-reach` Phase 1 pack:
 
 ```bash
-npm run validate:content-pack -- --map-pack highland-reach
-npm run test:phase1-release-persistence:highland
+npm run validate -- content-pack -- --map-pack highland-reach
+npm test -- phase1-release-persistence:highland
 ```
 
 `highland-reach` is the wider 10x10 Phase 1 variant with mirrored gold pockets, dual recruitment posts, and a denser four-neutral midline, so reviewers should expect slower first contact and more meaningful routing choices than the default baseline pack.
@@ -56,7 +56,7 @@ The CLI prints the document path, issue code, human-readable failure, and a sugg
 CI already runs the validator as a standalone step in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) with:
 
 ```bash
-npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+npm run validate -- content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
 ```
 
 That step uploads the generated report artifact so reviewers can inspect the exact diagnostics from the candidate revision.

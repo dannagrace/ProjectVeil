@@ -602,7 +602,7 @@ export function buildPhase1ExitDossierFreshnessGateReport(args: Args): Phase1Exi
       "phase1-candidate-dossier",
       "Phase 1 candidate dossier",
       dossierPath,
-      "Phase 1 candidate dossier is missing. Run `npm run release:phase1:candidate-dossier` or pass `--dossier`."
+      "Phase 1 candidate dossier is missing. Run `npm run release -- phase1:candidate-dossier` or pass `--dossier`."
     );
   } else {
     parsedDossier = readJsonFile<Phase1CandidateDossier>(dossierPath);
@@ -654,7 +654,7 @@ export function buildPhase1ExitDossierFreshnessGateReport(args: Args): Phase1Exi
       "phase1-exit-audit",
       "Phase 1 exit audit",
       exitAuditPath,
-      "Phase 1 exit audit is missing. Run `npm run release:phase1:exit-audit` or pass `--exit-audit`."
+      "Phase 1 exit audit is missing. Run `npm run release -- phase1:exit-audit` or pass `--exit-audit`."
     );
   } else {
     parsedExitAudit = readJsonFile<Phase1ExitAuditReport>(exitAuditPath);
@@ -727,7 +727,7 @@ export function buildPhase1ExitDossierFreshnessGateReport(args: Args): Phase1Exi
       "release-readiness-snapshot",
       "Release readiness snapshot",
       snapshotPath,
-      "Release readiness snapshot is missing. Run `npm run release:readiness:snapshot` or pass `--snapshot`."
+      "Release readiness snapshot is missing. Run `npm run release -- readiness:snapshot` or pass `--snapshot`."
     );
   } else {
     const snapshot = readJsonFile<ReleaseReadinessSnapshot>(snapshotPath);
@@ -752,7 +752,7 @@ export function buildPhase1ExitDossierFreshnessGateReport(args: Args): Phase1Exi
       "release-gate-summary",
       "Release gate summary",
       releaseGateSummaryPath,
-      "Release gate summary is missing. Run `npm run release:gate:summary` or pass `--release-gate-summary`."
+      "Release gate summary is missing. Run `npm run release -- gate:summary` or pass `--release-gate-summary`."
     );
   } else {
     const gateSummary = readJsonFile<ReleaseGateSummaryReport>(releaseGateSummaryPath);

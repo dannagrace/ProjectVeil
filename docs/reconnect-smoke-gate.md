@@ -26,17 +26,17 @@
 
 ## Automation Reference
 
-- 本地 canonical smoke：`npm run test:e2e:smoke`
-- 单测例过滤：`npm run test:e2e:smoke -- reconnect-prediction-convergence`
+- 本地 canonical smoke：`npm test -- e2e:smoke`
+- 单测例过滤：`npm test -- e2e:smoke -- reconnect-prediction-convergence`
 - 覆盖用例：`tests/e2e/reconnect-prediction-convergence.spec.ts`
 - 辅助多人 / 结算恢复参考：
-  - `npm run test:e2e:multiplayer -- pvp-reconnect-recovery`
-  - `npm run test:e2e:multiplayer -- pvp-postbattle-reconnect`
+  - `npm test -- e2e:multiplayer -- pvp-reconnect-recovery`
+  - `npm test -- e2e:multiplayer -- pvp-postbattle-reconnect`
 
 若当前命令包装不支持测试名过滤，直接运行完整命令：
 
-- `npm run test:e2e:smoke`
-- `npm run test:e2e:multiplayer:smoke`
+- `npm test -- e2e:smoke`
+- `npm test -- e2e:multiplayer:smoke`
 
 ## Smoke Hardening Notes
 

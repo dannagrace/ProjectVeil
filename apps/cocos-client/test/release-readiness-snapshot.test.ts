@@ -44,7 +44,7 @@ test("buildReleaseReadinessSnapshot reports pending when required automated chec
       {
         id: "typecheck-ci",
         title: "TypeScript CI typecheck",
-        command: "npm run typecheck:ci",
+        command: "npm run typecheck -- ci",
         required: true
       },
       true
@@ -145,7 +145,7 @@ test("release-readiness snapshot CLI includes the Cocos primary journey as a req
   assert.equal(primaryJourneyCheck.required, true);
   assert.equal(primaryJourneyCheck.kind, "automated");
   assert.equal(primaryJourneyCheck.status, "pending");
-  assert.equal(primaryJourneyCheck.command, "npm run smoke:cocos:canonical-journey");
+  assert.equal(primaryJourneyCheck.command, "npm run smoke -- cocos:canonical-journey");
   assert.equal(primaryJourneyCheck.notes, "Skipped command execution via --no-run.");
   assert.deepEqual(primaryJourneyCheck.evidence, []);
   assert.equal(primaryJourneyCheck.source, "default");

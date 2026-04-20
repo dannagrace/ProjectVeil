@@ -1,6 +1,6 @@
 # Release Readiness Trend Troubleshooting Runbook
 
-Use this runbook when `npm run release:health:summary`, the PR comment, or the `Release health gate` workflow reports a `readiness-trend` warning.
+Use this runbook when `npm run release -- health:summary`, the PR comment, or the `Release health gate` workflow reports a `readiness-trend` warning.
 
 The `readiness-trend` signal compares the current `release-readiness-dashboard.json` against the previous successful dashboard history for the same branch. It does not replace the current candidate `go/no-go` call. It answers a narrower question: did the candidate readiness decision improve, regress, or stay unready versus the prior revision?
 
@@ -81,7 +81,7 @@ What to inspect next:
 
 Usual fix:
 
-- refresh the stale evidence set for the candidate revision, then rerun `npm run release:readiness:dashboard`
+- refresh the stale evidence set for the candidate revision, then rerun `npm run release -- readiness:dashboard`
 
 ### No Previous Baseline Was Available
 
@@ -107,28 +107,28 @@ Usual fix:
 Rebuild the current candidate artifacts in the same order the dashboards expect:
 
 ```bash
-npm run release:readiness:snapshot -- \
+npm run release -- readiness:snapshot -- \
   --manual-checks docs/release-readiness-manual-checks.example.json
-npm run release:readiness:dashboard -- \
+npm run release -- readiness:dashboard -- \
   --candidate-revision <git-sha>
 npm run ci:trend-summary
-npm run release:health:summary
+npm run release -- health:summary
 ```
 
 If the dashboard points to specific stale or missing evidence, rerun only the needed producer before rebuilding the dashboard:
 
 ```bash
-npm run release:cocos:primary-diagnostics
+npm run release -- cocos:primary-diagnostics
 npm run stress:rooms:reconnect-soak
-npm run test:phase1-release-persistence
+npm test -- phase1-release-persistence
 ```
 
 Add these when the candidate depends on them:
 
 ```bash
 npm run package:wechat-release -- --output-dir <wechatgame-build-dir> --artifacts-dir artifacts/wechat-release --expect-exported-runtime
-npm run smoke:wechat-release -- --artifacts-dir artifacts/wechat-release
-npm run release:cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --output artifacts/release-evidence/<candidate-name>.json
+npm run smoke -- wechat-release -- --artifacts-dir artifacts/wechat-release
+npm run release -- cocos-rc:snapshot -- --candidate <candidate-name> --build-surface wechat_preview --output artifacts/release-evidence/<candidate-name>.json
 ```
 
 ## Decision Rule

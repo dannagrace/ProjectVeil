@@ -1,6 +1,6 @@
 # Release Health Summary
 
-`npm run release:health:summary` aggregates the existing release/readiness artifacts into one stable JSON summary plus a Markdown digest.
+`npm run release -- health:summary` aggregates the existing release/readiness artifacts into one stable JSON summary plus a Markdown digest.
 
 The summary now includes a unified `triage` section so maintainers can see, in one place:
 
@@ -11,12 +11,12 @@ The summary now includes a unified `triage` section so maintainers can see, in o
 
 It reuses the current artifact producers instead of redefining them:
 
-- `npm run release:readiness:snapshot`
-- `npm run release:gate:summary`
-- `npm run release:readiness:dashboard`
+- `npm run release -- readiness:snapshot`
+- `npm run release -- gate:summary`
+- `npm run release -- readiness:dashboard`
 - `npm run ci:trend-summary`
-- `npm run test:coverage:ci`
-- `npm run test:sync-governance:matrix`
+- `npm test -- coverage:ci`
+- `npm test -- sync-governance:matrix`
 
 ## Severity Rules
 
@@ -37,7 +37,7 @@ This makes the JSON easy for bots to consume while keeping the Markdown readable
 
 ## PR Gate Rule
 
-In CI, the `Release health gate` check runs `npm run release:health:summary` after the release readiness, release gate, and trend artifacts are assembled.
+In CI, the `Release health gate` check runs `npm run release -- health:summary` after the release readiness, release gate, and trend artifacts are assembled.
 
 - `blocking` summary status fails the PR check.
 - `warning` and `healthy` summary statuses keep the check green, while still publishing the JSON/Markdown summary and the PR comment.
@@ -50,13 +50,13 @@ That keeps the existing summary/comment flow usable without turning warning-only
 Use the latest local artifacts discovered under `artifacts/release-readiness/` plus `.coverage/summary.json`:
 
 ```bash
-npm run release:health:summary
+npm run release -- health:summary
 ```
 
 Point at explicit artifact paths when CI already produced stable filenames:
 
 ```bash
-npm run release:health:summary -- \
+npm run release -- health:summary -- \
   --release-readiness artifacts/release-readiness/release-readiness-2026-03-30T08-00-00.000Z.json \
   --release-gate-summary artifacts/release-readiness/release-gate-summary.json \
   --release-readiness-dashboard artifacts/release-readiness/release-readiness-dashboard.json \
@@ -69,7 +69,7 @@ npm run release:health:summary -- \
 Write to explicit output files:
 
 ```bash
-npm run release:health:summary -- \
+npm run release -- health:summary -- \
   --output artifacts/release-readiness/release-health-summary.json \
   --markdown-output artifacts/release-readiness/release-health-summary.md
 ```

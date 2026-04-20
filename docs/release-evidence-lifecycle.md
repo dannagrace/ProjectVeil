@@ -21,7 +21,7 @@
 Dry-run first:
 
 ```bash
-npm run release:evidence:lifecycle -- \
+npm run release -- evidence:lifecycle -- \
   --retention-days 14 \
   --archive-retention-days 90 \
   --keep-latest-per-family 2
@@ -30,7 +30,7 @@ npm run release:evidence:lifecycle -- \
 Apply the plan after review:
 
 ```bash
-npm run release:evidence:lifecycle -- \
+npm run release -- evidence:lifecycle -- \
   --retention-days 14 \
   --archive-retention-days 90 \
   --keep-latest-per-family 2 \

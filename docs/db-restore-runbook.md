@@ -40,13 +40,13 @@ For rehearsals, prefer the automatable wrapper first:
 
 ```bash
 export VEIL_RESTORE_BACKUP_KEY="$VEIL_BACKUP_S3_PREFIX/daily/project_veil-20260403T030000Z.sql.gz"
-npm run db:restore:rehearsal
+npm run db -- restore:rehearsal
 ```
 
 For recurring verification, prefer the latest-backup wrapper:
 
 ```bash
-npm run db:restore:test
+npm run db -- restore:test
 ```
 
 The remainder of this runbook explains the exact manual steps that wrapper executes so reviewers can audit or adapt the flow.
@@ -150,7 +150,7 @@ VEIL_MYSQL_PORT="$RESTORE_MYSQL_PORT" \
 VEIL_MYSQL_USER="$RESTORE_MYSQL_USER" \
 VEIL_MYSQL_PASSWORD="$RESTORE_MYSQL_PASSWORD" \
 VEIL_MYSQL_DATABASE="$RESTORE_MYSQL_DATABASE" \
-npm run test:phase1-release-persistence -- --storage mysql
+npm test -- phase1-release-persistence -- --storage mysql
 ```
 
 Validation is complete when:
@@ -158,7 +158,7 @@ Validation is complete when:
 - Hash verification passed.
 - The restore loaded without MySQL errors.
 - Expected core tables are present with plausible row counts.
-- `npm run test:phase1-release-persistence -- --storage mysql` passes on the restored instance.
+- `npm test -- phase1-release-persistence -- --storage mysql` passes on the restored instance.
 
 For incident work involving mid-battle disconnect loss, also verify that unresolved combat ledgers survived restore:
 
@@ -216,5 +216,5 @@ For production-readiness drills, capture these fields in the incident log or ops
 - restore host and schema name
 - checksum verification output
 - sanity-query row counts
-- `npm run test:phase1-release-persistence -- --storage mysql` result
+- `npm test -- phase1-release-persistence -- --storage mysql` result
 - measured start/end timestamps for the full rehearsal window

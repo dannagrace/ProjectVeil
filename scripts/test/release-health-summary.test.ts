@@ -201,13 +201,13 @@ test("buildReleaseHealthSummaryReport classifies blockers and warnings from mixe
   ]);
   assert.deepEqual(report.triage.warnings.map((entry) => entry.signalId), ["ci-trend", "coverage"]);
   assert.match(report.triage.blockers[0]?.nextStep ?? "", /release-readiness/);
-  assert.match(report.triage.blockers[1]?.nextStep ?? "", /validate:wechat-rc/);
+  assert.match(report.triage.blockers[1]?.nextStep ?? "", /npm run validate -- wechat-rc/);
   assert.match(report.triage.warnings[1]?.summary ?? "", /server lines coverage/);
   assert.match(renderMarkdown(report), /## Blocker Findings/);
   assert.match(renderMarkdown(report), /## Warning Findings/);
   assert.match(renderMarkdown(report), /### Blockers \(3\)/);
   assert.match(renderMarkdown(report), /Next step: Open `.*release-readiness-fail\.json` and clear the unresolved required checks/);
-  assert.match(renderMarkdown(report), /Next step: Open `.*release-gate-summary\.json`, rerun `npm run validate:wechat-rc`/);
+  assert.match(renderMarkdown(report), /Next step: Open `.*release-gate-summary\.json`, rerun `npm run validate -- wechat-rc`/);
   assert.match(renderMarkdown(report), /Upload receipt mismatch\./);
   assert.match(renderMarkdown(report), /Coverage thresholds failed in 1 scope\(s\)\./);
 });
@@ -300,7 +300,7 @@ test("buildReleaseHealthSummaryReport uses fallback details for sparse degraded 
   assert.match(report.triage.blockers[0]?.summary ?? "", /summary status is "pending"/);
   assert.match(report.triage.blockers[2]?.summary ?? "", /execution status is "failed"/);
   assert.match(report.triage.warnings[0]?.nextStep ?? "", /compare the new or ongoing regressions/);
-  assert.match(report.triage.warnings[1]?.nextStep ?? "", /test:coverage:ci/);
+  assert.match(report.triage.warnings[1]?.nextStep ?? "", /npm test -- coverage:ci/);
   assert.match(renderMarkdown(report), /Snapshot summary status is "pending"\./);
   assert.match(renderMarkdown(report), /Release gate overall status is "failed"\./);
   assert.match(renderMarkdown(report), /Sync governance execution status is "failed"\./);

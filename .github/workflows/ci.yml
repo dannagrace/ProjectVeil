@@ -74,11 +74,11 @@ jobs:
       matrix:
         include:
           - label: contributor quickstart
-            command: npm run validate:quickstart
+            command: npm run validate -- quickstart
           - label: config center regression
-            command: npm run test:client:config-center
+            command: npm test -- client:config-center
           - label: shared contract snapshots
-            command: npm run test:contracts
+            command: npm test -- contracts
 
     steps:
       - name: Checkout
@@ -186,7 +186,7 @@ jobs:
 
       - name: Typecheck ops tooling surface
         if: steps.ops-tooling.outputs.touched == 'true'
-        run: npm run typecheck:ops
+        run: npm run typecheck -- ops
 
   k8s-configmap-placeholder-gate:
     runs-on: ubuntu-latest
@@ -231,7 +231,7 @@ jobs:
 
       - name: Validate k8s ConfigMap placeholder values
         if: steps.k8s-config.outputs.touched == 'true'
-        run: npm run validate:k8s-configmap
+        run: npm run validate -- k8s-configmap
 
   content-smoke-gate:
     runs-on: ubuntu-latest
@@ -278,7 +278,7 @@ jobs:
 
       - name: Validate campaign and boss-template smoke slice
         if: github.event_name != 'pull_request' || steps.content-smoke.outputs.touched == 'true'
-        run: npm run validate:content-smoke -- --report-path "${RUNNER_TEMP}/content-smoke-report.json"
+        run: npm run validate -- content-smoke -- --report-path "${RUNNER_TEMP}/content-smoke-report.json"
 
       - name: Summarize content smoke gate
         if: always() && (github.event_name != 'pull_request' || steps.content-smoke.outputs.touched == 'true')
@@ -320,19 +320,19 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Typecheck
-        run: npm run typecheck:ci
+        run: npm run typecheck -- ci
 
       - name: Validate content-pack consistency
-        run: npm run validate:content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
+        run: npm run validate -- content-pack -- --report-path "${RUNNER_TEMP}/content-pack-validation-report.json"
 
       - name: Validate all shipped content-pack variants
-        run: npm run validate:content-pack:all
+        run: npm run validate -- content-pack:all
 
       - name: Validate release script inventory stays in sync
-        run: npm run test:release-script-inventory
+        run: npm test -- release-script-inventory
 
       - name: Test With V8 Coverage
-        run: npm run test:coverage:ci
+        run: npm test -- coverage:ci
 
       - name: Capture runtime regression artifact
         if: always()
@@ -455,14 +455,14 @@ jobs:
       - name: Run canonical primary Cocos journey smoke
         if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
         run: |
-          npm run smoke:cocos:canonical-journey -- \
+          npm run smoke -- cocos:canonical-journey -- \
             --output "${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.json" \
             --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-journey-smoke-${GITHUB_SHA}.md"
 
       - name: Capture primary Cocos diagnostics evidence
         if: always() && github.event_name == 'pull_request' && steps.cocos-release-packaging.outputs.touched == 'true'
         run: |
-          npm run release:cocos:primary-diagnostics -- \
+          npm run release -- cocos:primary-diagnostics -- \
             --output "${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.json" \
             --markdown-output "${RUNNER_TEMP}/release-readiness/cocos-primary-client-diagnostics-${GITHUB_SHA}.md"
 
@@ -522,12 +522,12 @@ jobs:
             if [[ -f "${smoke_json}" && -f "${smoke_md}" ]]; then
               echo "- Canonical Cocos journey smoke: present"
             else
-              echo "- Canonical Cocos journey smoke: missing. Regressed command: \`npm run smoke:cocos:canonical-journey -- --output <json> --markdown-output <md>\`"
+              echo "- Canonical Cocos journey smoke: missing. Regressed command: \`npm run smoke -- cocos:canonical-journey -- --output <json> --markdown-output <md>\`"
             fi
             if [[ -f "${diagnostics_json}" && -f "${diagnostics_md}" ]]; then
               echo "- Primary-client diagnostics: present"
             else
-              echo "- Primary-client diagnostics: missing. Regressed command: \`npm run release:cocos:primary-diagnostics -- --output <json> --markdown-output <md>\`"
+              echo "- Primary-client diagnostics: missing. Regressed command: \`npm run release -- cocos:primary-diagnostics -- --output <json> --markdown-output <md>\`"
             fi
             echo
             echo "Review this bundle before merge when a PR changes release packaging surfaces."
@@ -589,7 +589,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Run packaged client RC smoke
-        run: npm run smoke:client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
+        run: npm run smoke -- client:release-candidate -- --output "${RUNNER_TEMP}/release-readiness/client-release-candidate-smoke-${GITHUB_SHA}.json"
 
       - name: Upload packaged client RC smoke artifacts
         if: always()
@@ -625,7 +625,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run H5 connectivity smoke
-        run: npm run test:e2e:h5:connectivity
+        run: npm test -- e2e:h5:connectivity
 
       - name: Upload H5 connectivity smoke artifacts
         if: always()
@@ -754,7 +754,7 @@ jobs:
           if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
             args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
           fi
-          npm run release:gate:summary -- "${args[@]}"
+          npm run release -- gate:summary -- "${args[@]}"
 
       - name: Publish trend summary
         run: |
@@ -787,7 +787,7 @@ jobs:
           if [[ -d "${RUNNER_TEMP}/wechat-release" ]]; then
             args+=(--wechat-artifacts-dir "${RUNNER_TEMP}/wechat-release")
           fi
-          npm run release:readiness:dashboard -- "${args[@]}"
+          npm run release -- readiness:dashboard -- "${args[@]}"
 
       - name: Build release health summary artifact
         run: |
@@ -808,7 +808,7 @@ jobs:
             args+=(--coverage-summary ".coverage/summary.json")
           fi
           # release-health-summary exits non-zero only for blocking conditions; warnings still publish artifacts/comments.
-          npm run release:health:summary -- "${args[@]}"
+          npm run release -- health:summary -- "${args[@]}"
 
       - name: Build go/no-go decision packet artifact
         if: |
@@ -845,8 +845,8 @@ jobs:
             args+=(--coverage-summary ".coverage/summary.json")
           fi
 
-          npm run release:phase1:candidate-dossier -- "${args[@]}"
-          npm run release:go-no-go-packet -- \
+          npm run release -- phase1:candidate-dossier -- "${args[@]}"
+          npm run release -- go-no-go-packet -- \
             --dossier "${dossier_dir}/phase1-candidate-dossier.json" \
             --release-gate-summary "${RUNNER_TEMP}/release-readiness/release-gate-summary-${GITHUB_SHA}.json" \
             --output "${RUNNER_TEMP}/release-readiness/go-no-go-decision-packet-${candidate_slug}-${short_sha}.json" \

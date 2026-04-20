@@ -4,24 +4,24 @@ The `Phase 1 Candidate Rehearsal` workflow automates the nightly and `main`-bran
 
 It keeps the implementation narrow by reusing the existing evidence commands instead of creating a second release pipeline:
 
-- `npm run test:coverage:ci`
+- `npm test -- coverage:ci`
 - `npm run stress:rooms:reconnect-soak`
 - `npm run package:wechat-release`
-- `npm run validate:wechat-rc`
-- `npm run smoke:client:release-candidate`
-- `npm run release:cocos-rc:bundle`
-- `npm run release:runtime-observability:bundle`
-- `npm run release:candidate:evidence-audit`
-- `npm run release:evidence:index`
-- `npm run release:gate:summary`
-- `npm run release:phase1:same-revision-evidence-bundle`
-- `npm run release:phase1:evidence-drift-gate`
+- `npm run validate -- wechat-rc`
+- `npm run smoke -- client:release-candidate`
+- `npm run release -- cocos-rc:bundle`
+- `npm run release -- runtime-observability:bundle`
+- `npm run release -- candidate:evidence-audit`
+- `npm run release -- evidence:index`
+- `npm run release -- gate:summary`
+- `npm run release -- phase1:same-revision-evidence-bundle`
+- `npm run release -- phase1:evidence-drift-gate`
 - `npm run ci:trend-summary`
-- `npm run release:health:summary`
-- `npm run release:phase1:candidate-dossier`
-- `npm run release:phase1:exit-audit`
-- `npm run release:phase1:exit-dossier-freshness-gate`
-- `npm run release:go-no-go-packet`
+- `npm run release -- health:summary`
+- `npm run release -- phase1:candidate-dossier`
+- `npm run release -- phase1:exit-audit`
+- `npm run release -- phase1:exit-dossier-freshness-gate`
+- `npm run release -- go-no-go-packet`
 
 ## Workflow Contract
 
@@ -62,18 +62,18 @@ To mirror the workflow locally from repo root, first produce the prerequisite ar
 
 ```bash
 npm ci --no-audit --no-fund
-npm run test:coverage:ci
+npm test -- coverage:ci
 npm run stress:rooms:reconnect-soak -- --artifact-path artifacts/release-readiness/colyseus-reconnect-soak-summary-local.json
 npm run package:wechat-release -- --output-dir apps/cocos-client/test/fixtures/wechatgame-export --artifacts-dir artifacts/wechat-release-local --expect-exported-runtime --source-revision "$(git rev-parse HEAD)"
-npm run validate:wechat-rc -- --artifacts-dir artifacts/wechat-release-local --expected-revision "$(git rev-parse HEAD)"
-npm run smoke:client:release-candidate -- --output artifacts/release-readiness/client-release-candidate-smoke-local.json
-npm run release:runtime-observability:bundle -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --server-url http://127.0.0.1:2567 --include-room-lifecycle
+npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release-local --expected-revision "$(git rev-parse HEAD)"
+npm run smoke -- client:release-candidate -- --output artifacts/release-readiness/client-release-candidate-smoke-local.json
+npm run release -- runtime-observability:bundle -- --candidate phase1-mainline --candidate-revision "$(git rev-parse HEAD)" --target-surface h5 --target-environment local --server-url http://127.0.0.1:2567 --include-room-lifecycle
 ```
 
 Then run the orchestration command that the workflow uses:
 
 ```bash
-npm run release:phase1:candidate-rehearsal -- \
+npm run release -- phase1:candidate-rehearsal -- \
   --candidate phase1-mainline \
   --output-dir artifacts/release-readiness/phase1-candidate-rehearsal-local \
   --h5-smoke artifacts/release-readiness/client-release-candidate-smoke-local.json \

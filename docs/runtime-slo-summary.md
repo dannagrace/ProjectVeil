@@ -19,7 +19,7 @@ The endpoint supports:
 For PR or release evidence, use the CLI wrapper:
 
 ```bash
-npm run release:runtime:slo-summary -- \
+npm run release -- runtime:slo-summary -- \
   --server-url http://127.0.0.1:2567 \
   --profile pr_diagnostics
 ```

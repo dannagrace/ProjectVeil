@@ -10,7 +10,7 @@
   "status": "blocked",
   "summary": "The fixed 48-room stress baseline passed all thresholds. Multiplayer Playwright smoke was blocked in the container because Chromium could not load libatk-bridge-2.0.so.0, so the overall record is blocked rather than passed.",
   "commands": [
-    "npm run test:e2e:multiplayer:smoke",
+    "npm test -- e2e:multiplayer:smoke",
     "npm run stress:rooms -- --rooms=48 --connect-concurrency=12 --action-concurrency=12 --sample-interval-ms=100 --reconnect-pause-ms=150"
   ],
   "thresholds": {
@@ -47,7 +47,7 @@
   "validation": {
     "multiplayerSmoke": {
       "status": "blocked",
-      "command": "npm run test:e2e:multiplayer:smoke",
+      "command": "npm test -- e2e:multiplayer:smoke",
       "notes": "Playwright Chromium failed to launch in the container because libatk-bridge-2.0.so.0 was missing.",
       "error": "browserType.launch: chrome-headless-shell: error while loading shared libraries: libatk-bridge-2.0.so.0: cannot open shared object file: No such file or directory"
     },

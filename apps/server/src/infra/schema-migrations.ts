@@ -361,7 +361,7 @@ export function formatSchemaMigrationWarning(status: SchemaMigrationStatus): str
     `MySQL schema is behind the expected application version for database \`${status.database}\`.`,
     `Current migration: ${latestApplied}. Expected migration: ${latestExpected}.`,
     `Pending migrations: ${status.pending.map((migration) => migration.name).join(", ") || "none"}.`,
-    "Run `npm run db:migrate` before starting the server.",
+    "Run `npm run db -- migrate` before starting the server.",
     `${missingDatabase}${missingTable}`.trim()
   ]
     .filter((part) => part.length > 0)

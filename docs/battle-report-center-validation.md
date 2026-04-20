@@ -32,8 +32,8 @@
 ## Repeatable Local Validation
 
 1. Start the local server and H5 client:
-   - `npm run dev:server`
-   - `npm run dev:client`
+   - `npm run dev -- server`
+   - `npm run dev -- client`
 2. Optional Cocos parity check:
    - open `apps/cocos-client` in Cocos Creator 3.8.x
    - preview the `VeilRoot` scene

@@ -12,13 +12,13 @@ Issue `#328` adds file-backed shared contract snapshots for high-value client-fa
 
 The contract test lives in `packages/shared/test/client-payload-contracts.test.ts` and runs through both:
 
-- `npm run test:contracts`
-- `npm run test:shared`
+- `npm test -- contracts`
+- `npm test -- shared`
 
 For release-readiness and CI evidence, generate the compatibility report with:
 
 ```bash
-npm run test:multiplayer-protocol-compatibility -- \
+npm test -- multiplayer-protocol-compatibility -- \
   --output artifacts/release-readiness/multiplayer-protocol-compatibility.json
 ```
 
@@ -38,7 +38,7 @@ Failures print the snapshot path, the first differing line, and the exact refres
 Only refresh snapshots when the contract change is intentional and reviewed.
 
 ```bash
-UPDATE_CONTRACT_SNAPSHOTS=1 npm run test:contracts
+UPDATE_CONTRACT_SNAPSHOTS=1 npm test -- contracts
 ```
 
 Before committing:

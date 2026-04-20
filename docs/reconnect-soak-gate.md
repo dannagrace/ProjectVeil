@@ -13,7 +13,7 @@
 release candidate、shipping 候选包、或需要给 reviewer 固定 revision-scoped 证据时，统一执行下面这一条：
 
 ```bash
-npm run release:reconnect-soak -- \
+npm run release -- reconnect-soak -- \
   --candidate <candidate-name> \
   --candidate-revision <git-sha>
 ```
@@ -35,7 +35,7 @@ npm run release:reconnect-soak -- \
 如果需要覆盖输出路径，可追加：
 
 ```bash
-npm run release:reconnect-soak -- \
+npm run release -- reconnect-soak -- \
   --candidate phase1-wechat-rc \
   --candidate-revision abc1234 \
   --output artifacts/release-readiness/phase1-reconnect-soak.json \
@@ -72,13 +72,13 @@ npm run release:reconnect-soak -- \
 
 建议 CI 至少把该 JSON artifact 保留到构建产物中，供 release-readiness 记录引用。
 
-`npm run release:gate:summary` 和 `npm run release:phase1:candidate-dossier` 会把这份 artifact 作为正式 candidate gate 输入之一，并显式标记 reconnect soak evidence 是：
+`npm run release -- gate:summary` 和 `npm run release -- phase1:candidate-dossier` 会把这份 artifact 作为正式 candidate gate 输入之一，并显式标记 reconnect soak evidence 是：
 
 - `present`：artifact 对齐当前 candidate revision，soak 通过且 cleanup 归零
 - `stale`：artifact 时间戳过旧，或 revision 不再对齐当前 candidate
 - `failing`：任一 invariant、cleanup、计数器、或 candidate verdict 失败
 
-PR / 日常多人回归先看 `npm run test:e2e:multiplayer:smoke`；release candidate、shipping 候选包、或 reconnect / 房间恢复语义改动，再额外要求 reconnect soak gate 通过。
+PR / 日常多人回归先看 `npm test -- e2e:multiplayer:smoke`；release candidate、shipping 候选包、或 reconnect / 房间恢复语义改动，再额外要求 reconnect soak gate 通过。
 
 ## When This Must Pass
 

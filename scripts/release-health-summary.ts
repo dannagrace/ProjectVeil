@@ -510,7 +510,7 @@ function evaluateReleaseReadinessSignal(filePath: string | undefined): { signal:
         "Release readiness snapshot",
         "fail",
         "Release readiness snapshot is missing.",
-        ["Run `npm run release:readiness:snapshot` to publish the current regression/build gate state."]
+        ["Run `npm run release -- readiness:snapshot` to publish the current regression/build gate state."]
       ),
       findings: [buildFinding("release-readiness:missing", "release-readiness", "blocker", "Release readiness snapshot is missing.")]
     };
@@ -584,7 +584,7 @@ function evaluateReleaseGateSignal(filePath: string | undefined): { signal: Rele
         "Release gate summary",
         "fail",
         "Release gate summary is missing.",
-        ["Run `npm run release:gate:summary` after producing the readiness and release artifacts."]
+        ["Run `npm run release -- gate:summary` after producing the readiness and release artifacts."]
       ),
       findings: [buildFinding("release-gate:missing", "release-gate", "blocker", "Release gate summary is missing.")]
     };
@@ -786,7 +786,7 @@ function evaluateCoverageSignal(filePath: string | undefined): { signal: Release
         "Coverage summary",
         "warn",
         "Coverage summary is missing.",
-        ["Run `npm run test:coverage:ci` to publish `.coverage/summary.json` and `.coverage/summary.md`."]
+        ["Run `npm test -- coverage:ci` to publish `.coverage/summary.json` and `.coverage/summary.md`."]
       ),
       findings: [buildFinding("coverage:missing", "coverage", "warning", "Coverage summary is missing.")]
     };
@@ -827,7 +827,7 @@ function evaluateSyncGovernanceSignal(filePath: string | undefined): { signal: R
         "Sync governance matrix",
         "warn",
         "Sync governance matrix is missing.",
-        ["Run `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json` when multiplayer evidence is needed."]
+        ["Run `npm test -- sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json` when multiplayer evidence is needed."]
       ),
       findings: [buildFinding("sync-governance:missing", "sync-governance", "warning", "Sync governance matrix is missing.")]
     };
@@ -889,7 +889,7 @@ function buildReleaseReadinessTriage(filePath: string | undefined): ReleaseHealt
         "blocker",
         "Release readiness snapshot",
         "Release readiness snapshot is missing, so the branch gate state is unknown.",
-        "Run `npm run release:readiness:snapshot` to rebuild the snapshot, then inspect the required checks it records.",
+        "Run `npm run release -- readiness:snapshot` to rebuild the snapshot, then inspect the required checks it records.",
         [],
         []
       )
@@ -927,19 +927,19 @@ function buildReleaseReadinessTriage(filePath: string | undefined): ReleaseHealt
 function buildReleaseGateNextStep(gate: NonNullable<ReleaseGateSummaryReport["gates"]>[number], fallbackPath: string): string {
   const sourcePath = gate.source?.path ?? fallbackPath;
   if (gate.id === "release-readiness") {
-    return `Open \`${toDisplayPath(sourcePath)}\` and clear the failing or pending readiness checks, then rerun \`npm run release:gate:summary\`.`;
+    return `Open \`${toDisplayPath(sourcePath)}\` and clear the failing or pending readiness checks, then rerun \`npm run release -- gate:summary\`.`;
   }
   if (gate.id === "h5-release-candidate-smoke") {
-    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`npm run smoke:client:release-candidate\` to reproduce the packaged H5 failure, then rerun \`npm run release:gate:summary\`.`;
+    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`npm run smoke -- client:release-candidate\` to reproduce the packaged H5 failure, then rerun \`npm run release -- gate:summary\`.`;
   }
   if (gate.id === "wechat-release") {
     const command =
       gate.source?.kind === "wechat-smoke-report"
-        ? "npm run smoke:wechat-release -- --check"
-        : "npm run validate:wechat-rc";
-    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`npm run release:gate:summary\`.`;
+        ? "npm run smoke -- wechat-release -- --check"
+        : "npm run validate -- wechat-rc";
+    return `Open \`${toDisplayPath(sourcePath)}\`, rerun \`${command}\` to refresh the WeChat evidence, then rerun \`npm run release -- gate:summary\`.`;
   }
-  return `Open \`${toDisplayPath(sourcePath)}\` to inspect the failing gate evidence, then rerun \`npm run release:gate:summary\`.`;
+  return `Open \`${toDisplayPath(sourcePath)}\` to inspect the failing gate evidence, then rerun \`npm run release -- gate:summary\`.`;
 }
 
 function buildReleaseGateTriage(filePath: string | undefined): ReleaseHealthTriageEntry[] {
@@ -951,7 +951,7 @@ function buildReleaseGateTriage(filePath: string | undefined): ReleaseHealthTria
         "blocker",
         "Release gate summary",
         "Release gate summary is missing, so packaged release evidence was not normalized.",
-        "Run `npm run release:gate:summary` after producing the readiness and release artifacts.",
+        "Run `npm run release -- gate:summary` after producing the readiness and release artifacts.",
         [],
         []
       )
@@ -978,7 +978,7 @@ function buildReleaseGateTriage(filePath: string | undefined): ReleaseHealthTria
       summary,
       firstGate
         ? buildReleaseGateNextStep(firstGate, filePath)
-        : `Open \`${toDisplayPath(filePath)}\` to inspect the failed gate summary, then rerun \`npm run release:gate:summary\`.`,
+        : `Open \`${toDisplayPath(filePath)}\` to inspect the failed gate summary, then rerun \`npm run release -- gate:summary\`.`,
       failingGates.map((gate) => `${gate.id ?? gate.label ?? "unknown-gate"}: ${gate.failures?.[0] ?? gate.summary ?? "failed"}`),
       [
         ...createArtifactReference("Release gate summary", filePath, report.generatedAt),
@@ -1044,7 +1044,7 @@ function buildReadinessTrendTriage(
         "warning",
         "Candidate readiness trend",
         "Current release readiness dashboard is missing, so candidate history cannot be compared.",
-        "Run `npm run release:readiness:dashboard` for the candidate revision before rebuilding the release health summary.",
+        "Run `npm run release -- readiness:dashboard` for the candidate revision before rebuilding the release health summary.",
         [],
         []
       )
@@ -1117,7 +1117,7 @@ function buildCoverageTriage(filePath: string | undefined): ReleaseHealthTriageE
         "warning",
         "Coverage summary",
         "Coverage summary is missing, so line, branch, and function thresholds were not evaluated.",
-        "Run `npm run test:coverage:ci` to regenerate `.coverage/summary.json`.",
+        "Run `npm test -- coverage:ci` to regenerate `.coverage/summary.json`.",
         [],
         []
       )
@@ -1141,7 +1141,7 @@ function buildCoverageTriage(filePath: string | undefined): ReleaseHealthTriageE
       "warning",
       "Coverage summary",
       `${firstScope.scope} ${firstFailure?.metric ?? "coverage"} coverage is ${actualValue} against a ${firstFailure?.threshold ?? "unknown"}% floor.`,
-      `Open \`${toDisplayPath(filePath)}\` to inspect the failing scope, raise coverage above the threshold, then rerun \`npm run test:coverage:ci\`.`,
+      `Open \`${toDisplayPath(filePath)}\` to inspect the failing scope, raise coverage above the threshold, then rerun \`npm test -- coverage:ci\`.`,
       failingScopes.map((entry) => `${entry.scope}: ${entry.failures.length} threshold failure(s).`),
       createArtifactReference("Coverage summary", filePath)
     )
@@ -1157,7 +1157,7 @@ function buildSyncGovernanceTriage(filePath: string | undefined): ReleaseHealthT
         "warning",
         "Sync governance matrix",
         "Sync governance matrix is missing, so deterministic replay coverage was not verified.",
-        "Run `npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json` to rebuild the matrix artifact.",
+        "Run `npm test -- sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json` to rebuild the matrix artifact.",
         [],
         []
       )
@@ -1179,7 +1179,7 @@ function buildSyncGovernanceTriage(filePath: string | undefined): ReleaseHealthT
       failedScenarios[0]
         ? `Sync governance scenario failed: ${failedScenarios[0].title ?? failedScenarios[0].id ?? "unknown-scenario"}.`
         : `Sync governance execution status is ${JSON.stringify(report.execution?.status ?? "missing")}.`,
-      `Open \`${toDisplayPath(filePath)}\`, reproduce the failing deterministic sync scenario, then rerun \`npm run test:sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json\`.`,
+      `Open \`${toDisplayPath(filePath)}\`, reproduce the failing deterministic sync scenario, then rerun \`npm test -- sync-governance:matrix -- --output artifacts/release-readiness/sync-governance-matrix.json\`.`,
       failedScenarios.map((scenario) => scenario.title ?? scenario.id ?? "unknown-scenario"),
       createArtifactReference("Sync governance matrix", filePath, report.generatedAt)
     )

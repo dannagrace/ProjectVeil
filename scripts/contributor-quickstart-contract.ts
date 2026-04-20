@@ -161,7 +161,7 @@ function parseArgs(argv: string[]): Args {
 
 function printUsage(): void {
   console.log(
-    "Usage: npm run validate:quickstart:contract -- [--output <path>] [--markdown-output <path>] [--skip-runtime]"
+    "Usage: npm run validate -- quickstart:contract -- [--output <path>] [--markdown-output <path>] [--skip-runtime]"
   );
 }
 
@@ -253,10 +253,10 @@ function buildAlignmentStages(
       status: missingSetupCommands.length === 0 ? "passed" : "failed",
       summary:
         missingSetupCommands.length === 0
-          ? "README still routes contributors through `npm run doctor` and `npm run validate:quickstart`."
+          ? "README still routes contributors through `npm run doctor` and `npm run validate -- quickstart`."
           : "README quickstart setup block drifted from the maintained contributor path.",
       remediation:
-        "Update the `README.md` 5-Minute Setup block so it includes the maintained `nvm use`, `npm ci`, `npm run doctor`, and `npm run validate:quickstart` sequence.",
+        "Update the `README.md` 5-Minute Setup block so it includes the maintained `nvm use`, `npm ci`, `npm run doctor`, and `npm run validate -- quickstart` sequence.",
       details:
         missingSetupCommands.length === 0
           ? [`Setup block: ${setupCommands.join(" -> ")}`]

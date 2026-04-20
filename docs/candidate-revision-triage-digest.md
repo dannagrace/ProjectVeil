@@ -1,6 +1,6 @@
 # Candidate Revision Triage Digest
 
-`npm run release:candidate-triage:digest` builds a candidate-scoped error aggregation digest from runtime diagnostics snapshots or raw error-event bundles. The script writes both JSON and Markdown artifacts so release review and on-call can read the same summary.
+`npm run release -- candidate-triage:digest` builds a candidate-scoped error aggregation digest from runtime diagnostics snapshots or raw error-event bundles. The script writes both JSON and Markdown artifacts so release review and on-call can read the same summary.
 
 ## Inputs
 
@@ -13,7 +13,7 @@
 Use the digest when a candidate is blocked by crash spikes, repeated runtime exceptions, or unclear owner routing.
 
 ```bash
-npm run release:candidate-triage:digest -- \
+npm run release -- candidate-triage:digest -- \
   --candidate phase1-rc \
   --candidate-revision "$(git rev-parse HEAD)" \
   --input artifacts/runtime/server-diagnostic-snapshot.json \

@@ -132,7 +132,7 @@
    - 如需动态迷雾，可在 `VeilRoot` 上打开 `fogPulseEnabled` 并调整 `fogPulseIntervalSeconds`
    - 如未挂正式 `TiledMap`，`VeilMapBoard` 会自动走文字网格 + `VeilFogOverlay` 的回退渲染
    - 如已挂正式角色资源，可在 `VeilUnitAnimator` 上配置各状态动画名与回退时长
-6. 启动后端：`npm run dev:server`
+6. 启动后端：`npm run dev -- server`
 7. 在 Cocos 预览窗口运行场景
 8. 没有 `roomId` 查询参数时，会先进入 Cocos Lobby；可在大厅里刷新房间、游客进入、账号登录并进入，或打开配置台
 9. 如需查看账号进度回顾，可在 Lobby 左侧点击“资料回顾”，右侧会切换到 `战报 / 事件 / 成就` 三个分页标签；战报分页现在支持点击任意卡片打开“战报时间线”，会列出最新 6 条行动（含阵营、单位、动作与主要结算）并在暂无数据时给出提示
@@ -221,7 +221,7 @@
 ```bash
 WECHAT_APP_ID=wx-your-app-id \
 WECHAT_APP_SECRET=wx-your-app-secret \
-npm run dev:server
+npm run dev -- server
 ```
 
 然后在小游戏预览壳里注入：
@@ -251,7 +251,7 @@ npm run dev:server
     - `codex.wechat.build.json`
     - `README.codex.md`
 - 导出结果校验：
-  - `npm run validate:wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
+  - `npm run validate -- wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime`
   - 会读取导出的 `game.json`
   - 会校验注入的 `game.json / project.config.json / codex.wechat.build.json / README.codex.md` 是否与仓库配置一致
   - 会校验导出目录里是否包含 `game.js / application.js / src/settings.json` 这些运行时 bootstrap 文件
@@ -259,7 +259,7 @@ npm run dev:server
   - 对照 `4MB / 30MB` 预算给出通过/失败结果
   - 会根据 `runtimeRemoteUrl` 自动推导小游戏需要的 `request / socket` 域名
 - 资源热更新 diff：
-  - `npm run release:wechat:assets-hotfix -- --build-dir <wechatgame-build-dir> --baseline-manifest <codex.wechat.release.json> --output-dir artifacts/wechat-hotfix`
+  - `npm run release -- wechat:assets-hotfix -- --build-dir <wechatgame-build-dir> --baseline-manifest <codex.wechat.release.json> --output-dir artifacts/wechat-hotfix`
   - 会读取当前导出目录与上一版 `codex.wechat.release.json`，生成 `codex.wechat.hotfix-manifest.json/.md`
   - manifest 会列出 CDN 版本路径、变更文件清单、按分包聚合的变更摘要，以及可回退到的 baseline revision
   - 运行时侧可通过 `assets/scripts/cocos-wechat-hotfix.ts` 解析 `__PROJECT_VEIL_RUNTIME_CONFIG__.wechatMiniGame` 里的 `remoteAssetRoot / hotfixManifestUrl / hotfixVersion`，并为资源加载桥接层提供 override URL

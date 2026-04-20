@@ -331,18 +331,18 @@ const REQUIRED_CORE_GATES = [
     aliases: ["npm-test"]
   },
   {
-    label: "npm run typecheck:ci",
-    command: "npm run typecheck:ci",
+    label: "npm run typecheck -- ci",
+    command: "npm run typecheck -- ci",
     aliases: ["typecheck-ci"]
   },
   {
-    label: "npm run test:e2e:smoke",
-    command: "npm run test:e2e:smoke",
+    label: "npm test -- e2e:smoke",
+    command: "npm test -- e2e:smoke",
     aliases: ["e2e-smoke"]
   },
   {
-    label: "npm run test:e2e:multiplayer:smoke",
-    command: "npm run test:e2e:multiplayer:smoke",
+    label: "npm test -- e2e:multiplayer:smoke",
+    command: "npm test -- e2e:multiplayer:smoke",
     aliases: ["e2e-multiplayer-smoke"]
   },
   {
