@@ -26,11 +26,11 @@ import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
   equipOwnedCosmetic,
-  isPlayerBanActive,
   type RoomSnapshotStore,
   type PlayerAccountSnapshot,
   type BattleSnapshotRecord
 } from "./persistence";
+import { isPlayerBanActive } from "./domain/player-ban";
 import {
   configureConfigRuntimeStatusProvider,
   flushPendingConfigUpdate,
