@@ -88,6 +88,13 @@ import {
 } from "./battle-replay-retention";
 
 import {
+  readBooleanFlag,
+  readNonNegativeInteger,
+  readOptionalPositiveNumber,
+  readPositiveInteger
+} from "./persistence/env-readers";
+
+import {
   type BattleSnapshotCompensation,
   type BattleSnapshotInterruptedSettlementInput,
   type BattleSnapshotListOptions,
@@ -1308,64 +1315,6 @@ export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
 export const MAX_PLAYER_AVATAR_URL_LENGTH = 512;
 const MYSQL_DUPLICATE_ENTRY_ERROR_CODE = "ER_DUP_ENTRY";
 const MYSQL_DUPLICATE_ENTRY_ERRNO = 1062;
-
-function readOptionalPositiveNumber(value: string | undefined, fallback: number): number | null {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  if (parsed <= 0) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function readPositiveInteger(value: string | undefined, fallback: number): number {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return parsed;
-}
-
-function readNonNegativeInteger(value: string | undefined, fallback: number): number {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return fallback;
-  }
-
-  return parsed;
-}
-
-function readBooleanFlag(value: string | undefined, fallback: boolean): boolean {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-  return fallback;
-}
 
 function timestampOf(value: Date | string): number {
   return (typeof value === "string" ? new Date(value) : value).getTime();
