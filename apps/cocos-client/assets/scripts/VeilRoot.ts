@@ -209,10 +209,8 @@ import {
   resolveCampaignPanelMission
 } from "./cocos-campaign-panel.ts";
 import {
-  appendPrimaryClientTelemetry,
   buildPrimaryClientTelemetryFromUpdate,
   createPrimaryClientTelemetryEvent,
-  emitClientAnalyticsEvent,
   type ClientAnalyticsContext
 } from "./cocos-primary-client-telemetry.ts";
 import {
@@ -223,7 +221,6 @@ import {
   type ClientPerfRuntimeMetadata
 } from "./cocos-client-perf-telemetry.ts";
 import { describeAccountAuthFailure, type PrimaryClientTelemetryEvent, type RuntimeDiagnosticsConnectionStatus, type StructuredErrorCode, validateAccountLifecycleConfirm, validateAccountLifecycleRequest, validateAccountPassword, validatePrivacyConsentAccepted } from "@veil/shared/platform";
-import { normalizeTutorialStep } from "@veil/shared/progression";
 import type { TutorialProgressAction } from "@veil/shared/protocol";
 import {
   createCocosWechatPaymentOrder,
@@ -231,6 +228,7 @@ import {
   verifyCocosWechatPayment,
   type CocosWechatPaymentRuntimeLike
 } from "./cocos-wechat-payment.ts";
+import { normalizeTutorialStep } from "@veil/shared/progression";
 
 const { ccclass, property } = _decorator;
 
@@ -257,10 +255,32 @@ import {
   SETTINGS_PANEL_NODE_NAME,
   TIMELINE_NODE_NAME,
   TUTORIAL_OVERLAY_NODE_NAME,
+  advanceTutorialFlowForRoot,
   type BattleSettlementSnapshot,
+  bindGlobalErrorBoundaryForRoot,
+  buildTutorialOverlayViewForRoot,
+  completeTutorialAndFocusCampaignForRoot,
+  createClientAnalyticsContextForRoot,
+  createTelemetryContextForRoot,
+  emitPrimaryClientTelemetryForRoot,
   type GlobalErrorBoundaryEvent,
+  ensureAnalyticsSessionIdForRoot,
   type TutorialCampaignGuidance,
-  type VeilRootRuntime
+  handleAssetLoadFailureForRoot,
+  handleTutorialPrimaryActionForRoot,
+  maybeEmitExperimentExposureAnalyticsForRoot,
+  maybeEmitQuestCompleteAnalyticsForRoot,
+  maybeEmitShopOpenAnalyticsForRoot,
+  maybeReportSessionRuntimeErrorForRoot,
+  reportClientRuntimeErrorForRoot,
+  resolveTutorialCampaignGuidanceForRoot,
+  resolveTutorialGuidanceMissionForRoot,
+  type VeilRootRuntime,
+  skipTutorialFlowForRoot,
+  submitTutorialProgressForRoot,
+  trackAssetLoadFailureAnalyticsForRoot,
+  trackClientAnalyticsEventForRoot,
+  trackPurchaseInitiatedForRoot
 } from "./root/index.ts";
 
 @ccclass("ProjectVeilRoot")
@@ -3497,24 +3517,15 @@ export class VeilRoot extends Component {
   }
 
   private emitPrimaryClientTelemetry(event: PrimaryClientTelemetryEvent | PrimaryClientTelemetryEvent[] | null): void {
-    this.primaryClientTelemetry = appendPrimaryClientTelemetry(this.primaryClientTelemetry, event);
+    emitPrimaryClientTelemetryForRoot(this as unknown as Record<string, any>, event);
   }
 
   private ensureAnalyticsSessionId(): string {
-    if (!this.analyticsSessionId) {
-      this.analyticsSessionId = `cocos-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    }
-    return this.analyticsSessionId;
+    return ensureAnalyticsSessionIdForRoot(this as unknown as Record<string, any>);
   }
 
   private createClientAnalyticsContext(roomId = this.roomId): ClientAnalyticsContext {
-    return {
-      remoteUrl: this.remoteUrl,
-      playerId: this.playerId,
-      sessionId: this.ensureAnalyticsSessionId(),
-      roomId,
-      platform: "wechat"
-    };
+    return createClientAnalyticsContextForRoot(this as unknown as Record<string, any>, roomId);
   }
 
   private trackClientAnalyticsEvent<Name extends
@@ -3536,39 +3547,15 @@ export class VeilRoot extends Component {
     payload: Record<string, unknown>,
     roomId = this.roomId
   ): void {
-    emitClientAnalyticsEvent(name, this.createClientAnalyticsContext(roomId), payload as never);
+    trackClientAnalyticsEventForRoot(this as unknown as Record<string, any>, name, payload, roomId);
   }
 
   private trackAssetLoadFailureAnalytics(event: AssetLoadFailureEvent): void {
-    this.trackClientAnalyticsEvent("asset_load_failed", {
-      assetType: event.assetType,
-      assetPath: event.assetPath,
-      retryCount: event.retryCount,
-      critical: event.critical,
-      finalFailure: event.finalFailure,
-      errorMessage: event.errorMessage
-    });
+    trackAssetLoadFailureAnalyticsForRoot(this as unknown as Record<string, any>, event);
   }
 
   private handleAssetLoadFailure(event: AssetLoadFailureEvent): void {
-    if (!event.finalFailure || !event.critical) {
-      return;
-    }
-
-    const noticeKey = `${event.assetType}:${event.assetPath}`;
-    if (this.lastAssetFailureNoticeKey === noticeKey) {
-      return;
-    }
-
-    this.lastAssetFailureNoticeKey = noticeKey;
-    this.achievementNotice = {
-      eventId: noticeKey,
-      title: "资源加载异常",
-      detail: "部分资源加载失败，建议重新进入游戏",
-      expiresAt: Date.now() + 6000
-    };
-    this.pushLog(`资源加载失败：${event.assetPath}（已重试 ${event.retryCount} 次）`);
-    this.renderView();
+    handleAssetLoadFailureForRoot(this as unknown as Record<string, any>, event);
   }
 
   private reportClientRuntimeError(input: {
@@ -3580,181 +3567,35 @@ export class VeilRoot extends Component {
     detail?: string;
     roomId?: string | null;
   }): void {
-    this.trackClientAnalyticsEvent(
-      "client_runtime_error",
-      {
-        errorCode: input.errorCode,
-        severity: input.severity,
-        stage: input.stage,
-        recoverable: input.recoverable,
-        message: input.message,
-        ...(input.detail ? { detail: input.detail } : {})
-      },
-      input.roomId ?? this.roomId
-    );
+    reportClientRuntimeErrorForRoot(this as unknown as Record<string, any>, input);
   }
 
   private maybeReportSessionRuntimeError(error: unknown, stage: string): void {
-    if (!(error instanceof Error)) {
-      return;
-    }
-
-    if (error.message === "persistence_save_failed") {
-      this.reportClientRuntimeError({
-        errorCode: "persistence_save_failed",
-        severity: "error",
-        stage,
-        recoverable: false,
-        message: "Server persistence failed while applying a session action."
-      });
-      return;
-    }
-
-    if (
-      error.message === "room_left" ||
-      error.message === "session_unavailable" ||
-      error.message === "connect_failed" ||
-      error.message === "connect_timeout"
-    ) {
-      this.reportClientRuntimeError({
-        errorCode: "session_disconnect",
-        severity: "error",
-        stage,
-        recoverable: true,
-        message: error.message
-      });
-    }
+    maybeReportSessionRuntimeErrorForRoot(this as unknown as Record<string, any>, error, stage);
   }
 
   private bindGlobalErrorBoundary(): (() => void) | null {
-    const runtime = globalThis as typeof globalThis & {
-      addEventListener?: ((type: string, listener: (event: GlobalErrorBoundaryEvent) => void) => void) | undefined;
-      removeEventListener?: ((type: string, listener: (event: GlobalErrorBoundaryEvent) => void) => void) | undefined;
-    };
-    if (typeof runtime.addEventListener !== "function" || typeof runtime.removeEventListener !== "function") {
-      return null;
-    }
-
-    const handleGlobalFailure = (event: GlobalErrorBoundaryEvent): void => {
-      const reason = event.error ?? event.reason;
-      const message =
-        typeof event.message === "string" && event.message.trim().length > 0
-          ? event.message
-          : reason instanceof Error
-            ? reason.message
-            : String(reason ?? "unknown_client_error");
-      this.reportClientRuntimeError({
-        errorCode: "client_error_boundary_triggered",
-        severity: "fatal",
-        stage: "global",
-        recoverable: false,
-        message,
-        ...(reason instanceof Error && reason.stack ? { detail: reason.stack } : {})
-      });
-      this.pushLog(`客户端异常：${message}`);
-      this.renderView();
-    };
-
-    runtime.addEventListener("error", handleGlobalFailure);
-    runtime.addEventListener("unhandledrejection", handleGlobalFailure);
-
-    return () => {
-      runtime.removeEventListener?.("error", handleGlobalFailure);
-      runtime.removeEventListener?.("unhandledrejection", handleGlobalFailure);
-    };
+    return bindGlobalErrorBoundaryForRoot(this as unknown as Record<string, any>);
   }
 
   private createTelemetryContext(heroId?: string | null): { roomId: string; playerId: string; heroId?: string } {
-    return {
-      roomId: this.roomId,
-      playerId: this.playerId,
-      ...(heroId ? { heroId } : {})
-    };
+    return createTelemetryContextForRoot(this as unknown as Record<string, any>, heroId);
   }
 
   private maybeEmitShopOpenAnalytics(): void {
-    if (!this.showLobby || this.lobbyShopProducts.length === 0) {
-      return;
-    }
-
-    const sessionId = this.ensureAnalyticsSessionId();
-    if (this.emittedShopOpenSessionId === sessionId) {
-      return;
-    }
-
-    this.emittedShopOpenSessionId = sessionId;
-    this.trackClientAnalyticsEvent("shop_open", {
-      roomId: this.roomId,
-      surface: "lobby"
-    });
+    maybeEmitShopOpenAnalyticsForRoot(this as unknown as Record<string, any>);
   }
 
   private maybeEmitExperimentExposureAnalytics(profile: CocosPlayerAccountProfile): void {
-    const experiments = (profile as CocosPlayerAccountProfile & {
-      experiments?: Array<{
-        experimentKey: string;
-        experimentName: string;
-        owner: string;
-        bucket: number;
-        variant: string;
-      }>;
-    }).experiments ?? [];
-
-    for (const experiment of experiments) {
-      if (this.emittedExperimentExposureKeys.has(experiment.experimentKey)) {
-        continue;
-      }
-
-      this.emittedExperimentExposureKeys.add(experiment.experimentKey);
-      this.trackClientAnalyticsEvent(
-        "experiment_exposure",
-        {
-          experimentKey: experiment.experimentKey,
-          experimentName: experiment.experimentName,
-          variant: experiment.variant,
-          bucket: experiment.bucket,
-          surface: "player_account_profile",
-          owner: experiment.owner
-        },
-        profile.lastRoomId ?? this.roomId
-      );
-    }
+    maybeEmitExperimentExposureAnalyticsForRoot(this as unknown as Record<string, any>, profile);
   }
 
   private maybeEmitQuestCompleteAnalytics(previousProfile: CocosPlayerAccountProfile, profile: CocosPlayerAccountProfile): void {
-    const previousClaims = new Map(
-      (previousProfile.dailyQuestBoard?.quests ?? []).map((quest) => [quest.id, quest.claimed === true] as const)
-    );
-
-    for (const quest of profile.dailyQuestBoard?.quests ?? []) {
-      if (quest.claimed !== true || previousClaims.get(quest.id) === true) {
-        continue;
-      }
-
-      this.trackClientAnalyticsEvent(
-        "quest_complete",
-        {
-          roomId: profile.lastRoomId ?? this.roomId,
-          questId: quest.id,
-          reward: quest.reward
-        },
-        profile.lastRoomId ?? this.roomId
-      );
-    }
+    maybeEmitQuestCompleteAnalyticsForRoot(this as unknown as Record<string, any>, previousProfile, profile);
   }
 
   private trackPurchaseInitiated(product: ShopProduct, surface: "lobby" | "battle_pass"): void {
-    const price = Math.max(0, Math.floor(product.wechatPriceFen ?? product.price ?? 0));
-    const payload = {
-      roomId: this.roomId,
-      productId: product.productId,
-      productType: product.type,
-      currency: product.wechatPriceFen ? "wechat_fen" : "gems",
-      price,
-      surface
-    };
-    this.trackClientAnalyticsEvent("purchase_initiated", payload);
-    this.trackClientAnalyticsEvent("purchase_attempt", payload);
+    trackPurchaseInitiatedForRoot(this as unknown as Record<string, any>, product, surface);
   }
 
   private setBattleFeedback(feedback: CocosBattleFeedbackView | null, durationMs = BATTLE_FEEDBACK_DURATION_MS): void {
@@ -5939,274 +5780,35 @@ export class VeilRoot extends Component {
   }
 
   private buildTutorialOverlayView(): TutorialOverlayView | null {
-    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
-    if (tutorialStep === null || this.sessionSource !== "remote") {
-      return null;
-    }
-
-    const campaignGuidance = this.resolveTutorialCampaignGuidance();
-    const mission = campaignGuidance.mission;
-    const inLobby = this.showLobby;
-    const stepLabel = `引导 ${tutorialStep}/3`;
-    const busy = this.tutorialProgressInFlight;
-    if (tutorialStep === 1) {
-      return {
-        badge: "初次登录",
-        stepLabel,
-        title: "欢迎来到 Project Veil",
-        body: "先用一分钟熟悉核心节奏，再进入正式对局。",
-        detailLines: [
-          "世界地图是你的主舞台，侦察、招募、战斗都会在这里展开。",
-          "完成引导后才会解锁每日任务，避免新号同时接收过多系统信息。",
-          "前 5 场 PVP 会启用新手保护，优先避开高强度对局。"
-        ],
-        primaryLabel: busy ? "同步中..." : "开始引导",
-        busy
-      };
-    }
-
-    if (tutorialStep === 2) {
-      return {
-        badge: inLobby ? "出征准备" : "地图导览",
-        stepLabel,
-        title: inLobby ? "先进入你的第一张地图" : "留意地图、HUD 与首章目标",
-        body: inLobby
-          ? mission
-            ? `选择一个房间进入世界，下一步我们会把你正式交给首章任务 ${mission.name}。`
-            : "选择一个房间进入世界，前几步只需要专注于移动、招募和第一场战斗。"
-          : mission
-            ? `左侧地图、右侧 HUD 和底部时间线会一起指向首章任务 ${mission.name}，下一步就开始真正的主线推进。`
-            : "左侧地图、右侧 HUD 和底部时间线会给出下一步决策线索，这就是新手阶段最重要的三个面板。",
-        detailLines: inLobby
-          ? [
-              "房间进入后会直接落在世界地图。",
-              "优先观察可移动格子、附近资源点和可交互建筑。",
-              ...(mission ? [`首章目标会聚焦到 ${mission.name}。`] : []),
-              "如果你已经熟悉流程，现在可以直接跳过剩余引导。"
-            ]
-          : [
-              "先用安全操作熟悉移动反馈，再尝试资源采集或建筑互动。",
-              ...(campaignGuidance.objectivePreview.length > 0
-                ? [`首章任务：${campaignGuidance.objectivePreview.join(" / ")}`]
-                : []),
-              "PVP 新手保护仍然生效，先把开局节奏跑顺。",
-              "如果你是回流玩家，可以直接跳过剩余引导。"
-            ],
-        primaryLabel: busy ? "同步中..." : "继续",
-        ...(busy ? {} : { secondaryLabel: "跳过引导" }),
-        busy
-      };
-    }
-
-    return {
-      badge: mission ? "首章接管" : "最终确认",
-      stepLabel,
-      title: mission ? `把下一步交给 ${mission.name}` : "完成引导后解锁每日任务",
-      body: mission
-        ? inLobby
-          ? `完成引导后会直接进入房间，并把主提示切到首章任务 ${mission.name}。`
-          : `完成引导后会直接聚焦到首章任务 ${mission.name}，接下来就按主线面板推进第一场战斗与结算。`
-        : "最后一步会关闭引导遮罩，并按正常账户节奏开放每日任务板。",
-      detailLines: mission
-        ? [
-            `${campaignGuidance.phaseLabel}：${mission.description}`,
-            ...(campaignGuidance.objectivePreview.length > 0
-              ? [`优先目标：${campaignGuidance.objectivePreview.join(" / ")}`]
-              : []),
-            "引导结束后每日任务与活动奖励会恢复正常曝光。"
-          ]
-        : [
-            "每日任务会在账号快照里持续可见，不会因重连丢失。",
-            "如果你愿意，也可以现在跳过并直接开始正常游玩。",
-            "完成后重新进入大厅或刷新资料都会保持已完成状态。"
-          ],
-      primaryLabel:
-        busy
-          ? "同步中..."
-          : mission
-            ? "进入首章主线"
-            : "完成引导",
-      ...(busy ? {} : { secondaryLabel: "跳过引导" }),
-      busy
-    };
+    return buildTutorialOverlayViewForRoot(this as unknown as Record<string, any>);
   }
 
   private resolveTutorialCampaignGuidance(): TutorialCampaignGuidance {
-    const mission = this.resolveTutorialGuidanceMission();
-    if (!mission) {
-      return {
-        mission: null,
-        objectivePreview: [],
-        phaseLabel: "主线待同步"
-      };
-    }
-
-    const objectivePreview = mission.objectives
-      .slice(0, 2)
-      .map((objective) => objective.description.trim())
-      .filter((description) => description.length > 0);
-    const phaseLabel =
-      this.gameplayCampaignActiveMissionId === mission.id
-        ? "当前进行中"
-        : this.gameplayCampaign?.nextMissionId === mission.id
-          ? "下一主线"
-          : mission.status === "completed"
-            ? "已完成主线"
-            : "首章目标";
-    return {
-      mission,
-      objectivePreview,
-      phaseLabel
-    };
+    return resolveTutorialCampaignGuidanceForRoot(this as unknown as Record<string, any>);
   }
 
   private resolveTutorialGuidanceMission(): NonNullable<CocosCampaignSummary["missions"]>[number] | null {
-    const missions = this.gameplayCampaign?.missions ?? [];
-    if (missions.length === 0) {
-      return null;
-    }
-
-    return (
-      resolveCampaignPanelMission(this.gameplayCampaign, this.gameplayCampaignSelectedMissionId, this.gameplayCampaignActiveMissionId)
-      ?? (this.gameplayCampaign?.nextMissionId
-        ? missions.find((entry) => entry.id === this.gameplayCampaign?.nextMissionId) ?? null
-        : null)
-      ?? missions.find((entry) => entry.status === "available")
-      ?? missions[0]
-      ?? null
-    );
+    return resolveTutorialGuidanceMissionForRoot(this as unknown as Record<string, any>);
   }
 
   private async submitTutorialProgress(action: TutorialProgressAction): Promise<void> {
-    if (this.tutorialProgressInFlight || !this.authToken) {
-      return;
-    }
-
-    this.tutorialProgressInFlight = true;
-    this.renderView();
-    try {
-      const profile = await resolveVeilRootRuntime().updateTutorialProgress(this.remoteUrl, this.roomId, action, {
-        authSession: {
-          token: this.authToken,
-          playerId: this.playerId,
-          displayName: this.displayName || this.playerId,
-          authMode: this.authMode,
-          ...(this.loginId ? { loginId: this.loginId } : {}),
-          source: "remote"
-        },
-        storage: this.readWebStorage()
-      });
-      this.commitAccountProfile(
-        {
-          ...profile,
-          recentBattleReplays: profile.recentBattleReplays.length > 0
-            ? profile.recentBattleReplays
-            : this.lobbyAccountProfile.recentBattleReplays
-        },
-        false
-      );
-      this.pushLog(
-        action.step == null
-          ? action.reason === "skip"
-            ? "已跳过新手引导。"
-            : "新手引导已完成，每日任务已解锁。"
-          : `新手引导推进至第 ${action.step} 步。`
-      );
-      this.trackClientAnalyticsEvent(
-        "tutorial_step",
-        {
-          stepId:
-            action.step == null
-              ? action.reason === "skip"
-                ? "tutorial_skipped"
-                : "tutorial_completed"
-              : `step_${action.step}`,
-          status: action.reason === "skip" ? "skipped" : action.step == null ? "completed" : "active",
-          reason: action.reason ?? "advance"
-        },
-        profile.lastRoomId ?? this.roomId
-      );
-    } finally {
-      this.tutorialProgressInFlight = false;
-      this.renderView();
-    }
+    await submitTutorialProgressForRoot(this as unknown as Record<string, any>, action);
   }
 
   private async advanceTutorialFlow(): Promise<void> {
-    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
-    if (tutorialStep === null) {
-      return;
-    }
-
-    const nextStep = tutorialStep >= 3 ? null : tutorialStep + 1;
-    await this.submitTutorialProgress({
-      step: nextStep,
-      reason: nextStep == null ? "complete" : "advance"
-    });
+    await advanceTutorialFlowForRoot(this as unknown as Record<string, any>);
   }
 
   private async handleTutorialPrimaryAction(): Promise<void> {
-    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
-    if (tutorialStep === null) {
-      return;
-    }
-
-    if (tutorialStep < 3) {
-      await this.advanceTutorialFlow();
-      return;
-    }
-
-    await this.completeTutorialAndFocusCampaign();
+    await handleTutorialPrimaryActionForRoot(this as unknown as Record<string, any>);
   }
 
   private async completeTutorialAndFocusCampaign(): Promise<void> {
-    const focusMissionId = this.resolveTutorialGuidanceMission()?.id ?? null;
-    await this.submitTutorialProgress({
-      step: null,
-      reason: "complete"
-    });
-
-    if (this.showLobby) {
-      await this.enterLobbyRoom();
-    }
-
-    if (!this.authToken || this.authMode !== "account") {
-      return;
-    }
-
-    if (!this.gameplayCampaign && !this.gameplayCampaignLoading) {
-      await this.refreshGameplayCampaign(focusMissionId);
-    } else if (focusMissionId) {
-      this.gameplayCampaignSelectedMissionId = focusMissionId;
-    }
-
-    if (this.showLobby) {
-      const mission = this.resolveTutorialGuidanceMission();
-      this.gameplayCampaignStatus = mission
-        ? `引导已结束，进入地图后优先推进 ${mission.name}。`
-        : "引导已结束，进入地图后优先打开战役主线。";
-      this.renderView();
-      return;
-    }
-
-    await this.toggleGameplayCampaignPanel(true);
-    const mission = this.resolveTutorialGuidanceMission();
-    this.gameplayCampaignStatus = mission
-      ? `引导已移交给首章主线：${mission.name}`
-      : "引导已结束，战役主线已就绪。";
-    this.renderView();
+    await completeTutorialAndFocusCampaignForRoot(this as unknown as Record<string, any>);
   }
 
   private async skipTutorialFlow(): Promise<void> {
-    const tutorialStep = normalizeTutorialStep(this.lobbyAccountProfile.tutorialStep);
-    if (tutorialStep === null || tutorialStep < 2) {
-      return;
-    }
-
-    await this.submitTutorialProgress({
-      step: null,
-      reason: "skip"
-    });
+    await skipTutorialFlowForRoot(this as unknown as Record<string, any>);
   }
 
   private buildSettingsView(): CocosSettingsPanelView {
