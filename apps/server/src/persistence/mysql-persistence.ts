@@ -86,56 +86,61 @@ import {
   prunePlayerBattleReplaysForRetention,
   readBattleReplayRetentionPolicy
 } from "../battle-replay-retention";
+
+import {
+  readBooleanFlag,
+  readNonNegativeInteger,
+  readOptionalPositiveNumber,
+  readPositiveInteger
+} from "./env-readers";
+
+import {
+  formatTimestamp,
+  normalizePlayerId,
+  parseJsonColumn
+} from "./column-helpers";
+
+import {
+  normalizeBattleSnapshotPlayerIds,
+  normalizeBattleSnapshotStatus,
+  toBattleSnapshotRecord,
+  type BattleSnapshotRow
+} from "./battle-snapshots";
+
 import {
   type BattleSnapshotCompensation,
   type BattleSnapshotInterruptedSettlementInput,
   type BattleSnapshotListOptions,
   type BattleSnapshotRecord,
   type BattleSnapshotResolutionInput,
-  type BattleSnapshotRow,
   type BattleSnapshotStartInput,
   type BattleSnapshotStatus,
-  normalizeBattleSnapshotPlayerIds,
-  normalizeBattleSnapshotStatus,
-  toBattleSnapshotRecord
-} from "./battle-snapshots";
-import { formatTimestamp, normalizePlayerId, parseJsonColumn } from "./column-helpers";
+  type LeaderboardSeasonArchiveEntry,
+  type PlayerNameHistoryRetentionPolicy,
+  type PlayerReferralClaimResult,
+  type SeasonCloseSummary,
+  type SeasonListOptions,
+  type SeasonSnapshot,
+  type SnapshotRetentionPolicy
+} from "./types";
+export type {
+  BattleSnapshotCompensation,
+  BattleSnapshotInterruptedSettlementInput,
+  BattleSnapshotListOptions,
+  BattleSnapshotRecord,
+  BattleSnapshotResolutionInput,
+  BattleSnapshotStartInput,
+  BattleSnapshotStatus,
+  LeaderboardSeasonArchiveEntry,
+  PlayerNameHistoryRetentionPolicy,
+  PlayerReferralClaimResult,
+  SeasonCloseSummary,
+  SeasonListOptions,
+  SeasonSnapshot,
+  SnapshotRetentionPolicy
+} from "./types";
 
-export interface SeasonSnapshot {
-  seasonId: string;
-  status: "active" | "closed";
-  startedAt: string;
-  endedAt?: string;
-  rewardDistributedAt?: string;
-}
 
-export interface SeasonListOptions {
-  status?: "active" | "closed" | "all";
-  limit?: number;
-}
-
-export interface SeasonCloseSummary {
-  seasonId: string;
-  playersRewarded: number;
-  totalGemsGranted: number;
-}
-
-export interface LeaderboardSeasonArchiveEntry {
-  seasonId: string;
-  rank: number;
-  playerId: string;
-  displayName: string;
-  finalRating: number;
-  tier: string;
-  archivedAt: string;
-}
-
-export interface PlayerReferralClaimResult {
-  claimed: boolean;
-  rewardGems: number;
-  referrerId: string;
-  newPlayerId: string;
-}
 
 export interface BattlePassClaimResult {
   tier: number;
@@ -263,17 +268,6 @@ export interface RoomSnapshotStore {
   delete(roomId: string): Promise<void>;
   pruneExpired(referenceTime?: Date): Promise<number>;
   close(): Promise<void>;
-}
-
-export interface SnapshotRetentionPolicy {
-  ttlHours: number | null;
-  cleanupIntervalMinutes: number | null;
-}
-
-export interface PlayerNameHistoryRetentionPolicy {
-  ttlDays: number | null;
-  cleanupIntervalMinutes: number | null;
-  cleanupBatchSize: number;
 }
 
 export interface MySqlPersistenceConfig {
@@ -598,6 +592,7 @@ interface SupportTicketRow extends RowDataPacket {
   resolved_at: Date | string | null;
   updated_at: Date | string;
 }
+
 
 export interface RoomSnapshotSummary {
   roomId: string;
@@ -1298,75 +1293,29 @@ import {
   MYSQL_SUPPORT_TICKET_TABLE
 } from "./mysql-tables";
 export * from "./mysql-tables";
-const MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE = 100;
-export const DEFAULT_SNAPSHOT_TTL_HOURS = 72;
-export const DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES = 30;
-export const DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS = 90;
-export const DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES = 1440;
-export const DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE = 1000;
-export const MAX_PLAYER_DISPLAY_NAME_LENGTH = 40;
-export const MAX_PLAYER_LOGIN_ID_LENGTH = 40;
-export const MAX_PLAYER_AVATAR_URL_LENGTH = 512;
-const MYSQL_DUPLICATE_ENTRY_ERROR_CODE = "ER_DUP_ENTRY";
-const MYSQL_DUPLICATE_ENTRY_ERRNO = 1062;
-
-function readOptionalPositiveNumber(value: string | undefined, fallback: number): number | null {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  if (parsed <= 0) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function readPositiveInteger(value: string | undefined, fallback: number): number {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return parsed;
-}
-
-function readNonNegativeInteger(value: string | undefined, fallback: number): number {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return fallback;
-  }
-
-  return parsed;
-}
-
-function readBooleanFlag(value: string | undefined, fallback: boolean): boolean {
-  if (value == null || value.trim() === "") {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-  return fallback;
-}
+import {
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS,
+  DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_SNAPSHOT_TTL_HOURS,
+  MAX_LEADERBOARD_SEASON_ARCHIVE_SIZE,
+  MAX_PLAYER_AVATAR_URL_LENGTH,
+  MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  MAX_PLAYER_LOGIN_ID_LENGTH,
+  MYSQL_DUPLICATE_ENTRY_ERRNO,
+  MYSQL_DUPLICATE_ENTRY_ERROR_CODE
+} from "./defaults";
+export {
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_BATCH_SIZE,
+  DEFAULT_PLAYER_NAME_HISTORY_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_PLAYER_NAME_HISTORY_TTL_DAYS,
+  DEFAULT_SNAPSHOT_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_SNAPSHOT_TTL_HOURS,
+  MAX_PLAYER_AVATAR_URL_LENGTH,
+  MAX_PLAYER_DISPLAY_NAME_LENGTH,
+  MAX_PLAYER_LOGIN_ID_LENGTH
+} from "./defaults";
 
 function timestampOf(value: Date | string): number {
   return (typeof value === "string" ? new Date(value) : value).getTime();
