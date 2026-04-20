@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { registerEventRoutes, resetSeasonalEventRuntimeState } from "../src/event-engine";
+import { registerEventRoutes, resetSeasonalEventRuntimeState } from "@server/domain/battle/event-engine";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 

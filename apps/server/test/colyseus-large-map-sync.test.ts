@@ -3,8 +3,8 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 
 let requestCounter = 0;
 

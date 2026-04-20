@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
-import { readMySqlPersistenceConfig } from "../apps/server/src/persistence";
-import { runPendingSchemaMigrations } from "../apps/server/src/infra/schema-migrations";
+import { readMySqlPersistenceConfig } from "@server/persistence";
+import { runPendingSchemaMigrations } from "@server/infra/schema-migrations";
 
 loadEnv();
 

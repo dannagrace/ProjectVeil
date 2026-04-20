@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { scanAccountsForDisplayNameViolations } from "../scan-player-display-names";
-import type { PlayerAccountSnapshot } from "../../apps/server/src/persistence";
-import { clearCachedDisplayNameRules } from "../../apps/server/src/display-name-rules";
+import type { PlayerAccountSnapshot } from "@server/persistence";
+import { clearCachedDisplayNameRules } from "@server/domain/account/display-name-rules";
 
 test("scanAccountsForDisplayNameViolations reports banned-word matches using runtime rules", () => {
   clearCachedDisplayNameRules();

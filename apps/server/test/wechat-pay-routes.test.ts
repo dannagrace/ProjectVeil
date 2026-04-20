@@ -3,16 +3,16 @@ import { EventEmitter } from "node:events";
 import { generateKeyPairSync } from "node:crypto";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { issueAccountAuthSession } from "../src/auth";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import {
   encryptWechatCallbackResourceForTest,
   registerWechatPayRoutes,
   signWechatCallbackForTest,
   type WechatPayRuntimeConfig
-} from "../src/adapters/wechat-pay";
-import type { ShopProduct } from "../src/shop";
+} from "@server/adapters/wechat-pay";
+import type { ShopProduct } from "@server/domain/economy/shop";
 
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   {

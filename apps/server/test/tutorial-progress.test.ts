@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "../src/tutorial-progress";
+import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "@server/domain/account/tutorial-progress";
 
 test("normalizeTutorialProgressAction accepts an in-order advance", () => {
   assert.deepEqual(normalizeTutorialProgressAction({ step: 2, reason: "advance" }, 1), {

@@ -4,12 +4,12 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_REPORT_ROOM_REPORTER_TARGET_INDEX,
   MYSQL_PLAYER_REPORT_STATUS_CREATED_INDEX,
   MYSQL_PLAYER_REPORT_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { issueAccountAuthSession } from "../src/auth";
-import { applyBattlePassXp, resolveBattlePassConfig } from "../src/battle-pass";
-import type { RoomPersistenceSnapshot } from "../src/index";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import { registerShopRoutes, type ShopProduct } from "../src/shop";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
+import { applyBattlePassXp, resolveBattlePassConfig } from "@server/domain/economy/battle-pass";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
+import { registerShopRoutes, type ShopProduct } from "@server/domain/economy/shop";
 import { createDefaultHeroLoadout, createDefaultHeroProgression } from "@veil/shared/models";
 
 function createBattlePassWorldSnapshot(): RoomPersistenceSnapshot {

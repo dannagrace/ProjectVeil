@@ -10,7 +10,7 @@ import {
   type PlayerBattleReplaySummary,
   type WorldGenerationConfig
 } from "../packages/shared/src/index.ts";
-import { createMemoryRoomSnapshotStore } from "../apps/server/src/memory-room-snapshot-store.ts";
+import { createMemoryRoomSnapshotStore } from "../apps/server/src/infra/memory-room-snapshot-store.ts";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,

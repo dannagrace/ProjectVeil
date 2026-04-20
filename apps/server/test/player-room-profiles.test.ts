@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRoom } from "../src/index";
+import { createRoom } from "@server/index";
 import {
   applyPlayerAccountsToWorldState,
   applyPlayerHeroArchivesToWorldState,
@@ -8,7 +8,7 @@ import {
   createPlayerAccountsFromWorldState,
   createPlayerHeroArchivesFromWorldState,
   createPlayerRoomProfiles
-} from "../src/persistence";
+} from "@server/persistence";
 
 test("createPlayerRoomProfiles extracts one profile per player in the room", () => {
   const room = createRoom("room-player-profiles", 1001);

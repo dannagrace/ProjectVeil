@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveShopProducts } from "../src/shop";
+import { resolveShopProducts } from "@server/domain/economy/shop";
 
 // resolveShopProducts — happy path using default config
 

@@ -1,8 +1,8 @@
-import { dropIndexIfExists, ensureIndexExists, type SchemaMigrationConnection } from "../../apps/server/src/infra/schema-migrations";
+import { dropIndexIfExists, ensureIndexExists, type SchemaMigrationConnection } from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_NAME_HISTORY_CHANGED_AT_INDEX,
   MYSQL_PLAYER_NAME_HISTORY_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   await ensureIndexExists(

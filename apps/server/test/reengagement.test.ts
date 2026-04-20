@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flushAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "../src/analytics";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
+import { flushAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "@server/domain/ops/analytics";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import {
   acknowledgeReengagementMailboxOpen,
   recordReengagementReturn,
   runReengagementSweep,
   type ReengagementPolicy
-} from "../src/reengagement";
+} from "@server/domain/ops/reengagement";
 
 function seedLastSeenAt(store: ReturnType<typeof createMemoryRoomSnapshotStore>, playerId: string, lastSeenAt: string): void {
   const accounts = (store as unknown as { accounts: Map<string, Record<string, unknown>> }).accounts;

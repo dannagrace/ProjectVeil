@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadFeatureFlagConfig } from "../apps/server/src/feature-flags.ts";
+import { loadFeatureFlagConfig } from "../apps/server/src/domain/battle/feature-flags.ts";
 import {
   buildAdminExperimentSummaries,
   type AdminExperimentSummary
-} from "../apps/server/src/experiment-assignment.ts";
+} from "../apps/server/src/domain/battle/experiment-assignment.ts";
 import type { AnalyticsEvent } from "../packages/shared/src/index.ts";
 
 interface RollupCliOptions {

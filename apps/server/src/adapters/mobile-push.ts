@@ -1,9 +1,9 @@
 import { createSign } from "node:crypto";
 import { connect } from "node:http2";
 import type { MobilePushTokenRegistration } from "@veil/shared/models";
-import type { RoomSnapshotStore } from "../persistence";
-import { removeMobilePushToken } from "../mobile-push-tokens";
-import { getNotificationPreferenceValue } from "./wechat-social";
+import type { RoomSnapshotStore } from "@server/persistence";
+import { removeMobilePushToken } from "@server/domain/account/mobile-push-tokens";
+import { getNotificationPreferenceValue } from "@server/adapters/wechat-social";
 
 export type MobilePushTemplateKey = "match_found" | "turn_reminder" | "reengagement";
 type MobilePushPreferenceKey = "matchFound" | "turnReminder" | "reengagement";

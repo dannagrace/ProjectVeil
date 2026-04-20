@@ -2,8 +2,8 @@ import {
   dropColumnIfExists,
   ensureColumnExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
-import { MYSQL_PLAYER_ACCOUNT_TABLE } from "../../apps/server/src/persistence";
+} from "@server/infra/schema-migrations";
+import { MYSQL_PLAYER_ACCOUNT_TABLE } from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   const database = connection.config.database;

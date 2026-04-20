@@ -1,6 +1,6 @@
-import { recordPaymentDeadLetter, setPaymentGrantDeadLetterCount, setPaymentGrantQueueCount, setPaymentGrantQueueLatency } from "../../observability";
-import type { PaymentGrantRetryPolicy, PaymentOrderSnapshot } from "../../persistence";
-import type { PaymentOpsStore } from "./OrderIdempotencyStore";
+import { recordPaymentDeadLetter, setPaymentGrantDeadLetterCount, setPaymentGrantQueueCount, setPaymentGrantQueueLatency } from "@server/domain/ops/observability";
+import type { PaymentGrantRetryPolicy, PaymentOrderSnapshot } from "@server/persistence";
+import type { PaymentOpsStore } from "@server/domain/payment/OrderIdempotencyStore";
 
 const DEFAULT_PAYMENT_GRANT_MAX_ATTEMPTS = 5;
 const DEFAULT_PAYMENT_GRANT_BASE_DELAY_MS = 60_000;

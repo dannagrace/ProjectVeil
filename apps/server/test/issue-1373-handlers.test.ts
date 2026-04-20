@@ -3,16 +3,16 @@ import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client as ColyseusClient } from "colyseus";
 import type { ServerMessage } from "@veil/shared/protocol";
-import { configureAnalyticsRuntimeDependencies, flushAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "../src/analytics";
-import { issueAccountAuthSession } from "../src/auth";
+import { configureAnalyticsRuntimeDependencies, flushAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "@server/domain/ops/analytics";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
 import {
   configureRoomSnapshotStore,
   resetLobbyRoomRegistry,
   resetRoomRuntimeDependencies,
   VeilColyseusRoom
-} from "../src/colyseus-room";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 
 interface FakeClient extends ColyseusClient {
   sent: ServerMessage[];

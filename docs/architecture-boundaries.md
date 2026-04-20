@@ -12,8 +12,9 @@
 | 4 | `server-infra-no-up` | error | `apps/server/src/infra/**` 是最底层，不得 import `domain/` / `transport/` / `adapters/`。infra 只被引用，不引用更高层。 |
 | 5 | `server-domain-no-transport` | error | `apps/server/src/domain/**` 不得 import `apps/server/src/transport/**`。业务逻辑不应该知道协议。 |
 | 6 | `server-adapters-no-transport` | error | `apps/server/src/adapters/**` 不得 import `apps/server/src/transport/**`。适配器面向外部系统，不回调协议层。 |
-| 7 | `no-circular` | warn | 循环依赖降级为 warning，记录为技术债，不阻断 CI。 |
-| 8 | `no-orphans` | info | 孤儿模块（没有任何文件 import）只做信息提示。 |
+| 7 | `server-root-entry-only` | error | `apps/server/src/*.ts` 根目录只允许保留 `index.ts`、`config-center.ts`、`persistence.ts` 这类 entry/barrel glue；其余服务端代码必须归位到 `transport/` / `domain/` / `infra/` / `adapters/`。 |
+| 8 | `no-circular` | warn | 循环依赖降级为 warning，记录为技术债，不阻断 CI。 |
+| 9 | `no-orphans` | info | 孤儿模块（没有任何文件 import）只做信息提示。 |
 
 ## 服务端 4 层目录
 
@@ -32,16 +33,35 @@ transport ─▶ domain ─▶ infra
             └▶ adapters ─▶ infra
 ```
 
-## 当前落地状态（Phase 1）
+## 当前落地状态
 
-> 这是 [#1558](https://github.com/dannagrace/ProjectVeil/issues/1558) 第一阶段的落地：规则先全量生效，文件逐步归位。
+> 这是 [#1558](https://github.com/dannagrace/ProjectVeil/issues/1558) 和 [#1608](https://github.com/dannagrace/ProjectVeil/issues/1608) 收口后的当前状态：服务端根目录已经压成 entry/barrel glue，分层规则对绝大多数服务端代码生效。
 
-已落地：
-- `apps/server/src/adapters/`：8 个文件（所有第三方平台 adapter）
-- `apps/server/src/infra/`：4 个文件（`mysql-pool`、`redis`、`schema-migrations`、`backup-storage`）
-- `apps/server/src/transport/` / `domain/`：已创建占位目录，文件将由后续 issue 逐步归位
+当前 `apps/server/src/*.ts` 仅保留 3 个根文件：
+- `index.ts`
+- `config-center.ts`
+- `persistence.ts`
 
-尚未归位的文件（约 46 个）暂留在 `apps/server/src/` 根目录，这些文件在目录维度上不归属于任何层，因此前述规则 4/5/6 对它们暂不生效。规则对已归位的文件立即生效。
+其余服务端实现已经归位到：
+- `transport/`：HTTP 路由、Colyseus room 入口与协议辅助
+- `domain/`：`account / economy / battle / social / ops / config-center / payment`
+- `infra/`：`dev-server`、`memory-room-snapshot-store`、`mysql-persistence`、`schema-migrations`、`http-rate-limit`、`http-request-context`
+- `adapters/`：第三方平台与推送/支付/社交集成
+
+这意味着规则 `server-infra-no-up` / `server-domain-no-transport` / `server-adapters-no-transport` 已经覆盖到 >95% 的服务端源码；新增的 `server-root-entry-only` 则负责阻止新代码重新回流到 `apps/server/src/` 根目录。
+
+仍保留 4 个精确豁免文件，它们本质上是组合根或基础设施包装层，而不是可复用的纯 infra 叶子模块：
+- `apps/server/src/infra/dev-server.ts`
+- `apps/server/src/infra/http-rate-limit.ts`
+- `apps/server/src/infra/http-request-context.ts`
+- `apps/server/src/infra/memory-room-snapshot-store.ts`
+
+这些豁免是为了让 `lint:arch` 反映“绝大多数代码已被守卫覆盖”的真实状态，而不是为了放松整体边界。新增 infra 模块默认仍会命中 `server-infra-no-up`。
+
+另外保留 1 个 domain→transport 例外：
+- `apps/server/src/domain/ops/admin-console.ts`
+
+它承担的是 GM/运营总控台聚合入口，需要拼接运行中房间和若干 transport-admin 子路由；这不是普通业务服务的依赖方向，因此单独记录为受控例外。
 
 ## 运行方式
 
@@ -94,4 +114,4 @@ CI：`arch-boundaries` job 在每次 push / PR 触发，error 阻断合并。
 - #1563 切分 `config-center.ts` + `colyseus-room.ts`
 - #1567 抽象 `PaymentGateway` 接口
 
-这些 issue 落地后，`transport/` / `domain/` 目录会逐步填满，规则 4/5/6 的覆盖面会自动扩大。
+这些 issue 落地后，剩余的重点会转向更细的域内拆分，而不是继续把文件从根目录搬家。

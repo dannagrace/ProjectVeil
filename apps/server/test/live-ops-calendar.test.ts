@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   createDefaultLaunchRuntimeState,
   loadLaunchRuntimeState
-} from "../src/launch-runtime-state";
+} from "@server/domain/ops/launch-runtime-state";
 import {
   createLiveOpsCalendarScheduler,
   loadLiveOpsCalendarState,
@@ -15,12 +15,12 @@ import {
   runLiveOpsCalendarTick,
   saveLiveOpsCalendarState,
   type LiveOpsCalendarEntry
-} from "../src/live-ops-calendar";
+} from "@server/domain/social/live-ops-calendar";
 import {
   resetSeasonalEventRuntimeState,
   resolveSeasonalEvents,
   resolveSeasonalEventStatus
-} from "../src/event-engine";
+} from "@server/domain/battle/event-engine";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 

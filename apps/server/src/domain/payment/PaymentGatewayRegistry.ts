@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RoomSnapshotStore } from "../../persistence";
-import type { PaymentChannel, PaymentGateway } from "./PaymentGateway";
+import type { RoomSnapshotStore } from "@server/persistence";
+import type { PaymentChannel, PaymentGateway } from "@server/domain/payment/PaymentGateway";
 
 export interface PaymentGatewayHttpApp {
   use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;

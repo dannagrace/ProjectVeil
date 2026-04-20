@@ -4,8 +4,8 @@ import {
   normalizeDailyRewardConfig,
   resolveDailyRewardForStreak,
   getPreviousDailyRewardDateKey
-} from "../src/daily-rewards";
-import type { DailyRewardTier } from "../src/daily-rewards";
+} from "@server/domain/economy/daily-rewards";
+import type { DailyRewardTier } from "@server/domain/economy/daily-rewards";
 
 // ──────────────────────────────────────────────────────────
 // normalizeDailyRewardConfig

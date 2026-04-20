@@ -22,11 +22,11 @@ import {
   getActiveRoomInstances,
   resetLobbyRoomRegistry,
   VeilColyseusRoom
-} from "../apps/server/src/colyseus-room";
-import { createMemoryRoomSnapshotStore } from "../apps/server/src/memory-room-snapshot-store";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../apps/server/src/observability";
-import type { RoomSnapshotStore } from "../apps/server/src/persistence";
-import type { RoomPersistenceSnapshot } from "../apps/server/src/index";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
+import type { RoomSnapshotStore } from "@server/persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
 
 type ScenarioName = "world_progression" | "battle_settlement" | "reconnect" | "reconnect_soak";
 

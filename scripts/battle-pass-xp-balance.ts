@@ -1,5 +1,5 @@
 import battlePassConfigDocument from "../configs/battle-pass.json";
-import { resolveBattlePassConfig, resolveBattlePassTierForXp, type BattlePassConfig } from "../apps/server/src/battle-pass";
+import { resolveBattlePassConfig, resolveBattlePassTierForXp, type BattlePassConfig } from "@server/domain/economy/battle-pass";
 
 export interface BattlePassBalanceAssumptions {
   seasonDays: number;

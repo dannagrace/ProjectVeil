@@ -1,1 +1,1 @@
-export * from "./domain/config-center/index";
+export * from "@server/domain/config-center";

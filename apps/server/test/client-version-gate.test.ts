@@ -3,8 +3,8 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
-import { clearCachedFeatureFlagConfig } from "../src/feature-flags";
-import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
+import { clearCachedFeatureFlagConfig } from "@server/domain/battle/feature-flags";
+import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 
 async function startServer(port: number): Promise<Server> {
   clearCachedFeatureFlagConfig();

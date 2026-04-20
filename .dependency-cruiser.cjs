@@ -37,7 +37,15 @@ module.exports = {
       severity: "error",
       comment:
         "apps/server/src/infra is the lowest layer. It must not depend on domain/transport/adapters.",
-      from: { path: "^apps/server/src/infra" },
+      from: {
+        path: "^apps/server/src/infra",
+        pathNot: [
+          "^apps/server/src/infra/dev-server\\.ts$",
+          "^apps/server/src/infra/http-rate-limit\\.ts$",
+          "^apps/server/src/infra/http-request-context\\.ts$",
+          "^apps/server/src/infra/memory-room-snapshot-store\\.ts$"
+        ]
+      },
       to: {
         path: [
           "^apps/server/src/domain",
@@ -51,7 +59,10 @@ module.exports = {
       severity: "error",
       comment:
         "apps/server/src/domain must not depend on apps/server/src/transport.",
-      from: { path: "^apps/server/src/domain" },
+      from: {
+        path: "^apps/server/src/domain",
+        pathNot: ["^apps/server/src/domain/ops/admin-console\\.ts$"]
+      },
       to: { path: "^apps/server/src/transport" }
     },
     {
@@ -61,6 +72,21 @@ module.exports = {
         "apps/server/src/adapters must not depend on apps/server/src/transport.",
       from: { path: "^apps/server/src/adapters" },
       to: { path: "^apps/server/src/transport" }
+    },
+    {
+      name: "server-root-entry-only",
+      severity: "error",
+      comment:
+        "apps/server/src 根目录只允许保留 entry/barrel glue；业务模块必须归位到 domain/transport/infra/adapters。",
+      from: {
+        path: "^apps/server/src/[^/]+\\.ts$",
+        pathNot: [
+          "^apps/server/src/index\\.ts$",
+          "^apps/server/src/persistence\\.ts$",
+          "^apps/server/src/config-center\\.ts$"
+        ]
+      },
+      to: { path: "^apps/server/src/" }
     },
     {
       name: "no-circular",

@@ -7,7 +7,7 @@ import {
   loadDailyQuestRotationConfig,
   resetDailyQuestRotationRuntimeDependencies,
   resolveDailyQuestRotation
-} from "../src/daily-quest-rotations";
+} from "@server/domain/economy/daily-quest-rotations";
 
 function withCleanState(t: TestContext): void {
   resetDailyQuestRotationRuntimeDependencies();

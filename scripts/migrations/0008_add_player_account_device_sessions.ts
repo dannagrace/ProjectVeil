@@ -3,11 +3,11 @@ import {
   ensureIndexExists,
   ensureTableExists,
   type SchemaMigrationConnection
-} from "../../apps/server/src/infra/schema-migrations";
+} from "@server/infra/schema-migrations";
 import {
   MYSQL_PLAYER_ACCOUNT_SESSION_PLAYER_LAST_USED_INDEX,
   MYSQL_PLAYER_ACCOUNT_SESSION_TABLE
-} from "../../apps/server/src/persistence";
+} from "@server/persistence";
 
 export async function up(connection: SchemaMigrationConnection): Promise<void> {
   await ensureTableExists(

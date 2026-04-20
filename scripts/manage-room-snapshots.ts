@@ -1,5 +1,5 @@
 import { config as loadEnv } from "dotenv";
-import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "../apps/server/src/persistence";
+import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig } from "@server/persistence";
 
 loadEnv();
 

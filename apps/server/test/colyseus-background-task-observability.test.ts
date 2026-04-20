@@ -10,13 +10,13 @@ import {
   resetLobbyRoomRegistry,
   resetRoomRuntimeDependencies,
   runZombieRoomCleanup
-} from "../src/colyseus-room";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   configureErrorMonitoringRuntimeDependencies,
   resetErrorMonitoringRuntimeDependencies
-} from "../src/error-monitoring";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
+} from "@server/domain/ops/error-monitoring";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

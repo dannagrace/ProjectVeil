@@ -4,7 +4,7 @@ import {
   MySqlRoomSnapshotStore,
   type PlayerAccountSnapshot,
   type PlayerEventHistorySnapshot
-} from "../src/persistence";
+} from "@server/persistence";
 
 function createExistingAccount(overrides: Partial<PlayerAccountSnapshot> = {}): PlayerAccountSnapshot {
   return {

@@ -9,7 +9,7 @@ import {
   resolveCampaignConfig,
   resolveDailyDungeonConfig,
   startDailyDungeonRun
-} from "../src/pve-content";
+} from "@server/domain/battle/pve-content";
 
 test("campaign config exposes a 6-mission chapter 1 arc with dialogue and sequential unlocks", () => {
   const missions = resolveCampaignConfig();

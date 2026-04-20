@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listLobbyRooms } from "../src/colyseus-room";
-import { startDevServer, type DevServerBootstrapDependencies } from "../src/dev-server";
-import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "../src/observability";
+import { listLobbyRooms } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { startDevServer, type DevServerBootstrapDependencies } from "@server/infra/dev-server";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "@server/domain/ops/observability";
 import type {
   MySqlPersistenceConfig,
   PlayerNameHistoryRetentionPolicy,
   SnapshotRetentionPolicy
-} from "../src/persistence";
+} from "@server/persistence";
 
 interface TestLogger {
   logs: string[];

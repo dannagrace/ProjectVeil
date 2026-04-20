@@ -7,9 +7,9 @@ import {
   getActiveSeasonalEvents,
   rotateDailyQuests,
   resolveSeasonalEvents
-} from "../src/event-engine";
-import { loadDailyQuestConfig } from "../src/daily-quest-config";
-import type { PlayerAccountSnapshot, PlayerQuestState } from "../src/persistence";
+} from "@server/domain/battle/event-engine";
+import { loadDailyQuestConfig } from "@server/domain/economy/daily-quest-config";
+import type { PlayerAccountSnapshot, PlayerQuestState } from "@server/persistence";
 
 test("seasonal events resolve the active defend-the-bridge window", () => {
   const events = resolveSeasonalEvents();

@@ -6,8 +6,8 @@ import {
   resolveSeasonRewardBracket,
   resolveSeasonRewardConfig,
   computeSeasonReward
-} from "../src/season-rewards";
-import type { ResolvedSeasonRewardConfig } from "../src/season-rewards";
+} from "@server/domain/social/season-rewards";
+import type { ResolvedSeasonRewardConfig } from "@server/domain/social/season-rewards";
 
 // ──────────────────────────────────────────────────────────
 // Stub config helpers

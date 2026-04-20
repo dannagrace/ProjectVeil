@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import type { AchievementDefinition } from "@veil/shared/event-log";
 
 async function startAccountRouteServer(port: number): Promise<Server> {

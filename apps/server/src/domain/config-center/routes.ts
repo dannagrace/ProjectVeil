@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { MapObjectsConfig, WorldGenerationConfig } from "@veil/shared/models";
-import type { ConfigCenterStore, ConfigDocumentId, ConfigStageDocumentInput } from "./types";
-import { CONFIG_DEFINITIONS } from "./constants";
+import type { ConfigCenterStore, ConfigDocumentId, ConfigStageDocumentInput } from "@server/domain/config-center/types";
+import { CONFIG_DEFINITIONS } from "@server/domain/config-center/constants";
 import {
   configDefinitionFor,
   normalizePreviewSeed,
@@ -9,9 +9,9 @@ import {
   sendJson,
   sendNotFound,
   toErrorPayload
-} from "./helpers";
-import { buildConfigDiffEntries, buildConfigImpactSummary } from "./diff";
-import { createWorldConfigPreview, parseConfigDocument } from "./preview";
+} from "@server/domain/config-center/helpers";
+import { buildConfigDiffEntries, buildConfigImpactSummary } from "@server/domain/config-center/diff";
+import { createWorldConfigPreview, parseConfigDocument } from "@server/domain/config-center/preview";
 
 export function registerConfigCenterRoutes(
   app: {

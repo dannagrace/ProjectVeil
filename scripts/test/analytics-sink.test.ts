@@ -7,7 +7,7 @@ import {
   flushAnalyticsEventsForTest,
   getAnalyticsPipelineSnapshot,
   resetAnalyticsRuntimeDependencies
-} from "../../apps/server/src/analytics";
+} from "@server/domain/ops/analytics";
 
 afterEach(() => {
   resetAnalyticsRuntimeDependencies();

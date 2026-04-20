@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { RuntimeSloProfileId, RuntimeSloSummaryPayload } from "../apps/server/src/observability";
+import type { RuntimeSloProfileId, RuntimeSloSummaryPayload } from "@server/domain/ops/observability";
 
 interface Args {
   serverUrl: string;

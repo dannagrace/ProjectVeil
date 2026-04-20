@@ -3,10 +3,10 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
-import { registerAnalyticsRoutes } from "../src/analytics";
-import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
-import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "../src/colyseus-room";
-import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "../src/dev-server";
+import { registerAnalyticsRoutes } from "@server/domain/ops/analytics";
+import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
+import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "@server/infra/dev-server";
 import {
   recordRuntimeErrorEvent,
   recordMatchmakingRateLimited,
@@ -14,7 +14,7 @@ import {
   setMatchmakingQueueDepth,
   type RuntimePersistenceHealth,
   resetRuntimeObservability
-} from "../src/observability";
+} from "@server/domain/ops/observability";
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));

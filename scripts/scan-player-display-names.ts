@@ -1,8 +1,8 @@
 import { config as loadEnv } from "dotenv";
 import { pathToFileURL } from "node:url";
-import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig, type PlayerAccountSnapshot } from "../apps/server/src/persistence";
+import { MySqlRoomSnapshotStore, readMySqlPersistenceConfig, type PlayerAccountSnapshot } from "@server/persistence";
 import { findDisplayNameModerationViolation } from "../packages/shared/src/display-name-validation";
-import { loadDisplayNameValidationRules } from "../apps/server/src/display-name-rules";
+import { loadDisplayNameValidationRules } from "@server/domain/account/display-name-rules";
 
 loadEnv();
 

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { registerSeasonRoutes } from "../src/seasons";
-import type { RoomSnapshotStore, SeasonListOptions, SeasonSnapshot } from "../src/persistence";
+import { registerSeasonRoutes } from "@server/domain/social/seasons";
+import type { RoomSnapshotStore, SeasonListOptions, SeasonSnapshot } from "@server/persistence";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 

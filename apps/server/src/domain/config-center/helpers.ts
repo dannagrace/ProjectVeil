@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
-import type { LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
+import type { LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import type {
   ConfigDefinition,
   ConfigDocumentId,
@@ -11,9 +11,9 @@ import type {
   ParsedConfigDocument,
   RuntimeConfigDocumentId,
   ValidationIssue
-} from "./types";
-import type { ConfigCenterLibraryState, FlattenedConfigEntry, JsonSchemaNode } from "./constants";
-import { CONFIG_DEFINITIONS, RUNTIME_CONFIG_DOCUMENT_IDS } from "./constants";
+} from "@server/domain/config-center/types";
+import type { ConfigCenterLibraryState, FlattenedConfigEntry, JsonSchemaNode } from "@server/domain/config-center/constants";
+import { CONFIG_DEFINITIONS, RUNTIME_CONFIG_DOCUMENT_IDS } from "@server/domain/config-center/constants";
 
 export function createEmptyLibraryState(): ConfigCenterLibraryState {
   return {

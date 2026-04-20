@@ -1,13 +1,13 @@
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import { getBattleBalanceConfig, getDefaultBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultMapObjectsConfig, getDefaultUnitCatalog, getDefaultWorldConfig, replaceRuntimeConfigs, type RuntimeConfigBundle, validateBattleBalanceConfig, validateBattleSkillCatalog, validateMapObjectsConfig, validateUnitCatalog, validateWorldConfig } from "@veil/shared/world";
-import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "../../observability";
-import { captureServerError } from "../../error-monitoring";
-import { parseLeaderboardTierThresholdsConfigDocument, validateLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "../../leaderboard-tier-thresholds";
+import { countRuntimeErrorEventsSince, recordRuntimeErrorEvent } from "@server/domain/ops/observability";
+import { captureServerError } from "@server/domain/ops/error-monitoring";
+import { parseLeaderboardTierThresholdsConfigDocument, validateLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import type {
   ConfigDocumentId,
   ConfigPublishEventSummary,
   RuntimeConfigDocumentId
-} from "./types";
+} from "@server/domain/config-center/types";
 import type {
   ConfigCenterRuntimeDependencies,
   ConfigCenterTimerHandle,
@@ -16,15 +16,15 @@ import type {
   ConfigRollbackMonitorState,
   ConfigRuntimeApplyResult,
   PendingRuntimeBundleState
-} from "./constants";
+} from "@server/domain/config-center/constants";
 import {
   CONFIG_HOT_RELOAD_ERROR_THRESHOLD,
   DEFAULT_CONFIG_HOT_RELOAD_MONITOR_WINDOW_MS,
   RUNTIME_CONFIG_DOCUMENT_IDS
-} from "./constants";
-import { normalizeJsonContent } from "./helpers";
-import { buildConfigDiffEntries } from "./diff";
-import { buildRuntimeBundleWithParsedDocument, contentForDocumentId, parseConfigDocument } from "./preview";
+} from "@server/domain/config-center/constants";
+import { normalizeJsonContent } from "@server/domain/config-center/helpers";
+import { buildConfigDiffEntries } from "@server/domain/config-center/diff";
+import { buildRuntimeBundleWithParsedDocument, contentForDocumentId, parseConfigDocument } from "@server/domain/config-center/preview";
 
 export function buildRuntimeConfigBundle(
   documents: Partial<RuntimeConfigBundle>

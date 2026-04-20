@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDemoBattleState } from "@veil/shared/battle";
-import { createRoom } from "../src/index";
-import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "../src/observability";
+import { createRoom } from "@server/index";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 function resolveBattle(room: ReturnType<typeof createRoom>, playerId: string): void {
   let steps = 0;

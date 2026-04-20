@@ -2,10 +2,10 @@ import type {
   ConfigDocumentId,
   ConfigSchemaSummary,
   ValidationIssue
-} from "./types";
-import type { JsonSchemaNode, FlattenedConfigEntry } from "./constants";
-import { CONFIG_SCHEMA_VERSION } from "./constants";
-import { parseJsonPath, pushIssue } from "./helpers";
+} from "@server/domain/config-center/types";
+import type { JsonSchemaNode, FlattenedConfigEntry } from "@server/domain/config-center/constants";
+import { CONFIG_SCHEMA_VERSION } from "@server/domain/config-center/constants";
+import { parseJsonPath, pushIssue } from "@server/domain/config-center/helpers";
 
 export const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> = {
   world: {

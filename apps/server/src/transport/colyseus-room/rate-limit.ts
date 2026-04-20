@@ -1,13 +1,13 @@
 import type {
   SuspiciousActionAlertConfig,
   WebSocketActionRateLimitConfig
-} from "./types";
+} from "@server/transport/colyseus-room/types";
 import {
   DEFAULT_SUSPICIOUS_ACTION_THRESHOLD,
   DEFAULT_SUSPICIOUS_ACTION_WINDOW_MS,
   DEFAULT_WS_ACTION_RATE_LIMIT_MAX,
   DEFAULT_WS_ACTION_RATE_LIMIT_WINDOW_MS
-} from "./constants";
+} from "@server/transport/colyseus-room/constants";
 
 export function parseEnvNumber(
   value: string | undefined,

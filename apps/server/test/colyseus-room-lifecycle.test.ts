@@ -11,14 +11,14 @@ import { applyEloMatchResult } from "@veil/shared/social";
 import { decodePlayerWorldView, getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs } from "@veil/shared/world";
 import type { BattleState, WorldEvent } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
-import { resolveBattlePassConfig } from "../src/battle-pass";
+import { resolveBattlePassConfig } from "@server/domain/economy/battle-pass";
 import {
   configureAnalyticsRuntimeDependencies,
   flushAnalyticsEventsForTest,
   resetAnalyticsRuntimeDependencies
-} from "../src/analytics";
-import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "../src/config-center";
-import { issueAccountAuthSession, issueNextAuthSession, type GuestAuthSession } from "../src/auth";
+} from "@server/domain/ops/analytics";
+import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "@server/config-center";
+import { issueAccountAuthSession, issueNextAuthSession, type GuestAuthSession } from "@server/domain/account/auth";
 import {
   VeilColyseusRoom,
   configureRoomRuntimeDependencies,
@@ -27,11 +27,11 @@ import {
   listLobbyRooms,
   resetRoomRuntimeDependencies,
   resetLobbyRoomRegistry
-} from "../src/colyseus-room";
-import { createRoom, type RoomPersistenceSnapshot } from "../src/index";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { buildPrometheusMetricsDocument, buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "../src/observability";
-import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "../src/persistence";
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { createRoom, type RoomPersistenceSnapshot } from "@server/index";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { buildPrometheusMetricsDocument, buildRoomLifecycleSummaryPayload, resetRuntimeObservability } from "@server/domain/ops/observability";
+import type { PlayerAccountEnsureInput, PlayerAccountProgressPatch, PlayerAccountSnapshot } from "@server/persistence";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];

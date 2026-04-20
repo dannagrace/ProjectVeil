@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { RoomSnapshotStore } from "../src/persistence";
-import { registerRetentionSummaryRoute } from "../src/retention-summary";
+import type { RoomSnapshotStore } from "@server/persistence";
+import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
 
 test("retention summary route returns cohort metrics from account timestamps", async () => {
   const routes = new Map<string, (request: unknown, response: FakeResponse) => void | Promise<void>>();

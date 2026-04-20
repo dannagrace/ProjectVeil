@@ -3,16 +3,16 @@ import { EventEmitter } from "node:events";
 import { generateKeyPairSync } from "node:crypto";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { issueAccountAuthSession } from "../src/auth";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
 import {
   AppleIapVerificationError,
   createAppleStoreKitVerificationAdapter,
   registerApplePaymentRoutes,
   type AppleIapRuntimeConfig,
   type AppleVerifiedTransaction
-} from "../src/adapters/apple-iap";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import type { ShopProduct } from "../src/shop";
+} from "@server/adapters/apple-iap";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import type { ShopProduct } from "@server/domain/economy/shop";
 
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   {

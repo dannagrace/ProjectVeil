@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { evaluateMinorProtectionState, readMinorProtectionConfig } from "../src/minor-protection";
-import { registerMinorProtectionRoutes } from "../src/minor-protection-routes";
-import type { RoomSnapshotStore } from "../src/persistence";
+import { evaluateMinorProtectionState, readMinorProtectionConfig } from "@server/domain/ops/minor-protection";
+import { registerMinorProtectionRoutes } from "@server/transport/http/minor-protection-routes";
+import type { RoomSnapshotStore } from "@server/persistence";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 

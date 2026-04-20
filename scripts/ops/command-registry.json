@@ -763,7 +763,7 @@
       {
         "name": "server",
         "legacyScript": "dev:server",
-        "runner": "node --import tsx ./apps/server/src/dev-server.ts"
+        "runner": "node --import tsx ./apps/server/src/infra/dev-server.ts"
       }
     ]
   }

@@ -1,4 +1,4 @@
-export * from "./types";
+export * from "@server/transport/colyseus-room/types";
 export {
   DEFAULT_GROUP_CHALLENGE_SECRET,
   EMPTY_ROOM_TTL_MS,
@@ -9,17 +9,17 @@ export {
   TURN_REMINDER_DISCONNECT_THRESHOLD_MS,
   TURN_TIMER_TICK_MS,
   ZOMBIE_ROOM_CLEANUP_INTERVAL_MS
-} from "./constants";
+} from "@server/transport/colyseus-room/constants";
 export {
   formatBackgroundTaskDetail,
   reportBackgroundTaskFailure,
   reportPersistenceSaveFailure
-} from "./error-reporting";
+} from "@server/transport/colyseus-room/error-reporting";
 export {
   parseEnvNumber,
   readSuspiciousActionAlertConfig,
   readWebSocketActionRateLimitConfig
-} from "./rate-limit";
+} from "@server/transport/colyseus-room/rate-limit";
 export {
   clamp,
   cloneResourceLedger,
@@ -31,7 +31,7 @@ export {
   rebindWorldStatePlayerId,
   resolveFocusedMapBounds,
   sendMessage
-} from "./room-utils";
+} from "@server/transport/colyseus-room/room-utils";
 export {
   activeRoomInstances,
   advanceLobbyRoomOwnerToken,
@@ -47,4 +47,4 @@ export {
   resetRoomRuntimeDependencies,
   roomRuntimeDependencies,
   runZombieRoomCleanup
-} from "./runtime";
+} from "@server/transport/colyseus-room/runtime";

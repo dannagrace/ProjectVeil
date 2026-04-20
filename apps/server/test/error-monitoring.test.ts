@@ -6,7 +6,7 @@ import {
   configureErrorMonitoringRuntimeDependencies,
   isErrorMonitoringEnabled,
   resetErrorMonitoringRuntimeDependencies
-} from "../src/error-monitoring";
+} from "@server/domain/ops/error-monitoring";
 
 afterEach(() => {
   resetErrorMonitoringRuntimeDependencies();

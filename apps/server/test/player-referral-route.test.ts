@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
 import test from "node:test";
-import { issueGuestAuthSession } from "../src/auth";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import type { PlayerAccountSnapshot, PlayerReferralClaimResult, RoomSnapshotStore } from "../src/persistence";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
+import type { PlayerAccountSnapshot, PlayerReferralClaimResult, RoomSnapshotStore } from "@server/persistence";
 
 class ReferralRouteTestStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();

@@ -5,8 +5,8 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 
 import { normalizeGuildState } from "@veil/shared/social";
-import { createMemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { appendUgcCandidateKeyword, buildUgcReviewQueue, resolveUgcReviewEntry, scoreUgcContent } from "../src/ugc-moderation";
+import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { appendUgcCandidateKeyword, buildUgcReviewQueue, resolveUgcReviewEntry, scoreUgcContent } from "@server/domain/social/ugc-moderation";
 
 async function withKeywordConfig(t: { after(fn: () => void | Promise<void>): void }, payload: unknown): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "veil-ugc-review-"));

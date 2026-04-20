@@ -4,8 +4,8 @@ import {
   buildPlayerBattleReplaySummariesForPlayer,
   buildPlayerBattleReplaySummary,
   type CompletedBattleReplayCapture
-} from "../src/battle-replays";
-import { createRoom } from "../src/index";
+} from "@server/domain/battle/battle-replays";
+import { createRoom } from "@server/index";
 
 test("room persistence snapshot restores an active neutral battle", () => {
   const room = createRoom("room-persist-neutral", 1001);

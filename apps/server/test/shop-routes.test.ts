@@ -5,12 +5,12 @@ import {
   configureAnalyticsRuntimeDependencies,
   flushAnalyticsEventsForTest,
   resetAnalyticsRuntimeDependencies
-} from "../src/analytics";
-import { issueAccountAuthSession } from "../src/auth";
-import type { RoomPersistenceSnapshot } from "../src/index";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import type { PlayerAccountSnapshot } from "../src/persistence";
-import { registerShopRoutes, type ShopProduct } from "../src/shop";
+} from "@server/domain/ops/analytics";
+import { issueAccountAuthSession } from "@server/domain/account/auth";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import type { PlayerAccountSnapshot } from "@server/persistence";
+import { registerShopRoutes, type ShopProduct } from "@server/domain/economy/shop";
 import { resolveWeeklyShopRotation } from "@veil/shared/economy";
 import { createDefaultHeroLoadout, createDefaultHeroProgression } from "@veil/shared/models";
 

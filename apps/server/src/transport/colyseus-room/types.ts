@@ -1,7 +1,7 @@
-import type { RoomPersistenceSnapshot } from "../../index";
-import type { RoomSnapshotStore } from "../../persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import type { RoomSnapshotStore } from "@server/persistence";
 import type { ServerMessage } from "@veil/shared/protocol";
-import type { WechatSubscribeTemplateKey } from "../../adapters/wechat-subscribe";
+import type { WechatSubscribeTemplateKey } from "@server/adapters/wechat-subscribe";
 
 export type MessageOfType<T extends ServerMessage["type"]> = Omit<Extract<ServerMessage, { type: T }>, "type">;
 

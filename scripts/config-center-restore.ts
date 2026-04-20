@@ -1,5 +1,5 @@
 import path from "node:path";
-import { FileSystemConfigCenterStore } from "../apps/server/src/config-center";
+import { FileSystemConfigCenterStore } from "@server/config-center";
 
 type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 

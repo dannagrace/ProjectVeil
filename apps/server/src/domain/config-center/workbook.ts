@@ -1,13 +1,13 @@
 import * as XLSX from "xlsx";
-import type { ConfigDocument } from "./types";
-import { parseJsonPath, setValueAtPath } from "./helpers";
+import type { ConfigDocument } from "@server/domain/config-center/types";
+import { parseJsonPath, setValueAtPath } from "@server/domain/config-center/helpers";
 import {
   buildSchemaSummary,
   CONFIG_DOCUMENT_SCHEMAS,
   describeSchemaRequirement,
   flattenConfigValueWithSchema,
   schemaNodeForPath
-} from "./schemas";
+} from "@server/domain/config-center/schemas";
 
 export function buildTabularRowsForDocument(document: ConfigDocument): Array<Record<string, string>> {
   const schema = CONFIG_DOCUMENT_SCHEMAS[document.id];

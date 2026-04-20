@@ -5,8 +5,8 @@ import { Server, WebSocketTransport } from "colyseus";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { createWorldStateFromConfigs, decodePlayerWorldView, getDefaultMapObjectsConfig, getDefaultWorldConfig } from "@veil/shared/world";
-import type { RoomPersistenceSnapshot } from "../src/index";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   createPlayerAccountsFromWorldState,
   MAX_PLAYER_DISPLAY_NAME_LENGTH,
@@ -18,7 +18,7 @@ import {
   type PlayerAccountSnapshot,
   type PlayerHeroArchiveSnapshot,
   type RoomSnapshotStore
-} from "../src/persistence";
+} from "@server/persistence";
 
 class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();

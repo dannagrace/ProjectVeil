@@ -6,7 +6,7 @@ import type {
   PaymentOrderStatus,
   PaymentReceiptSnapshot,
   RoomSnapshotStore
-} from "../../persistence";
+} from "@server/persistence";
 
 export type PaymentReadyStore = RoomSnapshotStore &
   Required<

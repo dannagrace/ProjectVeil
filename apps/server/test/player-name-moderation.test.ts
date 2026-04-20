@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { registerAuthRoutes, issueGuestAuthSession, resetGuestAuthSessions } from "../src/auth";
-import { MemoryRoomSnapshotStore } from "../src/memory-room-snapshot-store";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { registerAuthRoutes, issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 
 async function startServer(port: number, store: MemoryRoomSnapshotStore): Promise<Server> {
   const transport = new WebSocketTransport();

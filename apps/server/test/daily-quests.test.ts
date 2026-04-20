@@ -5,7 +5,7 @@ import {
   getDailyQuestCycleKey,
   getDailyQuestResetAt,
   readDailyQuestFeatureEnabled
-} from "../src/daily-quests";
+} from "@server/domain/economy/daily-quests";
 
 // readDailyQuestFeatureEnabled
 

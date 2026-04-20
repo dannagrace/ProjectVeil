@@ -44,7 +44,7 @@ test("combines mixed server, content, and docs surfaces into one deduped plan", 
 test("flags release packaging and observability diagnostics without inventing new gates", () => {
   const plan = inferValidationPlan([
     "scripts/package-wechat-minigame-release.ts",
-    "apps/server/src/observability.ts"
+    "apps/server/src/domain/ops/observability.ts"
   ]);
 
   assert.deepEqual(

@@ -8,14 +8,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
-import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
+import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "@server/domain/economy/daily-rewards";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
-import { resetAccountTokenDeliveryState } from "../src/adapters/account-token-delivery";
+import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
 import {
   configureAnalyticsRuntimeDependencies,
   flushAnalyticsEventsForTest,
   resetAnalyticsRuntimeDependencies
-} from "../src/analytics";
+} from "@server/domain/ops/analytics";
 import {
   createWechatMiniGamePlayerId,
   hashAccountPassword,
@@ -23,11 +23,11 @@ import {
   registerAuthRoutes,
   resetGuestAuthSessions,
   type GuestAuthSession
-} from "../src/auth";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "../src/colyseus-room";
-import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "../src/observability";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import { resetWechatSessionKeyCache } from "../src/adapters/wechat-session-key";
+} from "@server/domain/account/auth";
+import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
+import { resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -49,8 +49,8 @@ import type {
   PlayerAccountSnapshot,
   PlayerHeroArchiveSnapshot,
   RoomSnapshotStore
-} from "../src/persistence";
-import type { RoomPersistenceSnapshot } from "../src/index";
+} from "@server/persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 
 class MemoryAuthStore implements RoomSnapshotStore {

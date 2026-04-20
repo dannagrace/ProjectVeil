@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { issueGuestAuthSession } from "../src/auth";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -20,8 +20,8 @@ import type {
   PlayerAccountUnbanInput,
   PlayerBanHistoryRecord,
   RoomSnapshotStore
-} from "../src/persistence";
-import type { RoomPersistenceSnapshot } from "../src/index";
+} from "@server/persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
 import { type BattleReplayPlaybackState, createEmptyBattleState, type PlayerBattleReplaySummary } from "@veil/shared/battle";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 

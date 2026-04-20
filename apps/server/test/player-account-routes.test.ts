@@ -2,23 +2,23 @@ import assert from "node:assert/strict";
 import { createCipheriv, createHash } from "node:crypto";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
-import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "../src/auth";
-import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "../src/daily-rewards";
-import { applyPlayerEventLogAndAchievements } from "../src/player-achievements";
+import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "@server/domain/account/auth";
+import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "@server/domain/economy/daily-rewards";
+import { applyPlayerEventLogAndAchievements } from "@server/domain/account/player-achievements";
 import {
   claimAllPlayerMailboxMessages,
   claimPlayerMailboxMessage,
   createMailboxClaimEventLogEntry,
   deliverPlayerMailboxMessage,
   normalizePlayerMailboxMessage
-} from "../src/player-mailbox";
-import { loadDailyQuestBoard } from "../src/daily-quests";
-import { registerPlayerAccountRoutes } from "../src/player-accounts";
-import { loadDailyQuestConfig } from "../src/daily-quest-config";
-import { assertDisplayNameAvailableOrThrow } from "../src/display-name-rules";
-import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "../src/event-engine";
-import { resolveActiveDailyDungeon } from "../src/pve-content";
-import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "../src/adapters/wechat-session-key";
+} from "@server/domain/account/player-mailbox";
+import { loadDailyQuestBoard } from "@server/domain/economy/daily-quests";
+import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
+import { loadDailyQuestConfig } from "@server/domain/economy/daily-quest-config";
+import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/display-name-rules";
+import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "@server/domain/battle/event-engine";
+import { resolveActiveDailyDungeon } from "@server/domain/battle/pve-content";
+import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
 import type {
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
@@ -38,8 +38,8 @@ import type {
   PlayerHeroArchiveSnapshot,
   PlayerQuestState,
   RoomSnapshotStore
-} from "../src/persistence";
-import type { RoomPersistenceSnapshot } from "../src/index";
+} from "@server/persistence";
+import type { RoomPersistenceSnapshot } from "@server/index";
 import type { PlayerBattleReplaySummary, PlayerBattleReportCenter } from "@veil/shared/battle";
 import { type PlayerAchievementProgress, type PlayerProgressionSnapshot, queryEventLogEntries } from "@veil/shared/event-log";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
@@ -427,7 +427,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     };
   }
 
-  async deliverPlayerMailbox(input: import("../src/player-mailbox").PlayerMailboxDeliveryInput) {
+  async deliverPlayerMailbox(input: import("@server/domain/account/player-mailbox").PlayerMailboxDeliveryInput) {
     const message = normalizePlayerMailboxMessage(input.message);
     const deliveredPlayerIds: string[] = [];
     const skippedPlayerIds: string[] = [];

@@ -1,11 +1,11 @@
 import type { Client as ColyseusClient } from "colyseus";
 import { DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, normalizeClientVersion } from "@veil/shared/platform";
 import type { ServerMessage, SessionStatePayload } from "@veil/shared/protocol";
-import { resolveMinimumSupportedClientVersion } from "../../feature-flags";
-import type { RoomPersistenceSnapshot } from "../../index";
-import type { RoomSnapshotStore } from "../../persistence";
-import type { MessageOfType } from "./types";
-import { DEFAULT_PLAYER_SLOT_ID, MAP_SYNC_CHUNK_PADDING, MAP_SYNC_CHUNK_SIZE } from "./constants";
+import { resolveMinimumSupportedClientVersion } from "@server/domain/battle/feature-flags";
+import type { RoomPersistenceSnapshot } from "@server/index";
+import type { RoomSnapshotStore } from "@server/persistence";
+import type { MessageOfType } from "@server/transport/colyseus-room/types";
+import { DEFAULT_PLAYER_SLOT_ID, MAP_SYNC_CHUNK_PADDING, MAP_SYNC_CHUNK_SIZE } from "@server/transport/colyseus-room/constants";
 
 export function hasPlayerReportStore(
   store: RoomSnapshotStore | null

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveCampaignConfig } from "../apps/server/src/pve-content.ts";
+import { resolveCampaignConfig } from "../apps/server/src/domain/battle/pve-content.ts";
 import { resolveContentPackMapPack } from "./content-pack-map-packs.ts";
 import { buildContentPackCliReport, type ContentPackCliReport } from "./validate-content-pack.ts";
 

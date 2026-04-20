@@ -10,7 +10,7 @@ import {
   resolveMinimumSupportedClientVersion,
   resolveFeatureEntitlementsForPlayer,
   resolveFeatureFlagsForPlayer
-} from "../src/feature-flags";
+} from "@server/domain/battle/feature-flags";
 import { DEFAULT_FEATURE_FLAG_CONFIG, type FeatureFlagConfigDocument } from "@veil/shared/platform";
 
 function makeMinimalFlagConfig(overrides: Partial<FeatureFlagConfigDocument["flags"]> = {}): FeatureFlagConfigDocument {
