@@ -2205,3 +2205,21 @@ Original prompt: 你先学习下当前项目并给出开发的计划
     - 商店 view 现在会生成 featured offer / value summary
   - `apps/cocos-client/assets/scripts/VeilLobbyPanel.ts`
     - Lobby 商店区会前置渲染 `本期推荐` 卡片，直接把推荐位抬到商品列表前面
+
+## Issue #1561 - VeilRoot root/ 拆分继续推进 - 2026-04-20
+
+- 本轮先把 `VeilRoot.ts` 里最适合独立验证的两块职责抽进了 `root/`：
+  - `apps/cocos-client/assets/scripts/root/telemetry-hooks.ts`
+    - 收拢 primary telemetry、client analytics、asset/runtime error 上报与 shop/quest/experiment 曝光逻辑
+  - `apps/cocos-client/assets/scripts/root/tutorial-orchestrator.ts`
+    - 收拢 tutorial overlay、首章 handoff、教程推进/跳过与 campaign guidance 计算
+- `apps/cocos-client/assets/scripts/VeilRoot.ts`
+  - 对应方法已改成轻量委托层，主文件继续瘦身，当前从 `6884` 行降到了 `6486` 行
+- 新增模块级测试：
+  - `apps/cocos-client/test/root-telemetry-hooks.test.ts`
+  - `apps/cocos-client/test/root-tutorial-orchestrator.test.ts`
+- 本轮验证已通过：
+  - `npm run typecheck:cocos`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/root-telemetry-hooks.test.ts ./apps/cocos-client/test/root-tutorial-orchestrator.test.ts`
+  - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts`
+  - `npm run smoke:cocos:canonical-journey`
