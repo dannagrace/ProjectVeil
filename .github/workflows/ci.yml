@@ -625,7 +625,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run H5 connectivity smoke
-        run: npm test -- e2e:h5:connectivity
+        run: npm run validate -- e2e:fixtures && npx playwright test --project=h5-connectivity --retries=2
 
       - name: Upload H5 connectivity smoke artifacts
         if: always()

@@ -165,7 +165,7 @@ export function buildScenarioGrepPattern(scenarios: readonly SyncGovernanceScena
 }
 
 function buildPlaywrightCommand(scenarios: readonly SyncGovernanceScenarioDefinition[] = SCENARIOS): string {
-  return `npx playwright test --config=playwright.multiplayer.config.ts --reporter=${PLAYWRIGHT_REPORTER} --grep "${buildScenarioGrepPattern(scenarios)}"`;
+  return `npx playwright test --project=multiplayer --reporter=${PLAYWRIGHT_REPORTER} --grep "${buildScenarioGrepPattern(scenarios)}"`;
 }
 
 function readGitValue(args: string[]): string {

@@ -54,7 +54,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 npm run validate -- redis-scaling
 
 ```bash
 node --import tsx --test apps/server/test/matchmaking-routes.test.ts
-npx playwright test tests/e2e/pvp-matchmaking-lifecycle.spec.ts --config=playwright.multiplayer.config.ts
+npx playwright test --project=multiplayer tests/e2e/pvp-matchmaking-lifecycle.spec.ts
 ```
 
 ## 部署建议

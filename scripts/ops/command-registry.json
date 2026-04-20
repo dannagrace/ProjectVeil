@@ -381,7 +381,7 @@
       {
         "name": "e2e",
         "legacyScript": "test:e2e",
-        "runner": "npm run validate -- e2e:fixtures && playwright test"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=full"
       },
       {
         "name": "e2e:all",
@@ -391,37 +391,37 @@
       {
         "name": "e2e:golden-path",
         "legacyScript": "test:e2e:golden-path",
-        "runner": "npm run validate -- e2e:fixtures && playwright test ./tests/e2e/golden-path-player-journey.spec.ts --config=playwright.smoke.config.ts"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=smoke ./tests/e2e/golden-path-player-journey.spec.ts"
       },
       {
         "name": "e2e:h5:connectivity",
         "legacyScript": "test:e2e:h5:connectivity",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.h5-connectivity.config.ts"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=h5-connectivity --retries=2"
       },
       {
         "name": "e2e:headed",
         "legacyScript": "test:e2e:headed",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --headed"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=full --headed"
       },
       {
         "name": "e2e:multiplayer",
         "legacyScript": "test:e2e:multiplayer",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=multiplayer"
       },
       {
         "name": "e2e:multiplayer:headed",
         "legacyScript": "test:e2e:multiplayer:headed",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.config.ts --headed"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=multiplayer --headed"
       },
       {
         "name": "e2e:multiplayer:smoke",
         "legacyScript": "test:e2e:multiplayer:smoke",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.multiplayer.smoke.config.ts"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=multiplayer-smoke"
       },
       {
         "name": "e2e:smoke",
         "legacyScript": "test:e2e:smoke",
-        "runner": "npm run validate -- e2e:fixtures && playwright test --config=playwright.smoke.config.ts"
+        "runner": "npm run validate -- e2e:fixtures && playwright test --project=smoke"
       },
       {
         "name": "launch-compliance:gate",
