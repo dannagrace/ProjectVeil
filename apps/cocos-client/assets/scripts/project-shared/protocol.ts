@@ -3,24 +3,37 @@ import type {
   BattleState,
   CosmeticId,
   EquippedCosmetics,
+  FriendLeaderboardEntry,
+  GroupChallenge,
   MovementPlan,
   Vec2,
   WorldAction,
   WorldEvent
 } from "./models.ts";
 import type { ActionValidationFailure } from "./action-precheck.ts";
+import type { FeatureFlags } from "./feature-flags.ts";
+import type { GuildRosterView, GuildSummaryView } from "./guilds.ts";
 import type { PlayerWorldViewPayload } from "./map-sync.ts";
+import type { RuntimeConfigBundle } from "./world-config.ts";
 
 export type SessionStateReason = "surrender" | "afk_forfeit" | "normal" | (string & {});
+
 export interface TutorialProgressAction {
   step: number | null;
   reason?: "advance" | "skip" | "complete";
 }
-export interface FeatureFlags {
-  quest_system_enabled: boolean;
-  battle_pass_enabled: boolean;
-  pve_enabled: boolean;
-  tutorial_enabled: boolean;
+
+export interface CampaignDialogueAckAction {
+  missionId: string;
+  sequence: "intro" | "outro";
+  dialogueLineId: string;
+}
+
+export interface EventProgressUpdatePayload {
+  eventId: string;
+  points: number;
+  delta: number;
+  objectiveId: string;
 }
 
 export interface SessionStatePayload {
@@ -37,6 +50,25 @@ export interface SessionStatePayload {
 export type PlayerReportReason = "cheating" | "harassment" | "afk";
 export type PlayerReportStatus = "pending" | "dismissed" | "warned" | "banned";
 
+export interface GuildCreateAction {
+  name: string;
+  tag: string;
+  description?: string;
+  memberLimit?: number;
+}
+
+export interface GuildJoinAction {
+  guildId: string;
+}
+
+export interface GuildLeaveAction {
+  guildId: string;
+}
+
+export interface GuildGetAction {
+  guildId: string;
+}
+
 export type ClientMessage =
   | {
       type: "connect";
@@ -48,6 +80,11 @@ export type ClientMessage =
       displayName?: string;
       authToken?: string;
       seed?: number;
+    }
+  | {
+      type: "TOKEN_REFRESH";
+      requestId: string;
+      authToken: string;
     }
   | {
       type: "world.action";
@@ -81,6 +118,52 @@ export type ClientMessage =
       type: "tutorial.progress";
       requestId: string;
       action: TutorialProgressAction;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId?: string;
+      challengeToken?: string;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      friendIds?: string[];
+    }
+  | {
+      type: "campaign.dialogue.ack";
+      requestId: string;
+      action: CampaignDialogueAckAction;
+    }
+  | {
+      type: "guild.create";
+      requestId: string;
+      action: GuildCreateAction;
+    }
+  | {
+      type: "guild.join";
+      requestId: string;
+      action: GuildJoinAction;
+    }
+  | {
+      type: "guild.leave";
+      requestId: string;
+      action: GuildLeaveAction;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      action: GuildGetAction;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      action: GuildGetAction;
     }
   | {
       type: "BUY_COSMETIC";
@@ -149,6 +232,12 @@ export type ServerMessage =
       };
     }
   | {
+      type: "SESSION_EXPIRED";
+      requestId: string;
+      delivery: "push";
+      reason: string;
+    }
+  | {
       type: "report.player";
       requestId: string;
       reportId: string;
@@ -158,15 +247,47 @@ export type ServerMessage =
       createdAt: string;
     }
   | {
+      type: "config.update";
+      requestId: "push";
+      delivery: "push";
+      payload: { bundle: RuntimeConfigBundle };
+    }
+  | {
       type: "event.progress.update";
       requestId: "push";
       delivery: "push";
-      payload: {
-        eventId: string;
-        points: number;
-        delta: number;
-        objectiveId: string;
-      };
+      payload: EventProgressUpdatePayload;
+    }
+  | {
+      type: "guild.list";
+      requestId: string;
+      items: GuildSummaryView[];
+    }
+  | {
+      type: "guild.get";
+      requestId: string;
+      guild: GuildSummaryView;
+    }
+  | {
+      type: "guild.roster";
+      requestId: string;
+      roster: GuildRosterView;
+    }
+  | {
+      type: "FRIEND_LEADERBOARD_REQUEST";
+      requestId: string;
+      items: FriendLeaderboardEntry[];
+      friendCount: number;
+    }
+  | {
+      type: "SHARE_ACTIVITY";
+      requestId: string;
+      activity: "battle_victory" | "group_challenge";
+      roomId: string;
+      shareUrl: string;
+      shareMessage: string;
+      challenge?: GroupChallenge;
+      challengeToken?: string;
     }
   | {
       type: "COSMETIC_APPLIED";

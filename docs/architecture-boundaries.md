@@ -52,6 +52,28 @@ npm run lint:arch
 
 CI：`arch-boundaries` job 在每次 push / PR 触发，error 阻断合并。
 
+## `project-shared` 镜像契约
+
+`apps/cocos-client/assets/scripts/project-shared/**` 是 Cocos 运行时对 `packages/shared/src/**` 的受控镜像层。之所以存在这层镜像，是因为 Cocos 脚本不能直接跨出 `assets/` 目录引用 workspace 外部源码。
+
+这层镜像有 3 条强约束：
+
+1. `project-shared` 里的业务源码不能手改。变更应先落在 `packages/shared/src/**`，再通过：
+   ```bash
+   node ./scripts/sync-project-shared.mjs
+   ```
+   回写镜像。
+2. 镜像范围不是“shared 根目录全量复制”，而是由 [scripts/project-shared-parity.mjs](/Users/grace/Documents/project/codex/ProjectVeil/scripts/project-shared-parity.mjs) 里的入口清单决定，并自动补齐这些入口在 `packages/shared/src/**` 内继续引用到的相对依赖。
+3. CI 会在 `npm run lint:arch` 中执行：
+   ```bash
+   node ./scripts/check-project-shared-parity.mjs
+   ```
+   只要镜像缺文件、出现未登记的额外 `.ts` 文件，或内容与 manifest 生成结果不一致，就会直接阻断合并。
+
+额外约定：
+- `project-shared/map.ts` 是兼容层入口，实际指向 `project-shared/world/index.ts`，用来承接 `packages/shared/src/world/**` 这组模块的镜像。
+- 如果 Cocos 需要新增 shared 能力，必须更新入口清单，让 mirror 重新计算闭包并让 parity check 跟着生效，不能只“顺手复制一个文件”。
+
 ## 异常豁免流程
 
 如果确实需要违反某条规则，处理顺序为：

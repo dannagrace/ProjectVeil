@@ -2,6 +2,7 @@ import type {
   BattleSkillCatalogConfig,
   HeroLearnedSkillState,
   HeroSkillTreeConfig,
+  HeroAttributeBonuses,
   WorldGenerationConfig
 } from "./models.ts";
 
@@ -66,6 +67,38 @@ function createHeroSkillIndex(config: HeroSkillTreeConfig): Map<string, HeroSkil
         : []
     )
   );
+}
+
+function validateHeroSkillStatBonuses(
+  bonuses: Partial<HeroAttributeBonuses> | undefined,
+  path: string,
+  issues: CrossFileConfigIssue[]
+): void {
+  if (!bonuses) {
+    return;
+  }
+
+  const allowedKeys = new Set(["attack", "defense", "power", "knowledge", "maxHp"]);
+  for (const [key, value] of Object.entries(bonuses)) {
+    const bonusPath = `${path}.${key}`;
+    if (!allowedKeys.has(key)) {
+      pushIssue(issues, {
+        documentId: "heroSkills",
+        path: bonusPath,
+        code: "unknown_hero_skill_stat_bonus",
+        message: `Unknown hero skill stat bonus key ${key}.`
+      });
+      continue;
+    }
+    if (!isNonNegativeInteger(value)) {
+      pushIssue(issues, {
+        documentId: "heroSkills",
+        path: bonusPath,
+        code: "hero_skill_stat_bonus_invalid",
+        message: `Hero skill stat bonus ${key} must be a non-negative integer.`
+      });
+    }
+  }
 }
 
 export function validateHeroSkillTreeCrossReferences(
@@ -232,6 +265,7 @@ export function validateHeroSkillTreeCrossReferences(
           message: `Hero skill ${skill.id} rank ${rank.rank} must define a description.`
         });
       }
+      validateHeroSkillStatBonuses(rank.statBonuses, `${rankPath}.statBonuses`, issues);
       for (const [battleSkillIndex, battleSkillId] of (rank.battleSkillIds ?? []).entries()) {
         if (!battleSkillIds.has(battleSkillId)) {
           pushIssue(issues, {
