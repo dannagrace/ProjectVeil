@@ -36,6 +36,20 @@
   - the first screen now exposes both the upgraded map pack and character art
   - the main remaining mismatch is deeper HUD / battle-state iconography, not the top-level room shell
 
+## H5 battle / timeline / badge pass - 2026-04-21
+
+- Completed the second shell unification pass aimed at the remaining visible mismatches:
+  - timeline items now carry a structured header (`source + tone pill`) instead of the old flat list rows
+  - hovered interaction badges now render as labeled chips instead of bare pixel icons
+  - battle actions, battle report controls, intel chips, detail rows, lane shells, room status, settlement cards, and empty states now share the same cooler panel language as the upgraded shell
+- Kept the battle interaction semantics untouched; this pass is visual + hierarchy only.
+- Verified with:
+  - `npm run typecheck -- client:h5`
+  - fresh room-entry screenshot: `output/playwright/h5-room-after-battle-timeline-pass.png`
+- Outcome:
+  - top-level room shell, battle panel, timeline, and interaction badges now read as one system
+  - the next visual bottleneck is the deeper icon set and state-specific emphasis inside active combat, not the surrounding shell
+
 ## Map art upgrade closure - 2026-04-20
 
 - Closed the approved map-art upgrade spec by updating the design doc status from planning to implemented and adding the missing implementation / integration / acceptance sections:

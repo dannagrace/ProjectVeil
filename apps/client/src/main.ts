@@ -2745,6 +2745,67 @@ function sourceLabel(source: TimelineEntry["source"]): string {
   return "系统";
 }
 
+function timelineToneLabel(tone: TimelineEntry["tone"]): string {
+  if (tone === "move") {
+    return "移动";
+  }
+
+  if (tone === "battle") {
+    return "战斗";
+  }
+
+  if (tone === "loot") {
+    return "收获";
+  }
+
+  if (tone === "sync") {
+    return "同步";
+  }
+
+  return "系统";
+}
+
+function rarityBadgeLabel(rarity: string | null | undefined): string {
+  if (!rarity) {
+    return "常规";
+  }
+
+  if (rarity === "elite") {
+    return "精英";
+  }
+
+  return rarity;
+}
+
+function factionBadgeLabel(faction: string | null | undefined): string {
+  if (!faction) {
+    return "中立";
+  }
+
+  if (faction === "crown") {
+    return "王冠";
+  }
+
+  if (faction === "wild") {
+    return "荒野";
+  }
+
+  if (faction === "shadow") {
+    return "暗影";
+  }
+
+  return faction;
+}
+
+function renderObjectBadgeChip(src: string, label: string, tone: "interaction" | "faction" | "rarity"): string {
+  return `
+    <span class="object-tag-shell tone-${tone}">
+      <img class="object-tag" src="${src}" alt="" aria-hidden="true" />
+      <span class="object-tag-label">${label}</span>
+    </span>
+  `;
+}
+
 function buildTimelineEntries(update: SessionUpdate, source: TimelineEntry["source"]): TimelineEntry[] {
   const items: TimelineEntry[] = [];
   const stamp = Date.now();
@@ -4072,6 +4133,7 @@ function renderBattleActions(): string {
           : " -> 自身";
       return `
         <button
+          class="battle-action-button battle-action-skill"
           data-testid="battle-skill-${skill.id}"
           data-battle-action="skill"
           data-skill-id="${skill.id}"
@@ -4088,13 +4150,14 @@ function renderBattleActions(): string {
 
   return `
     <div class="battle-actions" data-testid="battle-actions">
-      <button data-testid="battle-attack" data-battle-action="attack" data-attacker="${active.id}" data-defender="${selectedTarget?.id ?? ""}" ${selectedTarget ? "" : "disabled"}>
+      <button class="battle-action-button battle-action-attack" data-testid="battle-attack" data-battle-action="attack" data-attacker="${active.id}" data-defender="${selectedTarget?.id ?? ""}" ${selectedTarget ? "" : "disabled"}>
         ${selectedTarget ? `攻击 ${selectedTarget.stackName}` : "无可攻击目标"}
       </button>
       ${skillButtons}
-      <button data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
-      <button data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
+      <button class="battle-action-button battle-action-utility" data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
+      <button class="battle-action-button battle-action-utility" data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
       <button
+        class="battle-action-button battle-action-report"
         type="button"
         data-battle-report-toggle="${state.battleReport.open ? "close" : "open"}"
         ${reportTargetPlayerId ? "" : "disabled"}
@@ -4133,7 +4196,7 @@ function renderBattleActions(): string {
             <button type="button" data-battle-report-submit ${state.battleReport.submitting ? "disabled" : ""}>
               ${state.battleReport.submitting ? "提交中..." : "提交举报"}
             </button>
-            <button type="button" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}>取消</button>
+            <button type="button" class="battle-action-button battle-action-utility" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}>取消</button>
           </div>
         </div>`
           : ""
@@ -4382,8 +4445,11 @@ function renderTimeline(): string {
         .map(
           (item) => `
             <div class="timeline-item tone-${item.tone}">
-              <span class="timeline-source">${sourceLabel(item.source)}</span>
-              <strong>${item.text}</strong>
+              <div class="timeline-item-head">
+                <span class="timeline-source">${sourceLabel(item.source)}</span>
+                <span class="timeline-tone-pill tone-${item.tone}">${timelineToneLabel(item.tone)}</span>
+              </div>
+              <strong class="timeline-copy">${item.text}</strong>
             </div>
           `
         )
@@ -5114,9 +5180,9 @@ function render(): void {
                       </div>
                       <span>${hoveredObject.subtitle}</span>
                       <div class="object-card-tags meta-row">
-                        ${hoveredBadges.interaction ? `<img class="object-tag" src="${hoveredBadges.interaction}" alt="" aria-hidden="true" />` : ""}
-                        ${hoveredBadges.faction ? `<img class="object-tag" src="${hoveredBadges.faction}" alt="" aria-hidden="true" />` : ""}
-                        ${hoveredBadges.rarity ? `<img class="object-tag" src="${hoveredBadges.rarity}" alt="" aria-hidden="true" />` : ""}
+                        ${hoveredBadges.interaction ? renderObjectBadgeChip(hoveredBadges.interaction, interactionLabel(hoveredObject.interactionType), "interaction") : ""}
+                        ${hoveredBadges.faction ? renderObjectBadgeChip(hoveredBadges.faction, factionBadgeLabel(hoveredObject.faction), "faction") : ""}
+                        ${hoveredBadges.rarity ? renderObjectBadgeChip(hoveredBadges.rarity, rarityBadgeLabel(hoveredObject.rarity), "rarity") : ""}
                         <span class="object-card-value">${hoveredObject.value}</span>
                       </div>
                     </div>
