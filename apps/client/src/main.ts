@@ -2183,6 +2183,97 @@ function renderBattleDetailItem(title: string, meta: string, copy: string): stri
   `;
 }
 
+function renderUiIcon(
+  kind:
+    | "attack"
+    | "skill"
+    | "wait"
+    | "defend"
+    | "report"
+    | "count"
+    | "hp"
+    | "lane"
+    | "stat"
+    | "initiative"
+    | "move"
+    | "battle"
+    | "loot"
+    | "sync"
+    | "system"
+    | "selected"
+    | "active"
+    | "threat"
+    | "status"
+    | "target",
+  tone: "neutral" | "accent" | "danger" | "success" | "info" = "neutral"
+): string {
+  const paths: Record<string, string> = {
+    attack: '<path d="M5 19L19 5"/><path d="M9 5h10v10"/><path d="M5 9l4-4"/>',
+    skill: '<path d="M12 3l2.4 4.8L20 10l-4 3.8.9 5.2-4.9-2.5-4.9 2.5.9-5.2L4 10l5.6-2.2z"/>',
+    wait: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>',
+    defend: '<path d="M12 3l7 3v5c0 4.4-2.7 8.1-7 10-4.3-1.9-7-5.6-7-10V6z"/>',
+    report: '<path d="M6 4h9l3 3v13H6z"/><path d="M15 4v4h4"/><path d="M12 10v5"/><circle cx="12" cy="18" r="1"/>',
+    count: '<path d="M5 8h14"/><path d="M5 12h14"/><path d="M5 16h14"/>',
+    hp: '<path d="M12 20s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',
+    lane: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/><circle cx="8" cy="12" r="2"/>',
+    stat: '<path d="M5 18l4-5 3 2 5-7 2 1"/><path d="M17 8h2v2"/>',
+    initiative: '<path d="M12 4v8l5 3"/><circle cx="12" cy="12" r="8"/>',
+    move: '<path d="M4 15c2-3 4-6 8-6 3 0 5 2 8 5"/><path d="M14 6l6 1-2 6"/>',
+    battle: '<path d="M7 6l5 5-5 5"/><path d="M17 6l-5 5 5 5"/>',
+    loot: '<path d="M4 10h16v9H4z"/><path d="M8 10V7a2 2 0 114 0v3"/><path d="M12 10V7a2 2 0 114 0v3"/>',
+    sync: '<path d="M7 7h9l-2-2"/><path d="M17 17H8l2 2"/><path d="M16 5v5H6"/><path d="M8 19v-5h10"/>',
+    system: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.9 4.9l2.1 2.1"/><path d="M17 17l2.1 2.1"/><path d="M19.1 4.9L17 7"/><path d="M7 17l-2.1 2.1"/>',
+    selected: '<path d="M4 12l5 5L20 6"/>',
+    active: '<path d="M12 3l2.6 5.4L20 9l-4 3.6.9 5.4-4.9-2.7-4.9 2.7.9-5.4L4 9l5.4-.6z"/>',
+    threat: '<path d="M12 4l8 14H4z"/><path d="M12 9v4"/><circle cx="12" cy="16.5" r="1"/>',
+    status: '<path d="M6 12l3 3 9-9"/><path d="M5 5h14v14H5z"/>',
+    target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/>'
+  };
+
+  return `
+    <span class="ui-icon tone-${tone}" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        ${paths[kind]}
+      </svg>
+    </span>
+  `;
+}
+
+function renderIconChip(
+  icon: Parameters<typeof renderUiIcon>[0],
+  label: string,
+  tone: "neutral" | "accent" | "danger" | "success" | "info" = "neutral"
+): string {
+  return `<span class="battle-intel-chip tone-${tone}">${renderUiIcon(icon, tone)}<span>${label}</span></span>`;
+}
+
+function renderUnitStateBadge(
+  icon: Parameters<typeof renderUiIcon>[0],
+  label: string,
+  tone: "neutral" | "accent" | "danger" | "success" | "info"
+): string {
+  return `<span class="unit-state-badge tone-${tone}">${renderUiIcon(icon, tone)}<span>${label}</span></span>`;
+}
+
+function renderBattleActionButton(
+  className: string,
+  testId: string,
+  attrs: string,
+  icon: Parameters<typeof renderUiIcon>[0],
+  title: string,
+  subtitle: string
+): string {
+  return `
+    <button class="battle-action-button ${className}" data-testid="${testId}" ${attrs}>
+      <span class="battle-action-icon">${renderUiIcon(icon, className.includes("attack") ? "accent" : className.includes("report") ? "danger" : className.includes("skill") ? "info" : "neutral")}</span>
+      <span class="battle-action-copy">
+        <strong>${title}</strong>
+        <span>${subtitle}</span>
+      </span>
+    </button>
+  `;
+}
+
 function renderBattleSkillDetail(skill: BattleSkillView): string {
   const deliveryLabel =
     skill.target === "enemy" ? (skill.delivery === "ranged" ? "远程" : "接战") : "自身";
@@ -2248,7 +2339,7 @@ function renderBattleIntelCard(
             <div class="info-card-eyebrow">${eyebrow}</div>
             <strong>${title}</strong>
           </div>
-          <span class="status-pill">${badge}</span>
+          <span class="status-pill">${renderUiIcon("status", "neutral")}${badge}</span>
         </div>
         <div class="battle-detail-empty">${emptyMessage}</div>
       </article>
@@ -2270,15 +2361,15 @@ function renderBattleIntelCard(
           <div class="info-card-eyebrow">${eyebrow}</div>
           <strong>${title} · ${unit.stackName}</strong>
         </div>
-        <span class="status-pill">${badge}</span>
+        <span class="status-pill">${renderUiIcon("status", "neutral")}${badge}</span>
       </div>
       <div class="battle-intel-stats">
-        <span class="battle-intel-chip">数量 x${unit.count}</span>
-        <span class="battle-intel-chip">HP ${unit.currentHp}/${unit.maxHp}</span>
-        <span class="battle-intel-chip">线位 ${unit.lane + 1}</span>
-        <span class="battle-intel-chip">ATK ${unit.attack}</span>
-        <span class="battle-intel-chip">DEF ${unit.defense}</span>
-        <span class="battle-intel-chip">INIT ${unit.initiative}</span>
+        ${renderIconChip("count", `数量 x${unit.count}`)}
+        ${renderIconChip("hp", `HP ${unit.currentHp}/${unit.maxHp}`, "danger")}
+        ${renderIconChip("lane", `线位 ${unit.lane + 1}`, "info")}
+        ${renderIconChip("stat", `ATK ${unit.attack}`, "accent")}
+        ${renderIconChip("defend", `DEF ${unit.defense}`, "success")}
+        ${renderIconChip("initiative", `INIT ${unit.initiative}`, "info")}
       </div>
       ${renderBattleDetailGroup("技能", (unit.skills ?? []).map(renderBattleSkillDetail), "当前没有可说明的技能。")}
       ${renderBattleDetailGroup("状态", [...(unit.statusEffects ?? []).map(renderBattleStatusDetail), ...flagDetails], "当前没有持续状态。")}
@@ -4125,45 +4216,62 @@ function renderBattleActions(): string {
     .map((skill) => {
       const targetId = skill.target === "enemy" ? (selectedTarget?.id ?? "") : active.id;
       const enabled = skill.target === "enemy" ? Boolean(selectedTarget) && skill.remainingCooldown === 0 : skill.remainingCooldown === 0;
-      const labelSuffix =
+      const skillTargetLabel =
         skill.target === "enemy"
           ? selectedTarget
-            ? ` -> ${selectedTarget.stackName}`
-            : " -> 请选择目标"
-          : " -> 自身";
-      return `
-        <button
-          class="battle-action-button battle-action-skill"
-          data-testid="battle-skill-${skill.id}"
-          data-battle-action="skill"
-          data-skill-id="${skill.id}"
-          data-unit="${active.id}"
-          data-target="${targetId}"
-          ${enabled ? "" : "disabled"}
-          title="${skill.description}"
-        >
-          ${skill.name}${skill.remainingCooldown > 0 ? ` (${skill.remainingCooldown})` : ""}${labelSuffix}
-        </button>
-      `;
+            ? `目标 ${selectedTarget.stackName}`
+            : "先选择目标"
+          : "作用于自身";
+      const subtitle =
+        skill.remainingCooldown > 0
+          ? `冷却 ${skill.remainingCooldown} 回合 · ${skillTargetLabel}`
+          : `${battleSkillTargetLabel(skill.target)} · ${skillTargetLabel}`;
+      return renderBattleActionButton(
+        "battle-action-skill",
+        `battle-skill-${skill.id}`,
+        `data-battle-action="skill" data-skill-id="${skill.id}" data-unit="${active.id}" data-target="${targetId}" ${enabled ? "" : "disabled"} title="${skill.description}"`,
+        "skill",
+        skill.name,
+        subtitle
+      );
     })
     .join("");
 
   return `
     <div class="battle-actions" data-testid="battle-actions">
-      <button class="battle-action-button battle-action-attack" data-testid="battle-attack" data-battle-action="attack" data-attacker="${active.id}" data-defender="${selectedTarget?.id ?? ""}" ${selectedTarget ? "" : "disabled"}>
-        ${selectedTarget ? `攻击 ${selectedTarget.stackName}` : "无可攻击目标"}
-      </button>
+      ${renderBattleActionButton(
+        "battle-action-attack",
+        "battle-attack",
+        `data-battle-action="attack" data-attacker="${active.id}" data-defender="${selectedTarget?.id ?? ""}" ${selectedTarget ? "" : "disabled"}`,
+        "attack",
+        selectedTarget ? `攻击 ${selectedTarget.stackName}` : "无可攻击目标",
+        selectedTarget ? "对当前锁定目标发动普通攻击" : "先锁定一个敌方单位"
+      )}
       ${skillButtons}
-      <button class="battle-action-button battle-action-utility" data-testid="battle-wait" data-battle-action="wait" data-unit="${active.id}">等待</button>
-      <button class="battle-action-button battle-action-utility" data-testid="battle-defend" data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}>防御</button>
-      <button
-        class="battle-action-button battle-action-report"
-        type="button"
-        data-battle-report-toggle="${state.battleReport.open ? "close" : "open"}"
-        ${reportTargetPlayerId ? "" : "disabled"}
-      >
-        ${reportTargetPlayerId ? `举报玩家 ${escapeHtml(reportTargetPlayerId)}` : "当前无法举报"}
-      </button>
+      ${renderBattleActionButton(
+        "battle-action-utility",
+        "battle-wait",
+        `data-battle-action="wait" data-unit="${active.id}"`,
+        "wait",
+        "等待",
+        "保留单位，结束本次行动"
+      )}
+      ${renderBattleActionButton(
+        "battle-action-utility",
+        "battle-defend",
+        `data-battle-action="defend" data-unit="${active.id}" ${active.defending ? "disabled" : ""}`,
+        "defend",
+        "防御",
+        active.defending ? "本回合已进入防御姿态" : "抬高承伤能力，等待敌方接战"
+      )}
+      ${renderBattleActionButton(
+        "battle-action-report",
+        "battle-report-toggle",
+        `type="button" data-battle-report-toggle="${state.battleReport.open ? "close" : "open"}" ${reportTargetPlayerId ? "" : "disabled"}`,
+        "report",
+        reportTargetPlayerId ? `举报玩家 ${escapeHtml(reportTargetPlayerId)}` : "当前无法举报",
+        reportTargetPlayerId ? "提交多人对战举报记录" : "当前房间没有可举报目标"
+      )}
       ${
         state.battleReport.open && reportTargetPlayerId
           ? `
@@ -4193,10 +4301,22 @@ function renderBattleActions(): string {
             >${escapeHtml(state.battleReport.description)}</textarea>
           </label>
           <div class="battle-report-actions">
-            <button type="button" data-battle-report-submit ${state.battleReport.submitting ? "disabled" : ""}>
-              ${state.battleReport.submitting ? "提交中..." : "提交举报"}
-            </button>
-            <button type="button" class="battle-action-button battle-action-utility" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}>取消</button>
+            ${renderBattleActionButton(
+              "battle-action-report",
+              "battle-report-submit",
+              `type="button" data-battle-report-submit ${state.battleReport.submitting ? "disabled" : ""}`,
+              "report",
+              state.battleReport.submitting ? "提交中..." : "提交举报",
+              "写入管理员审核队列"
+            )}
+            ${renderBattleActionButton(
+              "battle-action-utility",
+              "battle-report-cancel",
+              `type="button" data-battle-report-toggle="close" ${state.battleReport.submitting ? "disabled" : ""}`,
+              "wait",
+              "取消",
+              "返回当前战斗面板"
+            )}
           </div>
         </div>`
           : ""
@@ -4294,8 +4414,8 @@ function renderRoomStatusPanel(): string {
       })}</p>
       <p class="muted" data-testid="opponent-summary">${opponentLine}</p>
       <div class="room-status-chips">
-        <span class="battle-intel-chip" data-testid="room-player-summary">${playerSummary}</span>
-        <span class="battle-intel-chip" data-testid="room-connection-summary">连接状态：${diagnosticsConnectionStatusLabel(state.diagnostics.connectionStatus)}</span>
+        <span class="battle-intel-chip" data-testid="room-player-summary">${renderUiIcon("active", "success")}<span>${playerSummary}</span></span>
+        <span class="battle-intel-chip" data-testid="room-connection-summary">${renderUiIcon("sync", "info")}<span>连接状态：${diagnosticsConnectionStatusLabel(state.diagnostics.connectionStatus)}</span></span>
       </div>
       <p class="muted" data-testid="room-next-action" data-tone="${roomFeedbackTone}">${renderRoomActionHint({
         battle: state.battle,
@@ -4368,6 +4488,14 @@ function renderBattlefield(): string {
     const statusLine = (unit.statusEffects ?? [])
       .map((status) => `${status.name} ${status.durationRemaining}`)
       .join(" · ");
+    const stateBadges = [
+      isActive ? renderUnitStateBadge("active", "当前行动", "accent") : "",
+      isSelected ? renderUnitStateBadge("target", "已锁定", "danger") : "",
+      unit.defending ? renderUnitStateBadge("defend", "防御中", "success") : "",
+      isDead ? renderUnitStateBadge("threat", "已阵亡", "neutral") : ""
+    ]
+      .filter(Boolean)
+      .join("");
 
     return `
       <button
@@ -4380,6 +4508,7 @@ function renderBattlefield(): string {
           ${frameSrc ? `<img class="unit-frame" src="${frameSrc}" alt="" aria-hidden="true" />` : ""}
           ${badgeSrc.faction ? `<img class="unit-badge unit-badge-faction" src="${badgeSrc.faction}" alt="" aria-hidden="true" />` : ""}
           ${badgeSrc.rarity ? `<img class="unit-badge unit-badge-rarity" src="${badgeSrc.rarity}" alt="" aria-hidden="true" />` : ""}
+          ${stateBadges ? `<div class="unit-state-rail">${stateBadges}</div>` : ""}
         </div>
         <div class="info-card-copy">
           <div class="info-card-head">
@@ -4390,15 +4519,15 @@ function renderBattlefield(): string {
             <span class="status-pill">${unitStatusLabel(unit.id, unit.count, unit.camp, isActive)}</span>
           </div>
           <div class="meta-row">
-            <span class="unit-meta">x${unit.count}</span>
-            <span class="unit-meta">HP ${unit.currentHp}/${unit.maxHp}</span>
+            <span class="unit-meta">${renderUiIcon("count")}x${unit.count}</span>
+            <span class="unit-meta">${renderUiIcon("hp", "danger")}HP ${unit.currentHp}/${unit.maxHp}</span>
           </div>
           <div class="meta-row">
-            <span class="unit-meta">线位 ${unit.lane + 1}</span>
+            <span class="unit-meta">${renderUiIcon("lane", "info")}线位 ${unit.lane + 1}</span>
           </div>
           <div class="meta-row">
-            <span class="unit-meta">ATK ${unit.attack}</span>
-            <span class="unit-meta">DEF ${unit.defense}${unit.defending ? " · DEFEND" : ""}</span>
+            <span class="unit-meta">${renderUiIcon("stat", "accent")}ATK ${unit.attack}</span>
+            <span class="unit-meta">${renderUiIcon("defend", "success")}DEF ${unit.defense}${unit.defending ? " · DEFEND" : ""}</span>
           </div>
           ${statusLine ? `<div class="meta-row"><span class="unit-meta">${statusLine}</span></div>` : ""}
         </div>
@@ -4414,8 +4543,8 @@ function renderBattlefield(): string {
         <div class="unit-grid">${friendlies.map((unit) => renderUnit(unit.id)).join("")}</div>
       </div>
       <div class="battle-turn-banner">
-        <strong>Round ${state.battle.round}</strong>
-        <span>${activeId ? `当前单位：${state.battle.units[activeId]?.stackName ?? activeId}` : "等待结算"}</span>
+        <strong>${renderUiIcon("battle", "accent")}Round ${state.battle.round}</strong>
+        <span>${activeId ? `${renderUiIcon("active", "accent")}当前单位：${state.battle.units[activeId]?.stackName ?? activeId}` : `${renderUiIcon("wait")}等待结算`}</span>
       </div>
       <div class="battle-lane">
         <div class="lane-title">敌方部队</div>
@@ -4447,7 +4576,7 @@ function renderTimeline(): string {
             <div class="timeline-item tone-${item.tone}">
               <div class="timeline-item-head">
                 <span class="timeline-source">${sourceLabel(item.source)}</span>
-                <span class="timeline-tone-pill tone-${item.tone}">${timelineToneLabel(item.tone)}</span>
+                <span class="timeline-tone-pill tone-${item.tone}">${renderUiIcon(item.tone === "move" ? "move" : item.tone === "battle" ? "battle" : item.tone === "loot" ? "loot" : item.tone === "sync" ? "sync" : "system", item.tone === "battle" ? "accent" : item.tone === "move" ? "success" : item.tone === "loot" ? "info" : "neutral")}${timelineToneLabel(item.tone)}</span>
               </div>
               <strong class="timeline-copy">${item.text}</strong>
             </div>

@@ -2381,3 +2381,14 @@ Original prompt: 你先学习下当前项目并给出开发的计划
     - `node --import ./node_modules/tsx/dist/loader.mjs --test ./apps/cocos-client/test/cocos-timeline-panel-model.test.ts ./apps/cocos-client/test/cocos-equipment-panel-model.test.ts ./apps/cocos-client/test/cocos-hud-panel-model.test.ts ./apps/cocos-client/test/cocos-settings-panel.test.ts ./apps/cocos-client/test/cocos-hud-panel.test.ts ./apps/cocos-client/test/root-panel-orchestration.test.ts ./apps/cocos-client/test/cocos-root-orchestration.test.ts ./apps/cocos-client/test/cocos-veil-root.test.ts ./apps/cocos-client/test/cocos-battle-panel-model.test.ts ./apps/cocos-client/test/cocos-map-board-model.test.ts`
     - `npm run test:cocos:coverage`
     - `npm run smoke:cocos:canonical-journey`
+
+- H5 战斗状态强调 + 图标系统第一轮完成：
+  - `apps/client/src/main.ts`
+    - 战斗面板接入统一 icon/button 组件，攻击、技能、等待、防御、举报都带动作图标和副标题
+    - 战场单位卡新增 `当前行动 / 已锁定 / 防御中 / 已阵亡` 状态 badge
+    - 时间线 tone pill、房间状态 chip、交互 badge 改成带图标的结构化芯片
+  - `apps/client/src/styles.css`
+    - 新增 `ui-icon`、`unit-state-badge`、`battle-action-copy` 等样式，统一 battle / timeline / badge 的冷色壳层
+  - 验收已通过：
+    - `npm run typecheck -- client:h5`
+    - Playwright 真实战斗截图：`output/playwright/h5-live-battle-full-after-icon-pass.png`
