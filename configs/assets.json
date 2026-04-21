@@ -104,81 +104,81 @@
     },
     "crown_crossbowman": {
       "portrait": {
-        "idle": "/assets/pixel/units/hero-guard-basic.png",
-        "selected": "/assets/pixel/units/hero-guard-basic-selected.png",
-        "hit": "/assets/pixel/units/hero-guard-basic-hit.png"
+        "idle": "/assets/pixel/units/crown-crossbowman.png",
+        "selected": "/assets/pixel/units/crown-crossbowman-selected.png",
+        "hit": "/assets/pixel/units/crown-crossbowman-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-ally.png"
     },
     "crown_light_outrider": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/dune-raider.png",
-        "selected": "/assets/pixel/showcase-units/dune-raider-selected.png",
-        "hit": "/assets/pixel/showcase-units/dune-raider-hit.png"
+        "idle": "/assets/pixel/units/crown-light-outrider.png",
+        "selected": "/assets/pixel/units/crown-light-outrider-selected.png",
+        "hit": "/assets/pixel/units/crown-light-outrider-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-ally.png"
     },
     "wild_cave_bear": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/iron-walker.png",
-        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
-        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+        "idle": "/assets/pixel/units/wild-cave-bear.png",
+        "selected": "/assets/pixel/units/wild-cave-bear-selected.png",
+        "hit": "/assets/pixel/units/wild-cave-bear-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "wild_serpent": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/moss-stalker.png",
-        "selected": "/assets/pixel/showcase-units/moss-stalker-selected.png",
-        "hit": "/assets/pixel/showcase-units/moss-stalker-hit.png"
+        "idle": "/assets/pixel/units/wild-serpent.png",
+        "selected": "/assets/pixel/units/wild-serpent-selected.png",
+        "hit": "/assets/pixel/units/wild-serpent-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "wild_hawk_rider": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/dune-raider.png",
-        "selected": "/assets/pixel/showcase-units/dune-raider-selected.png",
-        "hit": "/assets/pixel/showcase-units/dune-raider-hit.png"
+        "idle": "/assets/pixel/units/wild-hawk-rider.png",
+        "selected": "/assets/pixel/units/wild-hawk-rider-selected.png",
+        "hit": "/assets/pixel/units/wild-hawk-rider-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "wild_cave_troll": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/iron-walker.png",
-        "selected": "/assets/pixel/showcase-units/iron-walker-selected.png",
-        "hit": "/assets/pixel/showcase-units/iron-walker-hit.png"
+        "idle": "/assets/pixel/units/wild-cave-troll.png",
+        "selected": "/assets/pixel/units/wild-cave-troll-selected.png",
+        "hit": "/assets/pixel/units/wild-cave-troll-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "shadow_skeleton": {
       "portrait": {
-        "idle": "/assets/pixel/units/wolf-pack.png",
-        "selected": "/assets/pixel/units/wolf-pack-selected.png",
-        "hit": "/assets/pixel/units/wolf-pack-hit.png"
+        "idle": "/assets/pixel/units/shadow-skeleton.png",
+        "selected": "/assets/pixel/units/shadow-skeleton-selected.png",
+        "hit": "/assets/pixel/units/shadow-skeleton-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "shadow_wraith": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/glacier-warden.png",
-        "selected": "/assets/pixel/showcase-units/glacier-warden-selected.png",
-        "hit": "/assets/pixel/showcase-units/glacier-warden-hit.png"
+        "idle": "/assets/pixel/units/shadow-wraith.png",
+        "selected": "/assets/pixel/units/shadow-wraith-selected.png",
+        "hit": "/assets/pixel/units/shadow-wraith-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "shadow_hexer": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/ember-mage.png",
-        "selected": "/assets/pixel/showcase-units/ember-mage-selected.png",
-        "hit": "/assets/pixel/showcase-units/ember-mage-hit.png"
+        "idle": "/assets/pixel/units/shadow-hexer.png",
+        "selected": "/assets/pixel/units/shadow-hexer-selected.png",
+        "hit": "/assets/pixel/units/shadow-hexer-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     },
     "shadow_death_knight": {
       "portrait": {
-        "idle": "/assets/pixel/showcase-units/sunlance-knight.png",
-        "selected": "/assets/pixel/showcase-units/sunlance-knight-selected.png",
-        "hit": "/assets/pixel/showcase-units/sunlance-knight-hit.png"
+        "idle": "/assets/pixel/units/shadow-death-knight.png",
+        "selected": "/assets/pixel/units/shadow-death-knight-selected.png",
+        "hit": "/assets/pixel/units/shadow-death-knight-hit.png"
       },
       "frame": "/assets/pixel/frames/unit-frame-enemy.png"
     }
@@ -305,6 +305,156 @@
     },
     "/assets/pixel/units/wolf-pack-hit.png": {
       "slot": "unit.wolf_pack.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-crossbowman.png": {
+      "slot": "unit.crown_crossbowman.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-crossbowman-selected.png": {
+      "slot": "unit.crown_crossbowman.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-crossbowman-hit.png": {
+      "slot": "unit.crown_crossbowman.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-light-outrider.png": {
+      "slot": "unit.crown_light_outrider.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-light-outrider-selected.png": {
+      "slot": "unit.crown_light_outrider.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/crown-light-outrider-hit.png": {
+      "slot": "unit.crown_light_outrider.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-bear.png": {
+      "slot": "unit.wild_cave_bear.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-bear-selected.png": {
+      "slot": "unit.wild_cave_bear.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-bear-hit.png": {
+      "slot": "unit.wild_cave_bear.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-serpent.png": {
+      "slot": "unit.wild_serpent.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-serpent-selected.png": {
+      "slot": "unit.wild_serpent.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-serpent-hit.png": {
+      "slot": "unit.wild_serpent.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-hawk-rider.png": {
+      "slot": "unit.wild_hawk_rider.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-hawk-rider-selected.png": {
+      "slot": "unit.wild_hawk_rider.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-hawk-rider-hit.png": {
+      "slot": "unit.wild_hawk_rider.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-troll.png": {
+      "slot": "unit.wild_cave_troll.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-troll-selected.png": {
+      "slot": "unit.wild_cave_troll.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/wild-cave-troll-hit.png": {
+      "slot": "unit.wild_cave_troll.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-skeleton.png": {
+      "slot": "unit.shadow_skeleton.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-skeleton-selected.png": {
+      "slot": "unit.shadow_skeleton.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-skeleton-hit.png": {
+      "slot": "unit.shadow_skeleton.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-wraith.png": {
+      "slot": "unit.shadow_wraith.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-wraith-selected.png": {
+      "slot": "unit.shadow_wraith.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-wraith-hit.png": {
+      "slot": "unit.shadow_wraith.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-hexer.png": {
+      "slot": "unit.shadow_hexer.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-hexer-selected.png": {
+      "slot": "unit.shadow_hexer.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-hexer-hit.png": {
+      "slot": "unit.shadow_hexer.hit",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-death-knight.png": {
+      "slot": "unit.shadow_death_knight.idle",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-death-knight-selected.png": {
+      "slot": "unit.shadow_death_knight.selected",
+      "stage": "production",
+      "source": "generated"
+    },
+    "/assets/pixel/units/shadow-death-knight-hit.png": {
+      "slot": "unit.shadow_death_knight.hit",
       "stage": "production",
       "source": "generated"
     },

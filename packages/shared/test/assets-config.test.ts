@@ -106,14 +106,14 @@ test("getAssetMetadataEntry returns metadata entries and null for unknown paths"
 
 test("summarizeAssetMetadata reports stable totals by stage and source", () => {
   assert.deepEqual(summarizeAssetMetadata(assetConfig), {
-    total: 65,
+    total: 95,
     byStage: {
       placeholder: 0,
       prototype: 0,
-      production: 65
+      production: 95
     },
     bySource: {
-      generated: 65,
+      generated: 95,
       "open-source": 0,
       licensed: 0,
       commissioned: 0

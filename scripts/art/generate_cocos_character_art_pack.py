@@ -174,6 +174,16 @@ def main() -> None:
 
     render_unit_variants("unit-guard.png", "hero-guard-basic", UNIT_ROOT, zoom=1.32, center=(0.5, 0.34))
     render_unit_variants("unit-wolf-pack.png", "wolf-pack", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-crown-crossbowman.png", "crown-crossbowman", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-crown-light-outrider.png", "crown-light-outrider", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-wild-cave-bear.png", "wild-cave-bear", UNIT_ROOT, zoom=1.18, center=(0.5, 0.34))
+    render_unit_variants("unit-wild-serpent.png", "wild-serpent", UNIT_ROOT, zoom=1.18, center=(0.5, 0.34))
+    render_unit_variants("unit-wild-hawk-rider.png", "wild-hawk-rider", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-wild-cave-troll.png", "wild-cave-troll", UNIT_ROOT, zoom=1.16, center=(0.5, 0.34))
+    render_unit_variants("unit-shadow-skeleton.png", "shadow-skeleton", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-shadow-wraith.png", "shadow-wraith", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-shadow-hexer.png", "shadow-hexer", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
+    render_unit_variants("unit-shadow-death-knight.png", "shadow-death-knight", UNIT_ROOT, zoom=1.22, center=(0.5, 0.34))
 
     render_unit_variants("unit-moss-stalker.png", "moss-stalker", SHOWCASE_ROOT, zoom=1.18, center=(0.5, 0.35))
     render_unit_variants("unit-iron-walker.png", "iron-walker", SHOWCASE_ROOT, zoom=1.18, center=(0.5, 0.34))
