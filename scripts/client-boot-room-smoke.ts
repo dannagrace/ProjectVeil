@@ -275,8 +275,8 @@ async function main(): Promise<void> {
   runBlockingStep("validating e2e fixtures", FIXTURE_COMMAND);
 
   const processes = [
-    spawnManagedProcess("dev:server", ["run", "dev:server"]),
-    spawnManagedProcess("dev:client", ["run", "dev:client"])
+    spawnManagedProcess("dev -- server", ["run", "dev", "--", "server"]),
+    spawnManagedProcess("dev -- client:h5", ["run", "dev", "--", "client:h5"])
   ];
 
   try {
