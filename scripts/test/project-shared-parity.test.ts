@@ -64,3 +64,24 @@ test("project-shared sync and parity detect drift plus unexpected files", () => 
   assert.ok(driftReport.driftedFiles.some((entry) => entry.filePath.endsWith("/battle.ts")));
   assert.ok(driftReport.unexpectedFiles.some((entry) => entry.endsWith("/unexpected.ts")));
 });
+
+test("project-shared sync removes stale mirrored files so parity can recover after deletions", () => {
+  const fixtureRoot = createFixtureRoot();
+  syncProjectShared({ rootDir: fixtureRoot });
+
+  const staleTarget = resolve(
+    fixtureRoot,
+    "apps/cocos-client/assets/scripts/project-shared/stale-only.ts"
+  );
+  writeFileSync(staleTarget, 'export const staleOnly = true;\n', "utf8");
+
+  const staleReport = checkProjectSharedParity({ rootDir: fixtureRoot });
+  assert.ok(staleReport.unexpectedFiles.some((entry) => entry.endsWith("/stale-only.ts")));
+
+  const resyncResult = syncProjectShared({ rootDir: fixtureRoot });
+  const cleanReport = checkProjectSharedParity({ rootDir: fixtureRoot });
+
+  assert.ok(resyncResult.changedFiles.some((entry) => entry.endsWith("/stale-only.ts")));
+  assert.equal(cleanReport.hasViolations, false);
+  assert.equal(cleanReport.unexpectedFiles.length, 0);
+});

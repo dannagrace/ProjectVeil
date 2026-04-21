@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -265,6 +265,7 @@ export function syncProjectShared(options = {}) {
   const rootDir = resolve(options.rootDir ?? DEFAULT_ROOT_DIR);
   const expectedFiles = buildExpectedProjectSharedFiles({ rootDir });
   const changedFiles = [];
+  const actualFiles = listMirroredTypeScriptFiles(rootDir);
 
   for (const [relativeTargetPath, expectedContent] of expectedFiles.entries()) {
     const targetAbsolutePath = resolve(rootDir, relativeTargetPath);
@@ -278,6 +279,15 @@ export function syncProjectShared(options = {}) {
     }
 
     writeFileSync(targetAbsolutePath, expectedContent, "utf8");
+    changedFiles.push(relativeTargetPath);
+  }
+
+  for (const relativeTargetPath of actualFiles) {
+    if (expectedFiles.has(relativeTargetPath)) {
+      continue;
+    }
+
+    rmSync(resolve(rootDir, relativeTargetPath), { force: true });
     changedFiles.push(relativeTargetPath);
   }
 

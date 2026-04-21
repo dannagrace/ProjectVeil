@@ -10,20 +10,24 @@ export interface TimelinePanelViewModel {
   empty: boolean;
 }
 
+function trimTimelinePrefix(entry: string, pattern: RegExp): string {
+  return entry.replace(pattern, "").trim() || entry;
+}
+
 export function parseTimelineEntry(entry: string): TimelineEntryView {
-  if (entry.startsWith("[系统]")) {
+  if (/^(?:\[系统\]|系统：)\s*/.test(entry)) {
     return {
       tone: "system",
       badge: "系统",
-      body: entry.replace(/^\[系统\]\s*/, "").trim() || entry
+      body: trimTimelinePrefix(entry, /^(?:\[系统\]|系统：)\s*/)
     };
   }
 
-  if (entry.startsWith("[事件]")) {
+  if (/^(?:\[事件\]|事件：)\s*/.test(entry)) {
     return {
       tone: "event",
       badge: "事件",
-      body: entry.replace(/^\[事件\]\s*/, "").trim() || entry
+      body: trimTimelinePrefix(entry, /^(?:\[事件\]|事件：)\s*/)
     };
   }
 

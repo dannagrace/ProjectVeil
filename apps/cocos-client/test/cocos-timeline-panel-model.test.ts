@@ -8,7 +8,17 @@ test("parseTimelineEntry keeps explicit badges and falls back to generic records
     badge: "系统",
     body: "资源已同步",
   });
+  assert.deepEqual(parseTimelineEntry("系统：资源已同步"), {
+    tone: "system",
+    badge: "系统",
+    body: "资源已同步",
+  });
   assert.deepEqual(parseTimelineEntry("[事件] 英雄升级"), {
+    tone: "event",
+    badge: "事件",
+    body: "英雄升级",
+  });
+  assert.deepEqual(parseTimelineEntry("事件：英雄升级"), {
     tone: "event",
     badge: "事件",
     body: "英雄升级",

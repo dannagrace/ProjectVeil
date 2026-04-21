@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-import registryData from "./command-registry.json";
+import registryData from "./command-registry.json" with { type: "json" };
 
 export type CommandFamilyName = keyof typeof registryData;
 
@@ -182,7 +182,11 @@ export function renderFamilyHelp(family: CommandFamilyName): string {
 }
 
 function shellQuote(value: string): string {
-  return JSON.stringify(value);
+  if (value.length === 0) {
+    return "''";
+  }
+
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function runCommand(command: string, args: string[]): number {
