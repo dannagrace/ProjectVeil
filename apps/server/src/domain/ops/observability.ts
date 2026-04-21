@@ -11,6 +11,7 @@ import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "@server/inf
 import { resetGuestAuthSessions } from "@server/domain/account/auth";
 import { configureAuthoritativeRoomTelemetry } from "@server/index";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { getActiveRoomInstances, resetLobbyRoomRegistry } from "@server/transport/colyseus-room/runtime";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -2333,6 +2334,16 @@ export function registerRuntimeObservabilityRoutes(
   app.post("/api/test/reset-store", async (_request, response) => {
     try {
       if (store?.clearAll) {
+        const activeRooms = Array.from(getActiveRoomInstances().values());
+        for (const room of activeRooms) {
+          await room.disconnect().catch((error: unknown) => {
+            console.warn("[test-reset] failed to disconnect active room", {
+              roomId: room.roomId,
+              error
+            });
+          });
+        }
+        resetLobbyRoomRegistry();
         store.clearAll();
         resetCapturedAnalyticsEventsForTest();
         // Also reset guest auth sessions to clear cached tokens/sessions

@@ -5,7 +5,7 @@ import { Client, type Room } from "@colyseus/sdk";
 import type { ClientMessage, ServerMessage, SessionStatePayload } from "../packages/shared/src/index.ts";
 import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
-const FIXTURE_COMMAND = ["run", "validate:e2e:fixtures"] as const;
+const FIXTURE_COMMAND = ["run", "validate", "--", "e2e:fixtures"] as const;
 const SERVER_URL = "http://127.0.0.1:2567";
 const CLIENT_URL = "http://127.0.0.1:4173";
 const SERVER_WS_URL = "ws://127.0.0.1:2567";

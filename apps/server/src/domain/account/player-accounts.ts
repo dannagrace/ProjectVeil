@@ -1865,6 +1865,49 @@ export function registerPlayerAccountRoutes(
         },
         recentEventLog: appendEventLogEntries(account.recentEventLog, [claimEntry])
       });
+      const currentQuestState = await store.loadPlayerQuestState?.(account.playerId);
+      const cycleKey = board.cycleKey ?? timestamp.slice(0, 10);
+      if (store.savePlayerQuestState && cycleKey) {
+        const questIds = board.quests.map((entry) => entry.id);
+        const trackedState = currentQuestState ?? {
+          playerId: account.playerId,
+          currentDateKey: cycleKey,
+          activeQuestIds: questIds,
+          rotations: [],
+          updatedAt: timestamp
+        };
+        const nextRotations = trackedState.rotations.some((entry) => entry.dateKey === cycleKey)
+          ? trackedState.rotations.map((entry) =>
+              entry.dateKey === cycleKey
+                ? {
+                    ...entry,
+                    questIds,
+                    completedQuestIds: Array.from(new Set([...entry.completedQuestIds, quest.id])).sort((left, right) =>
+                      left.localeCompare(right)
+                    ),
+                    claimedQuestIds: Array.from(new Set([...entry.claimedQuestIds, quest.id])).sort((left, right) =>
+                      left.localeCompare(right)
+                    )
+                  }
+                : entry
+            )
+          : [
+              ...trackedState.rotations,
+              {
+                dateKey: cycleKey,
+                questIds,
+                completedQuestIds: [quest.id],
+                claimedQuestIds: [quest.id]
+              }
+            ];
+        await store.savePlayerQuestState(account.playerId, {
+          ...trackedState,
+          currentDateKey: cycleKey,
+          activeQuestIds: questIds,
+          rotations: nextRotations,
+          updatedAt: timestamp
+        });
+      }
       emitAnalyticsEvent("quest_complete", {
         playerId: account.playerId,
         roomId: account.lastRoomId ?? "daily-quests",

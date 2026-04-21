@@ -68,6 +68,48 @@ function updateCompletionTracking(state: PlayerQuestState, board: DailyQuestBoar
   };
 }
 
+function mergeTrackedQuestState(board: DailyQuestBoard, state: PlayerQuestState | null): DailyQuestBoard {
+  if (!state || !board.cycleKey) {
+    return board;
+  }
+
+  const currentRotation = state.rotations.find((entry) => entry.dateKey === board.cycleKey);
+  if (!currentRotation) {
+    return board;
+  }
+
+  const completedQuestIds = new Set(currentRotation.completedQuestIds);
+  const claimedQuestIds = new Set(currentRotation.claimedQuestIds);
+  const quests = board.quests.map((quest) => {
+    const completed = quest.completed || completedQuestIds.has(quest.id);
+    const claimed = quest.claimed || claimedQuestIds.has(quest.id);
+    return {
+      ...quest,
+      current: completed ? quest.target : quest.current,
+      completed,
+      claimed
+    };
+  });
+
+  return {
+    ...board,
+    availableClaims: quests.filter((quest) => quest.completed && !quest.claimed).length,
+    pendingRewards: quests.reduce(
+      (totals, quest) => {
+        if (!quest.completed || quest.claimed) {
+          return totals;
+        }
+
+        totals.gems += quest.reward.gems;
+        totals.gold += quest.reward.gold;
+        return totals;
+      },
+      createEmptyDailyQuestReward()
+    ),
+    quests
+  };
+}
+
 async function resolveDailyQuestDefinitions(
   store: RoomSnapshotStore,
   playerId: string,
@@ -125,14 +167,16 @@ export async function loadDailyQuestBoard(
     since: `${cycleKey}T00:00:00.000Z`
   });
   const definitions = await resolveDailyQuestDefinitions(store, account.playerId, cycleKey);
-  const board = buildDailyQuestBoard(history.items, {
-    enabled: true,
-    cycleKey,
-    resetAt: getDailyQuestResetAt(cycleKey),
-    definitions: definitions as DailyQuestDefinition[]
-  });
-
   const questState = await store.loadPlayerQuestState?.(account.playerId);
+  const board = mergeTrackedQuestState(
+    buildDailyQuestBoard(history.items, {
+      enabled: true,
+      cycleKey,
+      resetAt: getDailyQuestResetAt(cycleKey),
+      definitions: definitions as DailyQuestDefinition[]
+    }),
+    questState ?? null
+  );
   if (questState && board.cycleKey) {
     const nextState = updateCompletionTracking(questState, board);
     const currentEntry = questState.rotations.find((entry) => entry.dateKey === board.cycleKey);

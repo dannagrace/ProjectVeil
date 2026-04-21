@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { appendEventLogEntries } from "@veil/shared/event-log";
 import type { PlayerBattleReplaySummary } from "@veil/shared/battle";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type WorldState } from "@veil/shared/models";
 import type { RoomPersistenceSnapshot } from "@server/index";
@@ -165,6 +166,50 @@ test("memory room snapshot store preserves completed tutorial and account progre
       completedAt: "2026-04-16T08:00:00.000Z"
     }
   ]);
+});
+
+test("memory room snapshot store preserves full player event history beyond the recent event log window", async () => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.ensurePlayerAccount({
+    playerId: "player-history",
+    displayName: "北境斥候"
+  });
+
+  const initialEntries = Array.from({ length: 12 }, (_, index) => ({
+    id: `player-history:2026-04-21T10:${String(index).padStart(2, "0")}:00.000Z:hero.moved:${index + 1}`,
+    timestamp: `2026-04-21T10:${String(index).padStart(2, "0")}:00.000Z`,
+    roomId: "room-memory",
+    playerId: "player-history",
+    category: "movement" as const,
+    description: "Scouted the frontier.",
+    worldEventType: "hero.moved" as const,
+    rewards: []
+  }));
+  await store.savePlayerAccountProgress("player-history", {
+    recentEventLog: initialEntries
+  });
+
+  const claimEntry = {
+    id: "player-history:2026-04-21T10:59:00.000Z:daily-quest-claim:1:daily_explore_frontier",
+    timestamp: "2026-04-21T10:59:00.000Z",
+    roomId: "room-memory",
+    playerId: "player-history",
+    category: "account" as const,
+    description: "领取每日任务：边境侦察。",
+    rewards: []
+  };
+  const accountAfterInitialSave = await store.loadPlayerAccount("player-history");
+  await store.savePlayerAccountProgress("player-history", {
+    recentEventLog: appendEventLogEntries(accountAfterInitialSave?.recentEventLog, [claimEntry])
+  });
+
+  const history = await store.loadPlayerEventHistory("player-history", {
+    since: "2026-04-21T10:00:00.000Z"
+  });
+
+  assert.equal(history.total, 13);
+  assert.equal(history.items.at(0)?.id, claimEntry.id);
+  assert.ok(history.items.some((entry) => entry.id === initialEntries[0]?.id));
 });
 
 test("memory room snapshot store supports binding and resolving account credentials", async () => {

@@ -134,12 +134,12 @@ interface BrowserApiResult<T> {
   payload: T;
 }
 
-function resolveFirstClaimableOnboardingPlayerId(): string {
+function resolveFirstClaimableOnboardingPlayerId(prefix = "onboarding-main-seed"): string {
   const dateKey = new Date().toISOString().slice(0, 10);
   const questPool = loadDailyQuestConfig().quests;
 
   for (let index = 0; index < 256; index += 1) {
-    const playerId = `onboarding-main-seed-${index}`;
+    const playerId = `${prefix}-${index}`;
     const { quests } = rotateDailyQuests({
       playerId,
       dateKey,
@@ -426,7 +426,7 @@ test("onboarding funnel: tutorial completion hands off to chapter 1, settles the
 }, testInfo) => {
   test.setTimeout(60_000);
   const roomId = buildRoomId("onb-main");
-  const playerId = resolveFirstClaimableOnboardingPlayerId();
+  const playerId = resolveFirstClaimableOnboardingPlayerId(`onboarding-main-seed-${roomId.slice(-6)}`);
   const displayName = "Route Alpha";
   const campaignId = "chapter1";
   const firstMissionId = "chapter1-ember-watch";
@@ -541,7 +541,9 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
     await advanceTutorial(page, 3, "advance");
     await advanceTutorial(page, null, "complete");
 
-    await page.locator("[data-return-lobby]").click();
+    await page.locator("[data-return-lobby]").evaluate((button: HTMLButtonElement) => {
+      button.click();
+    });
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
     await expect(page.getByText(`已缓存云端会话：${playerId}`)).toBeVisible();
 

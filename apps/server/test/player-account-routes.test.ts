@@ -4142,6 +4142,53 @@ test("daily quests are enabled by default and complete the rotation, progress, a
   );
 });
 
+test("daily quest board preserves tracked completion and claim state when recent event history is truncated", async () => {
+  const store = new MemoryPlayerAccountStore();
+  const today = getDailyRewardDateKey();
+  await store.ensurePlayerAccount({
+    playerId: "daily-quest-tracked",
+    displayName: "边境记录官"
+  });
+  await store.savePlayerAccountProgress("daily-quest-tracked", {
+    tutorialStep: null
+  });
+
+  const initialQuestState = await store.loadPlayerQuestState("daily-quest-tracked");
+  const rotation = rotateDailyQuests({
+    playerId: "daily-quest-tracked",
+    dateKey: today,
+    questPool: loadDailyQuestConfig().quests,
+    questState: initialQuestState
+  });
+  const trackedQuest = rotation.quests[0];
+  assert.ok(trackedQuest);
+
+  store.seedEventHistory("daily-quest-tracked", []);
+  await store.savePlayerQuestState("daily-quest-tracked", {
+    playerId: "daily-quest-tracked",
+    currentDateKey: today,
+    activeQuestIds: rotation.quests.map((quest) => quest.id),
+    rotations: [
+      {
+        dateKey: today,
+        questIds: rotation.quests.map((quest) => quest.id),
+        completedQuestIds: [trackedQuest.id],
+        claimedQuestIds: [trackedQuest.id]
+      }
+    ],
+    updatedAt: `${today}T10:00:00.000Z`
+  });
+
+  const account = await store.loadPlayerAccount("daily-quest-tracked");
+  const board = await loadDailyQuestBoard(store, account!, new Date(`${today}T10:00:01.000Z`), true);
+  const trackedEntry = board.quests.find((quest) => quest.id === trackedQuest.id);
+
+  assert.equal(trackedEntry?.completed, true);
+  assert.equal(trackedEntry?.claimed, true);
+  assert.equal(trackedEntry?.current, trackedEntry?.target);
+  assert.equal(board.availableClaims, 0);
+});
+
 test("mailbox routes list delivered compensation and repeated claims stay idempotent", async (t) => {
   const port = 44940 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();

@@ -214,6 +214,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   private readonly snapshots = new Map<string, RoomPersistenceSnapshot>();
   private readonly battleSnapshots = new Map<string, BattleSnapshotRecord>();
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
+  private readonly playerEventHistory = new Map<string, EventLogEntry[]>();
   private readonly guilds = new Map<string, GuildState>();
   private readonly guildIdByPlayerId = new Map<string, string>();
   private readonly guildAuditLogs: GuildAuditLogRecord[] = [];
@@ -559,7 +560,9 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   ): Promise<PlayerEventHistorySnapshot> {
     const normalizedPlayerId = normalizePlayerId(playerId);
     const normalizedQuery = normalizeEventLogQuery(query);
-    const items = normalizeEventLogEntries(this.accounts.get(normalizedPlayerId)?.recentEventLog)
+    const items = normalizeEventLogEntries(
+      this.playerEventHistory.get(normalizedPlayerId) ?? this.accounts.get(normalizedPlayerId)?.recentEventLog
+    )
       .filter(
         (entry) =>
           (!normalizedQuery.category || entry.category === normalizedQuery.category) &&
@@ -2429,7 +2432,14 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
           : {}),
       updatedAt: new Date().toISOString()
     };
+    const existingEventHistory = this.playerEventHistory.get(normalizedPlayerId) ?? existing.recentEventLog;
+    const existingEventIds = new Set(normalizeEventLogEntries(existingEventHistory).map((entry) => entry.id));
+    const nextEventHistory = normalizeEventLogEntries([
+      ...normalizeEventLogEntries(patch.recentEventLog).filter((entry) => !existingEventIds.has(entry.id)),
+      ...normalizeEventLogEntries(existingEventHistory)
+    ]);
     this.accounts.set(normalizedPlayerId, cloneAccount(nextAccount));
+    this.playerEventHistory.set(normalizedPlayerId, structuredClone(nextEventHistory));
     return cloneAccount(nextAccount);
   }
 
@@ -2775,6 +2785,7 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   clearAll(): void {
     this.snapshots.clear();
     this.accounts.clear();
+    this.playerEventHistory.clear();
     this.authByLoginId.clear();
     this.authSessionsByPlayerId.clear();
     this.playerIdByWechatOpenId.clear();

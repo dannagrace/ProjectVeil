@@ -285,7 +285,7 @@ function getQuest(board: DailyQuestBoard | undefined): DailyQuestProgress {
 
 test("daily quest claim smoke settles the reward and records the event log entry", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-daily-quest");
-  const playerId = resolveClaimableDailyQuestPlayerId("daily-quest-player");
+  const playerId = resolveClaimableDailyQuestPlayerId(`daily-quest-player-${roomId.slice(-6)}`);
   let claimableQuestId = "";
   let claimableQuestReward: DailyQuestReward = { gems: 0, gold: 0 };
   let availableClaimsBeforeClaim = 0;
@@ -361,7 +361,7 @@ test("daily quest claim smoke settles the reward and records the event log entry
 
 test("daily quest re-claim guard does not double-credit the reward", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-daily-quest-reclaim");
-  const playerId = resolveClaimableDailyQuestPlayerId("daily-quest-reclaim-player");
+  const playerId = resolveClaimableDailyQuestPlayerId(`daily-quest-reclaim-player-${roomId.slice(-6)}`);
   let claimableQuestId = "";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {

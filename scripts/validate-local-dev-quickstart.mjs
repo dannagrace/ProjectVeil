@@ -85,7 +85,7 @@ export async function main() {
 
   logStep(`using Node ${process.version}`);
   logStep("validating e2e config fixtures");
-  await runCommand(npmCommand(), ["run", "validate:e2e:fixtures"], "E2E fixture validation");
+  await runCommand(npmCommand(), ["run", "validate", "--", "e2e:fixtures"], "E2E fixture validation");
   logStep("building the H5 debug shell");
   await runCommand(npmCommand(), ["run", QUICKSTART_H5_BUILD_SCRIPT], "H5 build");
 
