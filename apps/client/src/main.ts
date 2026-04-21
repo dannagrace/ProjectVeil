@@ -10,6 +10,7 @@ import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
 import {
   buildingAsset,
+  heroPortraitAsset,
   markerAsset,
   objectBadgeAssets,
   resourceAsset,
@@ -5013,9 +5014,24 @@ function render(): void {
           <div class="card" data-testid="stat-ore"><span>Ore</span><strong>${state.world.resources.ore}</strong></div>
         </div>
         <div class="hero-card" data-testid="hero-card">
-          <h2>${hero?.name ?? "No Hero"}</h2>
-          <p data-testid="hero-level">${formatHeroProgression(hero)}</p>
-          <p data-testid="hero-xp">${formatHeroExperience(hero)}</p>
+          <div class="hero-card-head">
+            ${
+              hero
+                ? `<div class="hero-portrait-shell">
+                    <img
+                      class="hero-portrait"
+                      src="${heroPortraitAsset(hero.armyTemplateId) ?? unitAsset(hero.armyTemplateId) ?? markerAsset("hero")}"
+                      alt="${hero.name}"
+                    />
+                  </div>`
+                : ""
+            }
+            <div class="hero-card-copy">
+              <h2>${hero?.name ?? "No Hero"}</h2>
+              <p data-testid="hero-level">${formatHeroProgression(hero)}</p>
+              <p data-testid="hero-xp">${formatHeroExperience(hero)}</p>
+            </div>
+          </div>
           ${renderHeroProgressPanel(hero)}
           <p data-testid="hero-stats">${formatHeroCoreStats(hero)}</p>
           <p data-testid="hero-hp">HP ${hero?.stats.hp ?? 0}/${hero?.stats.maxHp ?? 0}</p>
@@ -5042,7 +5058,24 @@ function render(): void {
       <section class="map-panel">
         <div class="panel-head">
           <h2>大地图</h2>
-          <div class="hint">${state.previewPlan ? formatPath(state.previewPlan.travelPath) : `Hero: ${hero?.position.x ?? "-"},${hero?.position.y ?? "-"}`}</div>
+          <div class="panel-context">
+            ${
+              hero
+                ? `<div class="map-hero-chip">
+                    <img
+                      class="map-hero-chip-portrait"
+                      src="${heroPortraitAsset(hero.armyTemplateId) ?? unitAsset(hero.armyTemplateId) ?? markerAsset("hero")}"
+                      alt="${hero.name}"
+                    />
+                    <div class="map-hero-chip-copy">
+                      <span>Field hero</span>
+                      <strong>${hero.name}</strong>
+                    </div>
+                  </div>`
+                : ""
+            }
+            <div class="hint">${state.previewPlan ? formatPath(state.previewPlan.travelPath) : `Hero: ${hero?.position.x ?? "-"},${hero?.position.y ?? "-"}`}</div>
+          </div>
         </div>
         <div class="map-inspector ${state.feedbackTone !== "idle" ? `tone-${state.feedbackTone}` : ""}">
           <div class="inspector-main">

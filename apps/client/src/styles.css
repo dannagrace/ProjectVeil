@@ -1,15 +1,18 @@
 :root {
   color-scheme: light;
-  --bg: #f4efe6;
-  --paper: rgba(255, 250, 240, 0.85);
-  --ink: #2b241d;
-  --muted: #6a6157;
-  --accent: #a44d2c;
-  --accent-soft: #e6b07b;
-  --grid: #d7c5b0;
-  --fog: #3b3a40;
-  --hero: #2f6e5b;
-  --neutral: #8a3131;
+  --bg: #e7e2d9;
+  --paper: rgba(248, 245, 239, 0.88);
+  --paper-strong: rgba(255, 251, 244, 0.94);
+  --ink: #2b3138;
+  --muted: #697583;
+  --accent: #b8784f;
+  --accent-soft: #d9b181;
+  --grid: #c0c9d3;
+  --fog: #34404d;
+  --hero: #4d8a78;
+  --neutral: #9b5955;
+  --panel-edge: rgba(77, 91, 108, 0.14);
+  --panel-shadow: 0 18px 36px rgba(34, 40, 49, 0.08);
   font-family: "Noto Serif SC", "Source Han Serif SC", serif;
 }
 
@@ -22,8 +25,9 @@ body {
   min-height: 100vh;
   color: var(--ink);
   background:
-    radial-gradient(circle at top left, rgba(244, 194, 128, 0.45), transparent 30%),
-    linear-gradient(135deg, #e8dcc8 0%, #f7f2e9 45%, #dfcfb8 100%);
+    radial-gradient(circle at top left, rgba(132, 160, 186, 0.18), transparent 24%),
+    radial-gradient(circle at top right, rgba(200, 160, 118, 0.16), transparent 28%),
+    linear-gradient(135deg, #ece7de 0%, #f6f1e8 40%, #ddd5c8 100%);
 }
 
 button {
@@ -50,11 +54,11 @@ button {
 .battle-panel,
 .lobby-hero-panel,
 .lobby-panel {
-  border: 1px solid rgba(78, 58, 42, 0.15);
+  border: 1px solid var(--panel-edge);
   border-radius: 20px;
   background: var(--paper);
   backdrop-filter: blur(6px);
-  box-shadow: 0 18px 40px rgba(84, 57, 35, 0.08);
+  box-shadow: var(--panel-shadow);
   padding: 18px;
 }
 
@@ -250,12 +254,13 @@ h1 {
 
 .session-link {
   flex: 0 0 auto;
-  border: 0;
+  border: 1px solid rgba(102, 118, 136, 0.16);
   border-radius: 999px;
   padding: 8px 12px;
-  background: rgba(78, 58, 42, 0.08);
+  background: linear-gradient(180deg, rgba(255, 251, 244, 0.92), rgba(233, 227, 216, 0.94));
   color: var(--ink);
   cursor: pointer;
+  box-shadow: 0 6px 14px rgba(35, 40, 48, 0.06);
 }
 
 .stats {
@@ -271,8 +276,8 @@ h1 {
 .battle-state,
 .battle-actions {
   border-radius: 16px;
-  border: 1px solid rgba(78, 58, 42, 0.1);
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  background: var(--paper-strong);
 }
 
 .card {
@@ -295,6 +300,41 @@ h1 {
 .log-panel {
   margin-top: 16px;
   padding: 14px;
+}
+
+.hero-card-head {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.hero-card-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.hero-card-copy p {
+  margin: 0;
+}
+
+.hero-portrait-shell {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(94, 109, 126, 0.18);
+  background: linear-gradient(180deg, rgba(255, 251, 244, 0.96), rgba(231, 226, 215, 0.92));
+  box-shadow: 0 10px 22px rgba(35, 40, 48, 0.12);
+}
+
+.hero-portrait {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .diagnostics-panel {
@@ -325,8 +365,8 @@ h1 {
 .diagnostics-card {
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(78, 58, 42, 0.08);
-  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(94, 109, 126, 0.1);
+  background: rgba(252, 249, 243, 0.8);
 }
 
 .diagnostics-card span {
@@ -426,8 +466,8 @@ h1 {
   margin-top: 14px;
   padding: 14px;
   border-radius: 16px;
-  border: 1px solid rgba(78, 58, 42, 0.1);
-  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  background: var(--paper-strong);
 }
 
 .account-card-head {
@@ -1213,6 +1253,46 @@ h1 {
   margin-bottom: 14px;
 }
 
+.panel-context {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.map-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 109, 126, 0.14);
+  background: rgba(255, 251, 244, 0.88);
+  box-shadow: 0 8px 16px rgba(35, 40, 48, 0.08);
+}
+
+.map-hero-chip-portrait {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.map-hero-chip-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.map-hero-chip-copy span {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-hero-chip-copy strong {
+  font-size: 13px;
+}
+
 .grid {
   display: grid;
   gap: 8px;
@@ -1332,9 +1412,9 @@ h1 {
 
 .info-card {
   border-radius: 16px;
-  border: 1px solid rgba(78, 58, 42, 0.1);
-  background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(247,239,228,0.84));
-  box-shadow: 0 10px 24px rgba(84, 57, 35, 0.08);
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.94), rgba(238, 232, 221, 0.92));
+  box-shadow: 0 10px 24px rgba(35, 40, 48, 0.08);
 }
 
 .info-card-media {
@@ -1373,7 +1453,7 @@ h1 {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(164, 77, 44, 0.1);
+  background: rgba(184, 120, 79, 0.12);
   color: var(--accent);
   font-size: 11px;
   font-weight: 700;
@@ -1433,8 +1513,6 @@ h1 {
   width: 24px;
   height: 24px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16));
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
 .object-card-value {
@@ -1443,7 +1521,7 @@ h1 {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(164, 77, 44, 0.08);
+  background: rgba(184, 120, 79, 0.1);
   color: var(--ink);
   font-size: 12px;
 }
@@ -1513,8 +1591,6 @@ h1 {
   width: 30px;
   height: 30px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18));
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
 .tile-building-badge {
@@ -1545,8 +1621,8 @@ h1 {
 
 .battle-lane {
   border-radius: 18px;
-  border: 1px solid rgba(78, 58, 42, 0.1);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  background: rgba(250, 247, 241, 0.88);
   padding: 14px;
   animation: fadeLiftIn 240ms ease;
 }
@@ -1585,8 +1661,6 @@ h1 {
   width: 100%;
   height: 96px;
   object-fit: cover;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
 .unit-frame {
@@ -1596,8 +1670,6 @@ h1 {
   height: 100%;
   object-fit: fill;
   pointer-events: none;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
 .unit-badge {
@@ -1606,8 +1678,6 @@ h1 {
   height: 32px;
   pointer-events: none;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.22));
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
 .unit-badge-faction {
@@ -1690,8 +1760,8 @@ h1 {
 .battle-empty,
 .battle-log {
   border-radius: 16px;
-  border: 1px solid rgba(78, 58, 42, 0.1);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  background: rgba(250, 247, 241, 0.86);
   padding: 14px;
 }
 
@@ -1742,7 +1812,7 @@ h1 {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(164, 77, 44, 0.08);
+  background: rgba(184, 120, 79, 0.1);
   font-size: 12px;
   color: var(--ink);
 }

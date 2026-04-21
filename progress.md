@@ -1,3 +1,41 @@
+## Character art scene acceptance - 2026-04-21
+
+- Ran scene-level acceptance against the live H5 debug shell after the non-pixel character / marker / frame upgrade:
+  - `http://127.0.0.1:4173/`
+  - used a fresh guest room session (`room-255012`) to avoid stale reconnect state
+- Captured stable runtime screenshots for review:
+  - `output/playwright/h5-room-stable-viewport.png`
+  - `output/playwright/map-art-preview-current.png`
+- Acceptance result:
+  - upgraded terrain / fog / building / resource tiles read clearly at gameplay scale
+  - marker / frame refresh reads correctly on the map and no longer clashes with the upgraded map pack
+  - the new visual language is now bottlenecked by old HUD / panel chrome rather than by the map or portrait assets
+- Main remaining style gaps:
+  - left/right shell panels still use the older flat beige card system, which now clashes with the colder map + portrait art
+  - battle panel pills, status cards, and low-level interaction badges still look like legacy placeholder UI
+  - upgraded portrait assets are not surfaced aggressively enough in the default above-the-fold room layout, so a lot of the art gain is currently hidden below the fold
+  - selected / enemy / neutral emphasis is readable but still too subtle compared with the new non-pixel marker treatment
+- Recommended next pass:
+  - unify HUD / panel iconography and card chrome first
+  - then tighten battle-state emphasis (`selected / threat / interactable / blocked`)
+  - only after that consider a second-stage character-art pass
+
+## H5 shell UI pass - 2026-04-21
+
+- Applied the first follow-up pass directly in the H5 debug shell so the upgraded art is no longer hidden behind the legacy UI chrome:
+  - surfaced the active hero portrait in the `hero-card`
+  - added an above-the-fold `Field hero` chip to the map header so the new character art is visible immediately after room entry
+  - removed forced pixel rendering from non-pixel character-adjacent assets (`unit portraits`, `unit frames`, `unit badges`, `map markers`, `object tags`)
+  - cooled the shell palette and card chrome so the shell sits closer to the new cold-frontier map and portrait treatment
+- Verified with:
+  - `npm run typecheck -- client:h5`
+  - fresh Playwright room-entry screenshots:
+    - `output/playwright/h5-room-stable-viewport-after-hero-chip.png`
+    - `output/playwright/h5-hero-card-after-ui-pass.png`
+- Result:
+  - the first screen now exposes both the upgraded map pack and character art
+  - the main remaining mismatch is deeper HUD / battle-state iconography, not the top-level room shell
+
 ## Map art upgrade closure - 2026-04-20
 
 - Closed the approved map-art upgrade spec by updating the design doc status from planning to implemented and adding the missing implementation / integration / acceptance sections:

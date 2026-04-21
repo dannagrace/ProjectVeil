@@ -9,6 +9,7 @@ type ResourceKey = keyof typeof assetConfig.resources;
 type BuildingKey = keyof typeof assetConfig.buildings;
 type MarkerKey = keyof typeof assetConfig.markers;
 type UnitKey = keyof typeof assetConfig.units;
+type HeroKey = keyof typeof assetConfig.heroes;
 export type AssetState = "idle" | "selected" | "hit";
 type FactionKey = keyof typeof assetConfig.badges.factions;
 type RarityKey = keyof typeof assetConfig.badges.rarities;
@@ -40,6 +41,10 @@ export function buildingAsset(key: string): string | null {
 
 export function markerAsset(key: "hero" | "neutral", state: AssetState = "idle"): string {
   return assetConfig.markers[key as MarkerKey]?.[state] ?? assetConfig.markers[key as MarkerKey]?.idle;
+}
+
+export function heroPortraitAsset(key: string): string | null {
+  return assetConfig.heroes[key as HeroKey]?.portrait ?? null;
 }
 
 export function unitAsset(key: string, state: AssetState = "idle"): string | null {
