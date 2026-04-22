@@ -1,3 +1,5 @@
+import { resolveRuntimeServerHttpUrl } from "./runtime-targets";
+
 const AUTH_SESSION_STORAGE_KEY = "project-veil:auth-session";
 const AUTH_REQUEST_TIMEOUT_MS = 10000; // 延长到 10秒以适应开发环境
 
@@ -70,8 +72,7 @@ function getAuthSessionStorage(): Storage | null {
 }
 
 function resolveAuthApiBaseUrl(): string {
-  // 在 4173 开发环境下，强制指向 127.0.0.1:2567 以规避跨域解析问题
-  return `http://127.0.0.1:2567`;
+  return resolveRuntimeServerHttpUrl();
 }
 
 function createGuestPlayerId(): string {

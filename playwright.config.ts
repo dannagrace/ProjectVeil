@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import path from "node:path";
 import { defineConfig, type Project, type ReporterDescription, type WebServerPlugin } from "@playwright/test";
 
 const DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
@@ -52,6 +54,48 @@ const DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
 
 type ProjectDefinition = Project & { name: string };
 
+const DEFAULT_SERVER_PORT = 2567;
+const DEFAULT_CLIENT_PORT = 4173;
+const DEFAULT_SERVER_HOST = "127.0.0.1";
+const DEFAULT_CLIENT_HOST = "127.0.0.1";
+
+function readPort(key: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[key] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function derivePort(base: number, span = 300): number {
+  const seed = process.env.VEIL_PLAYWRIGHT_WORKSPACE_SEED?.trim() || `${process.cwd()}:${process.pid}`;
+  const hash = createHash("sha1").update(seed).digest();
+  const offset = ((hash[0] << 8) | hash[1]) % span;
+  return base + offset;
+}
+
+function normalizeOrigin(value: string | undefined, fallbackHost: string, fallbackPort: number, protocol: "http" | "ws"): string {
+  return value?.trim() || `${protocol}://${fallbackHost}:${fallbackPort}`;
+}
+
+const serverPort = readPort(
+  "VEIL_PLAYWRIGHT_SERVER_PORT",
+  process.env.VEIL_PLAYWRIGHT_REUSE_SERVER === "1" ? DEFAULT_SERVER_PORT : derivePort(DEFAULT_SERVER_PORT)
+);
+const clientPort = readPort(
+  "VEIL_PLAYWRIGHT_CLIENT_PORT",
+  process.env.VEIL_PLAYWRIGHT_REUSE_SERVER === "1" ? DEFAULT_CLIENT_PORT : derivePort(DEFAULT_CLIENT_PORT)
+);
+const serverOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_SERVER_ORIGIN, DEFAULT_SERVER_HOST, serverPort, "http");
+const serverWsOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_SERVER_WS_URL, DEFAULT_SERVER_HOST, serverPort, "ws");
+const clientOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN, DEFAULT_CLIENT_HOST, clientPort, "http");
+const runId = process.env.VEIL_PLAYWRIGHT_RUN_ID?.trim() || `${path.basename(process.cwd())}-${process.pid}`;
+const playwrightOutputDir = process.env.PLAYWRIGHT_OUTPUT_DIR?.trim() || path.join("test-results", runId);
+const playwrightReportDir = process.env.PLAYWRIGHT_HTML_REPORT?.trim() || path.join("playwright-report", runId);
+
+process.env.VEIL_PLAYWRIGHT_SERVER_PORT = String(serverPort);
+process.env.VEIL_PLAYWRIGHT_CLIENT_PORT = String(clientPort);
+process.env.VEIL_PLAYWRIGHT_SERVER_ORIGIN = serverOrigin;
+process.env.VEIL_PLAYWRIGHT_SERVER_WS_URL = serverWsOrigin;
+process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN = clientOrigin;
+
 const SMOKE_PROJECT_NAME = "smoke";
 const H5_CONNECTIVITY_PROJECT_NAME = "h5-connectivity";
 const MULTIPLAYER_PROJECT_NAME = "multiplayer";
@@ -61,7 +105,7 @@ const FULL_PROJECT_NAME = "full";
 
 const SHARED_REPORTER: ReporterDescription[] = [
   ["list"],
-  ["html", { open: "never" }]
+  ["html", { open: "never", outputFolder: playwrightReportDir }]
 ];
 
 const SMOKE_TEST_MATCH =
@@ -115,7 +159,7 @@ function shouldReuseServers(): boolean {
 
 function resolveClientCommand(): string {
   if (process.env.VEIL_PLAYWRIGHT_CLIENT_MODE === "preview") {
-    return "npx vite preview --config apps/client/vite.config.ts --host 127.0.0.1 --port 4173 --strictPort";
+    return `npx vite preview --config apps/client/vite.config.ts --host ${DEFAULT_CLIENT_HOST} --port ${clientPort} --strictPort`;
   }
   return "npm run dev -- client:h5";
 }
@@ -128,7 +172,8 @@ function createSharedWebServers(): WebServerPlugin[] {
       command: "npm run dev -- server",
       env: {
         ...process.env,
-        ANALYTICS_ENDPOINT: "http://127.0.0.1:2567/api/test/analytics/events",
+        PORT: String(serverPort),
+        ANALYTICS_ENDPOINT: `${serverOrigin}/api/test/analytics/events`,
         ANALYTICS_SINK: "http",
         VEIL_ADMIN_TOKEN: process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token",
         VEIL_DAILY_QUESTS_ENABLED: "1",
@@ -138,7 +183,7 @@ function createSharedWebServers(): WebServerPlugin[] {
         VEIL_RATE_LIMIT_HTTP_ADMIN_MAX: process.env.VEIL_RATE_LIMIT_HTTP_ADMIN_MAX ?? "200",
         VEIL_RATE_LIMIT_WS_ACTION_MAX: process.env.VEIL_RATE_LIMIT_WS_ACTION_MAX ?? "40"
       },
-      port: 2567,
+      port: serverPort,
       reuseExistingServer,
       stdout: "pipe",
       stderr: "pipe",
@@ -150,7 +195,14 @@ function createSharedWebServers(): WebServerPlugin[] {
     },
     {
       command: resolveClientCommand(),
-      port: 4173,
+      env: {
+        ...process.env,
+        VEIL_PLAYWRIGHT_CLIENT_PORT: String(clientPort),
+        VEIL_DEV_SERVER_HTTP_URL: serverOrigin,
+        VITE_VEIL_SERVER_HTTP_URL: serverOrigin,
+        VITE_VEIL_SERVER_WS_URL: serverWsOrigin
+      },
+      port: clientPort,
       reuseExistingServer,
       stdout: "pipe",
       stderr: "pipe",
@@ -165,11 +217,12 @@ function createSharedWebServers(): WebServerPlugin[] {
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  outputDir: playwrightOutputDir,
   timeout: 30_000,
   fullyParallel: false,
   reporter: SHARED_REPORTER,
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: clientOrigin,
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
