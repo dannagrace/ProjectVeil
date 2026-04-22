@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hashAccountPassword, resetGuestAuthSessions, type GuestAuthSession } from "@server/domain/account/auth";
+import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
 import { startDevServer, type DevServerRuntimeHandle } from "@server/infra/dev-server";
 import type {
   PlayerAccountAuthSessionInput,
@@ -345,6 +346,14 @@ async function startRateLimitDevServer(
     createFileSystemConfigCenterStore: () => ({
       mode: "filesystem" as const,
       async initializeRuntimeConfigs() {},
+      async loadDocument() {
+        return {
+          content: JSON.stringify({
+            key: "leaderboard.tier_thresholds",
+            tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS
+          })
+        };
+      },
       async close() {}
     }),
     createMemoryRoomSnapshotStore: () => store as never,

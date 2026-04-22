@@ -17,9 +17,10 @@ test("normalizePlayerAccountReadModel(undefined) → globalResources defaults to
   assert.deepEqual(result.globalResources, { gold: 0, wood: 0, ore: 0 });
 });
 
-test("normalizePlayerAccountReadModel(null) → achievements=[] and recentEventLog=[]", () => {
+test("normalizePlayerAccountReadModel(null) seeds default achievements and keeps recentEventLog=[]", () => {
   const result = normalizePlayerAccountReadModel(null);
-  assert.deepEqual(result.achievements, []);
+  assert.equal(result.achievements.length > 0, true);
+  assert.equal(result.achievements.every((achievement) => achievement.unlocked === false), true);
   assert.deepEqual(result.recentEventLog, []);
 });
 

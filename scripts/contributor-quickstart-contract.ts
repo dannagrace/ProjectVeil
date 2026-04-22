@@ -208,9 +208,32 @@ function extractFiveMinuteSetupCommands(readmeText: string): string[] {
   return match ? normalizeLines(match[1]) : [];
 }
 
+function formatNpmScriptInvocation(scriptName: string): string {
+  const separatorIndex = scriptName.indexOf(":");
+  if (separatorIndex > 0) {
+    const family = scriptName.slice(0, separatorIndex);
+    const subcommand = scriptName.slice(separatorIndex + 1);
+    if (subcommand && ["validate", "dev", "release", "typecheck", "smoke", "test", "db"].includes(family)) {
+      return `npm run ${family} -- ${subcommand}`;
+    }
+  }
+  return `npm run ${scriptName}`;
+}
+
+function scriptEntryReachable(scripts: Record<string, string>, scriptName: string): boolean {
+  if (scripts[scriptName]) {
+    return true;
+  }
+  const separatorIndex = scriptName.indexOf(":");
+  if (separatorIndex <= 0) {
+    return false;
+  }
+  return Boolean(scripts[scriptName.slice(0, separatorIndex)]);
+}
+
 function endpointDocChecks(contract: QuickstartContractDefinition): Array<{ label: string; matcher: string | RegExp }> {
   return [
-    { label: "H5 debug shell command", matcher: `npm run ${contract.h5DevScript}` },
+    { label: "H5 debug shell command", matcher: formatNpmScriptInvocation(contract.h5DevScript) },
     { label: "H5 debug shell URL", matcher: "http://127.0.0.1:5173/" },
     { label: "runtime health URL", matcher: `${contract.serverUrl}/api/runtime/health` },
     { label: "auth-readiness endpoint mention", matcher: /auth-readiness/ },
@@ -225,7 +248,12 @@ function buildAlignmentStages(
 ): ContractStage[] {
   const scripts = packageJson.scripts ?? {};
   const setupCommands = extractFiveMinuteSetupCommands(readmeText);
-  const expectedSetup = ["nvm use", "npm ci --no-audit --no-fund", `npm run ${contract.doctorScript}`, `npm run ${contract.validateQuickstartScript}`];
+  const expectedSetup = [
+    "nvm use",
+    "npm ci --no-audit --no-fund",
+    formatNpmScriptInvocation(contract.doctorScript),
+    formatNpmScriptInvocation(contract.validateQuickstartScript)
+  ];
   const missingSetupCommands = expectedSetup.filter((command) => !setupCommands.includes(command));
 
   const scriptRequirements: Array<[string, string]> = [
@@ -234,7 +262,7 @@ function buildAlignmentStages(
     [contract.h5BuildScript, "H5 build entry point"],
     [contract.h5DevScript, "H5 debug shell entry point"]
   ];
-  const missingScripts = scriptRequirements.filter(([scriptName]) => !scripts[scriptName]);
+  const missingScripts = scriptRequirements.filter(([scriptName]) => !scriptEntryReachable(scripts, scriptName));
 
   const missingReadmeRuntimeMentions = endpointDocChecks(contract)
     .filter(({ matcher }) => {
@@ -292,7 +320,7 @@ function buildAlignmentStages(
       details:
         missingReadmeRuntimeMentions.length === 0
           ? [
-              `H5 shell: \`npm run ${contract.h5DevScript}\``,
+              `H5 shell: \`${formatNpmScriptInvocation(contract.h5DevScript)}\``,
               `Runtime base URL: \`${contract.serverUrl}\``,
               `Health checks: ${contract.healthChecks.map((entry) => `\`${entry}\``).join(", ")}`
             ]
@@ -306,7 +334,12 @@ function npmCommand(): string {
 }
 
 function defaultRunScript(scriptName: string, options: RunOptions): RunResult {
-  const result = spawnSync(npmCommand(), ["run", scriptName], {
+  const separatorIndex = scriptName.indexOf(":");
+  const args =
+    separatorIndex > 0 && ["validate", "dev", "release", "typecheck", "smoke", "test", "db"].includes(scriptName.slice(0, separatorIndex))
+      ? ["run", scriptName.slice(0, separatorIndex), "--", scriptName.slice(separatorIndex + 1)]
+      : ["run", scriptName];
+  const result = spawnSync(npmCommand(), args, {
     cwd: options.cwd,
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 20

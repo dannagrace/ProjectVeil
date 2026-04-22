@@ -4851,7 +4851,7 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
   assert.equal(claimPayload.claimed, true);
   assert.equal(claimPayload.reward.gems, expectedReward?.gems ?? 0);
   assert.equal(claimPayload.reward.resources.gold, expectedReward?.resources?.gold ?? 0);
-  assert.equal(claimPayload.reward.resources.ore, expectedReward?.resources?.ore ?? 0);
+  assert.equal(claimPayload.reward.resources.ore ?? 0, expectedReward?.resources?.ore ?? 0);
   assert.equal(claimPayload.dailyDungeon.attemptsRemaining, 0);
   if (activeSeasonalEvent) {
     assert.equal(claimPayload.eventProgress?.[0]?.eventId, activeSeasonalEvent.id);

@@ -1000,7 +1000,7 @@ test("guest auth route respects launch maintenance mode and whitelist bypass", a
       enabled: true,
       title: "停服维护中",
       message: "服务器正在维护，请稍后再试。",
-      nextOpenAt: "2026-04-18T02:00:00.000Z",
+      nextOpenAt: "2099-04-18T02:00:00.000Z",
       whitelistPlayerIds: ["vip-player"],
       whitelistLoginIds: []
     },
@@ -1035,7 +1035,7 @@ test("guest auth route respects launch maintenance mode and whitelist bypass", a
   assert.equal(rejectedPayload.error.code, "maintenance_mode_active");
   assert.equal(rejectedPayload.maintenanceMode?.active, true);
   assert.equal(rejectedPayload.maintenanceMode?.title, "停服维护中");
-  assert.equal(rejectedPayload.maintenanceMode?.nextOpenAt, "2026-04-18T02:00:00.000Z");
+  assert.equal(rejectedPayload.maintenanceMode?.nextOpenAt, "2099-04-18T02:00:00.000Z");
 
   const whitelistedResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
     method: "POST",
@@ -2397,7 +2397,8 @@ test("account registration confirm rejects invalid tokens", { concurrency: false
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      loginId: "invalid-registration-ranger"
+      loginId: "invalid-registration-ranger",
+      displayName: "Invalid Ranger"
     })
   });
   assert.equal(requestResponse.status, 202);
@@ -3009,7 +3010,8 @@ test("account registration request returns 503 when webhook delivery is misconfi
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      loginId: "misconfigured-registration-ranger"
+      loginId: "misconfigured-registration-ranger",
+      displayName: "Webhook Ranger"
     })
   });
   const payload = (await response.json()) as { error: { code: string; message: string } };
@@ -4201,7 +4203,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
 
   await store.savePlayerBan("banned-player", {
     banStatus: "temporary",
-    banExpiry: "2026-04-16T00:00:00.000Z",
+    banExpiry: "2099-04-16T00:00:00.000Z",
     banReason: "Harassment"
   });
 
@@ -4216,7 +4218,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
   assert.equal(sessionResponse.status, 403);
   assert.equal(sessionPayload.error.code, "account_banned");
   assert.equal(sessionPayload.error.reason, "Harassment");
-  assert.equal(sessionPayload.error.expiry, "2026-04-16T00:00:00.000Z");
+  assert.equal(sessionPayload.error.expiry, "2099-04-16T00:00:00.000Z");
 
   const reloginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
     method: "POST",
@@ -4235,7 +4237,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
   assert.equal(reloginResponse.status, 403);
   assert.equal(reloginPayload.error.code, "account_banned");
   assert.equal(reloginPayload.error.reason, "Harassment");
-  assert.equal(reloginPayload.error.expiry, "2026-04-16T00:00:00.000Z");
+  assert.equal(reloginPayload.error.expiry, "2099-04-16T00:00:00.000Z");
 });
 
 test("guest login requires privacy consent before issuing the first session", async (t) => {

@@ -8,6 +8,9 @@ import zlib from "node:zlib";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const restoreScriptPath = path.join(repoRoot, "scripts", "db-restore-rehearsal.sh");
+const EXPECTED_MIGRATION_COUNT = fs
+  .readdirSync(path.join(repoRoot, "scripts", "migrations"))
+  .filter((entry) => entry.endsWith(".ts")).length;
 
 function writeExecutable(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -175,7 +178,7 @@ function runRestore(tempDir: string, extraEnv: NodeJS.ProcessEnv = {}) {
       RESTORE_MYSQL_USER: "restore_user",
       RESTORE_MYSQL_PASSWORD: "secret",
       RESTORE_MYSQL_DATABASE: "project_veil_restore",
-      VEIL_TEST_SCHEMA_MIGRATION_COUNT: "24",
+      VEIL_TEST_SCHEMA_MIGRATION_COUNT: String(EXPECTED_MIGRATION_COUNT),
       ...extraEnv
     }
   });
@@ -208,7 +211,7 @@ test("db-restore-rehearsal restores a verified backup and runs the persistence r
     mysqlUser: string;
     mysqlDatabase: string;
   };
-  assert.deepEqual(npmInvocation.args, ["run", "test:phase1-release-persistence", "--", "--storage", "mysql"]);
+  assert.deepEqual(npmInvocation.args, ["test", "--", "phase1-release-persistence", "--", "--storage", "mysql"]);
   assert.equal(npmInvocation.mysqlHost, "127.0.0.1");
   assert.equal(npmInvocation.mysqlPort, "3310");
   assert.equal(npmInvocation.mysqlUser, "restore_user");
@@ -226,7 +229,7 @@ test("db-restore-rehearsal stops before mysql restore when checksum verification
 
   const result = runRestore(tempDir);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /FAILED|failed|no properly formatted/i);
+  assert.match(result.stderr, /FAILED|failed|no properly formatted|improperly formatted/i);
   assert.equal(fs.existsSync(path.join(tempDir, "mysql.log")), false);
   assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
 });
@@ -241,6 +244,9 @@ test("db-restore-rehearsal fails when schema migration coverage does not match t
   });
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Schema validation failed: expected 24 applied migrations, found 23\./);
+  assert.match(
+    result.stderr,
+    new RegExp(`Schema validation failed: expected ${EXPECTED_MIGRATION_COUNT} applied migrations, found 23\\.`)
+  );
   assert.equal(fs.existsSync(path.join(tempDir, "npm.json")), false);
 });

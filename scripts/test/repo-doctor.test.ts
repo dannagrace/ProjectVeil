@@ -34,7 +34,7 @@ test("doctor passes when baseline and requested flow prerequisites are configure
   writeFile(path.join(repoRoot, ".env"), "VEIL_MYSQL_HOST=127.0.0.1\n");
   writeFile(path.join(repoRoot, "apps/cocos-client/wechat-minigame.build.json"), "{}\n");
   writeFile(path.join(repoRoot, "apps/cocos-client/build-templates/wechatgame/README.codex.md"), "# template\n");
-  writeFile(path.join(repoRoot, ".cache/ms-playwright/chromium-1208/INSTALLATION_COMPLETE"), "ok\n");
+  writeFile(path.join(repoRoot, "Library/Caches/ms-playwright/chromium-1208/INSTALLATION_COMPLETE"), "ok\n");
 
   const report = collectDoctorReport(
     {

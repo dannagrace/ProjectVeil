@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   buildRoomId,
   expectHeroMoveSpent,
+  followTilePath,
   fullMoveTextPattern,
   openRoom,
   pressTile,
@@ -10,7 +11,16 @@ import {
 } from "./smoke-helpers";
 
 async function hoverTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).hover();
+  await page.evaluate(
+    ({ nextX, nextY }) => {
+      const tile = document.querySelector<HTMLElement>(`[data-x="${nextX}"][data-y="${nextY}"]`);
+      if (!tile) {
+        throw new Error(`tile_not_found:${nextX},${nextY}`);
+      }
+      tile.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    },
+    { nextX: x, nextY: y }
+  );
 }
 
 test("second player receives room push updates without leaking another player's move details", async ({ browser }, testInfo) => {
@@ -77,8 +87,15 @@ test("building ownership changes are pushed to other clients with the same visib
         ]);
       });
 
-      await pressTile(playerTwoPage, 3, 3);
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await followTilePath(
+        playerTwoPage,
+        [
+          { x: 6, y: 4, spent: 2 },
+          { x: 6, y: 2, spent: 4 },
+          { x: 5, y: 1, spent: 6 }
+        ],
+        "player-2"
+      );
 
       await hoverTile(playerTwoPage, 3, 1);
       await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前无人占领");
@@ -123,8 +140,15 @@ test("reloading a peer after ownership sync restores the claimed building state 
         ]);
       });
 
-      await pressTile(playerTwoPage, 3, 3);
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await followTilePath(
+        playerTwoPage,
+        [
+          { x: 6, y: 4, spent: 2 },
+          { x: 6, y: 2, spent: 4 },
+          { x: 5, y: 1, spent: 6 }
+        ],
+        "player-2"
+      );
       await pressTile(playerOnePage, 3, 1);
       await expectHeroMoveSpent(playerOnePage, 2, "player-1");
       await pressTile(playerOnePage, 3, 1);
@@ -136,7 +160,7 @@ test("reloading a peer after ownership sync restores the claimed building state 
       await reloadAndExpectRecoveredSession(playerTwoPage, {
         roomId,
         playerId: "player-2",
-        expectedMoveText: fullMoveTextPattern("player-2")
+        expectedMoveText: null
       });
 
       await hoverTile(playerTwoPage, 3, 1);

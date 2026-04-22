@@ -13,6 +13,11 @@ const FORBIDDEN_TOP_LEVEL_SHARED_IMPORTS = new Set([
 
 let ts = null;
 
+const FALLBACK_MODULE_SPECIFIER_PATTERNS = [
+  /^\s*import(?:\s+.+?\s+from\s+)?\s*["']([^"']+)["']/,
+  /^\s*export(?:\s+.+?\s+from\s+)\s*["']([^"']+)["']/
+];
+
 try {
   ({ default: ts } = await import("typescript"));
 } catch {
@@ -49,14 +54,19 @@ function listStaticImportSpecifiers(filePath, sourceText) {
     const imports = [];
 
     for (const statement of sourceFile.statements) {
-      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      const moduleSpecifier = ts.isImportDeclaration(statement)
+        ? statement.moduleSpecifier
+        : ts.isExportDeclaration(statement)
+          ? statement.moduleSpecifier
+          : undefined;
+      if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) {
         continue;
       }
 
       const { line } = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile));
       imports.push({
         line: line + 1,
-        specifier: statement.moduleSpecifier.text
+        specifier: moduleSpecifier.text
       });
     }
 
@@ -66,7 +76,9 @@ function listStaticImportSpecifiers(filePath, sourceText) {
   return sourceText
     .split(/\r?\n/g)
     .flatMap((lineText, index) => {
-      const match = lineText.match(/^\s*import(?:\s+.+?\s+from\s+)?\s*["']([^"']+)["']/);
+      const match = FALLBACK_MODULE_SPECIFIER_PATTERNS
+        .map((pattern) => lineText.match(pattern))
+        .find((candidate) => candidate);
       return match
         ? [
             {

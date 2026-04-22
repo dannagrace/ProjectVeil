@@ -164,7 +164,7 @@ upload_file() {
 
 cutoff_timestamp_days_ago() {
   local days="$1"
-  date -u -d "${days} days ago" +%Y%m%dT%H%M%SZ
+  node -e "const days = Number(process.argv[1]); const reference = process.argv[2]; const m = /^(\\d{4})(\\d{2})(\\d{2})T(\\d{2})(\\d{2})(\\d{2})Z$/.exec(reference); if (!m) process.exit(1); const [,y,mo,d,h,mi,s] = m; const base = Date.UTC(Number(y), Number(mo)-1, Number(d), Number(h), Number(mi), Number(s)); const ts = new Date(base - days * 24 * 60 * 60 * 1000); const pad=(n)=>String(n).padStart(2,'0'); process.stdout.write(\`\${ts.getUTCFullYear()}\${pad(ts.getUTCMonth()+1)}\${pad(ts.getUTCDate())}T\${pad(ts.getUTCHours())}\${pad(ts.getUTCMinutes())}\${pad(ts.getUTCSeconds())}Z\`);" "$days" "$BACKUP_TIMESTAMP"
 }
 
 prune_prefix() {

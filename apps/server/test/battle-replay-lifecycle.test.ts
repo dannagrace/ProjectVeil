@@ -16,6 +16,7 @@ import { createRoom } from "@server/index";
 import type { BattleReplayPlaybackState, PlayerBattleReplaySummary } from "@veil/shared/battle";
 import type { BattleState } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
+import { updateVisibilityByPlayer } from "@veil/shared/world";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];
@@ -190,13 +191,78 @@ async function startReplayRouteServer(port: number, store: MemoryRoomSnapshotSto
   return server;
 }
 
-test("authoritative room captures and drains a completed neutral battle replay", () => {
-  const room = createRoom("replay-capture-room", 1001);
-  room.dispatch("player-1", {
+function startNeutralBattle(room: ReturnType<typeof createRoom>, playerId: string, heroId: string) {
+  for (const destination of [
+    { x: 2, y: 1 },
+    { x: 3, y: 1 },
+    { x: 4, y: 1 },
+    { x: 5, y: 1 },
+    { x: 5, y: 2 },
+    { x: 5, y: 3 }
+  ]) {
+    const moveResult = room.dispatch(playerId, {
+      type: "hero.move",
+      heroId,
+      destination
+    });
+    assert.equal(moveResult.ok, true);
+  }
+
+  const battleResult = room.dispatch(playerId, {
     type: "hero.move",
-    heroId: "hero-1",
+    heroId,
     destination: { x: 5, y: 4 }
   });
+  assert.equal(battleResult.ok, true);
+  assert.ok(battleResult.battle);
+  return battleResult;
+}
+
+function placeHeroOnTile(
+  room: VeilColyseusRoom,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        map: {
+          tiles: Array<{
+            position: { x: number; y: number };
+            occupant?: { kind: "hero"; refId: string };
+          }>;
+        };
+        heroes: Array<{
+          id: string;
+          position: { x: number; y: number };
+          move: { total: number; remaining: number };
+        }>;
+        visibilityByPlayer: Record<string, unknown>;
+      };
+    };
+  };
+
+  const state = internalRoom.worldRoom.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+
+  hero.position = { ...position };
+  hero.move.remaining = hero.move.total;
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map as never, state.heroes as never, state as never);
+}
+
+test("authoritative room captures and drains a completed neutral battle replay", () => {
+  const room = createRoom("replay-capture-room", 1001);
+  startNeutralBattle(room, "player-1", "hero-1");
 
   assert.deepEqual(room.consumeCompletedBattleReplays(), []);
 
@@ -241,11 +307,7 @@ test("authoritative room captures and drains a completed neutral battle replay",
 
 test("authoritative room records rejected player battle actions in completed replay steps", () => {
   const room = createRoom("replay-capture-rejected-room", 1001);
-  room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  startNeutralBattle(room, "player-1", "hero-1");
 
   let rejectedActionRecorded = false;
   let playerSteps = 0;
@@ -312,6 +374,7 @@ test("colyseus replay lifecycle persists the settled replay once into the player
   });
 
   await connectPlayer(room, client, "player-1", "connect-replay-persist");
+  placeHeroOnTile(room, "hero-1", { x: 5, y: 3 });
   await emitRoomMessage(room, "world.action", client, {
     type: "world.action",
     requestId: "move-replay-persist",
@@ -365,6 +428,7 @@ test("battle replay playback route hands off a persisted live-room replay", asyn
   });
 
   await connectPlayer(room, client, "player-1", "connect-replay-route");
+  placeHeroOnTile(room, "hero-1", { x: 5, y: 3 });
   await emitRoomMessage(room, "world.action", client, {
     type: "world.action",
     requestId: "move-replay-route",

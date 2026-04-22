@@ -30,6 +30,7 @@ import { createEmptyBattleState, type PlayerBattleReplaySummary } from "@veil/sh
 import { queryEventLogEntries } from "@veil/shared/event-log";
 import type { BattleState } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
+import { updateVisibilityByPlayer } from "@veil/shared/world";
 
 interface FakeClient extends Client {
   sent: ServerMessage[];
@@ -352,6 +353,45 @@ function getBattleForPlayer(room: VeilColyseusRoom, playerId: string): BattleSta
   return internalRoom.worldRoom.getBattleForPlayer(playerId);
 }
 
+function placeHeroOnTile(
+  room: VeilColyseusRoom,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        map: {
+          tiles: Array<{
+            position: { x: number; y: number };
+            occupant?: { kind: "hero"; refId: string };
+          }>;
+        };
+        heroes: Array<{
+          id: string;
+          position: { x: number; y: number };
+          move: { total: number; remaining: number };
+        }>;
+        visibilityByPlayer: Record<string, unknown>;
+      };
+    };
+  };
+
+  const state = internalRoom.worldRoom.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+  hero.position = { ...position };
+  hero.move.remaining = hero.move.total;
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map as never, state.heroes as never, state as never);
+}
+
 async function resolveBattleThroughRoom(room: VeilColyseusRoom, client: FakeClient, playerId: string): Promise<number> {
   let steps = 0;
   while (steps < 20) {
@@ -534,6 +574,7 @@ test("player account battle replay detail routes read a replay captured and pers
   });
 
   await connectPlayer(room, client, "player-1", "connect-replay-detail-route");
+  placeHeroOnTile(room, "hero-1", { x: 5, y: 3 });
   await emitRoomMessage(room, "world.action", client, {
     type: "world.action",
     requestId: "move-replay-detail-route",

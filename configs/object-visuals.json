@@ -363,11 +363,11 @@
         "gold@4,6": "gold"
       }
     },
-    "phase2-frontier-expanded": {
-      "neutralArmies": {
-        "neutral-frontier-gate": "neutral",
-        "neutral-river-watch": "neutral",
-        "neutral-southern-pickets": "neutral"
+  "phase2-frontier-expanded": {
+    "neutralArmies": {
+      "neutral-frontier-gate": "neutral",
+      "neutral-river-watch": "neutral",
+      "neutral-southern-pickets": "neutral"
       },
       "buildings": {
         "recruit-post-frontier-expanded-1": "recruitment_post",
@@ -375,11 +375,32 @@
         "mine-frontier-expanded-1": "resource_mine",
         "watchtower-frontier-expanded-1": "watchtower"
       },
-      "resources": {
-        "wood@6,4": "wood",
-        "gold@14,16": "gold",
-        "ore@26,27": "ore"
-      }
+    "resources": {
+      "wood@6,4": "wood",
+      "gold@14,16": "gold",
+      "ore@26,27": "ore"
+    }
+  },
+  "phase2-verdant-vale": {
+    "neutralArmies": {
+      "neutral-grove-sentinels": "neutral",
+      "neutral-highland-warband": "neutral",
+      "neutral-vale-roamers": "neutral"
+    },
+    "buildings": {
+      "lumber-camp-vale-1": "resource_mine",
+      "recruit-post-vale-1": "recruitment_post",
+      "shrine-power-vale-1": "attribute_shrine",
+      "forge-vale-1": "resource_mine",
+      "watchtower-vale-1": "watchtower",
+      "recruit-post-vale-2": "recruitment_post"
+    },
+    "resources": {
+      "wood@1,4": "wood",
+      "wood@7,2": "wood",
+      "ore@9,5": "ore",
+      "gold@4,7": "gold"
     }
   }
+}
 }

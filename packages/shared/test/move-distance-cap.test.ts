@@ -136,8 +136,8 @@ function createEncounterState(remainingMove: number): WorldState {
   });
 }
 
-test("validateWorldAction rejects encounter moves beyond the remaining full path distance", () => {
-  const state = createEncounterState(1);
+test("validateWorldAction rejects encounter moves when the hero cannot reach the encounter entry tile", () => {
+  const state = createEncounterState(0);
 
   assert.deepEqual(validateWorldAction(state, {
     type: "hero.move",

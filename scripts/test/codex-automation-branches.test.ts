@@ -466,8 +466,16 @@ test("ops:branch-hygiene fixture dry-run only lists explicit cleanup candidates"
   );
   assert.equal(payload.summary.openPr, 1);
   assert.equal(payload.summary.draftPr, 1);
-  assert.ok(payload.worktrees.some((worktree) => worktree.path === fixture.worktrees.safeLocalPath && worktree.state === "merged"));
-  assert.ok(payload.worktrees.some((worktree) => worktree.path === fixture.worktrees.dirtyMergedPath && worktree.state === "dirty"));
+  assert.ok(
+    payload.worktrees.some(
+      (worktree) => path.basename(worktree.path) === path.basename(fixture.worktrees.safeLocalPath) && worktree.state === "merged"
+    )
+  );
+  assert.ok(
+    payload.worktrees.some(
+      (worktree) => path.basename(worktree.path) === path.basename(fixture.worktrees.dirtyMergedPath) && worktree.state === "dirty"
+    )
+  );
 
   const remoteEnabledResult = runAudit(fixture.repoDir, ["prune", "--format", "json", "--delete-remote"], [
     { branch: fixture.branches.openPrRemote },
@@ -498,7 +506,7 @@ test("ops:branch-hygiene apply mode removes clean merged worktrees and preserves
   assert.equal(localApplyResult.status, 0, `stdout=${localApplyResult.stdout}\nstderr=${localApplyResult.stderr}`);
   assert.match(
     localApplyResult.stdout,
-    new RegExp(`Removed worktree ${fixture.worktrees.safeLocalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+    new RegExp(`Removed worktree .*${path.basename(fixture.worktrees.safeLocalPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
   );
   assert.match(
     localApplyResult.stdout,

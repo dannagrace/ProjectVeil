@@ -6,14 +6,65 @@ import {
   type CompletedBattleReplayCapture
 } from "@server/domain/battle/battle-replays";
 import { createRoom } from "@server/index";
+import { updateVisibilityByPlayer } from "@veil/shared/world";
+
+function moveHeroAlongPath(
+  room: ReturnType<typeof createRoom>,
+  playerId: string,
+  heroId: string,
+  path: Array<{ x: number; y: number }>
+): void {
+  for (const destination of path) {
+    const result = room.dispatch(playerId, {
+      type: "hero.move",
+      heroId,
+      destination
+    });
+    assert.equal(result.ok, true);
+  }
+}
+
+function startNeutralBattle(room: ReturnType<typeof createRoom>, playerId: string, heroId: string) {
+  moveHeroAlongPath(room, playerId, heroId, [
+    { x: 2, y: 1 },
+    { x: 3, y: 1 },
+    { x: 4, y: 1 },
+    { x: 5, y: 1 },
+    { x: 5, y: 2 },
+    { x: 5, y: 3 }
+  ]);
+  const result = room.dispatch(playerId, {
+    type: "hero.move",
+    heroId,
+    destination: { x: 5, y: 4 }
+  });
+  assert.equal(result.ok, true);
+  assert.ok(result.battle);
+}
+
+function placeHeroOnTile(
+  room: ReturnType<typeof createRoom>,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const state = room.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+  hero.position = { ...position };
+  hero.move.remaining = hero.move.total;
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map, state.heroes, state);
+}
 
 test("room persistence snapshot restores an active neutral battle", () => {
   const room = createRoom("room-persist-neutral", 1001);
-  room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  startNeutralBattle(room, "player-1", "hero-1");
 
   const snapshot = room.serializePersistenceSnapshot();
   const restored = createRoom("room-persist-neutral", 1001, snapshot);
@@ -26,16 +77,15 @@ test("room persistence snapshot restores an active neutral battle", () => {
 
 test("room persistence snapshot restores a resolved PvP world without active battles", () => {
   const room = createRoom("room-persist-pvp", 1001);
-  room.dispatch("player-1", {
+  placeHeroOnTile(room, "hero-1", { x: 2, y: 1 });
+  placeHeroOnTile(room, "hero-2", { x: 3, y: 1 });
+  const battleStart = room.dispatch("player-1", {
     type: "hero.move",
     heroId: "hero-1",
-    destination: { x: 3, y: 4 }
+    destination: { x: 3, y: 1 }
   });
-  room.dispatch("player-2", {
-    type: "hero.move",
-    heroId: "hero-2",
-    destination: { x: 3, y: 4 }
-  });
+  assert.equal(battleStart.ok, true);
+  assert.ok(battleStart.battle);
 
   let steps = 0;
   while (steps < 12) {

@@ -33,12 +33,27 @@ interface LobbyRoomsPayload {
   items?: unknown[];
 }
 
+interface AutomationStateHeroLike {
+  playerId?: string;
+  x: number;
+  y: number;
+}
+
 function encodeRoomQuery(roomId: string, playerId: string): string {
   return `${CLIENT_BASE_URL}/?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(playerId)}`;
 }
 
 export function buildRoomId(prefix: string): string {
   return `${prefix}-${Date.now()}`;
+}
+
+export async function resetSmokeStore(): Promise<void> {
+  const response = await fetch("http://127.0.0.1:2567/api/test/reset-store", {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error(`reset_store_failed:${response.status}`);
+  }
 }
 
 export function moveTextPattern(remaining: number, playerId = "player-1"): RegExp {
@@ -169,6 +184,93 @@ export async function pressTile(page: Page, x: number, y: number): Promise<void>
   });
 }
 
+export async function moveToAnyReachableTile(page: Page): Promise<{ x: number; y: number }> {
+  const target = await page.evaluate(() => {
+    const reachableTiles = Array.from(document.querySelectorAll<HTMLButtonElement>(".tile.is-reachable"))
+      .filter((tile) => !tile.classList.contains("is-hero"))
+      .map((tile) => ({
+        x: Number(tile.dataset.x ?? Number.NaN),
+        y: Number(tile.dataset.y ?? Number.NaN)
+      }))
+      .filter((tile) => Number.isFinite(tile.x) && Number.isFinite(tile.y));
+
+    reachableTiles.sort((left, right) => {
+      if (left.y !== right.y) {
+        return left.y - right.y;
+      }
+      return left.x - right.x;
+    });
+
+    return reachableTiles[0] ?? null;
+  });
+
+  if (!target) {
+    throw new Error("reachable_tile_missing");
+  }
+
+  const previousMoveText = await page.getByTestId("hero-move").innerText();
+  await pressTile(page, target.x, target.y);
+  await expect(page.getByTestId("hero-move")).not.toHaveText(previousMoveText, { timeout: 10_000 });
+  return target;
+}
+
+export async function followTilePath(
+  page: Page,
+  path: ReadonlyArray<{ x: number; y: number; spent?: number }>,
+  playerId = "player-1"
+): Promise<void> {
+  for (const step of path) {
+    await pressTile(page, step.x, step.y);
+    if (typeof step.spent === "number") {
+      await expectHeroMoveSpent(page, step.spent, playerId);
+    }
+  }
+}
+
+async function readAutomationState(page: Page): Promise<{
+  visibleHeroes?: AutomationStateHeroLike[];
+}> {
+  const text = await page.evaluate(() => window.render_game_to_text?.() ?? "{}");
+  return JSON.parse(text) as { visibleHeroes?: AutomationStateHeroLike[] };
+}
+
+async function waitForVisibleHero(page: Page, playerId: string, x: number, y: number): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        (await readAutomationState(page)).visibleHeroes?.some(
+          (hero) => hero.playerId === playerId && hero.x === x && hero.y === y
+        ) ?? false,
+      {
+        message: `waiting for ${playerId} visibility at ${x},${y}`
+      }
+    )
+    .toBe(true);
+}
+
+export async function startDeterministicPvpBattle(playerOnePage: Page, playerTwoPage: Page): Promise<void> {
+  await pressTile(playerOnePage, 3, 1);
+  await expectHeroMoveSpent(playerOnePage, 2, "player-1");
+
+  await followTilePath(
+    playerTwoPage,
+    [
+      { x: 6, y: 4, spent: 2 },
+      { x: 6, y: 2, spent: 4 },
+      { x: 5, y: 1, spent: 6 }
+    ],
+    "player-2"
+  );
+
+  await expect(playerOnePage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
+  await waitForVisibleHero(playerOnePage, "player-2", 5, 1);
+  await pressTile(playerOnePage, 5, 1);
+  await expectHeroMoveSpent(playerOnePage, 3, "player-1");
+
+  await expect(playerOnePage.getByTestId("battle-panel")).not.toContainText("No active battle");
+  await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle");
+}
+
 export async function attackOnce(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
@@ -187,6 +289,48 @@ export async function attackOnce(page: Page): Promise<void> {
   }
 
   throw new Error("battle_attack_click_unavailable");
+}
+
+async function hasVisibleBattleAttack(page: Page): Promise<boolean> {
+  try {
+    return await page.getByTestId("battle-attack").isVisible();
+  } catch {
+    return false;
+  }
+}
+
+async function hasVisibleBattleModal(page: Page): Promise<boolean> {
+  try {
+    return await page.getByTestId("battle-modal-title").isVisible();
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveBattleToSettlement(
+  firstPage: Page,
+  secondPage: Page,
+  maxTurns = 8
+): Promise<void> {
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    if ((await hasVisibleBattleModal(firstPage)) || (await hasVisibleBattleModal(secondPage))) {
+      return;
+    }
+
+    if (await hasVisibleBattleAttack(firstPage)) {
+      await attackOnce(firstPage);
+      continue;
+    }
+
+    if (await hasVisibleBattleAttack(secondPage)) {
+      await attackOnce(secondPage);
+      continue;
+    }
+
+    await firstPage.waitForTimeout(200);
+  }
+
+  throw new Error("battle_settlement_not_reached");
 }
 
 export async function dismissBattleModal(page: Page): Promise<void> {

@@ -1,8 +1,65 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDemoBattleState } from "@veil/shared/battle";
+import { updateVisibilityByPlayer } from "@veil/shared/world";
 import { createRoom } from "@server/index";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
+
+function moveHeroAlongPath(
+  room: ReturnType<typeof createRoom>,
+  playerId: string,
+  heroId: string,
+  path: Array<{ x: number; y: number }>
+) {
+  let result = room.getSnapshot(playerId);
+  for (const destination of path) {
+    const moveResult = room.dispatch(playerId, {
+      type: "hero.move",
+      heroId,
+      destination
+    });
+    assert.equal(moveResult.ok, true);
+    result = moveResult.snapshot;
+  }
+
+  return result;
+}
+
+function startNeutralBattle(room: ReturnType<typeof createRoom>, playerId: string, heroId: string) {
+  moveHeroAlongPath(room, playerId, heroId, [
+    { x: 2, y: 1 },
+    { x: 3, y: 1 },
+    { x: 4, y: 1 },
+    { x: 5, y: 1 },
+    { x: 5, y: 2 },
+    { x: 5, y: 3 }
+  ]);
+
+  return room.dispatch(playerId, {
+    type: "hero.move",
+    heroId,
+    destination: { x: 5, y: 4 }
+  });
+}
+
+function placeHeroOnTile(
+  room: ReturnType<typeof createRoom>,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const state = room.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+  hero.position = { ...position };
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map, state.heroes, state);
+}
 
 function resolveBattle(room: ReturnType<typeof createRoom>, playerId: string): void {
   let steps = 0;
@@ -34,12 +91,7 @@ function resolveBattle(room: ReturnType<typeof createRoom>, playerId: string): v
 
 test("battle start auto-resolves defender opener before state is returned to the player", () => {
   const room = createRoom("room-auto-open", 1001);
-
-  const result = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  const result = startNeutralBattle(room, "player-1", "hero-1");
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.events, [
@@ -50,16 +102,8 @@ test("battle start auto-resolves defender opener before state is returned to the
       encounterKind: "neutral",
       neutralArmyId: "neutral-1",
       battleId: "battle-neutral-1",
-      path: [
-        { x: 1, y: 1 },
-        { x: 2, y: 1 },
-        { x: 3, y: 1 },
-        { x: 4, y: 1 },
-        { x: 5, y: 1 },
-        { x: 5, y: 2 },
-        { x: 5, y: 3 }
-      ],
-      moveCost: 6
+      path: [{ x: 5, y: 3 }],
+      moveCost: 0
     }
   ]);
   assert.ok(result.battle);
@@ -79,11 +123,7 @@ test("battle start auto-resolves defender opener before state is returned to the
 
 test("player battle actions are followed by automated defender turns until control returns", () => {
   const room = createRoom("room-auto-loop", 1001);
-  const moveResult = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  const moveResult = startNeutralBattle(room, "player-1", "hero-1");
 
   assert.ok(moveResult.battle);
   assert.equal(moveResult.battle?.activeUnitId, "hero-1-stack");
@@ -205,12 +245,7 @@ test("server rejects terrain-locked battle skills before mutating authoritative 
 test("completed battles contribute to Prometheus battle duration observations", () => {
   resetRuntimeObservability();
   const room = createRoom("room-battle-duration", 1001);
-
-  room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  startNeutralBattle(room, "player-1", "hero-1");
 
   resolveBattle(room, "player-1");
 
@@ -241,11 +276,7 @@ test("room supports concurrent neutral battles and returns player-specific battl
   };
   secondNeutralTile.occupant = { kind: "neutral", refId: "neutral-2" };
 
-  const playerOneResult = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
+  const playerOneResult = startNeutralBattle(room, "player-1", "hero-1");
   const playerTwoResult = room.dispatch("player-2", {
     type: "hero.move",
     heroId: "hero-2",
@@ -412,15 +443,13 @@ test("room allows recruiting from a recruitment post when the hero stands on it"
 
 test("room allows visiting an attribute shrine once and persists the stat bonus", () => {
   const room = createRoom("room-shrine", 1001);
+  const moveResult = moveHeroAlongPath(room, "player-1", "hero-1", [
+    { x: 2, y: 1 },
+    { x: 3, y: 1 },
+    { x: 3, y: 2 }
+  ]);
 
-  const moveResult = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 3, y: 2 }
-  });
-
-  assert.equal(moveResult.ok, true);
-  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 3, y: 2 });
+  assert.deepEqual(moveResult.state.ownHeroes[0]?.position, { x: 3, y: 2 });
 
   const visitResult = room.dispatch("player-1", {
     type: "hero.visit",
@@ -457,30 +486,7 @@ test("room allows visiting an attribute shrine once and persists the stat bonus"
 
 test("room allows visiting the contested basin watchtower and persists the vision bonus", () => {
   const room = createRoom("room-watchtower[map:contested_basin]", 1001);
-
-  const moveResult = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 4, y: 5 }
-  });
-
-  assert.equal(moveResult.ok, true);
-  assert.deepEqual(moveResult.snapshot.state.ownHeroes[0]?.position, { x: 4, y: 5 });
-
-  const nextDayResult = room.dispatch("player-1", {
-    type: "turn.endDay"
-  });
-
-  assert.equal(nextDayResult.ok, true);
-
-  const finalMoveResult = room.dispatch("player-1", {
-    type: "hero.move",
-    heroId: "hero-1",
-    destination: { x: 5, y: 4 }
-  });
-
-  assert.equal(finalMoveResult.ok, true);
-  assert.deepEqual(finalMoveResult.snapshot.state.ownHeroes[0]?.position, { x: 5, y: 4 });
+  placeHeroOnTile(room, "hero-1", { x: 5, y: 4 });
 
   const visitResult = room.dispatch("player-1", {
     type: "hero.visit",

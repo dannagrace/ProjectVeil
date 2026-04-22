@@ -448,6 +448,7 @@ function parseArgs(argv: string[]): Args {
   let ciTrendSummaryPath: string | undefined;
   let coverageSummaryPath: string | undefined;
   let configCenterLibraryPath: string | undefined;
+  let cocosRcReconnectReplayPath: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let outputDir: string | undefined;
   let outputPath: string | undefined;

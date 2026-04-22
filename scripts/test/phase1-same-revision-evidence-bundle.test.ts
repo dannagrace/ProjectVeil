@@ -23,6 +23,10 @@ function readGit(args: string[]): string {
   return result.stdout.trim();
 }
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function runBundle(args: string[]): { status: number; stdout: string; stderr: string } {
   try {
     const stdout = execFileSync(
@@ -52,10 +56,19 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
   const revision = readGit(["rev-parse", "HEAD"]);
   const shortRevision = readGit(["rev-parse", "--short", "HEAD"]);
   const candidate = "phase1-rc";
+  const snapshotGeneratedAt = hoursAgo(1.4);
+  const h5SmokeGeneratedAt = hoursAgo(1.3);
+  const h5SmokeFinishedAt = hoursAgo(1.28);
+  const reconnectGeneratedAt = hoursAgo(1.2);
+  const persistenceGeneratedAt = hoursAgo(1.1);
+  const cocosSnapshotExecutedAt = hoursAgo(1.0);
+  const cocosBundleGeneratedAt = hoursAgo(0.95);
+  const releaseGateGeneratedAt = hoursAgo(0.9);
+  const dashboardGeneratedAt = hoursAgo(0.85);
 
   const snapshotPath = path.join(inputDir, "release-readiness-snapshot.json");
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-04T01:00:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: shortRevision,
@@ -71,14 +84,14 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
 
   const h5SmokePath = path.join(inputDir, "client-release-candidate-smoke.json");
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-04T01:05:00.000Z",
+    generatedAt: h5SmokeGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: shortRevision
     },
     execution: {
       status: "passed",
-      finishedAt: "2026-04-04T01:06:00.000Z"
+      finishedAt: h5SmokeFinishedAt
     },
     summary: {
       total: 2,
@@ -91,7 +104,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
 
   const reconnectPath = path.join(inputDir, "colyseus-reconnect-soak-summary.json");
   writeJson(reconnectPath, {
-    generatedAt: "2026-04-04T01:10:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     candidate: {
       name: candidate,
       revision
@@ -128,7 +141,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
 
   const persistencePath = path.join(inputDir, "phase1-release-persistence-regression.json");
   writeJson(persistencePath, {
-    generatedAt: "2026-04-04T01:20:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: shortRevision
@@ -154,7 +167,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
       shortCommit: shortRevision
     },
     execution: {
-      executedAt: "2026-04-04T01:25:00.000Z",
+      executedAt: cocosSnapshotExecutedAt,
       overallStatus: "passed",
       summary: "Cocos RC snapshot is current for the candidate revision."
     }
@@ -168,7 +181,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
   const cocosBundlePath = path.join(inputDir, "cocos-rc-evidence-bundle.json");
   writeJson(cocosBundlePath, {
     bundle: {
-      generatedAt: "2026-04-04T01:30:00.000Z",
+      generatedAt: cocosBundleGeneratedAt,
       candidate,
       commit: revision,
       shortCommit: shortRevision,
@@ -189,7 +202,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
 
   const releaseGateSummaryPath = path.join(inputDir, "release-gate-summary.json");
   writeJson(releaseGateSummaryPath, {
-    generatedAt: "2026-04-04T01:35:00.000Z",
+    generatedAt: releaseGateGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: shortRevision
@@ -204,7 +217,7 @@ test("phase1 same-revision evidence bundle writes a machine-readable manifest fo
 
   const dashboardPath = path.join(inputDir, "release-readiness-dashboard.json");
   writeJson(dashboardPath, {
-    generatedAt: "2026-04-04T01:40:00.000Z",
+    generatedAt: dashboardGeneratedAt,
     overallStatus: "pass",
     inputs: {
       snapshotPath,

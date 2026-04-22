@@ -56,7 +56,7 @@ test("flags release packaging and observability diagnostics without inventing ne
     ]
   );
   assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate -- wechat-rc"));
-  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run release -- health:summary"));
+  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run release -- cocos-rc:bundle"));
   assert.ok(plan.optionalSteps.every((step) => step.command?.startsWith("npm run") ?? true));
 });
 

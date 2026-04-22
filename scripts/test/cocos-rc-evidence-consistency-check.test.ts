@@ -7,6 +7,10 @@ import test from "node:test";
 
 const REPO_ROOT = process.cwd();
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-cocos-rc-consistency-"));
 }
@@ -46,14 +50,14 @@ test("cocos RC evidence consistency check passes when RC and readiness artifacts
   const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
 
   writeJson(readinessSnapshotPath, {
-    generatedAt: "2026-04-06T08:30:00.000Z",
+    generatedAt: hoursAgo(2),
     revision: {
       commit: revision,
       shortCommit: revision
     }
   });
   writeJson(gateSummaryPath, {
-    generatedAt: "2026-04-06T08:35:00.000Z",
+    generatedAt: hoursAgo(1.8),
     revision: {
       commit: revision,
       shortCommit: revision
@@ -69,7 +73,7 @@ test("cocos RC evidence consistency check passes when RC and readiness artifacts
       shortCommit: revision
     },
     execution: {
-      completedAt: "2026-04-06T08:38:00.000Z"
+      completedAt: hoursAgo(1.6)
     }
   });
   writeJson(cocosRcSnapshotPath, {
@@ -79,7 +83,7 @@ test("cocos RC evidence consistency check passes when RC and readiness artifacts
       shortCommit: revision
     },
     execution: {
-      executedAt: "2026-04-06T08:40:00.000Z"
+      executedAt: hoursAgo(1.4)
     },
     linkedEvidence: {
       releaseReadinessSnapshot: {
@@ -98,7 +102,7 @@ test("cocos RC evidence consistency check passes when RC and readiness artifacts
         shortCommit: revision
       }
     },
-    generatedAt: "2026-04-06T08:42:00.000Z",
+    generatedAt: hoursAgo(1.2),
     linkedEvidence: {
       snapshot: readinessSnapshotPath,
       primaryJourneyEvidence: primaryJourneyEvidencePath
@@ -106,7 +110,7 @@ test("cocos RC evidence consistency check passes when RC and readiness artifacts
   });
   writeJson(bundlePath, {
     bundle: {
-      generatedAt: "2026-04-06T08:45:00.000Z",
+      generatedAt: hoursAgo(1.1),
       candidate,
       commit: revision,
       shortCommit: revision
@@ -175,14 +179,14 @@ test("cocos RC evidence consistency check reports candidate drift, stale artifac
   const bundlePath = path.join(artifactsDir, `cocos-rc-evidence-bundle-${candidate}-${revision}.json`);
 
   writeJson(readinessSnapshotPath, {
-    generatedAt: "2026-04-01T08:30:00.000Z",
+    generatedAt: hoursAgo(48),
     revision: {
       commit: revision,
       shortCommit: revision
     }
   });
   writeJson(gateSummaryPath, {
-    generatedAt: "2026-04-06T08:35:00.000Z",
+    generatedAt: hoursAgo(2),
     revision: {
       commit: "deadbeef",
       shortCommit: "deadbeef"
@@ -198,7 +202,7 @@ test("cocos RC evidence consistency check reports candidate drift, stale artifac
       shortCommit: revision
     },
     execution: {
-      completedAt: "2026-04-06T08:38:00.000Z"
+      completedAt: hoursAgo(1.8)
     }
   });
   writeJson(cocosRcSnapshotPath, {
@@ -208,7 +212,7 @@ test("cocos RC evidence consistency check reports candidate drift, stale artifac
       shortCommit: revision
     },
     execution: {
-      executedAt: "2026-04-06T08:40:00.000Z"
+      executedAt: hoursAgo(1.6)
     },
     linkedEvidence: {
       releaseReadinessSnapshot: {
@@ -227,7 +231,7 @@ test("cocos RC evidence consistency check reports candidate drift, stale artifac
         shortCommit: revision
       }
     },
-    generatedAt: "2026-04-06T08:42:00.000Z",
+    generatedAt: hoursAgo(1.4),
     linkedEvidence: {
       snapshot: readinessSnapshotPath,
       primaryJourneyEvidence: primaryJourneyEvidencePath
@@ -235,7 +239,7 @@ test("cocos RC evidence consistency check reports candidate drift, stale artifac
   });
   writeJson(bundlePath, {
     bundle: {
-      generatedAt: "2026-04-06T08:45:00.000Z",
+      generatedAt: hoursAgo(1.2),
       candidate,
       commit: revision,
       shortCommit: revision

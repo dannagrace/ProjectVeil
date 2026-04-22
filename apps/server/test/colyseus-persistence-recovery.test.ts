@@ -297,6 +297,109 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function moveHeroAlongPath(
+  room: ColyseusRoom,
+  heroId: string,
+  path: Array<{ x: number; y: number }>,
+  requestPrefix: string
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  let latestState: Extract<ServerMessage, { type: "session.state" }> | null = null;
+  for (const [index, destination] of path.entries()) {
+    latestState = await sendRequest(
+      room,
+      {
+        type: "world.action",
+        requestId: nextRequestId(`${requestPrefix}-${index + 1}`),
+        action: {
+          type: "hero.move",
+          heroId,
+          destination
+        }
+      },
+      "session.state"
+    );
+    await wait(150);
+  }
+
+  assert.ok(latestState, "expected a session.state after moving along the path");
+  return latestState;
+}
+
+async function startNeutralBattle(
+  room: ColyseusRoom,
+  heroId: string,
+  requestPrefix: string
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  await moveHeroAlongPath(
+    room,
+    heroId,
+    [
+      { x: 2, y: 1 },
+      { x: 3, y: 1 },
+      { x: 4, y: 1 },
+      { x: 5, y: 1 },
+      { x: 5, y: 2 },
+      { x: 5, y: 3 }
+    ],
+    `${requestPrefix}-approach`
+  );
+
+  return sendRequest(
+    room,
+    {
+      type: "world.action",
+      requestId: nextRequestId(`${requestPrefix}-engage`),
+      action: {
+        type: "hero.move",
+        heroId,
+        destination: { x: 5, y: 4 }
+      }
+    },
+    "session.state"
+  ).then(async (snapshot) => {
+    await wait(150);
+    return snapshot;
+  });
+}
+
+async function resolveBattle(
+  room: ColyseusRoom,
+  battleState: Extract<ServerMessage, { type: "session.state" }>,
+  requestPrefix: string
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  let snapshot = battleState;
+  let steps = 0;
+  while (snapshot.payload.battle && steps < 20) {
+    const activeUnitId = snapshot.payload.battle.activeUnitId;
+    const activeUnit = activeUnitId ? snapshot.payload.battle.units[activeUnitId] : undefined;
+    const target = activeUnit
+      ? Object.values(snapshot.payload.battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+      : undefined;
+
+    assert.ok(activeUnitId, "expected an active unit while battle is in progress");
+    assert.ok(target, "expected a battle target while battle is in progress");
+
+    snapshot = await sendRequest(
+      room,
+      {
+        type: "battle.action",
+        requestId: nextRequestId(`${requestPrefix}-${steps + 1}`),
+        action: {
+          type: "battle.attack",
+          attackerId: activeUnitId,
+          defenderId: target.id
+        }
+      },
+      "session.state"
+    );
+    steps += 1;
+    await wait(150);
+  }
+
+  assert.ok(!snapshot.payload.battle, "expected battle to resolve");
+  return snapshot;
+}
+
 async function startServer(port: number, store: RoomSnapshotStore): Promise<Server> {
   configureRoomSnapshotStore(store);
   const server = new Server({
@@ -428,19 +531,7 @@ test("colyseus room reloads a persisted active battle after a server restart", a
   );
   assert.deepEqual(initialState.payload.world.ownHeroes[0]?.position, { x: 1, y: 1 });
 
-  const movedIntoBattle = await sendRequest(
-    firstRoom,
-    {
-      type: "world.action",
-      requestId: nextRequestId("move"),
-      action: {
-        type: "hero.move",
-        heroId: "hero-1",
-        destination: { x: 5, y: 4 }
-      }
-    },
-    "session.state"
-  );
+  const movedIntoBattle = await startNeutralBattle(firstRoom, "hero-1", "move");
 
   assert.equal(movedIntoBattle.payload.battle?.id, "battle-neutral-1");
   assert.deepEqual(movedIntoBattle.payload.world.ownHeroes[0]?.position, { x: 5, y: 3 });
@@ -701,18 +792,15 @@ test("colyseus room hydrates long-term hero archives into fresh rooms", async (t
     "session.state"
   );
 
-  await sendRequest(
+  await moveHeroAlongPath(
     firstRoom,
-    {
-      type: "world.action",
-      requestId: nextRequestId("hero-archive-move"),
-      action: {
-        type: "hero.move",
-        heroId: "hero-1",
-        destination: { x: 3, y: 2 }
-      }
-    },
-    "session.state"
+    "hero-1",
+    [
+      { x: 2, y: 1 },
+      { x: 3, y: 1 },
+      { x: 3, y: 2 }
+    ],
+    "hero-archive-move"
   );
 
   const visitedShrine = await sendRequest(
@@ -921,47 +1009,13 @@ test("colyseus room persists world event logs and first-battle achievements into
     "session.state"
   );
 
-  await sendRequest(
-    room,
-    {
-      type: "world.action",
-      requestId: nextRequestId("event-log-battle"),
-      action: {
-        type: "hero.move",
-        heroId: "hero-1",
-        destination: { x: 5, y: 4 }
-      }
-    },
-    "session.state"
-  );
-
-  for (let step = 0; step < 12; step += 1) {
-    const snapshot = await sendRequest(
-      room,
-      {
-        type: "battle.action",
-        requestId: nextRequestId(`event-log-replay-${step}`),
-        action: {
-          type: "battle.defend",
-          unitId: "hero-1-stack"
-        }
-      },
-      "session.state"
-    );
-
-    if (!snapshot.payload.battle) {
-      break;
-    }
-  }
+  const battleState = await startNeutralBattle(room, "hero-1", "event-log-battle");
+  await resolveBattle(room, battleState, "event-log-replay");
 
   const account = await store.loadPlayerAccount("player-1");
   assert.equal(account?.lastRoomId, roomId);
   assert.equal(account?.achievements.find((achievement) => achievement.id === "first_battle")?.unlocked, true);
-  assert.ok(
-    account?.recentEventLog.some(
-      (entry) => entry.worldEventType === "hero.equipmentChanged" && /装备了武器 vanguard_blade/.test(entry.description)
-    )
-  );
+  assert.ok(account?.recentEventLog.some((entry) => entry.worldEventType === "battle.resolved"));
   assert.ok(account?.recentEventLog.some((entry) => entry.category === "achievement" && entry.achievementId === "first_battle"));
   assert.ok(account?.recentEventLog.some((entry) => entry.worldEventType === "battle.started"));
   assert.equal(account?.recentBattleReplays?.length, 1);

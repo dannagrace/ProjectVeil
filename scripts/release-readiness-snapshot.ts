@@ -92,6 +92,13 @@ interface ReleaseReadinessSnapshot {
   checks: ReleaseReadinessCheck[];
 }
 
+interface CommandInvocation {
+  file: string;
+  args: string[];
+  shell: boolean;
+  env: NodeJS.ProcessEnv;
+}
+
 const DEFAULT_OUTPUT_DIR = path.join("artifacts", "release-readiness");
 const OUTPUT_TAIL_BYTES = 4000;
 
@@ -308,10 +315,43 @@ function writeJsonFile(filePath: string, payload: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
-function runCommand(command: string): SpawnSyncReturns<string> {
-  return spawnSync(command, {
+function sanitizeChildEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  delete env.npm_lifecycle_event;
+  delete env.npm_lifecycle_script;
+  delete env.npm_command;
+  return env;
+}
+
+export function buildCommandInvocation(command: string): CommandInvocation {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("npm ")) {
+    const npmExecPath = process.env.npm_execpath;
+    if (npmExecPath) {
+      const npmNodeExecPath = process.env.npm_node_execpath || process.execPath;
+      return {
+        file: npmNodeExecPath,
+        args: [npmExecPath, ...trimmed.split(/\s+/).slice(1)],
+        shell: false,
+        env: sanitizeChildEnv()
+      };
+    }
+  }
+
+  return {
+    file: command,
+    args: [],
     shell: true,
+    env: sanitizeChildEnv()
+  };
+}
+
+function runCommand(command: string): SpawnSyncReturns<string> {
+  const invocation = buildCommandInvocation(command);
+  return spawnSync(invocation.file, invocation.args, {
+    shell: invocation.shell,
     cwd: process.cwd(),
+    env: invocation.env,
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 20
   });

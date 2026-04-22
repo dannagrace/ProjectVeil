@@ -1,4 +1,4 @@
-import { configureConfigRuntimeStatusProvider } from "@server/config-center";
+import { configureConfigRuntimeStatusProvider } from "@server/domain/config-center/runtime";
 import {
   sendWechatSubscribeMessage
 } from "@server/adapters/wechat-subscribe";
