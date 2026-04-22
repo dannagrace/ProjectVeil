@@ -1,6 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
+import { SERVER_BASE_URL } from "./runtime-targets";
 const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token";
 const SEED_MESSAGE_ID = "shop-purchase-e2e-seed";
 const SEEDED_GEMS = 200;

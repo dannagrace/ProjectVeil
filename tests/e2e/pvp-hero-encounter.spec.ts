@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectHeroMoveSpent, followTilePath, resolveBattleToSettlement } from "./smoke-helpers";
+import { CLIENT_BASE_URL } from "./runtime-targets";
 
 async function pressTile(page: Page, x: number, y: number): Promise<void> {
   await page.locator(`[data-x="${x}"][data-y="${y}"]`).dispatchEvent("pointerdown", {
@@ -15,8 +16,8 @@ test("two players can enter a hero-vs-hero battle and resolve it with correct tu
   const playerTwoPage = await playerTwoContext.newPage();
 
   await Promise.all([
-    playerOnePage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-1`),
-    playerTwoPage.goto(`http://127.0.0.1:4173/?roomId=${roomId}&playerId=player-2`)
+    playerOnePage.goto(`${CLIENT_BASE_URL}/?roomId=${roomId}&playerId=player-1`),
+    playerTwoPage.goto(`${CLIENT_BASE_URL}/?roomId=${roomId}&playerId=player-2`)
   ]);
 
   await expectHeroMoveSpent(playerOnePage, 0, "player-1");

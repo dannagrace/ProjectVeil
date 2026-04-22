@@ -10,9 +10,7 @@ import {
   reloadAndExpectAuthoritativeConvergence,
   withSmokeDiagnostics
 } from "./smoke-helpers";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
-const SERVER_WS_URL = "ws://127.0.0.1:2567";
+import { SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
 
 interface AutomationState {
   hero?: {

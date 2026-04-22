@@ -1,8 +1,6 @@
 import { expect, type APIRequestContext } from "@playwright/test";
 import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName } from "../../packages/shared/src/analytics-events";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
-const ANALYTICS_CAPTURE_ENDPOINT = `${SERVER_BASE_URL}/api/test/analytics/events`;
+import { ANALYTICS_CAPTURE_ENDPOINT } from "./runtime-targets";
 
 interface AnalyticsCapturePayload {
   events?: AnalyticsEvent[];
