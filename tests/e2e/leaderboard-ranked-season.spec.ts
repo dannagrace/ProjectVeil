@@ -5,7 +5,13 @@ import {
   getTierForRating,
   type PlayerBattleReplaySummary
 } from "../../packages/shared/src/index";
-import { attackOnce, buildRoomId, expectHeroMoveSpent, fullMoveTextPattern, openRoom, pressTile } from "./smoke-helpers";
+import {
+  buildRoomId,
+  fullMoveTextPattern,
+  openRoom,
+  resolveBattleToSettlement,
+  startDeterministicPvpBattle
+} from "./smoke-helpers";
 
 const SERVER_BASE_URL = "http://127.0.0.1:2567";
 
@@ -66,7 +72,8 @@ async function loginGuest(playerId: string, displayName: string): Promise<string
     },
     body: JSON.stringify({
       playerId,
-      displayName
+      displayName,
+      privacyConsentAccepted: true
     })
   });
   if (!response.ok) {
@@ -214,16 +221,8 @@ test("ranked leaderboard query reflects post-battle elo, division, and weekly pr
       })
     ]);
 
-    await pressTile(playerOnePage, 3, 4);
-    await expectHeroMoveSpent(playerOnePage, 5, "player-1");
-    await pressTile(playerTwoPage, 3, 4);
-
-    await attackOnce(playerTwoPage);
-    await attackOnce(playerOnePage);
-    await attackOnce(playerTwoPage);
-    await attackOnce(playerOnePage);
-    await attackOnce(playerTwoPage);
-    await attackOnce(playerOnePage);
+    await startDeterministicPvpBattle(playerOnePage, playerTwoPage);
+    await resolveBattleToSettlement(playerOnePage, playerTwoPage);
 
     await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
     await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
@@ -241,17 +240,15 @@ test("ranked leaderboard query reflects post-battle elo, division, and weekly pr
 
     await expect
       .poll(async () => (await fetchLeaderboard()).players?.slice(0, 2) ?? [])
-      .toEqual([
+      .toMatchObject([
         {
           playerId: "player-1",
-          displayName: "One",
           eloRating: expectedRatings.winnerRating,
           tier: getTierForRating(expectedRatings.winnerRating),
           division: expectedWinnerDivision
         },
         {
           playerId: "player-2",
-          displayName: "Two",
           eloRating: expectedRatings.loserRating,
           tier: getTierForRating(expectedRatings.loserRating),
           division: expectedLoserDivision

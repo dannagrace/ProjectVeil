@@ -220,6 +220,12 @@ function writePassingArtifacts(workspace: string, revision: string): {
   const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
   const reconnectSoakPath = path.join(artifactsDir, "colyseus-reconnect-soak-summary-pass.json");
   const cocosBundlePath = path.join(artifactsDir, "cocos-rc-evidence-bundle-pass.json");
+  const cocosSnapshotPath = path.join(artifactsDir, `cocos-rc-snapshot-phase1-rc-${revision}.json`);
+  const primaryJourneyEvidencePath = path.join(artifactsDir, `cocos-primary-journey-evidence-phase1-rc-${revision}.json`);
+  const checklistMarkdownPath = path.join(artifactsDir, `cocos-rc-checklist-phase1-rc-${revision}.md`);
+  const blockersMarkdownPath = path.join(artifactsDir, `cocos-rc-blockers-phase1-rc-${revision}.md`);
+  const presentationSignoffPath = path.join(artifactsDir, `cocos-presentation-signoff-phase1-rc-${revision}.json`);
+  const presentationSignoffMarkdownPath = path.join(artifactsDir, `cocos-presentation-signoff-phase1-rc-${revision}.md`);
   const persistencePath = path.join(artifactsDir, `phase1-release-persistence-regression-${revision}.json`);
   const runtimeObservabilityEvidencePath = writeRuntimeEvidenceArtifact(artifactsDir, revision);
   const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
@@ -234,6 +240,8 @@ function writePassingArtifacts(workspace: string, revision: string): {
   const smokeRecordedAt = hoursAgo(1.15);
   const persistenceGeneratedAt = hoursAgo(1.1);
   const releaseGateGeneratedAt = hoursAgo(1.55);
+  const cocosSnapshotExecutedAt = hoursAgo(1.35);
+  const primaryJourneyCompletedAt = hoursAgo(1.32);
 
   writeJson(snapshotPath, {
     generatedAt: snapshotGeneratedAt,
@@ -287,11 +295,12 @@ function writePassingArtifacts(workspace: string, revision: string): {
       summary: "Cocos RC evidence is complete."
     },
     artifacts: {
-      snapshot: path.join(artifactsDir, "cocos-rc-snapshot-phase1-rc.json"),
-      checklistMarkdown: path.join(artifactsDir, "cocos-rc-checklist-phase1-rc.md"),
-      blockersMarkdown: path.join(artifactsDir, "cocos-rc-blockers-phase1-rc.md"),
-      presentationSignoff: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.json"),
-      presentationSignoffMarkdown: path.join(artifactsDir, "cocos-presentation-signoff-phase1-rc.md")
+      snapshot: cocosSnapshotPath,
+      primaryJourneyEvidence: primaryJourneyEvidencePath,
+      checklistMarkdown: checklistMarkdownPath,
+      blockersMarkdown: blockersMarkdownPath,
+      presentationSignoff: presentationSignoffPath,
+      presentationSignoffMarkdown: presentationSignoffMarkdownPath
     },
     linkedEvidence: {
       releaseReadinessSnapshot: {
@@ -311,6 +320,47 @@ function writePassingArtifacts(workspace: string, revision: string): {
       { id: "presentationSignoff", label: "Presentation sign-off", filled: true }
     ]
   });
+  writeJson(cocosSnapshotPath, {
+    candidate: {
+      name: "phase1-rc",
+      commit: revision,
+      shortCommit: revision
+    },
+    execution: {
+      executedAt: cocosSnapshotExecutedAt,
+      overallStatus: "passed",
+      summary: "Cocos RC snapshot is current for the candidate revision."
+    },
+    linkedEvidence: {
+      releaseReadinessSnapshot: {
+        path: snapshotPath
+      },
+      primaryJourneyEvidence: {
+        path: primaryJourneyEvidencePath
+      }
+    }
+  });
+  writeJson(primaryJourneyEvidencePath, {
+    candidate: {
+      name: "phase1-rc",
+      commit: revision,
+      shortCommit: revision
+    },
+    execution: {
+      completedAt: primaryJourneyCompletedAt
+    }
+  });
+  fs.writeFileSync(checklistMarkdownPath, "# Checklist\n", "utf8");
+  fs.writeFileSync(blockersMarkdownPath, "# Blockers\n", "utf8");
+  writeJson(presentationSignoffPath, {
+    generatedAt: hoursAgo(1.3),
+    candidate: {
+      name: "phase1-rc",
+      revision
+    },
+    status: "passed"
+  });
+  fs.writeFileSync(presentationSignoffMarkdownPath, "# Presentation sign-off\n", "utf8");
   writeJson(wechatCandidateSummaryPath, {
     generatedAt: wechatSummaryGeneratedAt,
     candidate: { revision, version: "1.2.3", status: "ready" },

@@ -58,6 +58,7 @@ test("notification preferences default to enabled categories", () => {
     turnReminder: false,
     groupChallenge: true,
     friendLeaderboard: true,
+    reengagement: true,
     updatedAt: "2026-04-04T12:00:00.000Z"
   });
 });

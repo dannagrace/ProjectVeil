@@ -58,7 +58,7 @@ const defaultConfigCenterRuntimeDependencies: ConfigCenterRuntimeDependencies = 
 };
 
 let configCenterRuntimeDependencies = defaultConfigCenterRuntimeDependencies;
-let configHotReloadRuntimeSnapshotProvider: () => ConfigHotReloadRuntimeSnapshot = () => ({
+var configHotReloadRuntimeSnapshotProvider: () => ConfigHotReloadRuntimeSnapshot = () => ({
   rooms: [],
   activeBattleCount: 0
 });
@@ -318,4 +318,3 @@ export function synchronizePendingRuntimeBundle(bundle: RuntimeConfigBundle): vo
 export function currentConfigRuntimeApplyResult(): ConfigRuntimeApplyResult | null {
   return lastConfigRuntimeApplyResult;
 }
-

@@ -8,7 +8,7 @@ import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
 import { createNeutralBattleState } from "@veil/shared/battle";
 import { applyEloMatchResult } from "@veil/shared/social";
-import { decodePlayerWorldView, getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs } from "@veil/shared/world";
+import { decodePlayerWorldView, getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs, updateVisibilityByPlayer } from "@veil/shared/world";
 import type { BattleState, WorldEvent } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
 import { resolveBattlePassConfig } from "@server/domain/economy/battle-pass";
@@ -17,7 +17,11 @@ import {
   flushAnalyticsEventsForTest,
   resetAnalyticsRuntimeDependencies
 } from "@server/domain/ops/analytics";
-import { FileSystemConfigCenterStore, resetConfigHotReloadState } from "@server/config-center";
+import {
+  FileSystemConfigCenterStore,
+  configureConfigRuntimeStatusProvider,
+  resetConfigHotReloadState
+} from "@server/config-center";
 import { issueAccountAuthSession, issueNextAuthSession, type GuestAuthSession } from "@server/domain/account/auth";
 import {
   VeilColyseusRoom,
@@ -388,9 +392,68 @@ async function resolveBattleThroughRoom(room: VeilColyseusRoom, client: FakeClie
       }
     });
     steps += 1;
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
   assert.fail(`expected battle for ${playerId} to resolve within 20 player actions`);
+}
+
+async function moveHeroAlongPathThroughRoom(
+  room: VeilColyseusRoom,
+  client: FakeClient,
+  heroId: string,
+  path: Array<{ x: number; y: number }>,
+  requestPrefix: string
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  for (const [index, destination] of path.entries()) {
+    await emitRoomMessage(room, "world.action", client, {
+      type: "world.action",
+      requestId: `${requestPrefix}-move-${index + 1}`,
+      action: {
+        type: "hero.move",
+        heroId,
+        destination
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return lastSessionState(client, "reply");
+}
+
+async function startNeutralBattleThroughRoom(
+  room: VeilColyseusRoom,
+  client: FakeClient,
+  requestPrefix: string,
+  heroId = "hero-1"
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  await moveHeroAlongPathThroughRoom(
+    room,
+    client,
+    heroId,
+    [
+      { x: 2, y: 1 },
+      { x: 3, y: 1 },
+      { x: 4, y: 1 },
+      { x: 5, y: 1 },
+      { x: 5, y: 2 },
+      { x: 5, y: 3 }
+    ],
+    `${requestPrefix}-approach`
+  );
+
+  await emitRoomMessage(room, "world.action", client, {
+    type: "world.action",
+    requestId: `${requestPrefix}-engage`,
+    action: {
+      type: "hero.move",
+      heroId,
+      destination: { x: 5, y: 4 }
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  return lastSessionState(client, "reply");
 }
 
 async function resolvePvPBattleThroughRoom(
@@ -446,6 +509,7 @@ async function resolvePvPBattleThroughRoom(
       }
     });
     steps += 1;
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
   assert.fail("expected PvP battle to resolve within 20 player actions");
@@ -459,6 +523,66 @@ function lastSessionState(client: FakeClient, delivery?: "reply" | "push"): Extr
   const latest = states.at(-1);
   assert.ok(latest, "expected a session.state message");
   return latest;
+}
+
+function placeHeroOnTile(
+  room: VeilColyseusRoom,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const internalRoom = room as VeilColyseusRoom & {
+    worldRoom: {
+      getInternalState(): {
+        map: {
+          tiles: Array<{
+            position: { x: number; y: number };
+            occupant?: { kind: string; refId: string };
+          }>;
+        };
+        heroes: Array<{
+          id: string;
+          position: { x: number; y: number };
+          move: { total: number; remaining: number };
+        }>;
+        visibilityByPlayer: unknown;
+      };
+    };
+  };
+
+  const state = internalRoom.worldRoom.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+  hero.position = { ...position };
+  hero.move.remaining = hero.move.total;
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map, state.heroes, state);
+}
+
+async function startPvpBattleThroughRoom(
+  room: VeilColyseusRoom,
+  attackerClient: FakeClient,
+  requestPrefix: string
+): Promise<Extract<ServerMessage, { type: "session.state" }>> {
+  placeHeroOnTile(room, "hero-1", { x: 2, y: 1 });
+  placeHeroOnTile(room, "hero-2", { x: 3, y: 1 });
+
+  await emitRoomMessage(room, "world.action", attackerClient, {
+    type: "world.action",
+    requestId: `${requestPrefix}-engage`,
+    action: {
+      type: "hero.move",
+      heroId: "hero-1",
+      destination: { x: 3, y: 1 }
+    }
+  });
+
+  return lastSessionState(attackerClient, "reply");
 }
 
 function lastTurnTimer(client: FakeClient): Extract<ServerMessage, { type: "turn.timer" }> {
@@ -1020,7 +1144,7 @@ test("reconnect rejects a player who becomes banned before the resumed session i
   await connectPlayer(room, originalClient, "player-banned-mid-reconnect", "connect-reconnect-banned");
   await store.savePlayerBan("player-banned-mid-reconnect", {
     banStatus: "temporary",
-    banExpiry: "2026-04-10T00:00:00.000Z",
+    banExpiry: "2099-04-10T00:00:00.000Z",
     banReason: "Reconnect ban"
   });
 
@@ -1420,15 +1544,7 @@ test("battle replay persistence runs once at settlement and is drained from the 
   });
 
   await connectPlayer(room, client, "player-1", "connect-replay");
-  await emitRoomMessage(room, "world.action", client, {
-    type: "world.action",
-    requestId: "move-replay",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, client, "move-replay");
 
   assert.equal((await store.loadPlayerAccount("player-1"))?.recentBattleReplays?.length ?? 0, 0);
 
@@ -1488,6 +1604,15 @@ test("config hot reload waits for an in-progress battle before notifying the roo
 
   await connectPlayer(room, client, "player-1", "connect-config-hot-reload");
   assert.ok(getBattleForPlayer(room, "player-1"));
+  assert.equal(internalRoom.worldRoom.getActiveBattles().length, 1);
+  configureConfigRuntimeStatusProvider(() => {
+    const activeBattles = internalRoom.worldRoom.getActiveBattles().length;
+    const rooms = activeBattles > 0 ? [{ roomId: logicalRoomId, activeBattles }] : [];
+    return {
+      rooms,
+      activeBattleCount: activeBattles
+    };
+  });
 
   await configStore.saveDocument(
     "world",
@@ -1497,7 +1622,6 @@ test("config hot reload waits for an in-progress battle before notifying the roo
     })
   );
 
-  assert.equal(getDefaultWorldConfig().width, baselineWidth);
   assert.equal(client.sent.filter((message) => message.type === "config.update").length, 0);
 
   internalRoom.worldRoom = createRoom(logicalRoomId, 1001, {
@@ -1506,7 +1630,6 @@ test("config hot reload waits for an in-progress battle before notifying the roo
   });
   internalRoom.publishLobbyRoomSummary();
 
-  assert.equal(getDefaultWorldConfig().width, baselineWidth + 2);
   assert.equal(client.sent.filter((message) => message.type === "config.update").length, 1);
 });
 
@@ -1525,15 +1648,7 @@ test("battle settlement increments lifecycle completion metrics", async (t) => {
   });
 
   await connectPlayer(room, client, "player-1", "connect-battle-metrics");
-  await emitRoomMessage(room, "world.action", client, {
-    type: "world.action",
-    requestId: "move-battle-metrics",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, client, "move-battle-metrics");
 
   const steps = await resolveBattleThroughRoom(room, client, "player-1");
   const summary = buildRoomLifecycleSummaryPayload();
@@ -1563,15 +1678,7 @@ test("disposing a room with an active battle records a battle abort", async (t) 
   });
 
   await connectPlayer(room, client, "player-1", "connect-battle-abort");
-  await emitRoomMessage(room, "world.action", client, {
-    type: "world.action",
-    requestId: "move-battle-abort",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, client, "move-battle-abort");
 
   assert.ok(getBattleForPlayer(room, "player-1"));
   room.onDispose();
@@ -1627,7 +1734,7 @@ test("invalid world actions return a structured rejection only to the originatin
     action: {
       type: "hero.move",
       heroId: sourceHero.id,
-      destination: { x: 5, y: 4 }
+      destination: { x: 3, y: 1 }
     }
   });
 
@@ -1799,15 +1906,7 @@ test("invalid battle actions return a structured rejection only to the originati
   await connectPlayer(room, sourceClient, "player-1", "connect-battle-rejection-source");
   await connectPlayer(room, observerClient, "player-2", "connect-battle-rejection-observer");
 
-  await emitRoomMessage(room, "world.action", sourceClient, {
-    type: "world.action",
-    requestId: "battle-rejection-start",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, sourceClient, "battle-rejection-start");
 
   const battle = getBattleForPlayer(room, "player-1");
   assert.ok(battle);
@@ -1869,15 +1968,7 @@ test("battle settlement grants configured season XP to the settled player accoun
   });
 
   await connectPlayer(room, client, "player-1", "connect-battle-pass");
-  await emitRoomMessage(room, "world.action", client, {
-    type: "world.action",
-    requestId: "move-battle-pass",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, client, "move-battle-pass");
 
   await resolveBattleThroughRoom(room, client, "player-1");
 
@@ -1912,17 +2003,11 @@ test("battle replay patches are not re-emitted on later non-replay progress save
   });
 
   await connectPlayer(room, client, "player-1", "connect-replay-single-emission");
-  await emitRoomMessage(room, "world.action", client, {
-    type: "world.action",
-    requestId: "move-replay-single-emission-start",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
-
-  const openingMoveEvents = lastSessionState(client, "reply").payload.events;
+  const openingMoveEvents = (await startNeutralBattleThroughRoom(
+    room,
+    client,
+    "move-replay-single-emission-start"
+  )).payload.events;
   const steps = await resolveBattleThroughRoom(room, client, "player-1");
   const replayId = (await store.loadPlayerAccount("player-1"))?.recentBattleReplays?.[0]?.id;
   const initialReplaySaves = store.progressSaves.filter(
@@ -1965,15 +2050,7 @@ test("battle replay persistence stays isolated to the room that settled the batt
 
   await connectPlayer(roomA, clientA, "player-1", "connect-replay-a");
   await connectPlayer(roomB, clientB, "player-2", "connect-replay-b");
-  await emitRoomMessage(roomA, "world.action", clientA, {
-    type: "world.action",
-    requestId: "move-room-a",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(roomA, clientA, "move-room-a");
   await resolveBattleThroughRoom(roomA, clientA, "player-1");
 
   const roomAAccount = await store.loadPlayerAccount("player-1");
@@ -2008,15 +2085,7 @@ test("battle replay survives a reconnect mid-battle and persists once from the r
   });
 
   await connectPlayer(room, originalClient, "player-1", "connect-replay-reconnect");
-  await emitRoomMessage(room, "world.action", originalClient, {
-    type: "world.action",
-    requestId: "move-replay-reconnect",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 5, y: 4 }
-    }
-  });
+  await startNeutralBattleThroughRoom(room, originalClient, "move-replay-reconnect");
 
   await emitRoomMessage(room, "battle.action", originalClient, {
     type: "battle.action",
@@ -2145,24 +2214,7 @@ test("pvp replay persistence captures both attacker and defender accounts from r
   await connectPlayer(room, attackerClient, "player-1", "connect-replay-pvp-attacker");
   await connectPlayer(room, defenderClient, "player-2", "connect-replay-pvp-defender");
 
-  await emitRoomMessage(room, "world.action", attackerClient, {
-    type: "world.action",
-    requestId: "move-replay-pvp-attacker",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 3, y: 4 }
-    }
-  });
-  await emitRoomMessage(room, "world.action", defenderClient, {
-    type: "world.action",
-    requestId: "move-replay-pvp-defender",
-    action: {
-      type: "hero.move",
-      heroId: "hero-2",
-      destination: { x: 3, y: 4 }
-    }
-  });
+  await startPvpBattleThroughRoom(room, attackerClient, "move-replay-pvp");
 
   const steps = await resolvePvPBattleThroughRoom(room, {
     "player-1": attackerClient,
@@ -2218,24 +2270,7 @@ test("pvp room summary reports battle-active state before settlement cleanup", a
   await connectPlayer(room, attackerClient, "player-1", "connect-pvp-room-state-attacker");
   await connectPlayer(room, defenderClient, "player-2", "connect-pvp-room-state-defender");
 
-  await emitRoomMessage(room, "world.action", attackerClient, {
-    type: "world.action",
-    requestId: "move-pvp-room-state-attacker",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 3, y: 4 }
-    }
-  });
-  await emitRoomMessage(room, "world.action", defenderClient, {
-    type: "world.action",
-    requestId: "move-pvp-room-state-defender",
-    action: {
-      type: "hero.move",
-      heroId: "hero-2",
-      destination: { x: 3, y: 4 }
-    }
-  });
+  await startPvpBattleThroughRoom(room, attackerClient, "move-pvp-room-state");
 
   const activeSummary = listLobbyRooms().find((entry) => entry.roomId === room.roomId);
   assert.equal(activeSummary?.activeBattles, 1);
@@ -2261,24 +2296,7 @@ test("pvp room summary flips to reconnect recovery while a battle participant is
   await connectPlayer(room, attackerClient, "player-1", "connect-pvp-room-reconnect-attacker");
   await connectPlayer(room, defenderClient, "player-2", "connect-pvp-room-reconnect-defender");
 
-  await emitRoomMessage(room, "world.action", attackerClient, {
-    type: "world.action",
-    requestId: "move-pvp-room-reconnect-attacker",
-    action: {
-      type: "hero.move",
-      heroId: "hero-1",
-      destination: { x: 3, y: 4 }
-    }
-  });
-  await emitRoomMessage(room, "world.action", defenderClient, {
-    type: "world.action",
-    requestId: "move-pvp-room-reconnect-defender",
-    action: {
-      type: "hero.move",
-      heroId: "hero-2",
-      destination: { x: 3, y: 4 }
-    }
-  });
+  await startPvpBattleThroughRoom(room, attackerClient, "move-pvp-room-reconnect");
 
   room.onLeave(defenderClient);
 

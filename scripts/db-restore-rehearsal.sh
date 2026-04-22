@@ -62,7 +62,7 @@ require_command gzip
 require_command mysql
 
 if command -v sha256sum >/dev/null 2>&1; then
-  SHA_VERIFY=(sha256sum -c)
+  SHA_VERIFY=(sha256sum --strict -c)
 elif command -v shasum >/dev/null 2>&1; then
   SHA_VERIFY=(shasum -a 256 -c)
 else

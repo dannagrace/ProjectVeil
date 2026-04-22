@@ -68,22 +68,11 @@ const UNIT_CONFIG = {
   ]
 };
 
-const BATTLE_SKILL_CONFIG = {
-  skills: [
-    {
-      id: "power_shot",
-      name: "投矛射击",
-      description: "远程压制目标。",
-      kind: "active",
-      target: "enemy",
-      cooldown: 2,
-      effects: {
-        damageMultiplier: 0.85,
-        allowRetaliation: false
-      }
-    }
-  ],
-  statuses: []
+const BATTLE_SKILL_CONFIG = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "configs", "battle-skills.json"), "utf8")
+) as {
+  skills: unknown[];
+  statuses: unknown[];
 };
 
 const BATTLE_BALANCE_CONFIG = {

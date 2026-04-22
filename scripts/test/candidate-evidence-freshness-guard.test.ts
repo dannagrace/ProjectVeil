@@ -224,9 +224,16 @@ function writeBaseArtifacts(workspace: string): {
   };
 }
 
+function createEmptyWechatArtifactsDir(workspace: string): string {
+  const wechatArtifactsDir = path.join(workspace, "wechat-artifacts");
+  fs.mkdirSync(wechatArtifactsDir, { recursive: true });
+  return wechatArtifactsDir;
+}
+
 test("candidate evidence freshness guard passes for fresh same-revision candidate evidence", () => {
   const workspace = createTempWorkspace();
   const fixture = writeBaseArtifacts(workspace);
+  const wechatArtifactsDir = createEmptyWechatArtifactsDir(workspace);
   const outputPath = path.join(workspace, "candidate-evidence-freshness-guard.json");
   const markdownOutputPath = path.join(workspace, "candidate-evidence-freshness-guard.md");
 
@@ -236,6 +243,8 @@ test("candidate evidence freshness guard passes for fresh same-revision candidat
       fixture.candidate,
       "--candidate-revision",
       fixture.revision,
+      "--target-surface",
+      "h5",
       "--snapshot",
       fixture.snapshotPath,
       "--release-gate-summary",
@@ -244,6 +253,8 @@ test("candidate evidence freshness guard passes for fresh same-revision candidat
       fixture.bundlePath,
       "--manual-evidence-ledger",
       fixture.ledgerPath,
+      "--wechat-artifacts-dir",
+      wechatArtifactsDir,
       "--output",
       outputPath,
       "--markdown-output",
@@ -267,6 +278,7 @@ test("candidate evidence freshness guard passes for fresh same-revision candidat
 test("candidate evidence freshness guard fails mixed revision evidence", () => {
   const workspace = createTempWorkspace();
   const fixture = writeBaseArtifacts(workspace);
+  const wechatArtifactsDir = createEmptyWechatArtifactsDir(workspace);
   writeJson(fixture.gateSummaryPath, {
     generatedAt: hoursAgo(1),
     revision: {
@@ -285,6 +297,8 @@ test("candidate evidence freshness guard fails mixed revision evidence", () => {
       fixture.candidate,
       "--candidate-revision",
       fixture.revision,
+      "--target-surface",
+      "h5",
       "--snapshot",
       fixture.snapshotPath,
       "--release-gate-summary",
@@ -293,6 +307,8 @@ test("candidate evidence freshness guard fails mixed revision evidence", () => {
       fixture.bundlePath,
       "--manual-evidence-ledger",
       fixture.ledgerPath,
+      "--wechat-artifacts-dir",
+      wechatArtifactsDir,
       "--output",
       outputPath,
       "--max-age-hours",
@@ -314,6 +330,7 @@ test("candidate evidence freshness guard fails mixed revision evidence", () => {
 test("candidate evidence freshness guard fails when a required candidate artifact is missing", () => {
   const workspace = createTempWorkspace();
   const fixture = writeBaseArtifacts(workspace);
+  const wechatArtifactsDir = createEmptyWechatArtifactsDir(workspace);
   const outputPath = path.join(workspace, "candidate-evidence-freshness-guard.json");
 
   const result = runGuard(
@@ -322,6 +339,8 @@ test("candidate evidence freshness guard fails when a required candidate artifac
       fixture.candidate,
       "--candidate-revision",
       fixture.revision,
+      "--target-surface",
+      "h5",
       "--snapshot",
       fixture.snapshotPath,
       "--release-gate-summary",
@@ -330,6 +349,8 @@ test("candidate evidence freshness guard fails when a required candidate artifac
       path.join(fixture.artifactsDir, "missing-bundle.json"),
       "--manual-evidence-ledger",
       fixture.ledgerPath,
+      "--wechat-artifacts-dir",
+      wechatArtifactsDir,
       "--output",
       outputPath,
       "--max-age-hours",
@@ -351,6 +372,7 @@ test("candidate evidence freshness guard fails when a required candidate artifac
 test("candidate evidence freshness guard fails stale candidate evidence", () => {
   const workspace = createTempWorkspace();
   const fixture = writeBaseArtifacts(workspace);
+  const wechatArtifactsDir = createEmptyWechatArtifactsDir(workspace);
   writeJson(fixture.snapshotPath, {
     generatedAt: hoursAgo(MAX_AGE_HOURS + 24),
     revision: {
@@ -366,6 +388,8 @@ test("candidate evidence freshness guard fails stale candidate evidence", () => 
       fixture.candidate,
       "--candidate-revision",
       fixture.revision,
+      "--target-surface",
+      "h5",
       "--snapshot",
       fixture.snapshotPath,
       "--release-gate-summary",
@@ -374,6 +398,8 @@ test("candidate evidence freshness guard fails stale candidate evidence", () => 
       fixture.bundlePath,
       "--manual-evidence-ledger",
       fixture.ledgerPath,
+      "--wechat-artifacts-dir",
+      wechatArtifactsDir,
       "--output",
       outputPath,
       "--max-age-hours",

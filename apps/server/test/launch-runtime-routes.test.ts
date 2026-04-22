@@ -82,12 +82,12 @@ test("launch runtime routes expose active announcements and maintenance mode", a
     ],
     maintenanceMode: {
       enabled: true,
-      title: "停服维护中",
-      message: "预计 10:00 恢复。",
-      nextOpenAt: "2026-04-17T10:00:00.000Z",
-      whitelistPlayerIds: [],
-      whitelistLoginIds: []
-    }
+        title: "停服维护中",
+        message: "预计 10:00 恢复。",
+        nextOpenAt: "2099-04-17T10:00:00.000Z",
+        whitelistPlayerIds: [],
+        whitelistLoginIds: []
+      }
   });
   t.after(restore);
 
@@ -107,6 +107,6 @@ test("launch runtime routes expose active announcements and maintenance mode", a
     active: true,
     title: "停服维护中",
     message: "预计 10:00 恢复。",
-    nextOpenAt: "2026-04-17T10:00:00.000Z"
+    nextOpenAt: "2099-04-17T10:00:00.000Z"
   });
 });

@@ -14,6 +14,10 @@ function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function runDashboard(args: string[], cwd: string): { stdout: string; status: number } {
   try {
     const stdout = execFileSync("node", ["--import", "tsx", "./scripts/release-readiness-dashboard.ts", ...args], {
@@ -42,8 +46,14 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
   const wechatArtifactsDir = path.join(workspaceDir, "wechat-artifacts");
   const smokeReportPath = path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json");
 
+  const snapshotGeneratedAt = hoursAgo(24 * 15);
+  const reconnectGeneratedAt = hoursAgo(24 * 15);
+  const cocosExecutedAt = hoursAgo(2);
+  const persistenceGeneratedAt = hoursAgo(1.5);
+  const smokeExecutedAt = hoursAgo(1.75);
+
   writeJson(snapshotPath, {
-    generatedAt: "2026-03-01T00:00:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -67,12 +77,12 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
     },
     execution: {
       overallStatus: "failed",
-      executedAt: "2026-03-30T00:10:00.000Z",
+      executedAt: cocosExecutedAt,
       summary: "Primary journey hit a release-blocking regression."
     }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-03-01T00:00:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -99,7 +109,7 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
     ]
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-03-30T00:20:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: {
       shortCommit: "abc1234"
     },
@@ -125,7 +135,7 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
     },
     execution: {
       result: "passed",
-      executedAt: "2026-03-30T00:05:00.000Z",
+      executedAt: smokeExecutedAt,
       summary: "Smoke suite passed."
     },
     cases: [
@@ -206,6 +216,9 @@ test("release-readiness dashboard keeps stale and partial mixed-surface evidence
   assert.match(markdown, /## Same-candidate evidence[\s\S]*Candidate-level evidence audit not selected/);
   assert.match(markdown, /WeChat package metadata missing\./);
   assert.match(markdown, /Primary-client diagnostic snapshots: FAIL \(/);
-  assert.match(markdown, /Cocos RC snapshot: FAIL @ 2026-03-30T00:10:00.000Z/);
-  assert.match(markdown, /older than 14 day\(s\) \(2026-03-01T00:00:00.000Z\)/);
+  assert.match(markdown, new RegExp(`Cocos RC snapshot: FAIL @ ${cocosExecutedAt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(
+    markdown,
+    new RegExp(`older than 14 day\\(s\\) \\(${snapshotGeneratedAt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`)
+  );
 });

@@ -8,6 +8,9 @@ import zlib from "node:zlib";
 
 const repoRoot = path.resolve(__dirname, "../..");
 const restoreTestScriptPath = path.join(repoRoot, "scripts", "db-restore-test.sh");
+const EXPECTED_MIGRATION_COUNT = fs
+  .readdirSync(path.join(repoRoot, "scripts", "migrations"))
+  .filter((entry) => entry.endsWith(".ts")).length;
 
 function writeExecutable(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -104,7 +107,7 @@ if (process.env.VEIL_TEST_MYSQL_LOG_FILE) {
 }
 
 if (args.includes("--batch") && args.includes("--skip-column-names")) {
-  process.stdout.write("24");
+  process.stdout.write(String(${EXPECTED_MIGRATION_COUNT}));
   process.exit(0);
 }
 

@@ -16,6 +16,10 @@ function createTempWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "veil-phase1-dossier-"));
 }
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
 function writeRuntimeGateArtifact(
   artifactsDir: string,
   revision: string,
@@ -26,9 +30,12 @@ function writeRuntimeGateArtifact(
   }
 ): string {
   const runtimeGatePath = path.join(artifactsDir, `runtime-observability-gate-${revision}.json`);
+  const runtimeHealthObservedAt = hoursAgo(0.95);
+  const authObservedAt = hoursAgo(0.9);
+  const metricsObservedAt = hoursAgo(0.85);
   writeJson(runtimeGatePath, {
     schemaVersion: 1,
-    generatedAt: "2026-04-05T08:45:05.000Z",
+    generatedAt: hoursAgo(0.8),
     candidate: {
       name: "phase1-rc",
       revision,
@@ -77,7 +84,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["runtime-health"] ?? "passed",
         httpStatus: 200,
         summary: "Runtime health responded with an OK payload.",
-        observedAt: "2026-04-05T08:45:00.000Z",
+        observedAt: runtimeHealthObservedAt,
         freshness: "fresh",
         details: ["activeRooms=3", "connections=11", "actions=182"],
         keyReadinessFields: {
@@ -93,7 +100,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["auth-readiness"] ?? "passed",
         httpStatus: 200,
         summary: overrides?.headline ?? "Auth readiness is healthy.",
-        observedAt: "2026-04-05T08:45:05.000Z",
+        observedAt: authObservedAt,
         freshness: "fresh",
         details: ["lockouts=0", "pendingRegistrations=0", "pendingRecoveries=0"],
         keyReadinessFields: {
@@ -109,7 +116,7 @@ function writeRuntimeGateArtifact(
         status: overrides?.endpointStatuses?.["runtime-metrics"] ?? "passed",
         httpStatus: 200,
         summary: "Runtime metrics exposed the required Prometheus counters.",
-        observedAt: "2026-04-05T08:45:05.000Z",
+        observedAt: metricsObservedAt,
         freshness: "fresh",
         details: ["Required Prometheus metrics are present."],
         keyReadinessFields: {
@@ -142,8 +149,19 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
   const coverageSummaryPath = path.join(workspace, ".coverage", "summary.json");
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
   const wechatCandidateSummaryPath = path.join(wechatDir, "codex.wechat.release-candidate-summary.json");
+  const snapshotGeneratedAt = hoursAgo(1.6);
+  const waiverApprovedAt = hoursAgo(1.8);
+  const h5SmokeGeneratedAt = hoursAgo(1.5);
+  const reconnectGeneratedAt = hoursAgo(1.4);
+  const cocosBundleGeneratedAt = hoursAgo(1.3);
+  const wechatCandidateGeneratedAt = hoursAgo(1.2);
+  const devtoolsRecordedAt = hoursAgo(1.18);
+  const deviceRuntimeRecordedAt = hoursAgo(1.16);
+  const persistenceGeneratedAt = hoursAgo(1.1);
+  const syncGovernanceGeneratedAt = hoursAgo(1.0);
+  const ciTrendGeneratedAt = hoursAgo(0.9);
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-05T08:30:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: revision
@@ -161,7 +179,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
         status: "passed",
         waiver: {
           approvedBy: "release-manager",
-          approvedAt: "2026-04-05T08:20:00.000Z",
+          approvedAt: waiverApprovedAt,
           reason: "Documented flaky shard accepted for this RC only."
         }
       },
@@ -173,7 +191,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     ]
   });
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-05T08:32:00.000Z",
+    generatedAt: h5SmokeGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: revision
@@ -189,7 +207,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-04-05T08:33:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: revision
@@ -218,7 +236,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
   });
   writeJson(cocosBundlePath, {
     bundle: {
-      generatedAt: "2026-04-05T08:34:00.000Z",
+      generatedAt: cocosBundleGeneratedAt,
       candidate: "phase1-rc",
       commit: revision,
       shortCommit: revision,
@@ -251,7 +269,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     ]
   });
   writeJson(wechatCandidateSummaryPath, {
-    generatedAt: "2026-04-05T08:40:00.000Z",
+    generatedAt: wechatCandidateGeneratedAt,
     candidate: {
       revision,
       version: "1.2.3",
@@ -290,7 +308,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
             required: true,
             status: "passed",
             owner: "release-oncall",
-            recordedAt: "2026-04-05T08:39:00.000Z",
+            recordedAt: devtoolsRecordedAt,
             revision,
             artifactPath: path.join(wechatDir, "codex.wechat.install-launch-evidence.json")
           },
@@ -300,7 +318,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
             required: true,
             status: "passed",
             owner: "release-oncall",
-            recordedAt: "2026-04-05T08:40:00.000Z",
+            recordedAt: deviceRuntimeRecordedAt,
             revision,
             artifactPath: path.join(wechatDir, "device-runtime-review.json")
           }
@@ -310,7 +328,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     blockers: []
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-04-05T08:41:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: {
       commit: revision,
       shortCommit: revision
@@ -334,7 +352,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     }
   });
   writeJson(syncGovernancePath, {
-    generatedAt: "2026-04-05T08:42:00.000Z",
+    generatedAt: syncGovernanceGeneratedAt,
     execution: {
       status: "passed"
     },
@@ -351,7 +369,7 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     ]
   });
   writeJson(ciTrendSummaryPath, {
-    generatedAt: "2026-04-05T08:43:00.000Z",
+    generatedAt: ciTrendGeneratedAt,
     summary: {
       overallStatus: "passed",
       totalFindings: 0,
@@ -826,22 +844,30 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   const ciTrendSummaryPath = path.join(artifactsDir, "ci-trend-summary.json");
   const coverageSummaryPath = path.join(workspace, ".coverage", "summary.json");
   const configCenterLibraryPath = path.join(workspace, "configs", ".config-center-library.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
   const runtimeObservabilityGatePath = writeRuntimeGateArtifact(artifactsDir, revision);
+  const snapshotGeneratedAt = hoursAgo(1.6);
+  const h5SmokeGeneratedAt = hoursAgo(1.5);
+  const reconnectGeneratedAt = hoursAgo(1.4);
+  const cocosBundleGeneratedAt = hoursAgo(1.3);
+  const persistenceGeneratedAt = hoursAgo(1.2);
+  const syncGovernanceGeneratedAt = hoursAgo(1.1);
+  const ciTrendGeneratedAt = hoursAgo(1.0);
 
   writeJson(snapshotPath, {
-    generatedAt: "2026-04-05T08:30:00.000Z",
+    generatedAt: snapshotGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     summary: { status: "passed", requiredFailed: 0, requiredPending: 0 },
     checks: [{ id: "npm-test", required: true, status: "passed" }]
   });
   writeJson(h5SmokePath, {
-    generatedAt: "2026-04-05T08:32:00.000Z",
+    generatedAt: h5SmokeGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     execution: { status: "passed", exitCode: 0 },
     summary: { total: 2, passed: 2, failed: 0 }
   });
   writeJson(reconnectSoakPath, {
-    generatedAt: "2026-04-05T08:33:00.000Z",
+    generatedAt: reconnectGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     status: "passed",
     summary: { failedScenarios: 0, scenarioNames: ["reconnect_soak"] },
@@ -861,7 +887,7 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
   });
   writeJson(cocosBundlePath, {
     bundle: {
-      generatedAt: "2026-04-05T08:34:00.000Z",
+      generatedAt: cocosBundleGeneratedAt,
       candidate: "phase1-rc",
       commit: revision,
       shortCommit: revision,
@@ -873,7 +899,7 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
     requiredEvidence: [{ id: "roomId", label: "Room id recorded", filled: true }]
   });
   writeJson(persistencePath, {
-    generatedAt: "2026-04-05T08:41:00.000Z",
+    generatedAt: persistenceGeneratedAt,
     revision: { commit: revision, shortCommit: revision },
     requestedStorageMode: "memory",
     effectiveStorageMode: "memory",
@@ -883,13 +909,13 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
     persistenceRegression: { mapPackId: "phase1", assertions: ["room hydration reapplied resources"] }
   });
   writeJson(syncGovernancePath, {
-    generatedAt: "2026-04-05T08:42:00.000Z",
+    generatedAt: syncGovernanceGeneratedAt,
     execution: { status: "passed" },
     summary: { passed: 2, failed: 0, skipped: 0 },
     scenarios: [{ id: "room-push-redaction", status: "passed" }]
   });
   writeJson(ciTrendSummaryPath, {
-    generatedAt: "2026-04-05T08:43:00.000Z",
+    generatedAt: ciTrendGeneratedAt,
     summary: {
       overallStatus: "passed",
       totalFindings: 0,
@@ -950,6 +976,8 @@ test("phase1 candidate dossier CLI writes a stable candidate bundle directory wi
       coverageSummaryPath,
       "--config-center-library",
       configCenterLibraryPath,
+      "--wechat-artifacts-dir",
+      wechatArtifactsDir,
       "--output-dir",
       outputDir
     ],

@@ -210,7 +210,7 @@ test("phase1 candidate dossier keeps missing bundle fallback recoverable while m
   assert.equal(cocosSection?.result, "pending");
   assert.equal(cocosSection?.artifactPath, missingBundlePath);
   assert.match(cocosSection?.summary ?? "", /manifest is missing/i);
-  assert.match(cocosSection?.details.join("\n") ?? "", /release:cocos-rc:bundle/);
+  assert.match(cocosSection?.details.join("\n") ?? "", /npm run release -- cocos-rc:bundle/);
   assert.equal(dossier.summary.requiredPending.includes("Cocos RC bundle"), true);
   assert.equal(dossier.phase1ExitEvidenceGate.result, "failed");
   assert.equal(dossier.summary.status, "failed");
