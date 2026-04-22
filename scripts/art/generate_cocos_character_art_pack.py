@@ -8,11 +8,17 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOp
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = ROOT / "output" / "unit-art-upgrade" / "sources"
 COCOS_ROOT = ROOT / "apps" / "cocos-client" / "assets" / "resources" / "pixel"
+H5_ROOT = ROOT / "apps" / "client" / "public" / "assets" / "pixel"
 HERO_ROOT = COCOS_ROOT / "heroes"
 UNIT_ROOT = COCOS_ROOT / "units"
 SHOWCASE_ROOT = COCOS_ROOT / "showcase-units"
 MARKER_ROOT = COCOS_ROOT / "markers"
 FRAME_ROOT = COCOS_ROOT / "frames"
+H5_HERO_ROOT = H5_ROOT / "heroes"
+H5_UNIT_ROOT = H5_ROOT / "units"
+H5_SHOWCASE_ROOT = H5_ROOT / "showcase-units"
+H5_MARKER_ROOT = H5_ROOT / "markers"
+H5_FRAME_ROOT = H5_ROOT / "frames"
 
 
 def load(name: str) -> Image.Image:
@@ -51,6 +57,11 @@ def save(img: Image.Image, path: Path) -> None:
     img.save(path)
 
 
+def save_all(img: Image.Image, *paths: Path) -> None:
+    for path in paths:
+        save(img, path)
+
+
 def hero_from_sheet(sheet: Image.Image, quadrant: tuple[int, int], zoom: float, center: tuple[float, float], filename: str) -> None:
     width, height = sheet.size
     half_w = width // 2
@@ -59,7 +70,7 @@ def hero_from_sheet(sheet: Image.Image, quadrant: tuple[int, int], zoom: float, 
     top = quadrant[1] * half_h
     tile = sheet.crop((left, top, left + half_w, top + half_h))
     portrait = fit_render(tile, 16, zoom=zoom, center=center, contrast=1.14, sharpness=1.35, color=0.94)
-    save(portrait, HERO_ROOT / filename)
+    save_all(portrait, HERO_ROOT / filename, H5_HERO_ROOT / filename)
 
 
 def make_selected_variant(img: Image.Image) -> Image.Image:
@@ -94,9 +105,30 @@ def make_hit_variant(img: Image.Image) -> Image.Image:
 def render_unit_variants(source_name: str, target_stem: str, directory: Path, zoom: float = 1.18, center: tuple[float, float] = (0.5, 0.45)) -> None:
     src = load(source_name)
     idle = fit_render(src, 32, zoom=zoom, center=center, contrast=1.08, sharpness=1.28, color=0.95)
-    save(idle, directory / f"{target_stem}.png")
-    save(make_selected_variant(idle), directory / f"{target_stem}-selected.png")
-    save(make_hit_variant(idle), directory / f"{target_stem}-hit.png")
+    mirror_root = {
+        UNIT_ROOT: H5_UNIT_ROOT,
+        SHOWCASE_ROOT: H5_SHOWCASE_ROOT,
+    }.get(directory)
+    idle_path = directory / f"{target_stem}.png"
+    selected_path = directory / f"{target_stem}-selected.png"
+    hit_path = directory / f"{target_stem}-hit.png"
+    if mirror_root is None:
+        save(idle, idle_path)
+        save(make_selected_variant(idle), selected_path)
+        save(make_hit_variant(idle), hit_path)
+        return
+
+    save_all(idle, idle_path, mirror_root / f"{target_stem}.png")
+    save_all(
+        make_selected_variant(idle),
+        selected_path,
+        mirror_root / f"{target_stem}-selected.png",
+    )
+    save_all(
+        make_hit_variant(idle),
+        hit_path,
+        mirror_root / f"{target_stem}-hit.png",
+    )
 
 
 def radial_gradient(size: int, inner: tuple[int, int, int], outer: tuple[int, int, int]) -> Image.Image:
@@ -192,15 +224,31 @@ def main() -> None:
     render_unit_variants("unit-dune-raider.png", "dune-raider", SHOWCASE_ROOT, zoom=1.18, center=(0.5, 0.34))
     render_unit_variants("unit-glacier-warden.png", "glacier-warden", SHOWCASE_ROOT, zoom=1.20, center=(0.5, 0.34))
 
-    save(create_marker("hero", "idle"), MARKER_ROOT / "hero-marker.png")
-    save(create_marker("hero", "selected"), MARKER_ROOT / "hero-marker-selected.png")
-    save(create_marker("hero", "hit"), MARKER_ROOT / "hero-marker-hit.png")
-    save(create_marker("neutral", "idle"), MARKER_ROOT / "neutral-marker.png")
-    save(create_marker("neutral", "selected"), MARKER_ROOT / "neutral-marker-selected.png")
-    save(create_marker("neutral", "hit"), MARKER_ROOT / "neutral-marker-hit.png")
+    save_all(create_marker("hero", "idle"), MARKER_ROOT / "hero-marker.png", H5_MARKER_ROOT / "hero-marker.png")
+    save_all(
+        create_marker("hero", "selected"),
+        MARKER_ROOT / "hero-marker-selected.png",
+        H5_MARKER_ROOT / "hero-marker-selected.png",
+    )
+    save_all(create_marker("hero", "hit"), MARKER_ROOT / "hero-marker-hit.png", H5_MARKER_ROOT / "hero-marker-hit.png")
+    save_all(
+        create_marker("neutral", "idle"),
+        MARKER_ROOT / "neutral-marker.png",
+        H5_MARKER_ROOT / "neutral-marker.png",
+    )
+    save_all(
+        create_marker("neutral", "selected"),
+        MARKER_ROOT / "neutral-marker-selected.png",
+        H5_MARKER_ROOT / "neutral-marker-selected.png",
+    )
+    save_all(
+        create_marker("neutral", "hit"),
+        MARKER_ROOT / "neutral-marker-hit.png",
+        H5_MARKER_ROOT / "neutral-marker-hit.png",
+    )
 
-    save(create_frame("ally"), FRAME_ROOT / "unit-frame-ally.png")
-    save(create_frame("enemy"), FRAME_ROOT / "unit-frame-enemy.png")
+    save_all(create_frame("ally"), FRAME_ROOT / "unit-frame-ally.png", H5_FRAME_ROOT / "unit-frame-ally.png")
+    save_all(create_frame("enemy"), FRAME_ROOT / "unit-frame-enemy.png", H5_FRAME_ROOT / "unit-frame-enemy.png")
 
 
 if __name__ == "__main__":

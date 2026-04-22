@@ -86,8 +86,9 @@ export function describeTileObject(tile: PlayerTileView | null): TileCardDescrip
 
   if (tile.building?.kind === "resource_mine") {
     const config = objectVisuals.buildings.resource_mine;
-    const ownerLabel =
-      typeof tile.building.lastHarvestDay === "number"
+    const ownerLabel = tile.building.ownerPlayerId
+      ? `当前归属 ${tile.building.ownerPlayerId}${typeof tile.building.lastHarvestDay === "number" ? `，最近一次领取于第 ${tile.building.lastHarvestDay} 天` : ""}`
+      : typeof tile.building.lastHarvestDay === "number"
         ? `最近一次领取于第 ${tile.building.lastHarvestDay} 天`
         : "当前无人占领";
     return {

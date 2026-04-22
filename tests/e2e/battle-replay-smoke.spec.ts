@@ -1,11 +1,15 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { attackOnce, buildRoomId, fullMoveTextPattern, openRoom, pressTile, withSmokeDiagnostics } from "./smoke-helpers";
+import { expect, test, type APIRequestContext } from "@playwright/test";
+import {
+  buildRoomId,
+  followTilePath,
+  fullMoveTextPattern,
+  openRoom,
+  pressTile,
+  resolveBattleToSettlement,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 const SERVER_BASE_URL = "http://127.0.0.1:2567";
-
-interface StoredAuthSession {
-  token?: string;
-}
 
 interface PlayerBattleReplaySummary {
   id: string;
@@ -18,56 +22,44 @@ interface BattleReplayPlaybackState {
   totalSteps: number;
 }
 
+interface GuestLoginPayload {
+  session?: {
+    token?: string;
+  };
+}
+
 function extractBattleId(roomId: string, detail: string): string {
-  const match = detail.match(new RegExp(`遭遇会话：${roomId}/([^\\s]+)`));
+  const match = detail.match(new RegExp(`遭遇会话：${roomId}/([^\\s。]+)`));
   if (!match?.[1]) {
     throw new Error(`battle_id_not_found:${detail}`);
   }
   return match[1];
 }
 
-async function readAuthToken(page: Page): Promise<string> {
-  let token: string | null = null;
-  await expect
-    .poll(
-      async () => {
-        token = await page.evaluate(() => {
-          const raw = window.localStorage.getItem("project-veil:auth-session");
-          if (!raw) {
-            return null;
-          }
-
-          try {
-            const session = JSON.parse(raw) as StoredAuthSession;
-            return typeof session.token === "string" && session.token.trim().length > 0 ? session.token : null;
-          } catch {
-            return null;
-          }
-        });
-        return token;
-      },
-      {
-        message: "waiting for guest auth token",
-        timeout: 10_000
-      }
-    )
-    .not.toBeNull();
-
-  return token as string;
-}
-
-function buildAuthHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`
-  };
-}
-
-async function getJson<T>(request: APIRequestContext, path: string, token: string): Promise<T> {
-  const response = await request.get(`${SERVER_BASE_URL}${path}`, {
-    headers: buildAuthHeaders(token)
-  });
+async function getJson<T>(
+  request: APIRequestContext,
+  path: string,
+  headers?: Record<string, string>
+): Promise<T> {
+  const response = await request.get(`${SERVER_BASE_URL}${path}`, headers ? { headers } : undefined);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as T;
+}
+
+async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
+  const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
+    data: {
+      playerId,
+      displayName: playerId,
+      privacyConsentAccepted: true
+    }
+  });
+  expect(response.status()).toBe(200);
+
+  const payload = (await response.json()) as GuestLoginPayload;
+  const token = payload.session?.token?.trim();
+  expect(token).toBeTruthy();
+  return token ?? "";
 }
 
 test("battle replay center smoke persists a resolved PvP battle and supports account playback", async ({
@@ -101,37 +93,44 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
       });
 
       let battleId = "";
+      const replayPlayerId = "player-1";
 
       await test.step("gameplay: resolve the PvP battle to completion", async () => {
-        await pressTile(playerOnePage, 3, 4);
-        await pressTile(playerTwoPage, 3, 4);
+        await pressTile(playerOnePage, 3, 1);
+        await followTilePath(
+          playerTwoPage,
+          [
+            { x: 6, y: 4, spent: 2 },
+            { x: 6, y: 2, spent: 4 },
+            { x: 5, y: 1, spent: 6 }
+          ],
+          "player-2"
+        );
+        await pressTile(playerOnePage, 5, 1);
 
         await expect(playerOnePage.getByTestId("room-status-detail")).toContainText(`遭遇会话：${roomId}/battle-`);
         battleId = extractBattleId(roomId, await playerOnePage.getByTestId("room-status-detail").innerText());
 
-        await attackOnce(playerTwoPage);
-        await attackOnce(playerOnePage);
-        await attackOnce(playerTwoPage);
-        await attackOnce(playerOnePage);
-        await attackOnce(playerTwoPage);
+        await resolveBattleToSettlement(playerOnePage, playerTwoPage);
 
         await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
         await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
       });
 
       await test.step("api: list, detail, and playback routes expose the saved replay", async () => {
-        const token = await readAuthToken(playerOnePage);
         let replaySummary: PlayerBattleReplaySummary | null = null;
+        let replayId: string | null = null;
+        const token = await createGuestSessionToken(request, replayPlayerId);
 
         await expect
           .poll(
             async () => {
               const payload = await getJson<{ items: PlayerBattleReplaySummary[] }>(
                 request,
-                "/api/player-accounts/me/battle-replays",
-                token
+                `/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays`
               );
               replaySummary = payload.items.find((item) => item.battleId === battleId) ?? null;
+              replayId = replaySummary?.id ?? null;
               return replaySummary?.battleId ?? null;
             },
             {
@@ -142,20 +141,23 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
           .toBe(battleId);
 
         expect(replaySummary).not.toBeNull();
+        expect(replayId).not.toBeNull();
 
         const detailPayload = await getJson<{ replay: PlayerBattleReplaySummary }>(
           request,
-          `/api/player-accounts/me/battle-replays/${encodeURIComponent(battleId)}`,
-          token
+          `/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays/${encodeURIComponent(replayId!)}`,
+          {
+            Authorization: `Bearer ${token}`
+          }
         );
         expect(detailPayload.replay.battleId).toBe(battleId);
         expect(detailPayload.replay.steps.length).toBeGreaterThan(0);
 
         const playbackResponse = await request.post(
-          `${SERVER_BASE_URL}/api/player-accounts/me/battle-replays/${encodeURIComponent(battleId)}/playback`,
+          `${SERVER_BASE_URL}/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays/${encodeURIComponent(replayId!)}/playback`,
           {
             headers: {
-              ...buildAuthHeaders(token),
+              Authorization: `Bearer ${token}`,
               "Content-Type": "application/json"
             },
             data: {

@@ -10,8 +10,8 @@
     "totalSubpackageMb": 30
   },
   "packageSizes": {
-    "totalBytes": 2486,
-    "mainPackageBytes": 2486,
+    "totalBytes": 2659,
+    "mainPackageBytes": 2659,
     "totalSubpackageBytes": 0
   },
   "subpackages": [],
@@ -46,8 +46,8 @@
     },
     {
       "relativePath": "README.codex.md",
-      "bytes": 1407,
-      "sha256": "6b2418e6bbfa9b735c78709d39b862f77ea3b6ea3cb1a3873ac14db7ceb1294a"
+      "bytes": 1580,
+      "sha256": "147c4f71dc9fbbf689c6b02228cc47dfb0c1d8ab334dc867d85e83a3db784913"
     },
     {
       "relativePath": "src/settings.json",

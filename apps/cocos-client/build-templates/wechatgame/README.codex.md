@@ -32,3 +32,4 @@
 - 若资源需要分包，请把对应 Asset Bundle 的 Compression Type 设为 Mini Game Subpackage。
 - 导出后运行 `npm run validate -- wechat-build -- --output-dir <wechatgame-build-dir> --expect-exported-runtime` 校验注入配置与 4MB / 30MB 预算。
 - 把远程资源目录上传到 CDN 后，再在微信开发者工具中补齐域名白名单。
+- 如果需要增量资源发布，运行 `npm run release -- wechat:assets-hotfix -- --build-dir <wechatgame-build-dir>` 生成 hotfix manifest 并上传变更资源。

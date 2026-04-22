@@ -169,6 +169,19 @@ export async function pressTile(page: Page, x: number, y: number): Promise<void>
   });
 }
 
+export async function followTilePath(
+  page: Page,
+  path: ReadonlyArray<{ x: number; y: number; spent?: number }>,
+  playerId = "player-1"
+): Promise<void> {
+  for (const step of path) {
+    await pressTile(page, step.x, step.y);
+    if (typeof step.spent === "number") {
+      await expectHeroMoveSpent(page, step.spent, playerId);
+    }
+  }
+}
+
 export async function attackOnce(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await expect(page.getByTestId("battle-attack")).toBeVisible({ timeout: 10_000 });
@@ -187,6 +200,48 @@ export async function attackOnce(page: Page): Promise<void> {
   }
 
   throw new Error("battle_attack_click_unavailable");
+}
+
+async function hasVisibleBattleAttack(page: Page): Promise<boolean> {
+  try {
+    return await page.getByTestId("battle-attack").isVisible();
+  } catch {
+    return false;
+  }
+}
+
+async function hasVisibleBattleModal(page: Page): Promise<boolean> {
+  try {
+    return await page.getByTestId("battle-modal-title").isVisible();
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveBattleToSettlement(
+  firstPage: Page,
+  secondPage: Page,
+  maxTurns = 8
+): Promise<void> {
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    if ((await hasVisibleBattleModal(firstPage)) || (await hasVisibleBattleModal(secondPage))) {
+      return;
+    }
+
+    if (await hasVisibleBattleAttack(firstPage)) {
+      await attackOnce(firstPage);
+      continue;
+    }
+
+    if (await hasVisibleBattleAttack(secondPage)) {
+      await attackOnce(secondPage);
+      continue;
+    }
+
+    await firstPage.waitForTimeout(200);
+  }
+
+  throw new Error("battle_settlement_not_reached");
 }
 
 export async function dismissBattleModal(page: Page): Promise<void> {
