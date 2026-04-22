@@ -162,6 +162,19 @@ function createSeasonalEventFixture() {
   };
 }
 
+function nodeCenterInRoot(node: Node, root: Node): { x: number; y: number } {
+  let current: Node | null = node;
+  let x = 0;
+  let y = 0;
+  while (current && current !== root) {
+    x += current.position.x;
+    y += current.position.y;
+    current = current.parent;
+  }
+  assert.equal(current, root, "expected node to belong to lobby root");
+  return { x, y };
+}
+
 test("lobby panel room cards render active room summaries from the server response", () => {
   const cards = buildLobbyRoomCards([
     {
@@ -966,5 +979,117 @@ test("VeilLobbyPanel renders mailbox compensation copy and wires claim actions",
 
   assert.equal(claimAllCount, 1);
   assert.deepEqual(claimedMessageIds, ["comp-1"]);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel dispatchPointerUp opens a Creator-safe lobby field input and submits typed values", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const edits: Array<{ field: string; value: string }> = [];
+  component.configure({
+    onSubmitLobbyFieldEdit: (field, value) => {
+      edits.push({ field, value });
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState({ playerId: "guest-197749" }));
+
+  const playerField = findNode(node, "LobbyPlayerField");
+  assert.ok(playerField);
+  const playerFieldCenter = nodeCenterInRoot(playerField, node);
+  assert.equal(component.dispatchPointerUp(playerFieldCenter.x, playerFieldCenter.y), "lobby-field:playerId");
+  assert.match(readCardLabel(node, "LobbyTextInputCard"), /编辑游客 Player ID/);
+
+  component.dispatchKeyboardInput({ key: "X" });
+  component.dispatchKeyboardInput({ key: "1" });
+  const submitButton = findNode(node, "LobbyTextInputSubmit");
+  assert.ok(submitButton);
+  const submitCenter = nodeCenterInRoot(submitButton, node);
+  assert.equal(component.dispatchPointerUp(submitCenter.x, submitCenter.y), "lobby-input-submit");
+
+  assert.deepEqual(edits, [{ field: "playerId", value: "guest-197749X1" }]);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel dispatchPointerUp opens account-flow field input and submits password drafts without exposing raw text", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const edits: Array<{ field: string; value: string }> = [];
+  component.configure({
+    onSubmitAccountFlowFieldEdit: (field, value) => {
+      edits.push({ field, value });
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(
+    createLobbyState({
+      accountFlow: {
+        title: "正式注册",
+        intro: "填写注册信息。",
+        requestLabel: "申请令牌",
+        confirmLabel: "确认注册",
+        deliveryHint: "令牌将通过开发模式回显。",
+        readiness: {
+          status: "missing",
+          summary: "等待填写",
+          detail: "至少填写登录 ID、令牌和口令。"
+        },
+        fields: [
+          {
+            key: "password",
+            label: "注册口令",
+            value: "",
+            placeholder: "至少 6 位",
+            hint: "Creator 预览里可直接键盘输入。",
+            readiness: {
+              status: "missing",
+              summary: "待填写",
+              detail: "至少 6 位。"
+            }
+          }
+        ]
+      } as never
+    })
+  );
+
+  const passwordField = findNode(node, "LobbyAccountFlowField-password");
+  assert.ok(passwordField);
+  const passwordFieldCenter = nodeCenterInRoot(passwordField, node);
+  assert.equal(component.dispatchPointerUp(passwordFieldCenter.x, passwordFieldCenter.y), "lobby-account-flow:password");
+  component.dispatchKeyboardInput({ key: "s" });
+  component.dispatchKeyboardInput({ key: "e" });
+  component.dispatchKeyboardInput({ key: "c" });
+  component.dispatchKeyboardInput({ key: "r" });
+  component.dispatchKeyboardInput({ key: "e" });
+  component.dispatchKeyboardInput({ key: "t" });
+  assert.match(readCardLabel(node, "LobbyTextInputCard"), /当前输入：••••••/);
+  assert.equal(component.dispatchKeyboardInput({ key: "Enter", keyCode: 13 }), "lobby-input-submit");
+
+  assert.deepEqual(edits, [{ field: "password", value: "secret" }]);
+  component.onDestroy();
+});
+
+test("VeilLobbyPanel account login CTA uses the built-in two-step input flow instead of prompt-only login", () => {
+  const { node, component } = createComponentHarness(VeilLobbyPanel, { name: "LobbyPanelRoot", width: 760, height: 620 });
+  const credentials: Array<{ loginId: string; password: string }> = [];
+  component.configure({
+    onSubmitAccountLoginCredentials: (loginId, password) => {
+      credentials.push({ loginId, password });
+    }
+  });
+  component.scheduleOnce = () => undefined;
+  component.render(createLobbyState({ loginId: "veil-ranger" }));
+
+  const loginButton = findNode(node, "LobbyAccountEnter");
+  assert.ok(loginButton);
+  const loginButtonCenter = nodeCenterInRoot(loginButton, node);
+  assert.equal(component.dispatchPointerUp(loginButtonCenter.x, loginButtonCenter.y), "lobby-account-login");
+  assert.match(readCardLabel(node, "LobbyTextInputCard"), /先输入登录 ID/);
+  assert.equal(component.dispatchKeyboardInput({ key: "Enter", keyCode: 13 }), "lobby-input-submit");
+  assert.match(readCardLabel(node, "LobbyTextInputCard"), /输入账号口令/);
+
+  for (const char of "secret") {
+    component.dispatchKeyboardInput({ key: char });
+  }
+  assert.equal(component.dispatchKeyboardInput({ key: "Enter", keyCode: 13 }), "lobby-input-submit");
+  assert.deepEqual(credentials, [{ loginId: "veil-ranger", password: "secret" }]);
   component.onDestroy();
 });

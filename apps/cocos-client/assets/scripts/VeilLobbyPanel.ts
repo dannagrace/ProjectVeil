@@ -266,6 +266,7 @@ export interface VeilLobbyPanelOptions {
   onEditDisplayName?: () => void;
   onEditRoomId?: () => void;
   onEditLoginId?: () => void;
+  onSubmitLobbyFieldEdit?: (field: "playerId" | "displayName" | "roomId" | "loginId", value: string) => void;
   onTogglePrivacyConsent?: () => void;
   onRefresh?: () => void;
   onEnterRoom?: () => void;
@@ -275,6 +276,8 @@ export interface VeilLobbyPanelOptions {
   onRegisterAccount?: () => void;
   onRecoverAccount?: () => void;
   onEditAccountFlowField?: (field: CocosAccountLifecycleFieldView["key"]) => void;
+  onSubmitAccountFlowFieldEdit?: (field: CocosAccountLifecycleFieldView["key"], value: string) => void;
+  onSubmitAccountLoginCredentials?: (loginId: string, password: string) => void;
   onRequestAccountFlow?: () => void;
   onConfirmAccountFlow?: () => void;
   onToggleAccountMinorProtection?: () => void;
@@ -306,6 +309,20 @@ interface PanelCardTone {
   accent: Color;
 }
 
+type LobbyEditableField = "playerId" | "displayName" | "roomId" | "loginId";
+
+interface LobbyTextInputState {
+  scope: "lobby" | "account-flow" | "account-login-loginId" | "account-login-password";
+  field: LobbyEditableField | CocosAccountLifecycleFieldView["key"];
+  title: string;
+  hint: string;
+  value: string;
+  placeholder: string;
+  submitLabel: string;
+  masked: boolean;
+  loginIdDraft?: string;
+}
+
 @ccclass("ProjectVeilLobbyPanel")
 export class VeilLobbyPanel extends Component {
   private currentState: VeilLobbyRenderState | null = null;
@@ -317,6 +334,7 @@ export class VeilLobbyPanel extends Component {
   private onEditDisplayName: (() => void) | undefined;
   private onEditRoomId: (() => void) | undefined;
   private onEditLoginId: (() => void) | undefined;
+  private onSubmitLobbyFieldEdit: ((field: LobbyEditableField, value: string) => void) | undefined;
   private onTogglePrivacyConsent: (() => void) | undefined;
   private onRefresh: (() => void) | undefined;
   private onEnterRoom: (() => void) | undefined;
@@ -326,6 +344,10 @@ export class VeilLobbyPanel extends Component {
   private onRegisterAccount: (() => void) | undefined;
   private onRecoverAccount: (() => void) | undefined;
   private onEditAccountFlowField: ((field: CocosAccountLifecycleFieldView["key"]) => void) | undefined;
+  private onSubmitAccountFlowFieldEdit:
+    | ((field: CocosAccountLifecycleFieldView["key"], value: string) => void)
+    | undefined;
+  private onSubmitAccountLoginCredentials: ((loginId: string, password: string) => void) | undefined;
   private onRequestAccountFlow: (() => void) | undefined;
   private onConfirmAccountFlow: (() => void) | undefined;
   private onToggleAccountMinorProtection: (() => void) | undefined;
@@ -356,6 +378,7 @@ export class VeilLobbyPanel extends Component {
   private showSkillPanel = false;
   private showDailyQuestPanel = false;
   private rewardSpotlightAutoOpenedForPlayerId: string | null = null;
+  private activeTextInput: LobbyTextInputState | null = null;
 
   onDestroy(): void {
     this.stopReplayPlaybackLoop();
@@ -367,6 +390,7 @@ export class VeilLobbyPanel extends Component {
     this.onEditDisplayName = options.onEditDisplayName;
     this.onEditRoomId = options.onEditRoomId;
     this.onEditLoginId = options.onEditLoginId;
+    this.onSubmitLobbyFieldEdit = options.onSubmitLobbyFieldEdit;
     this.onTogglePrivacyConsent = options.onTogglePrivacyConsent;
     this.onRefresh = options.onRefresh;
     this.onEnterRoom = options.onEnterRoom;
@@ -376,6 +400,8 @@ export class VeilLobbyPanel extends Component {
     this.onRegisterAccount = options.onRegisterAccount;
     this.onRecoverAccount = options.onRecoverAccount;
     this.onEditAccountFlowField = options.onEditAccountFlowField;
+    this.onSubmitAccountFlowFieldEdit = options.onSubmitAccountFlowFieldEdit;
+    this.onSubmitAccountLoginCredentials = options.onSubmitAccountLoginCredentials;
     this.onRequestAccountFlow = options.onRequestAccountFlow;
     this.onConfirmAccountFlow = options.onConfirmAccountFlow;
     this.onToggleAccountMinorProtection = options.onToggleAccountMinorProtection;
@@ -498,7 +524,7 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(224, 235, 246, 52),
         accent: new Color(110, 152, 214, 210)
       },
-      state.entering ? null : this.onEditPlayerId ?? null
+      state.entering ? null : () => this.openLobbyFieldInput("playerId")
     );
 
     leftCursorY = this.renderCard(
@@ -513,7 +539,7 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(224, 235, 246, 52),
         accent: new Color(144, 122, 212, 200)
       },
-      state.entering ? null : this.onEditDisplayName ?? null
+      state.entering ? null : () => this.openLobbyFieldInput("displayName")
     );
 
     leftCursorY = this.renderCard(
@@ -528,7 +554,7 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(224, 235, 246, 52),
         accent: new Color(108, 168, 132, 204)
       },
-      state.entering ? null : this.onEditRoomId ?? null
+      state.entering ? null : () => this.openLobbyFieldInput("roomId")
     );
 
     leftCursorY = this.renderCard(
@@ -547,7 +573,7 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(224, 235, 246, 52),
         accent: new Color(216, 182, 118, 196)
       },
-      state.entering ? null : this.onEditLoginId ?? null
+      state.entering ? null : () => this.openLobbyFieldInput("loginId")
     );
 
     leftCursorY = this.renderCard(
@@ -694,7 +720,7 @@ export class VeilLobbyPanel extends Component {
         stroke: new Color(228, 236, 248, 120),
         accent: new Color(220, 230, 244, 112)
       },
-      state.entering || matchmakingSearching ? null : this.onLoginAccount ?? null
+      state.entering || matchmakingSearching ? null : () => this.openAccountLoginInput()
     );
     this.renderActionButton(
       "LobbyRegisterAccount",
@@ -1041,6 +1067,12 @@ export class VeilLobbyPanel extends Component {
       this.renderDailyQuestPanelModal(width, height, state);
     } else {
       this.hideDailyQuestPanelModal();
+    }
+
+    if (this.activeTextInput) {
+      this.renderTextInputModal(width, height);
+    } else {
+      this.hideTextInputModal();
     }
   }
 
@@ -1947,6 +1979,350 @@ export class VeilLobbyPanel extends Component {
     this.hideExtraCards("LobbyDailyQuestClaim-", 0);
   }
 
+  dispatchPointerUp(localX: number, localY: number): string | null {
+    if (this.activeTextInput) {
+      const modalActions: Array<{ name: string; result: string; callback: (() => void) | undefined }> = [
+        { name: "LobbyTextInputCancel", result: "lobby-input-cancel", callback: () => this.closeTextInput() },
+        { name: "LobbyTextInputSubmit", result: "lobby-input-submit", callback: () => this.submitTextInput() },
+        { name: "LobbyTextInputBackdrop", result: "lobby-input-cancel", callback: () => this.closeTextInput() }
+      ];
+      for (const action of modalActions) {
+        const node = this.node.getChildByName(action.name);
+        if (this.pointInNode(localX, localY, node)) {
+          action.callback?.();
+          return action.result;
+        }
+      }
+      return null;
+    }
+
+    const fieldActions: Array<{ name: string; result: string; callback: (() => void) | undefined }> = [
+      { name: "LobbyPlayerField", result: "lobby-field:playerId", callback: () => this.openLobbyFieldInput("playerId") },
+      { name: "LobbyDisplayNameField", result: "lobby-field:displayName", callback: () => this.openLobbyFieldInput("displayName") },
+      { name: "LobbyRoomField", result: "lobby-field:roomId", callback: () => this.openLobbyFieldInput("roomId") },
+      { name: "LobbyLoginField", result: "lobby-field:loginId", callback: () => this.openLobbyFieldInput("loginId") },
+      { name: "LobbyPrivacyConsent", result: "lobby-field:privacyConsent", callback: this.onTogglePrivacyConsent },
+      { name: "LobbyAccountEnter", result: "lobby-account-login", callback: () => this.openAccountLoginInput() }
+    ];
+    for (const action of fieldActions) {
+      const node = this.node.getChildByName(action.name);
+      if (this.pointInNode(localX, localY, node)) {
+        action.callback?.();
+        return action.result;
+      }
+    }
+
+    const accountFlowFieldKeys: CocosAccountLifecycleFieldView["key"][] = ["loginId", "displayName", "token", "password"];
+    for (const key of accountFlowFieldKeys) {
+      const node = this.node.getChildByName(`LobbyAccountFlowField-${key}`);
+      if (this.pointInNode(localX, localY, node)) {
+        if (this.currentState?.accountFlow) {
+          const field = this.currentState.accountFlow.fields.find((entry) => entry.key === key);
+          if (field) {
+            this.openAccountFlowFieldInput(field);
+          }
+        }
+        return `lobby-account-flow:${key}`;
+      }
+    }
+
+    const accountFlowActions: Array<{ name: string; result: string; callback: (() => void) | undefined }> = [
+      { name: "LobbyAccountFlowRequest", result: "lobby-account-flow:request", callback: this.onRequestAccountFlow },
+      { name: "LobbyAccountFlowConfirm", result: "lobby-account-flow:confirm", callback: this.onConfirmAccountFlow },
+      { name: "LobbyAccountFlowBindWechat", result: "lobby-account-flow:bind-wechat", callback: this.onBindWechatAccount },
+      { name: "LobbyAccountFlowCancel", result: "lobby-account-flow:cancel", callback: this.onCancelAccountFlow },
+      {
+        name: "LobbyAccountFlowMinorProtection",
+        result: "lobby-account-flow:minor-protection",
+        callback: this.onToggleAccountMinorProtection
+      },
+      {
+        name: "LobbyAccountFlowMinorProtectionToggle",
+        result: "lobby-account-flow:minor-protection",
+        callback: this.onToggleAccountMinorProtection
+      }
+    ];
+    for (const action of accountFlowActions) {
+      const node = this.node.getChildByName(action.name);
+      if (this.pointInNode(localX, localY, node)) {
+        action.callback?.();
+        return action.result;
+      }
+    }
+
+    return null;
+  }
+
+  dispatchKeyboardInput(event: { key?: string; keyCode?: number; ctrlKey?: boolean; metaKey?: boolean }): string | null {
+    if (!this.activeTextInput || event.ctrlKey || event.metaKey) {
+      return null;
+    }
+
+    const key = typeof event.key === "string" ? event.key : "";
+    const keyCode = typeof event.keyCode === "number" ? event.keyCode : 0;
+    if (key === "Enter" || keyCode === 13) {
+      this.submitTextInput();
+      return "lobby-input-submit";
+    }
+    if (key === "Escape" || keyCode === 27) {
+      this.closeTextInput();
+      return "lobby-input-cancel";
+    }
+    if (key === "Backspace" || keyCode === 8) {
+      this.activeTextInput = {
+        ...this.activeTextInput,
+        value: this.activeTextInput.value.slice(0, -1)
+      };
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+      return "lobby-input-backspace";
+    }
+    if (key.length === 1) {
+      this.activeTextInput = {
+        ...this.activeTextInput,
+        value: `${this.activeTextInput.value}${key}`
+      };
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+      return "lobby-input-typed";
+    }
+
+    return null;
+  }
+
+  private openLobbyFieldInput(field: LobbyEditableField): void {
+    if (!this.currentState) {
+      return;
+    }
+
+    const fieldConfig: Record<LobbyEditableField, Omit<LobbyTextInputState, "scope" | "field">> = {
+      playerId: {
+        title: "编辑游客 Player ID",
+        hint: "直接键入，回车确认。",
+        value: this.currentState.playerId,
+        placeholder: "guest-xxxxxx",
+        submitLabel: "保存游客身份",
+        masked: false
+      },
+      displayName: {
+        title: "编辑昵称",
+        hint: "支持直接修改当前展示昵称。",
+        value: this.currentState.displayName || this.currentState.playerId,
+        placeholder: "输入昵称",
+        submitLabel: "保存昵称",
+        masked: false
+      },
+      roomId: {
+        title: "编辑房间 ID",
+        hint: "输入要加入或创建的房间实例 ID。",
+        value: this.currentState.roomId,
+        placeholder: "room-alpha",
+        submitLabel: "切换房间",
+        masked: false
+      },
+      loginId: {
+        title: "编辑登录 ID",
+        hint: "填写正式账号登录 ID；游客模式下可留空。",
+        value: this.currentState.loginId,
+        placeholder: "veil-ranger",
+        submitLabel: "保存登录 ID",
+        masked: false
+      }
+    };
+
+    this.activeTextInput = {
+      scope: "lobby",
+      field,
+      ...fieldConfig[field]
+    };
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private openAccountFlowFieldInput(field: CocosAccountLifecycleFieldView): void {
+    this.activeTextInput = {
+      scope: "account-flow",
+      field: field.key,
+      title: `编辑${field.label}`,
+      hint: field.hint,
+      value: field.value,
+      placeholder: field.placeholder,
+      submitLabel: "保存流程字段",
+      masked: field.key === "password"
+    };
+    this.onEditAccountFlowField?.(field.key);
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private openAccountLoginInput(): void {
+    if (!this.currentState) {
+      return;
+    }
+
+    this.activeTextInput = {
+      scope: "account-login-loginId",
+      field: "loginId",
+      title: "账号登录",
+      hint: "先输入登录 ID，回车继续填写账号口令。",
+      value: this.currentState.loginId,
+      placeholder: "veil-ranger",
+      submitLabel: "继续输入口令",
+      masked: false
+    };
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private submitTextInput(): void {
+    if (!this.activeTextInput) {
+      return;
+    }
+
+    const draft = this.activeTextInput;
+    if (draft.scope === "account-login-loginId") {
+      this.activeTextInput = {
+        scope: "account-login-password",
+        field: "loginId",
+        title: "账号登录",
+        hint: "输入账号口令，回车登录。",
+        value: "",
+        placeholder: "至少 6 位",
+        submitLabel: "登录账号",
+        masked: true,
+        loginIdDraft: draft.value.trim().toLowerCase()
+      };
+      if (this.currentState) {
+        this.render(this.currentState);
+      }
+      return;
+    }
+
+    this.activeTextInput = null;
+    if (draft.scope === "lobby") {
+      this.onSubmitLobbyFieldEdit?.(draft.field as LobbyEditableField, draft.value);
+    } else if (draft.scope === "account-flow") {
+      this.onSubmitAccountFlowFieldEdit?.(draft.field as CocosAccountLifecycleFieldView["key"], draft.value);
+    } else if (draft.scope === "account-login-password") {
+      this.onSubmitAccountLoginCredentials?.(draft.loginIdDraft ?? "", draft.value);
+    }
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private closeTextInput(): void {
+    this.activeTextInput = null;
+    if (this.currentState) {
+      this.render(this.currentState);
+    }
+  }
+
+  private renderTextInputModal(width: number, height: number): void {
+    if (!this.activeTextInput) {
+      return;
+    }
+
+    const { title, hint, value, placeholder, submitLabel, masked } = this.activeTextInput;
+    const displayValue = value.length > 0 ? (masked ? "•".repeat(value.length) : value) : placeholder;
+    const lines = [
+      title,
+      `当前输入：${displayValue}`,
+      hint,
+      "键盘输入；Backspace 删除；Enter 确认；Esc 取消。"
+    ];
+    this.renderBackdrop("LobbyTextInputBackdrop", width, height, () => this.closeTextInput());
+    this.renderCard(
+      "LobbyTextInputCard",
+      0,
+      Math.min(height / 2 - 120, 176),
+      Math.min(460, width - 64),
+      124,
+      lines,
+      {
+        fill: new Color(20, 28, 40, 242),
+        stroke: new Color(228, 236, 248, 86),
+        accent: new Color(130, 184, 236, 220)
+      },
+      null,
+      13,
+      18
+    );
+    this.renderActionButton(
+      "LobbyTextInputCancel",
+      -92,
+      -38,
+      168,
+      30,
+      "取消",
+      {
+        fill: ACTION_LOGOUT,
+        stroke: new Color(247, 232, 226, 118),
+        accent: new Color(250, 234, 228, 110)
+      },
+      () => this.closeTextInput()
+    );
+    this.renderActionButton(
+      "LobbyTextInputSubmit",
+      92,
+      -38,
+      168,
+      30,
+      submitLabel,
+      {
+        fill: ACTION_ENTER,
+        stroke: new Color(228, 244, 229, 124),
+        accent: new Color(226, 244, 230, 116)
+      },
+      () => this.submitTextInput()
+    );
+  }
+
+  private hideTextInputModal(): void {
+    for (const name of ["LobbyTextInputBackdrop", "LobbyTextInputCard", "LobbyTextInputCancel", "LobbyTextInputSubmit"]) {
+      const node = this.node.getChildByName(name);
+      if (node) {
+        node.active = false;
+      }
+    }
+  }
+
+  private pointInNode(localX: number, localY: number, node: Node | null): boolean {
+    if (!node || !node.active) {
+      return false;
+    }
+
+    const transform = node.getComponent(UITransform) ?? null;
+    if (!transform) {
+      return false;
+    }
+
+    let centerX = 0;
+    let centerY = 0;
+    let current: Node | null = node;
+    while (current && current !== this.node) {
+      centerX += current.position.x;
+      centerY += current.position.y;
+      current = current.parent;
+    }
+
+    if (current !== this.node) {
+      return false;
+    }
+
+    return (
+      localX >= centerX - transform.width / 2
+      && localX <= centerX + transform.width / 2
+      && localY >= centerY - transform.height / 2
+      && localY <= centerY + transform.height / 2
+    );
+  }
+
   private renderCard(
     name: string,
     centerX: number,
@@ -2601,7 +2977,7 @@ export class VeilLobbyPanel extends Component {
           stroke: new Color(224, 235, 246, 52),
           accent: new Color(110, 152, 214, 196)
         },
-        entering ? null : () => this.onEditAccountFlowField?.(field.key),
+        entering ? null : () => this.openAccountFlowFieldInput(field),
         13,
         17
       );

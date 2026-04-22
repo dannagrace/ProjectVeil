@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { sys } from "cc";
+import { Node, sys, UITransform, view } from "cc";
 import {
   buildCocosAccountReviewPage,
   createCocosAccountReviewState,
@@ -18,6 +18,7 @@ import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName }
 import { createMemoryStorage, createSessionUpdate } from "./helpers/cocos-session-fixtures.ts";
 import { createVeilRootHarness, installVeilRootRuntime, resetVeilRootRuntime } from "./helpers/veil-root-harness.ts";
 import type { BattleAction, BattleState, SessionUpdate, VeilCocosSessionOptions } from "../assets/scripts/VeilCocosSession.ts";
+import { LOBBY_NODE_NAME } from "../assets/scripts/root/constants.ts";
 
 afterEach(() => {
   resetVeilRootRuntime();
@@ -1886,6 +1887,35 @@ test("VeilRoot keeps the lobby visible and explains when an account session has 
   assert.equal(root.sessionSource, "none");
   assert.equal(root.lobbyStatus, "账号会话已失效，请重新登录后再进入房间。");
   assert.equal(storage.getItem("project-veil:auth-session"), null);
+});
+
+test("VeilRoot routes lobby pointer input into the lobby panel instead of dropping it while showLobby is active", () => {
+  const root = createVeilRootHarness();
+  root.showLobby = true;
+  const lobbyNode = new Node(LOBBY_NODE_NAME);
+  lobbyNode.parent = root.node;
+  const lobbyTransform = lobbyNode.addComponent(UITransform);
+  lobbyTransform.setContentSize(420, 280);
+  lobbyNode.setPosition(0, 0, 0);
+
+  let dispatchCall: { x: number; y: number } | null = null;
+  root.lobbyPanel = {
+    dispatchPointerUp: (x: number, y: number) => {
+      dispatchCall = { x, y };
+      return "lobby-field:playerId";
+    }
+  } as never;
+
+  const visibleSize = view.getVisibleSize();
+  root.handleHudActionInput({
+    getUILocation: () => ({
+      x: visibleSize.width / 2,
+      y: visibleSize.height / 2
+    })
+  });
+
+  assert.deepEqual(dispatchCall, { x: 0, y: 0 });
+  assert.equal(root.inputDebug, "button lobby-field:playerId");
 });
 
 test("VeilRoot forwards session connection events into runtime diagnostics and logs", async () => {

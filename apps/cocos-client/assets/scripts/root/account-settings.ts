@@ -80,16 +80,38 @@ class VeilRootAccountSettingsMethods {
      if (!this.ensurePrivacyConsentAccepted()) {
       return;
     }
-     const storage = this.readWebStorage();
+    await this.submitLobbyAccountLoginCredentials(nextLoginId, password);
+  }
+
+  async submitLobbyAccountLoginCredentials(loginIdDraft: string, passwordDraft: string): Promise<void> {
+    const loginId = loginIdDraft.trim().toLowerCase();
+    const loginIdError = validateAccountLifecycleRequest("registration", loginId);
+    if (loginIdError) {
+      this.lobbyStatus = loginIdError.message;
+      this.renderView();
+      return;
+    }
+    const password = passwordDraft.trim();
+    const passwordError = validateAccountPassword(password, "password", "账号口令");
+    if (passwordError) {
+      this.lobbyStatus = passwordError.message;
+      this.renderView();
+      return;
+    }
+    if (!this.ensurePrivacyConsentAccepted()) {
+      return;
+    }
+
+    const storage = this.readWebStorage();
     this.lobbyEntering = true;
-    this.lobbyStatus = `正在使用账号 ${nextLoginId.toLowerCase()} 登录并进入房间 ${this.roomId}...`;
+    this.lobbyStatus = `正在使用账号 ${loginId} 登录并进入房间 ${this.roomId}...`;
     this.renderView();
-     try {
+    try {
       const authSession = await loginWithCocosProvider(
         this.remoteUrl,
         {
           provider: "account-password",
-          loginId: nextLoginId,
+          loginId,
           password
         },
         {
@@ -102,7 +124,7 @@ class VeilRootAccountSettingsMethods {
       this.displayName = authSession.displayName;
       this.authMode = authSession.authMode;
       this.authProvider = authSession.provider ?? "account-password";
-      this.loginId = authSession.loginId ?? nextLoginId.toLowerCase();
+      this.loginId = authSession.loginId ?? loginId;
       this.sessionSource = authSession.source;
       this.syncWechatShareBridge();
       this.lobbyStatus = `账号 ${this.loginId} 登录成功，正在同步全局仓库并进入房间 ${this.roomId}...`;
@@ -609,41 +631,25 @@ class VeilRootAccountSettingsMethods {
     this.renderView();
   }
 
-  promptForAccountFlowField(field: "loginId" | "displayName" | "token" | "password"): void {
-    const promptRef = globalThis.prompt;
-    if (typeof promptRef !== "function" || !this.activeAccountFlow) {
-      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用浏览器调试壳填写流程字段。";
-      this.renderView();
+  applyAccountFlowFieldDraft(field: "loginId" | "displayName" | "token" | "password", value: string): void {
+    if (!this.activeAccountFlow) {
       return;
     }
-     if (field === "loginId") {
-      const nextValue = promptRef("输入登录 ID", this.loginId)?.trim();
-      if (nextValue === undefined) {
-        return;
-      }
+
+    const nextValue = value.trim();
+    if (field === "loginId") {
       this.loginId = nextValue.toLowerCase();
       this.lobbyStatus = this.loginId ? `已更新登录 ID 草稿为 ${this.loginId}。` : "已清空登录 ID 草稿。";
       this.renderView();
       return;
     }
-     if (field === "displayName") {
-      const nextValue = promptRef("输入注册昵称", this.registrationDisplayName || this.displayName || this.loginId);
-      if (nextValue === null) {
-        return;
-      }
-      this.registrationDisplayName = nextValue.trim();
+    if (field === "displayName") {
+      this.registrationDisplayName = nextValue;
       this.lobbyStatus = this.registrationDisplayName ? "已更新注册昵称草稿。" : "已清空注册昵称草稿。";
       this.renderView();
       return;
     }
-     if (field === "token") {
-      const nextValue = promptRef(
-        this.activeAccountFlow === "registration" ? "输入注册令牌" : "输入找回令牌",
-        this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken
-      )?.trim();
-      if (nextValue === undefined) {
-        return;
-      }
+    if (field === "token") {
       if (this.activeAccountFlow === "registration") {
         this.registrationToken = nextValue;
       } else {
@@ -653,20 +659,88 @@ class VeilRootAccountSettingsMethods {
       this.renderView();
       return;
     }
-     const nextValue = promptRef(
+
+    if (this.activeAccountFlow === "registration") {
+      this.registrationPassword = nextValue;
+    } else {
+      this.recoveryPassword = nextValue;
+    }
+    this.lobbyStatus = nextValue ? "已更新口令草稿。" : "已清空口令草稿。";
+    this.renderView();
+  }
+
+  applyLobbyFieldDraft(field: "playerId" | "displayName" | "roomId" | "loginId", value: string): void {
+    const storage = this.readWebStorage();
+    if (field === "playerId") {
+      const previousSuggestedName = readPreferredCocosDisplayName(this.playerId, storage);
+      const nextPlayerId = value.trim() || createCocosGuestPlayerId();
+      const storedSession = readStoredCocosAuthSession(storage);
+      this.playerId = nextPlayerId;
+      if (!this.displayName.trim() || this.displayName === previousSuggestedName) {
+        this.displayName =
+          storedSession?.playerId === nextPlayerId ? storedSession.displayName : readPreferredCocosDisplayName(nextPlayerId, storage);
+      }
+      this.authToken = storedSession?.playerId === nextPlayerId ? storedSession.token ?? null : null;
+      this.authMode = storedSession?.playerId === nextPlayerId ? storedSession.authMode : "guest";
+      this.authProvider = storedSession?.playerId === nextPlayerId ? storedSession.provider ?? "guest" : "guest";
+      this.loginId = storedSession?.playerId === nextPlayerId ? storedSession.loginId ?? "" : "";
+      this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
+      this.syncWechatShareBridge();
+      this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
+      this.renderView();
+      void this.refreshLobbyAccountProfile();
+      return;
+    }
+    if (field === "displayName") {
+      this.displayName = rememberPreferredCocosDisplayName(this.playerId, value, storage);
+      this.syncWechatShareBridge();
+      this.lobbyStatus = "昵称草稿已更新。";
+      this.renderView();
+      void this.refreshLobbyAccountProfile();
+      return;
+    }
+    if (field === "loginId") {
+      this.loginId = value.trim().toLowerCase();
+      this.lobbyStatus = this.loginId ? `已更新登录 ID 草稿为 ${this.loginId}。` : "已清空登录 ID 草稿。";
+      this.renderView();
+      return;
+    }
+
+    const nextRoomId = value.trim();
+    if (nextRoomId.length === 0) {
+      return;
+    }
+    this.roomId = nextRoomId;
+    this.syncWechatShareBridge();
+    this.lobbyStatus = `已将目标房间切换为 ${nextRoomId}。`;
+    this.renderView();
+    void this.refreshLobbyAccountProfile();
+  }
+
+  promptForAccountFlowField(field: "loginId" | "displayName" | "token" | "password"): void {
+    const promptRef = globalThis.prompt;
+    if (typeof promptRef !== "function" || !this.activeAccountFlow) {
+      this.lobbyStatus = "当前运行环境不支持弹出式输入，请改用浏览器调试壳填写流程字段。";
+      this.renderView();
+      return;
+    }
+    const nextValue = field === "loginId"
+      ? promptRef("输入登录 ID", this.loginId)?.trim()
+      : field === "displayName"
+        ? promptRef("输入注册昵称", this.registrationDisplayName || this.displayName || this.loginId)
+        : field === "token"
+          ? promptRef(
+              this.activeAccountFlow === "registration" ? "输入注册令牌" : "输入找回令牌",
+              this.activeAccountFlow === "registration" ? this.registrationToken : this.recoveryToken
+            )?.trim()
+          : promptRef(
       this.activeAccountFlow === "registration" ? "输入注册口令（至少 6 位）" : "输入新的账号口令（至少 6 位）",
       ""
     );
-    if (nextValue === null) {
+    if (nextValue == null) {
       return;
     }
-    if (this.activeAccountFlow === "registration") {
-      this.registrationPassword = nextValue.trim();
-    } else {
-      this.recoveryPassword = nextValue.trim();
-    }
-    this.lobbyStatus = nextValue.trim() ? "已更新口令草稿。" : "已清空口令草稿。";
-    this.renderView();
+    this.applyAccountFlowFieldDraft(field, nextValue);
   }
 
   async requestActiveAccountFlow(): Promise<void> {
@@ -842,62 +916,17 @@ class VeilRootAccountSettingsMethods {
       this.renderView();
       return;
     }
-     const storage = this.readWebStorage();
-    if (field === "playerId") {
-      const previousSuggestedName = readPreferredCocosDisplayName(this.playerId, storage);
-      const nextValue = promptRef("输入游客 playerId", this.playerId)?.trim();
-      if (nextValue === undefined) {
-        return;
-      }
-       const nextPlayerId = nextValue || createCocosGuestPlayerId();
-      const storedSession = readStoredCocosAuthSession(storage);
-      this.playerId = nextPlayerId;
-      if (!this.displayName.trim() || this.displayName === previousSuggestedName) {
-        this.displayName =
-          storedSession?.playerId === nextPlayerId ? storedSession.displayName : readPreferredCocosDisplayName(nextPlayerId, storage);
-      }
-      this.authToken = storedSession?.playerId === nextPlayerId ? storedSession.token ?? null : null;
-      this.authMode = storedSession?.playerId === nextPlayerId ? storedSession.authMode : "guest";
-      this.authProvider = storedSession?.playerId === nextPlayerId ? storedSession.provider ?? "guest" : "guest";
-      this.loginId = storedSession?.playerId === nextPlayerId ? storedSession.loginId ?? "" : "";
-      this.sessionSource = storedSession?.playerId === nextPlayerId ? storedSession.source : "manual";
-      this.syncWechatShareBridge();
-      this.lobbyStatus = `已切换游客身份草稿为 ${nextPlayerId}。`;
-      this.renderView();
-      void this.refreshLobbyAccountProfile();
+    const nextValue = field === "playerId"
+      ? promptRef("输入游客 playerId", this.playerId)?.trim()
+      : field === "displayName"
+        ? promptRef("输入展示昵称", this.displayName || this.playerId)
+        : field === "loginId"
+          ? promptRef("输入登录 ID", this.loginId)?.trim()
+          : promptRef("输入房间 ID", this.roomId)?.trim();
+    if (nextValue == null) {
       return;
     }
-     if (field === "displayName") {
-      const nextValue = promptRef("输入展示昵称", this.displayName || this.playerId);
-      if (nextValue === null) {
-        return;
-      }
-       this.displayName = rememberPreferredCocosDisplayName(this.playerId, nextValue, storage);
-      this.syncWechatShareBridge();
-      this.lobbyStatus = "昵称草稿已更新。";
-      this.renderView();
-      void this.refreshLobbyAccountProfile();
-      return;
-    }
-     if (field === "loginId") {
-      const nextValue = promptRef("输入登录 ID", this.loginId)?.trim();
-      if (nextValue === undefined) {
-        return;
-      }
-       this.loginId = nextValue.toLowerCase();
-      this.lobbyStatus = this.loginId ? `已更新登录 ID 草稿为 ${this.loginId}。` : "已清空登录 ID 草稿。";
-      this.renderView();
-      return;
-    }
-     const nextValue = promptRef("输入房间 ID", this.roomId)?.trim();
-    if (nextValue === undefined || nextValue.length === 0) {
-      return;
-    }
-     this.roomId = nextValue;
-    this.syncWechatShareBridge();
-    this.lobbyStatus = `已将目标房间切换为 ${nextValue}。`;
-    this.renderView();
-    void this.refreshLobbyAccountProfile();
+    this.applyLobbyFieldDraft(field, nextValue);
   }
 }
 

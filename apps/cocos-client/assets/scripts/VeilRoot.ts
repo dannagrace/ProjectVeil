@@ -123,6 +123,7 @@ export class VeilRoot extends Component {
     if (this.hudActionBinding) {
       input.off(Input.EventType.TOUCH_END, this.handleHudActionInput, this);
       input.off(Input.EventType.MOUSE_UP, this.handleHudActionInput, this);
+      input.off("keydown", this.handleHudKeyboardInput, this);
       this.hudActionBinding = false;
     }
 

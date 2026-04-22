@@ -155,17 +155,8 @@ class VeilRootViewLayoutMethods {
     lobbyTransform.setContentSize(Math.max(360, visibleSize.width - 48), Math.max(620, visibleSize.height - 52));
     this.lobbyPanel = lobbyNode.getComponent(VeilLobbyPanel) ?? lobbyNode.addComponent(VeilLobbyPanel);
     this.lobbyPanel.configure({
-      onEditPlayerId: () => {
-        this.promptForLobbyField("playerId");
-      },
-      onEditDisplayName: () => {
-        this.promptForLobbyField("displayName");
-      },
-      onEditRoomId: () => {
-        this.promptForLobbyField("roomId");
-      },
-      onEditLoginId: () => {
-        this.promptForLobbyField("loginId");
+      onSubmitLobbyFieldEdit: (field, value) => {
+        this.applyLobbyFieldDraft(field, value);
       },
       onTogglePrivacyConsent: () => {
         this.togglePrivacyConsent();
@@ -191,8 +182,11 @@ class VeilRootViewLayoutMethods {
       onRecoverAccount: () => {
         this.openLobbyAccountFlow("recovery");
       },
-      onEditAccountFlowField: (field) => {
-        this.promptForAccountFlowField(field);
+      onSubmitAccountLoginCredentials: (loginId, password) => {
+        void this.submitLobbyAccountLoginCredentials(loginId, password);
+      },
+      onSubmitAccountFlowFieldEdit: (field, value) => {
+        this.applyAccountFlowFieldDraft(field, value);
       },
       onRequestAccountFlow: () => {
         void this.requestActiveAccountFlow();
@@ -543,6 +537,7 @@ class VeilRootViewLayoutMethods {
 
     input.on(Input.EventType.TOUCH_END, this.handleHudActionInput, this);
     input.on(Input.EventType.MOUSE_UP, this.handleHudActionInput, this);
+    input.on("keydown", this.handleHudKeyboardInput, this);
     this.hudActionBinding = true;
   }
 
@@ -847,6 +842,23 @@ class VeilRootViewLayoutMethods {
     }
 
     if (this.showLobby) {
+      const lobbyNode = this.node.getChildByName(LOBBY_NODE_NAME);
+      const lobbyTransform = lobbyNode?.getComponent(UITransform) ?? null;
+      if (lobbyNode && lobbyTransform) {
+        const lobbyLocalX = centeredX - lobbyNode.position.x;
+        const lobbyLocalY = centeredY - lobbyNode.position.y;
+        if (
+          lobbyLocalX >= -lobbyTransform.width / 2
+          && lobbyLocalX <= lobbyTransform.width / 2
+          && lobbyLocalY >= -lobbyTransform.height / 2
+          && lobbyLocalY <= lobbyTransform.height / 2
+        ) {
+          const action = this.lobbyPanel?.dispatchPointerUp(lobbyLocalX, lobbyLocalY) ?? null;
+          if (action) {
+            this.inputDebug = `button ${action}`;
+          }
+        }
+      }
       return;
     }
 
@@ -873,6 +885,22 @@ class VeilRootViewLayoutMethods {
     }
 
     this.inputDebug = `button ${action}`;
+  }
+
+  handleHudKeyboardInput(...args: unknown[]): void {
+    if (!this.showLobby) {
+      return;
+    }
+
+    const event = args[0] as { key?: string; keyCode?: number; ctrlKey?: boolean; metaKey?: boolean } | undefined;
+    if (!event) {
+      return;
+    }
+
+    const action = this.lobbyPanel?.dispatchKeyboardInput(event) ?? null;
+    if (action) {
+      this.inputDebug = `button ${action}`;
+    }
   }
 
   buildSettingsView(): CocosSettingsPanelView {
