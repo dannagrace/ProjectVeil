@@ -23,3 +23,20 @@ test("shared import boundary guard rejects @veil/shared/index shortcuts", { conc
     rmSync(probePath, { force: true });
   }
 });
+
+test("shared import boundary guard rejects export-from @veil/shared/index shortcuts", { concurrency: false }, () => {
+  const probePath = resolve(ROOT_DIR, "apps/client/src/__shared-export-boundary-probe__.ts");
+  writeFileSync(probePath, 'export * from "@veil/shared/index";\n', "utf8");
+
+  try {
+    const result = spawnSync(process.execPath, ["./scripts/check-shared-import-boundaries.mjs"], {
+      cwd: ROOT_DIR,
+      encoding: "utf8",
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /@veil\/shared\/index/);
+  } finally {
+    rmSync(probePath, { force: true });
+  }
+});
