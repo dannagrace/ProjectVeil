@@ -7,6 +7,7 @@ import type { BattleAction, BattleState, EquipmentType, MovementPlan, PlayerWorl
 import type { FeatureFlags } from "@veil/shared/platform";
 import type { ClientMessage, PlayerReportReason, ServerMessage, SessionStatePayload } from "@veil/shared/protocol";
 import type { RuntimeConfigBundle } from "@veil/shared/world";
+import { resolveRuntimeServerWsUrl } from "./runtime-targets";
 
 export interface SessionUpdate {
   world: PlayerWorldView;
@@ -946,8 +947,7 @@ async function connectRemoteGameSession(
   options?: GameSessionOptions,
   connectOptions?: RemoteConnectOptions
 ): Promise<RemoteConnectResult> {
-  // 强制锁定 127.0.0.1:2567，规避 DNS 和 localhost IPv6 解析问题
-  const remoteUrl = "ws://127.0.0.1:2567";
+  const remoteUrl = resolveRuntimeServerWsUrl();
   
   const storage = getReconnectionStorage();
   const useStoredToken = connectOptions?.useStoredToken ?? true;

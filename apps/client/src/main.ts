@@ -7,6 +7,7 @@ import { buildAchievementUiItems, createHeroAttributeBreakdown, createHeroProgre
 import type { PlayerReportReason } from "@veil/shared/protocol";
 import { getDefaultBattleSkillCatalog, predictPlayerWorldAction } from "@veil/shared/world";
 import { createGameSession, readStoredSessionReplay, type SessionUpdate } from "./local-session";
+import { resolveRuntimeServerHttpUrl } from "./runtime-targets";
 import { buildH5RuntimeDiagnosticsSnapshot } from "./runtime-diagnostics";
 import {
   buildingAsset,
@@ -72,15 +73,17 @@ import {
 } from "./room-feedback";
 import { createMainSessionRuntime } from "./main-session-runtime";
 
+const runtimeServerHttpUrl = resolveRuntimeServerHttpUrl();
+
 // 注入全局调试条
 const debugBar = document.createElement("div");
 debugBar.style.cssText = "position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,0.8);color:#0f0;padding:4px 10px;z-index:9999;font-size:12px;pointer-events:none;font-family:monospace;";
 debugBar.id = "veil-debug-bar";
-debugBar.textContent = `Target API: http://127.0.0.1:2567 | Status: Initializing...`;
+debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | Status: Initializing...`;
 document.body.appendChild(debugBar);
 
 function updateDebugStatus(msg: string, color = "#0f0") {
-    debugBar.textContent = `Target API: http://127.0.0.1:2567 | ${msg}`;
+    debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | ${msg}`;
     debugBar.style.color = color;
 }
 
