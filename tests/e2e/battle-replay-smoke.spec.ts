@@ -8,8 +8,7 @@ import {
   resolveBattleToSettlement,
   withSmokeDiagnostics
 } from "./smoke-helpers";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
+import { SERVER_BASE_URL } from "./runtime-targets";
 
 interface PlayerBattleReplaySummary {
   id: string;

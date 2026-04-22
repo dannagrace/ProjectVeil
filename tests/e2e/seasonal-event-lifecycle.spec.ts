@@ -1,7 +1,6 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
+import { SERVER_BASE_URL } from "./runtime-targets";
 const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token";
 const EVENT_ID = "defend-the-bridge";
 const OBJECTIVE_ACTION_TYPE = "daily_dungeon_reward_claimed";

@@ -1,10 +1,11 @@
 import { test, expect } from './fixtures';
+import { ADMIN_BASE_URL, CLIENT_BASE_URL } from "./runtime-targets";
 
 test('Admin Console 联动测试: 修改资源并验证实时同步', async ({ browser }) => {
   // 1. 创建玩家页面 (H5 Client)
   const playerContext = await browser.newContext();
   const playerPage = await playerContext.newPage();
-  await playerPage.goto('http://127.0.0.1:4173');
+  await playerPage.goto(CLIENT_BASE_URL);
   
   // 模拟登录 player-1
   const nameInput = playerPage.locator('input[placeholder*="ID"], input[type="text"]').first();
@@ -17,7 +18,7 @@ test('Admin Console 联动测试: 修改资源并验证实时同步', async ({ b
   // 2. 创建管理员页面 (Admin Console)
   const adminContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
-  await adminPage.goto('http://127.0.0.1:2567/admin');
+  await adminPage.goto(ADMIN_BASE_URL);
   
   // 输入 Player ID 并修改资源
   await adminPage.fill('#targetPlayerId', 'player-1');

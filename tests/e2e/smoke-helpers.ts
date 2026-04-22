@@ -1,8 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { getHeroMoveTotal } from "./config-fixtures";
-
-const CLIENT_BASE_URL = "http://127.0.0.1:4173";
-const SERVER_DIAGNOSTICS_URL = "http://127.0.0.1:2567/api/runtime/diagnostic-snapshot?format=text";
+import { CLIENT_BASE_URL, RESET_ENDPOINT, SERVER_DIAGNOSTICS_URL } from "./runtime-targets";
 
 interface RoomSessionOptions {
   roomId: string;
@@ -48,7 +46,7 @@ export function buildRoomId(prefix: string): string {
 }
 
 export async function resetSmokeStore(): Promise<void> {
-  const response = await fetch("http://127.0.0.1:2567/api/test/reset-store", {
+  const response = await fetch(RESET_ENDPOINT, {
     method: "POST"
   });
   if (!response.ok) {

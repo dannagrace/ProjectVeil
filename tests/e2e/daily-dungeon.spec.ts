@@ -1,6 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
+import { SERVER_BASE_URL } from "./runtime-targets";
 const ACTIVE_WINDOW_NOW = "2026-04-10T12:00:00.000Z";
 const INACTIVE_WINDOW_NOW = "2026-05-12T12:00:00.000Z";
 const ACTIVE_DUNGEON_ID = "shadow-archives";

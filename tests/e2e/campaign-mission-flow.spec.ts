@@ -1,7 +1,6 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
+import { SERVER_BASE_URL } from "./runtime-targets";
 const FIRST_MISSION_ID = "chapter1-ember-watch";
 const FIRST_MISSION_MAP_ID = "amber-fields";
 const FIRST_CHAPTER_ID = "chapter1";

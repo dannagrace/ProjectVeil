@@ -1,8 +1,5 @@
 import { test as base } from "@playwright/test";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
-const CLIENT_BASE_URL = "http://127.0.0.1:4173";
-const RESET_ENDPOINT = `${SERVER_BASE_URL}/api/test/reset-store`;
+import { CLIENT_BASE_URL, RESET_ENDPOINT } from "./runtime-targets";
 
 /**
  * Custom test fixture that automatically resets the server's in-memory store

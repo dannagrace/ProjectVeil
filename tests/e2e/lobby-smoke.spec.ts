@@ -7,6 +7,7 @@ import {
   waitForLobbyReady,
   withSmokeDiagnostics
 } from "./smoke-helpers";
+import { SERVER_BASE_URL } from "./runtime-targets";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId?: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -125,7 +126,7 @@ test("lobby supports password recovery and rotates the account password before e
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await waitForLobbyReady(page);
 
-    const requestRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/request", {
+    const requestRegistrationResponse = await request.post(`${SERVER_BASE_URL}/api/auth/account-registration/request`, {
       data: {
         loginId,
         displayName
@@ -135,7 +136,7 @@ test("lobby supports password recovery and rotates the account password before e
     const requestRegistrationPayload = (await requestRegistrationResponse.json()) as { registrationToken?: string };
     expect(requestRegistrationPayload.registrationToken).toBeTruthy();
 
-    const confirmRegistrationResponse = await request.post("http://127.0.0.1:2567/api/auth/account-registration/confirm", {
+    const confirmRegistrationResponse = await request.post(`${SERVER_BASE_URL}/api/auth/account-registration/confirm`, {
       data: {
         loginId,
         registrationToken: requestRegistrationPayload.registrationToken,
@@ -160,7 +161,7 @@ test("lobby supports password recovery and rotates the account password before e
     await expect(page.getByTestId("account-card")).toContainText(displayName);
     await expect(page.getByTestId("account-card")).toContainText(`已绑定登录 ID：${loginId}`);
 
-    const oldPasswordLoginResponse = await request.post("http://127.0.0.1:2567/api/auth/account-login", {
+    const oldPasswordLoginResponse = await request.post(`${SERVER_BASE_URL}/api/auth/account-login`, {
       data: {
         loginId,
         password: originalPassword
@@ -168,7 +169,7 @@ test("lobby supports password recovery and rotates the account password before e
     });
     expect(oldPasswordLoginResponse.status()).toBe(401);
 
-    const newPasswordLoginResponse = await request.post("http://127.0.0.1:2567/api/auth/account-login", {
+    const newPasswordLoginResponse = await request.post(`${SERVER_BASE_URL}/api/auth/account-login`, {
       data: {
         loginId,
         password: nextPassword

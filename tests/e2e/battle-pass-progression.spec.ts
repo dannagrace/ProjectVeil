@@ -6,9 +6,7 @@ import {
   type PlayerWorldView,
   type SessionStatePayload
 } from "../../packages/shared/src/index";
-
-const SERVER_BASE_URL = "http://127.0.0.1:2567";
-const SERVER_WS_URL = "ws://127.0.0.1:2567";
+import { SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
 const BATTLE_PASS_TIER = 2;
 const BATTLE_PASS_TIER_XP_REQUIRED = 500;
 const BATTLE_PASS_TIER_REWARD = {
