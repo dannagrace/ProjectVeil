@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { recordHttpRateLimited } from "@server/domain/ops/observability";
+import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 
 const DEFAULT_HTTP_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_HTTP_RATE_LIMIT_GLOBAL_MAX = 200;
@@ -70,19 +71,8 @@ function readHttpRateLimitConfig(env: NodeJS.ProcessEnv = process.env): HttpRate
   };
 }
 
-function readHeaderValue(value: string | string[] | undefined): string | null {
-  return Array.isArray(value) ? value[0]?.trim() || null : value?.trim() || null;
-}
-
-function readHeaderCsvValue(value: string | string[] | undefined): string | null {
-  const headerValue = readHeaderValue(value);
-  return headerValue?.split(",")[0]?.trim() || null;
-}
-
 function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
-  const forwardedFor = readHeaderCsvValue(request.headers["x-forwarded-for"]);
-  const rawIp = forwardedFor || request.socket.remoteAddress?.trim() || "unknown";
-  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+  return resolveTrustedRequestIp(request);
 }
 
 function resolveHttpRateLimitPolicy(pathname: string, config = readHttpRateLimitConfig()): HttpRateLimitPolicy {

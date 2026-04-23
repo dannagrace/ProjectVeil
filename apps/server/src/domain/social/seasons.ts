@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -17,11 +18,7 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
-  if (!adminToken) {
-    return false;
-  }
-  const headerToken = request.headers["x-veil-admin-token"];
-  return headerToken === adminToken;
+  return timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken);
 }
 
 const MAX_JSON_BODY_BYTES = 32 * 1024;

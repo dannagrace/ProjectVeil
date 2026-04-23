@@ -7,6 +7,7 @@ import { createGuild, createGuildRosterView, createGuildSummaryView, type GuildC
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { loadDisplayNameValidationRules } from "@server/domain/account/display-name-rules";
 import { recordHttpRateLimited } from "@server/domain/ops/observability";
+import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import type { GuildAuditLogRecord, GuildChatMessageRecord, RoomSnapshotStore } from "@server/persistence";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -88,11 +89,7 @@ function toGuildChatMessage(record: GuildChatMessageRecord): GuildChatMessage {
 }
 
 function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
-  const forwardedFor = request.headers["x-forwarded-for"];
-  const headerValue = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-  const normalizedHeader = headerValue?.split(",")[0]?.trim();
-  const rawIp = normalizedHeader || request.socket.remoteAddress?.trim() || "unknown";
-  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+  return resolveTrustedRequestIp(request);
 }
 
 class GuildChatRateLimiter {

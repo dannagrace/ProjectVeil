@@ -10,6 +10,7 @@ import {
 } from "@server/domain/social/leaderboard-tier-thresholds";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { isLeaderboardFrozen, isLeaderboardHidden } from "@server/domain/social/leaderboard-anti-abuse";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -34,7 +35,7 @@ function readHeaderValue(value: string | string[] | undefined): string | null {
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
-  return Boolean(adminToken) && readHeaderValue(request.headers["x-veil-admin-token"]) === adminToken;
+  return timingSafeCompareAdminToken(readHeaderValue(request.headers["x-veil-admin-token"]), adminToken);
 }
 
 function readLimit(request: IncomingMessage, fallback = 100): number {

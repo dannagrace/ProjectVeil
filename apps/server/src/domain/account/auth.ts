@@ -38,6 +38,7 @@ import {
   type PlayerAccountSnapshot,
   type RoomSnapshotStore
 } from "@server/persistence";
+import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import { isPlayerBanActive } from "@server/domain/player-ban";
 import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "@server/domain/battle/feature-flags";
@@ -1889,15 +1890,8 @@ function sendAuthFailure(
   });
 }
 
-function readHeaderCsvValue(value: string | string[] | undefined): string | null {
-  const headerValue = readHeaderValue(value);
-  return headerValue?.split(",")[0]?.trim() || null;
-}
-
 function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
-  const forwardedFor = readHeaderCsvValue(request.headers["x-forwarded-for"]);
-  const rawIp = forwardedFor || request.socket.remoteAddress?.trim() || "unknown";
-  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+  return resolveTrustedRequestIp(request);
 }
 
 function consumeSlidingWindowRateLimit(key: string, config = readAuthRuntimeConfig()): RateLimitResult {

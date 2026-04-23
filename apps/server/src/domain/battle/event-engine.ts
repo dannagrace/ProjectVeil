@@ -7,6 +7,7 @@ import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import type { DailyQuestConfigDefinition } from "@server/domain/economy/daily-quest-config";
 import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQuestState, RoomSnapshotStore } from "@server/persistence";
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 interface SeasonalEventSummaryDocument {
@@ -150,7 +151,7 @@ function readAdminTokenFromRequest(request: Pick<IncomingMessage, "headers">): s
 
 function isAdminAuthorized(request: Pick<IncomingMessage, "headers">): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
-  return Boolean(adminToken) && readAdminTokenFromRequest(request) === adminToken;
+  return timingSafeCompareAdminToken(readAdminTokenFromRequest(request), adminToken);
 }
 
 function sendAdminUnauthorized(response: ServerResponse): void {
