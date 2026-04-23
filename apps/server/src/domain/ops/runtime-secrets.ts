@@ -32,6 +32,10 @@ function normalizeSecretValue(value: string): string {
   return value.trim();
 }
 
+function isProductionEnvironment(env: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV?.trim().toLowerCase() === "production";
+}
+
 function readRequiredEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
   if (!value) {
@@ -169,6 +173,17 @@ function validateAwsManagedSecrets(env: NodeJS.ProcessEnv): void {
   }
 }
 
+function validateProductionRuntimeSecrets(env: NodeJS.ProcessEnv): void {
+  if (!isProductionEnvironment(env)) {
+    return;
+  }
+  if (readRuntimeSecret("VEIL_AUTH_SECRET", env)) {
+    return;
+  }
+
+  throw new Error("VEIL_AUTH_SECRET must be configured for production startup");
+}
+
 export function readRuntimeSecret(key: RuntimeSecretKey, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const runtimeValue = runtimeSecrets.get(key)?.trim();
   if (runtimeValue) {
@@ -191,6 +206,7 @@ export async function loadRuntimeSecrets(
   runtimeSecrets = new Map();
 
   if (provider === "env") {
+    validateProductionRuntimeSecrets(env);
     return;
   }
 
@@ -199,6 +215,7 @@ export async function loadRuntimeSecrets(
   const payload = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
   runtimeSecrets = parseAwsSecretPayload(readAwsSecretText(payload));
   validateAwsManagedSecrets(env);
+  validateProductionRuntimeSecrets(env);
 }
 
 export function setRuntimeSecretsForTest(values: Partial<Record<RuntimeSecretKey, string>>): void {
