@@ -4224,7 +4224,7 @@ test("mailbox routes list delivered compensation and repeated claims stay idempo
       title: "停机补偿",
       body: "补发宝石和金币。",
       sentAt: "2026-04-16T00:00:00.000Z",
-      expiresAt: "2026-04-23T00:00:00.000Z",
+      expiresAt: "2099-04-23T00:00:00.000Z",
       grant: {
         gems: 40,
         resources: {
