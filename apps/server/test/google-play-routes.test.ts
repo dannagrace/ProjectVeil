@@ -274,6 +274,260 @@ test("google verify returns a permanent structured error when verification fails
   assert.equal(payload.error.category, "verification");
 });
 
+test("google RTDN validates shared secrets and surfaces duplicate-safe handler results", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = {
+    ...createGoogleRuntimeConfig(),
+    rtdnSharedSecret: "veil-rtdn-secret"
+  };
+  const seenEvents: Array<{
+    eventId: string;
+    kind: string;
+    notificationType: string;
+    orderId?: string;
+    purchaseTokenHash?: string;
+  }> = [];
+
+  registerGooglePlayRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    notificationHandler: async (event) => {
+      seenEvents.push({
+        eventId: event.eventId,
+        kind: event.kind,
+        notificationType: event.notificationType,
+        orderId: event.orderId,
+        purchaseTokenHash: event.purchaseTokenHash
+      });
+
+      return {
+        status: seenEvents.length === 1 ? "processed" : "duplicate"
+      };
+    }
+  });
+
+  const body = JSON.stringify({
+    message: {
+      messageId: "136969346945",
+      data: Buffer.from(
+        JSON.stringify({
+          version: "1.0",
+          packageName: "com.projectveil.app",
+          eventTimeMillis: "1713862800000",
+          subscriptionNotification: {
+            version: "1.0",
+            notificationType: 12,
+            purchaseToken: "google-purchase-token"
+          }
+        }),
+        "utf8"
+      ).toString("base64")
+    },
+    subscription: "projects/project-veil/subscriptions/google-rtdn"
+  });
+
+  const firstResponse = await app.invoke("/api/payments/google/rtdn?token=veil-rtdn-secret", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body
+  });
+  const secondResponse = await app.invoke("/api/payments/google/rtdn?token=veil-rtdn-secret", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body
+  });
+
+  const firstPayload = firstResponse.json as {
+    acknowledged: boolean;
+    status: string;
+    eventId: string;
+    notificationType: string;
+    purchaseTokenHash: string;
+  };
+  const secondPayload = secondResponse.json as {
+    acknowledged: boolean;
+    status: string;
+    eventId: string;
+    notificationType: string;
+    purchaseTokenHash: string;
+  };
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 200);
+  assert.equal(seenEvents.length, 2);
+  assert.deepEqual(
+    seenEvents.map((event) => ({
+      eventId: event.eventId,
+      kind: event.kind,
+      notificationType: event.notificationType,
+      orderId: event.orderId,
+      purchaseTokenHashLength: event.purchaseTokenHash?.length ?? 0
+    })),
+    [
+      {
+        eventId: "136969346945",
+        kind: "subscription",
+        notificationType: "SUBSCRIPTION_REVOKED",
+        orderId: `google:${firstPayload.purchaseTokenHash}`,
+        purchaseTokenHashLength: 64
+      },
+      {
+        eventId: "136969346945",
+        kind: "subscription",
+        notificationType: "SUBSCRIPTION_REVOKED",
+        orderId: `google:${firstPayload.purchaseTokenHash}`,
+        purchaseTokenHashLength: 64
+      }
+    ]
+  );
+  assert.deepEqual(
+    { ...firstPayload, purchaseTokenHash: `${firstPayload.purchaseTokenHash}`.length },
+    {
+      acknowledged: true,
+      status: "processed",
+      eventId: "136969346945",
+      notificationType: "SUBSCRIPTION_REVOKED",
+      purchaseTokenHash: 64
+    }
+  );
+  assert.deepEqual(
+    { ...secondPayload, purchaseTokenHash: `${secondPayload.purchaseTokenHash}`.length },
+    {
+      acknowledged: true,
+      status: "duplicate",
+      eventId: "136969346945",
+      notificationType: "SUBSCRIPTION_REVOKED",
+      purchaseTokenHash: 64
+    }
+  );
+  assert.equal("purchaseToken" in firstPayload, false);
+});
+
+test("google RTDN rejects invalid shared secrets", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = {
+    ...createGoogleRuntimeConfig(),
+    rtdnSharedSecret: "veil-rtdn-secret"
+  };
+
+  registerGooglePlayRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig
+  });
+
+  const response = await app.invoke("/api/payments/google/rtdn?token=wrong-secret", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      message: {
+        messageId: "136969346945",
+        data: Buffer.from(
+          JSON.stringify({
+            version: "1.0",
+            packageName: "com.projectveil.app",
+            eventTimeMillis: "1713862800000",
+            testNotification: {
+              version: "1.0"
+            }
+          }),
+          "utf8"
+        ).toString("base64")
+      }
+    })
+  });
+
+  const payload = response.json as { error: { code: string; retryable: boolean; category: string } };
+  assert.equal(response.statusCode, 401);
+  assert.equal(payload.error.code, "google_rtdn_unauthorized");
+  assert.equal(payload.error.retryable, false);
+  assert.equal(payload.error.category, "verification");
+});
+
+test("google RTDN accepts authenticated Pub/Sub OIDC bearer tokens", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const runtimeConfig = {
+    ...createGoogleRuntimeConfig(),
+    rtdnAudience: "https://payments.projectveil.test/api/payments/google/rtdn",
+    rtdnServiceAccountEmail: "pubsub-push@project-veil.iam.gserviceaccount.com",
+    rtdnTokenInfoUrl: "https://oauth.example.test/tokeninfo"
+  };
+  const seenEvents: string[] = [];
+
+  registerGooglePlayRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    runtimeConfig,
+    fetchImpl: (async (input) => {
+      const url = String(input);
+      assert.equal(url, "https://oauth.example.test/tokeninfo?id_token=pubsub-oidc-token");
+      return new Response(
+        JSON.stringify({
+          aud: "https://payments.projectveil.test/api/payments/google/rtdn",
+          email: "pubsub-push@project-veil.iam.gserviceaccount.com",
+          email_verified: "true",
+          exp: String(Math.floor(Date.now() / 1000) + 300),
+          iss: "https://accounts.google.com"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }) as typeof fetch,
+    notificationHandler: async (event) => {
+      seenEvents.push(event.notificationType);
+      return {
+        status: "processed"
+      };
+    }
+  });
+
+  const response = await app.invoke("/api/payments/google/rtdn", {
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer pubsub-oidc-token"
+    },
+    body: JSON.stringify({
+      message: {
+        messageId: "oidc-message-1",
+        data: Buffer.from(
+          JSON.stringify({
+            version: "1.0",
+            packageName: "com.projectveil.app",
+            eventTimeMillis: "1713862800000",
+            testNotification: {
+              version: "1.0"
+            }
+          }),
+          "utf8"
+        ).toString("base64")
+      }
+    })
+  });
+
+  const payload = response.json as {
+    acknowledged: boolean;
+    status: string;
+    eventId: string;
+    notificationType: string;
+  };
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(seenEvents, ["TEST_NOTIFICATION"]);
+  assert.deepEqual(payload, {
+    acknowledged: true,
+    status: "processed",
+    eventId: "oidc-message-1",
+    notificationType: "TEST_NOTIFICATION"
+  });
+});
+
 test("google adapter validates purchases through purchases.products.get and recognizes test purchases", async () => {
   const runtimeConfig = createGoogleRuntimeConfig();
   const seenRequests: Array<{ url: string; method: string; body: string }> = [];
