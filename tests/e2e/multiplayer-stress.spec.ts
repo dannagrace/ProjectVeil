@@ -10,7 +10,7 @@ import {
   reloadAndExpectAuthoritativeConvergence,
   withSmokeDiagnostics
 } from "./smoke-helpers";
-import { SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
 
 interface AutomationState {
   hero?: {
@@ -56,7 +56,11 @@ interface RawSession {
 }
 
 async function resetStore(request: APIRequestContext): Promise<void> {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 }
 

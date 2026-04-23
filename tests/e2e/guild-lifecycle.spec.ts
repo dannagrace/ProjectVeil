@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-import { SERVER_BASE_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 
 interface GuestLoginPayload {
   session?: {
@@ -58,7 +58,11 @@ async function createGuestSessionToken(
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 });
 

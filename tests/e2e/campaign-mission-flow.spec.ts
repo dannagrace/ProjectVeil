@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { pollForAnalyticsEvent } from "./analytics-helpers";
-import { SERVER_BASE_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 const FIRST_MISSION_ID = "chapter1-ember-watch";
 const FIRST_MISSION_MAP_ID = "amber-fields";
 const FIRST_CHAPTER_ID = "chapter1";
@@ -131,7 +131,11 @@ async function completeMission(request: APIRequestContext, token: string, missio
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 });
 

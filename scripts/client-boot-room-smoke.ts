@@ -13,6 +13,7 @@ const DEFAULT_SERVER_WS_URL = "ws://127.0.0.1:2567";
 const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LIMIT = 80;
+const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
 
 interface SmokeRuntimeTargets {
   serverUrl: string;
@@ -126,8 +127,8 @@ async function fetchText(url: string): Promise<string> {
   return await response.text();
 }
 
-async function fetchJson<T>(url: string): Promise<HttpJsonResponse<T>> {
-  const response = await fetch(url);
+async function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<HttpJsonResponse<T>> {
+  const response = await fetch(url, headers ? { headers } : undefined);
   if (!response.ok) {
     throw new Error(`GET ${url} returned HTTP ${response.status}`);
   }
@@ -184,7 +185,9 @@ async function verifyClientBoot(): Promise<void> {
 
   await fetchRuntimeHealth(`${CLIENT_URL}/api/runtime/health`, "client-proxied runtime health");
 
-  const authReadiness = await fetchJson<RuntimeStatusPayload>(`${CLIENT_URL}/api/runtime/auth-readiness`);
+  const authReadiness = await fetchJson<RuntimeStatusPayload>(`${CLIENT_URL}/api/runtime/auth-readiness`, {
+    "x-veil-admin-token": ADMIN_TOKEN
+  });
   if (authReadiness.body.status !== "ok") {
     throw new Error(`client-proxied auth readiness is ${JSON.stringify(authReadiness.body)}`);
   }
@@ -204,7 +207,9 @@ async function waitForServerReadiness(): Promise<void> {
     STARTUP_TIMEOUT_MS
   );
 
-  const authReadiness = await fetchJson<RuntimeStatusPayload>(`${SERVER_URL}/api/runtime/auth-readiness`);
+  const authReadiness = await fetchJson<RuntimeStatusPayload>(`${SERVER_URL}/api/runtime/auth-readiness`, {
+    "x-veil-admin-token": ADMIN_TOKEN
+  });
   if (authReadiness.body.status !== "ok") {
     throw new Error(`runtime auth-readiness is ${JSON.stringify(authReadiness.body)}`);
   }
