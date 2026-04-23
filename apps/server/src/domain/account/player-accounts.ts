@@ -2869,6 +2869,24 @@ export function registerPlayerAccountRoutes(
         });
         return;
       }
+      if (error instanceof Error && error.message === "referral_daily_limit_exceeded") {
+        sendJson(response, 429, {
+          error: {
+            code: "referral_daily_limit_exceeded",
+            message: "Daily referral reward limit reached for this referrer"
+          }
+        });
+        return;
+      }
+      if (error instanceof Error && error.message === "referral_lifetime_limit_exceeded") {
+        sendJson(response, 429, {
+          error: {
+            code: "referral_lifetime_limit_exceeded",
+            message: "Lifetime referral reward limit reached for this referrer"
+          }
+        });
+        return;
+      }
       if (error instanceof PayloadTooLargeError) {
         sendJson(response, 413, {
           error: {

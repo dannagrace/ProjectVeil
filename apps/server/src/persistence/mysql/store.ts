@@ -1285,6 +1285,9 @@ export {
   MAX_PLAYER_LOGIN_ID_LENGTH
 } from "@server/persistence/defaults";
 
+const DEFAULT_PLAYER_REFERRAL_DAILY_LIMIT = 5;
+const DEFAULT_PLAYER_REFERRAL_LIFETIME_LIMIT = 50;
+
 function timestampOf(value: Date | string): number {
   return (typeof value === "string" ? new Date(value) : value).getTime();
 }
@@ -7449,6 +7452,29 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          FOR UPDATE`,
         [normalizedReferrerId, normalizedNewPlayerId]
       );
+
+      const [referralLimitRows] = await connection.query<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS lifetime_count,
+           SUM(CASE WHEN created_at >= UTC_DATE() THEN 1 ELSE 0 END) AS daily_count
+         FROM \`${MYSQL_PLAYER_REFERRAL_TABLE}\`
+         WHERE referrer_id = ?`,
+        [normalizedReferrerId]
+      );
+      const referralLimitRow = referralLimitRows[0] as
+        | {
+            lifetime_count?: unknown;
+            daily_count?: unknown;
+          }
+        | undefined;
+      const lifetimeCount = Number(referralLimitRow?.lifetime_count ?? 0);
+      const dailyCount = Number(referralLimitRow?.daily_count ?? 0);
+      if (dailyCount >= DEFAULT_PLAYER_REFERRAL_DAILY_LIMIT) {
+        throw new Error("referral_daily_limit_exceeded");
+      }
+      if (lifetimeCount >= DEFAULT_PLAYER_REFERRAL_LIFETIME_LIMIT) {
+        throw new Error("referral_lifetime_limit_exceeded");
+      }
 
       const referralId = randomUUID();
       try {

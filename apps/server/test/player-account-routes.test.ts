@@ -137,6 +137,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     updatedAt: string;
   }>>();
   private readonly referrals = new Set<string>();
+  private readonly referralCountsByReferrer = new Map<string, number>();
   private nextNameHistoryId = 1;
   private nextSupportTicketId = 1;
 
@@ -403,10 +404,15 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     if (this.referrals.has(referralKey)) {
       throw new Error("duplicate_referral");
     }
+    const currentReferralCount = this.referralCountsByReferrer.get(normalizedReferrerId) ?? 0;
+    if (currentReferralCount >= 5) {
+      throw new Error("referral_daily_limit_exceeded");
+    }
 
     const referrer = await this.ensurePlayerAccount({ playerId: normalizedReferrerId });
     const newPlayer = await this.ensurePlayerAccount({ playerId: normalizedNewPlayerId });
     this.referrals.add(referralKey);
+    this.referralCountsByReferrer.set(normalizedReferrerId, currentReferralCount + 1);
 
     this.accounts.set(normalizedReferrerId, {
       ...referrer,
@@ -4568,6 +4574,68 @@ test("referral endpoint credits both accounts exactly once", async (t) => {
   const newPlayer = await store.loadPlayerAccount("new-player-2");
   assert.equal(referrer?.gems, 31);
   assert.equal(newPlayer?.gems, 23);
+});
+
+test("referral endpoint caps same-referrer reward farming", async (t) => {
+  const port = 44970 + Math.floor(Math.random() * 1000);
+  const store = new MemoryPlayerAccountStore();
+  await store.ensurePlayerAccount({
+    playerId: "referrer-limit",
+    displayName: "推荐守门人"
+  });
+  const server = await startAccountRouteServer(port, store);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    const playerId = `new-player-limit-${index}`;
+    await store.ensurePlayerAccount({
+      playerId,
+      displayName: `新玩家 ${index}`
+    });
+    const session = issueGuestAuthSession({
+      playerId,
+      displayName: `新玩家 ${index}`
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/api/player/referral`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        referrerId: "referrer-limit"
+      })
+    });
+    assert.equal(response.status, 200);
+  }
+
+  await store.ensurePlayerAccount({
+    playerId: "new-player-limit-5",
+    displayName: "第六位新玩家"
+  });
+  const blockedSession = issueGuestAuthSession({
+    playerId: "new-player-limit-5",
+    displayName: "第六位新玩家"
+  });
+  const blockedResponse = await fetch(`http://127.0.0.1:${port}/api/player/referral`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${blockedSession.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      referrerId: "referrer-limit"
+    })
+  });
+  const blockedPayload = (await blockedResponse.json()) as {
+    error: { code: string };
+  };
+
+  assert.equal(blockedResponse.status, 429);
+  assert.equal(blockedPayload.error.code, "referral_daily_limit_exceeded");
 });
 
 test("campaign mission completion unlocks the next chapter 1 mission and grants rewards", async (t) => {
