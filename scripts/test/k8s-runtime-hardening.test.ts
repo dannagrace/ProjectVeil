@@ -81,7 +81,9 @@ test("network policy restricts ingress to ingress-nginx and narrows egress", asy
     assert.match(policy, /port:\s*2567/);
     assert.match(policy, /kubernetes\.io\/metadata\.name:\s*kube-system/);
     assert.match(policy, /port:\s*6379/);
+    assert.match(policy, /cidr:\s*10\.0\.0\.0\/16\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*3306/);
     assert.match(policy, /port:\s*3306/);
+    assert.doesNotMatch(policy, /cidr:\s*0\.0\.0\.0\/0\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*3306/);
     assert.match(policy, /port:\s*443/);
   }
 });

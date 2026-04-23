@@ -39,9 +39,13 @@ spec:
           port: 6379
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: 10.0.0.0/16
       ports:
         - protocol: TCP
           port: 3306
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
         - protocol: TCP
           port: 443
