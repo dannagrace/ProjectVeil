@@ -4,6 +4,8 @@ import { __httpRateLimitInternals } from "@server/infra/http-rate-limit";
 import { startDevServer } from "@server/infra/dev-server";
 import { resetRuntimeObservability } from "@server/domain/ops/observability";
 
+const OBSERVABILITY_ADMIN_TOKEN = "http-rate-limit-admin-token";
+
 function withEnvOverrides(
   overrides: Record<string, string>,
   cleanup: Array<() => void>
@@ -34,6 +36,7 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
   withEnvOverrides(
     {
       ADMIN_SECRET: "test-admin-secret",
+      VEIL_ADMIN_TOKEN: OBSERVABILITY_ADMIN_TOKEN,
       VEIL_TRUSTED_PROXIES: "127.0.0.1",
       VEIL_RATE_LIMIT_HTTP_WINDOW_MS: "60000",
       VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX: "2",
@@ -107,7 +110,9 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
   assert.equal(limitedGlobalResponse.headers.get("Retry-After"), "60");
 
   const metricsResponse = await fetch(`http://127.0.0.1:${port}/metrics`, {
-    headers: withHeaders(metricsIp)
+    headers: withHeaders(metricsIp, {
+      "x-veil-admin-token": OBSERVABILITY_ADMIN_TOKEN
+    })
   });
   const metricsText = await metricsResponse.text();
 

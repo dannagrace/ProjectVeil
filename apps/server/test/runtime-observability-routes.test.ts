@@ -16,6 +16,9 @@ import {
   resetRuntimeObservability
 } from "@server/domain/ops/observability";
 
+const RUNTIME_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "runtime-admin-token";
+process.env.VEIL_ADMIN_TOKEN = RUNTIME_ADMIN_TOKEN;
+
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -173,6 +176,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   process.env.ANALYTICS_DELETION_WORKFLOW = "dsr-player-delete";
   const server = await startObservabilityServer(port);
   const room = await joinRoom(port, "room-observability-alpha", "player-1");
+  const adminHeaders = {
+    "x-veil-admin-token": RUNTIME_ADMIN_TOKEN
+  };
 
   t.after(async () => {
     if (originalFeatureFlagJson === undefined) {
@@ -328,18 +334,31 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.antiCheat.counters.alertsTotal, 0);
   assert.equal(healthPayload.runtime.antiCheat.alertsTracked, 0);
 
-  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const unauthorizedReadinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const unauthorizedReadinessPayload = (await unauthorizedReadinessResponse.json()) as {
+    error?: {
+      code?: string;
+    };
+  };
+  assert.equal(unauthorizedReadinessResponse.status, 403);
+  assert.equal(unauthorizedReadinessPayload.error?.code, "forbidden");
+
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`, {
+    headers: adminHeaders
+  });
   const readinessPayload = (await readinessResponse.json()) as {
     status: string;
     headline: string;
   };
 
   assert.equal(readinessResponse.status, 200);
-  assert.equal(readinessResponse.headers.get("access-control-allow-origin"), "*");
+  assert.equal(readinessResponse.headers.get("access-control-allow-origin"), null);
   assert.equal(readinessPayload.status, "ok");
   assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
 
-  const featureFlagResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/feature-flags`);
+  const featureFlagResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/feature-flags`, {
+    headers: adminHeaders
+  });
   const featureFlagPayload = (await featureFlagResponse.json()) as {
     status: string;
     headline: string;
@@ -370,7 +389,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(featureFlagPayload.flags.find((flag) => flag.flagKey === "battle_pass_enabled")?.stages[0]?.key, "canary-1");
   assert.equal(featureFlagPayload.auditHistory[0]?.ticket, "#1203");
 
-  const killSwitchResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/kill-switches`);
+  const killSwitchResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/kill-switches`, {
+    headers: adminHeaders
+  });
   const killSwitchPayload = (await killSwitchResponse.json()) as {
     status: string;
     headline: string;
@@ -396,7 +417,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(killSwitchPayload.killSwitches.find((entry) => entry.key === "wechat_matchmaking")?.channels?.[0], "wechat");
   assert.match(killSwitchPayload.headline, /kill_switches active=0/);
 
-  const diagnosticResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`);
+  const diagnosticResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`, {
+    headers: adminHeaders
+  });
   const diagnosticPayload = (await diagnosticResponse.json()) as {
     source: {
       surface: string;
@@ -441,7 +464,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(diagnosticPayload.diagnostics.errorSummary.topFingerprints[0]?.featureArea, "payment");
   assert.match(diagnosticPayload.diagnostics.logTail[0] ?? "", /rooms=1 connections=1/);
 
-  const diagnosticTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot?format=text`);
+  const diagnosticTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot?format=text`, {
+    headers: adminHeaders
+  });
   const diagnosticText = await diagnosticTextResponse.text();
 
   assert.equal(diagnosticTextResponse.status, 200);
@@ -452,7 +477,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(diagnosticText, /Errors 1 \/ fingerprints 1 \/ fatal 0 \/ crashes 0/);
   assert.match(diagnosticText, /Room summary room-observability-alpha \/ day 1 \/ players 1/);
 
-  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`, {
+    headers: adminHeaders
+  });
   const metricsText = await metricsResponse.text();
 
   assert.equal(metricsResponse.status, 200);
@@ -484,7 +511,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
     /^veil_runtime_error_events_total\{error_code="wechat_pay_timeout",feature_area="payment",owner_area="commerce",severity="error"\} 1$/m
   );
 
-  const roomLifecycleResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary`);
+  const roomLifecycleResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary`, {
+    headers: adminHeaders
+  });
   const roomLifecyclePayload = (await roomLifecycleResponse.json()) as {
     status: string;
     headline: string;
@@ -517,9 +546,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(roomLifecyclePayload.summary.recentEvents[0]?.kind, "room.created");
   assert.equal(roomLifecyclePayload.summary.recentEvents[0]?.roomId, "room-observability-alpha");
 
-  const roomLifecycleTextResponse = await fetch(
-    `http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary?format=text`
-  );
+  const roomLifecycleTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/room-lifecycle-summary?format=text`, {
+    headers: adminHeaders
+  });
   const roomLifecycleText = await roomLifecycleTextResponse.text();
 
   assert.equal(roomLifecycleTextResponse.status, 200);
@@ -529,7 +558,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(roomLifecycleText, /room_creates=1/);
   assert.match(roomLifecycleText, /room\.created/);
 
-  const analyticsPipelineResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline`);
+  const analyticsPipelineResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline`, {
+    headers: adminHeaders
+  });
   const analyticsPipelinePayload = (await analyticsPipelineResponse.json()) as {
     status: string;
     sink: string;
@@ -562,7 +593,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
     1
   );
 
-  const analyticsPipelineTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline?format=text`);
+  const analyticsPipelineTextResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/analytics-pipeline?format=text`, {
+    headers: adminHeaders
+  });
   const analyticsPipelineText = await analyticsPipelineTextResponse.text();
 
   assert.equal(analyticsPipelineTextResponse.status, 200);
@@ -578,7 +611,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPreflightResponse.status, 204);
   assert.equal(healthPreflightResponse.headers.get("access-control-allow-origin"), "*");
 
-  const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`);
+  const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`, {
+    headers: adminHeaders
+  });
   const prometheusText = await prometheusResponse.text();
 
   assert.equal(prometheusResponse.status, 200);

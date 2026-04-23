@@ -10,6 +10,7 @@ import {
 import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "@server/infra/mysql-pool";
 import { resetGuestAuthSessions } from "@server/domain/account/auth";
 import { configureAuthoritativeRoomTelemetry } from "@server/index";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { getActiveRoomInstances, resetLobbyRoomRegistry } from "@server/transport/colyseus-room/runtime";
 
@@ -2170,7 +2171,52 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.paymentGrant.counters.deadLetterTotal = 0;
 }
 
-const PUBLIC_RUNTIME_CORS_PATHS = new Set(["/api/runtime/health", "/api/runtime/auth-readiness"]);
+const PUBLIC_RUNTIME_CORS_PATHS = new Set(["/api/runtime/health"]);
+
+function sendAdminTokenNotConfigured(response: ServerResponse): void {
+  sendJson(response, 503, {
+    error: {
+      code: "admin_token_not_configured",
+      message: "VEIL_ADMIN_TOKEN is not configured"
+    }
+  });
+}
+
+function sendInvalidAdminToken(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "forbidden",
+      message: "Invalid admin token"
+    }
+  });
+}
+
+function requireRuntimeAdminToken(request: IncomingMessage, response: ServerResponse): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  if (!adminToken) {
+    sendAdminTokenNotConfigured(response);
+    return false;
+  }
+
+  if (!timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken)) {
+    sendInvalidAdminToken(response);
+    return false;
+  }
+
+  return true;
+}
+
+function protectRuntimeRoute(
+  handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
+): (request: IncomingMessage, response: ServerResponse) => void | Promise<void> {
+  return async (request, response) => {
+    if (!requireRuntimeAdminToken(request, response)) {
+      return;
+    }
+
+    await handler(request, response);
+  };
+}
 
 function readRequestPathname(request: IncomingMessage): string {
   try {
@@ -2190,6 +2236,7 @@ export function registerRuntimeObservabilityRoutes(
     serviceName?: string;
     store?: { clearAll?: () => void };
     persistence?: RuntimePersistenceHealth;
+    enableTestRoutes?: boolean;
   }
 ): void {
   const serviceName = options?.serviceName ?? "project-veil-server";
@@ -2225,152 +2272,185 @@ export function registerRuntimeObservabilityRoutes(
     }
   });
 
-  app.get("/api/runtime/metrics", async (_request, response) => {
-    try {
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-      response.end(`${buildPrometheusMetricsDocument()}\n`);
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/room-lifecycle-summary", async (request, response) => {
-    try {
-      const summary = buildRoomLifecycleSummaryPayload(serviceName);
-      const url = new URL(request.url ?? "/api/runtime/room-lifecycle-summary", "http://runtime.local");
-
-      if (url.searchParams.get("format") === "text") {
+  app.get(
+    "/api/runtime/metrics",
+    protectRuntimeRoute(async (_request, response) => {
+      try {
         response.statusCode = 200;
-        response.setHeader("Content-Type", "text/plain; charset=utf-8");
-        response.end(renderRoomLifecycleSummaryText(summary));
-        return;
+        response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+        response.end(`${buildPrometheusMetricsDocument()}\n`);
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
       }
+    })
+  );
 
-      sendJson(response, 200, summary);
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
+  app.get(
+    "/api/runtime/room-lifecycle-summary",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        const summary = buildRoomLifecycleSummaryPayload(serviceName);
+        const url = new URL(request.url ?? "/api/runtime/room-lifecycle-summary", "http://runtime.local");
 
-  app.get("/api/runtime/auth-readiness", async (_request, response) => {
-    try {
-      sendJson(response, 200, buildAuthReadinessPayload(serviceName));
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/diagnostic-snapshot", async (request, response) => {
-    try {
-      const snapshot = buildRuntimeDiagnosticSnapshot(serviceName);
-      const url = new URL(request.url ?? "/api/runtime/diagnostic-snapshot", "http://runtime.local");
-
-      if (url.searchParams.get("format") === "text") {
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/plain; charset=utf-8");
-        response.end(`${renderRuntimeDiagnosticsSnapshotText(snapshot)}\n`);
-        return;
-      }
-
-      sendJson(response, 200, snapshot);
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/account-token-delivery", async (_request, response) => {
-    try {
-      sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/analytics-pipeline", async (request, response) => {
-    try {
-      const snapshot = getAnalyticsPipelineSnapshot();
-      const url = new URL(request.url ?? "/api/runtime/analytics-pipeline", "http://runtime.local");
-
-      if (url.searchParams.get("format") === "text") {
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/plain; charset=utf-8");
-        response.end(renderAnalyticsPipelineSnapshotText(snapshot));
-        return;
-      }
-
-      sendJson(response, 200, snapshot);
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/feature-flags", async (_request, response) => {
-    try {
-      sendJson(response, 200, buildFeatureFlagObservabilityPayload(serviceName));
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/kill-switches", async (_request, response) => {
-    try {
-      sendJson(response, 200, buildRuntimeKillSwitchPayload(serviceName));
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  app.get("/api/runtime/slo-summary", async (request, response) => {
-    try {
-      const summary = buildRuntimeSloSummaryPayload(serviceName);
-      const url = new URL(request.url ?? "/api/runtime/slo-summary", "http://runtime.local");
-
-      if (url.searchParams.get("format") === "markdown") {
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/markdown; charset=utf-8");
-        response.end(renderRuntimeSloSummaryMarkdown(summary));
-        return;
-      }
-
-      if (url.searchParams.get("format") === "text") {
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/plain; charset=utf-8");
-        response.end(renderRuntimeSloSummaryText(summary));
-        return;
-      }
-
-      sendJson(response, 200, summary);
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
-
-  // Test-only endpoint to reset in-memory state
-  app.post("/api/test/reset-store", async (_request, response) => {
-    try {
-      if (store?.clearAll) {
-        const activeRooms = Array.from(getActiveRoomInstances().values());
-        for (const room of activeRooms) {
-          await room.disconnect().catch((error: unknown) => {
-            console.warn("[test-reset] failed to disconnect active room", {
-              roomId: room.roomId,
-              error
-            });
-          });
+        if (url.searchParams.get("format") === "text") {
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/plain; charset=utf-8");
+          response.end(renderRoomLifecycleSummaryText(summary));
+          return;
         }
-        resetLobbyRoomRegistry();
-        store.clearAll();
-        resetCapturedAnalyticsEventsForTest();
-        // Also reset guest auth sessions to clear cached tokens/sessions
-        // that were persisted in module-level maps in auth.ts
-        resetGuestAuthSessions();
-        sendJson(response, 200, { status: "ok", message: "Store and auth sessions cleared" });
-      } else {
-        sendJson(response, 400, { error: { message: "Store does not support clearing" } });
+
+        sendJson(response, 200, summary);
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
       }
-    } catch (error) {
-      sendJson(response, 500, { error: toErrorPayload(error) });
-    }
-  });
+    })
+  );
+
+  app.get(
+    "/api/runtime/auth-readiness",
+    protectRuntimeRoute(async (_request, response) => {
+      try {
+        sendJson(response, 200, buildAuthReadinessPayload(serviceName));
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/diagnostic-snapshot",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        const snapshot = buildRuntimeDiagnosticSnapshot(serviceName);
+        const url = new URL(request.url ?? "/api/runtime/diagnostic-snapshot", "http://runtime.local");
+
+        if (url.searchParams.get("format") === "text") {
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/plain; charset=utf-8");
+          response.end(`${renderRuntimeDiagnosticsSnapshotText(snapshot)}\n`);
+          return;
+        }
+
+        sendJson(response, 200, snapshot);
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/account-token-delivery",
+    protectRuntimeRoute(async (_request, response) => {
+      try {
+        sendJson(response, 200, buildAuthTokenDeliveryPayload(serviceName));
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/analytics-pipeline",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        const snapshot = getAnalyticsPipelineSnapshot();
+        const url = new URL(request.url ?? "/api/runtime/analytics-pipeline", "http://runtime.local");
+
+        if (url.searchParams.get("format") === "text") {
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/plain; charset=utf-8");
+          response.end(renderAnalyticsPipelineSnapshotText(snapshot));
+          return;
+        }
+
+        sendJson(response, 200, snapshot);
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/feature-flags",
+    protectRuntimeRoute(async (_request, response) => {
+      try {
+        sendJson(response, 200, buildFeatureFlagObservabilityPayload(serviceName));
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/kill-switches",
+    protectRuntimeRoute(async (_request, response) => {
+      try {
+        sendJson(response, 200, buildRuntimeKillSwitchPayload(serviceName));
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.get(
+    "/api/runtime/slo-summary",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        const summary = buildRuntimeSloSummaryPayload(serviceName);
+        const url = new URL(request.url ?? "/api/runtime/slo-summary", "http://runtime.local");
+
+        if (url.searchParams.get("format") === "markdown") {
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/markdown; charset=utf-8");
+          response.end(renderRuntimeSloSummaryMarkdown(summary));
+          return;
+        }
+
+        if (url.searchParams.get("format") === "text") {
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/plain; charset=utf-8");
+          response.end(renderRuntimeSloSummaryText(summary));
+          return;
+        }
+
+        sendJson(response, 200, summary);
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  if (options?.enableTestRoutes) {
+    // Test-only endpoint to reset in-memory state
+    app.post("/api/test/reset-store", async (request, response) => {
+      if (!requireRuntimeAdminToken(request, response)) {
+        return;
+      }
+
+      try {
+        if (store?.clearAll) {
+          const activeRooms = Array.from(getActiveRoomInstances().values());
+          for (const room of activeRooms) {
+            await room.disconnect().catch((error: unknown) => {
+              console.warn("[test-reset] failed to disconnect active room", {
+                roomId: room.roomId,
+                error
+              });
+            });
+          }
+          resetLobbyRoomRegistry();
+          store.clearAll();
+          resetCapturedAnalyticsEventsForTest();
+          // Also reset guest auth sessions to clear cached tokens/sessions
+          // that were persisted in module-level maps in auth.ts
+          resetGuestAuthSessions();
+          sendJson(response, 200, { status: "ok", message: "Store and auth sessions cleared" });
+        } else {
+          sendJson(response, 400, { error: { message: "Store does not support clearing" } });
+        }
+      } catch (error) {
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    });
+  }
 }

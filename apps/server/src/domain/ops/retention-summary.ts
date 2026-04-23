@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 interface RetentionSummaryHttpApp {
   get(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
@@ -20,6 +22,31 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
+}
+
+function requireRetentionSummaryAdminToken(request: IncomingMessage, response: ServerResponse): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  if (!adminToken) {
+    sendJson(response, 503, {
+      error: {
+        code: "admin_token_not_configured",
+        message: "VEIL_ADMIN_TOKEN is not configured"
+      }
+    });
+    return false;
+  }
+
+  if (!timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken)) {
+    sendJson(response, 403, {
+      error: {
+        code: "forbidden",
+        message: "Invalid admin token"
+      }
+    });
+    return false;
+  }
+
+  return true;
 }
 
 function toIsoDate(input?: string | null): string | null {
@@ -87,6 +114,10 @@ function buildRetentionSummary(accounts: Awaited<ReturnType<RoomSnapshotStore["l
 
 export function registerRetentionSummaryRoute(app: RetentionSummaryHttpApp, store: RoomSnapshotStore | null): void {
   app.get("/ops/retention-summary", async (_request, response) => {
+    if (!requireRetentionSummaryAdminToken(_request, response)) {
+      return;
+    }
+
     if (!store) {
       sendJson(response, 503, {
         error: {

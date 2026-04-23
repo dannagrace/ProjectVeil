@@ -1,6 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { getHeroMoveTotal } from "./config-fixtures";
-import { CLIENT_BASE_URL, RESET_ENDPOINT, SERVER_DIAGNOSTICS_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, CLIENT_BASE_URL, RESET_ENDPOINT, SERVER_DIAGNOSTICS_URL } from "./runtime-targets";
 
 interface RoomSessionOptions {
   roomId: string;
@@ -71,10 +71,22 @@ export function moveRemainingAfterSpend(spent: number, playerId = "player-1"): n
   return getHeroMoveTotal(playerId) - spent;
 }
 
-async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
-  return await page.evaluate(async (requestPath) => {
+function getAdminHeaders(): Record<string, string> {
+  return {
+    "x-veil-admin-token": ADMIN_TOKEN
+  };
+}
+
+async function fetchJsonFromBrowser<T>(
+  page: Page,
+  path: string,
+  headers: Record<string, string> = getAdminHeaders()
+): Promise<T> {
+  return await page.evaluate(async ({ requestPath, requestHeaders }) => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const response = await fetch(requestPath);
+      const response = await fetch(requestPath, {
+        headers: requestHeaders
+      });
       if (response.ok) {
         return (await response.json()) as T;
       }
@@ -85,8 +97,8 @@ async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
       }
       throw new Error(`browser_fetch_failed:${requestPath}:${response.status}`);
     }
-    throw new Error(`browser_fetch_failed:${requestPath}:unreachable`);
-  }, path);
+      throw new Error(`browser_fetch_failed:${requestPath}:unreachable`);
+  }, { requestPath: path, requestHeaders: headers });
 }
 
 export async function waitForLobbyReady(page: Page): Promise<void> {
@@ -94,10 +106,13 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
     // Reset the server's in-memory store before entering lobby
     // The fixture also resets server-side, but this ensures the browser
     // context is fresh after being reused across tests
-    await page.evaluate(async () => {
+    await page.evaluate(async (adminToken) => {
+      const adminHeaders = {
+        "x-veil-admin-token": adminToken
+      };
       for (let attempt = 0; attempt < 5; attempt += 1) {
         try {
-          const response = await fetch("/api/test/reset-store", { method: "POST" });
+          const response = await fetch("/api/test/reset-store", { method: "POST", headers: adminHeaders });
           if (response.ok || response.status !== 429 || attempt === 4) {
             return;
           }
@@ -108,11 +123,11 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
         }
       }
       try {
-        await fetch("/api/test/reset-store", { method: "POST" });
+        await fetch("/api/test/reset-store", { method: "POST", headers: adminHeaders });
       } catch {
         // Ignore errors if endpoint not available
       }
-    });
+    }, ADMIN_TOKEN);
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
@@ -505,7 +520,9 @@ async function attachPageDiagnostics(testInfo: TestInfo, page: Page, label: stri
 
 async function attachServerDiagnostics(testInfo: TestInfo): Promise<void> {
   try {
-    const response = await fetch(SERVER_DIAGNOSTICS_URL);
+    const response = await fetch(SERVER_DIAGNOSTICS_URL, {
+      headers: getAdminHeaders()
+    });
     if (!response.ok) {
       await attachText(testInfo, "server-diagnostics-error.txt", `HTTP ${response.status}`);
       return;
