@@ -8,9 +8,11 @@ import {
   registerAnalyticsRoutes,
   resetAnalyticsRuntimeDependencies
 } from "@server/domain/ops/analytics";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 
 afterEach(() => {
   resetAnalyticsRuntimeDependencies();
+  resetGuestAuthSessions();
 });
 
 interface TestResponse {
@@ -38,7 +40,7 @@ function createResponse(): TestResponse {
   };
 }
 
-function createRequest(method: string, body?: string): Readable & {
+function createRequest(method: string, body?: string, headers: Record<string, string> = {}): Readable & {
   method: string;
   headers: Record<string, string>;
   resume(): void;
@@ -49,7 +51,10 @@ function createRequest(method: string, body?: string): Readable & {
     resume(): void;
   };
   request.method = method;
-  request.headers = body == null ? {} : { "content-length": Buffer.byteLength(body).toString() };
+  request.headers = {
+    ...headers,
+    ...(body == null ? {} : { "content-length": Buffer.byteLength(body).toString() })
+  };
   request.resume = () => {
     request.read();
   };
@@ -129,9 +134,12 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload whe
   const requestBody = JSON.stringify({
     schemaVersion: 1,
     emittedAt: "2026-04-05T00:00:00.000Z",
-    events: [{ name: "shop_open" }, { name: "battle_start" }]
+    events: [{ name: "shop_open", playerId: "spoofed-player" }, { name: "battle_start" }]
   });
-  const request = createRequest("POST", requestBody);
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Veil Ranger" });
+  const request = createRequest("POST", requestBody, {
+    authorization: `Bearer ${session.token}`
+  });
   const response = createResponse();
 
   let nextCalled = false;
@@ -143,7 +151,7 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload whe
   await handler(request as never, response);
 
   assert.equal(response.statusCode, 202);
-  assert.equal(response.headers["Access-Control-Allow-Origin"], "*");
+  assert.equal(response.headers["Access-Control-Allow-Origin"], undefined);
   assert.equal(response.headers["Content-Type"], "application/json; charset=utf-8");
   assert.deepEqual(JSON.parse(response.body), { accepted: 2 });
   assert.equal(logs.length, 1);
@@ -154,8 +162,32 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload whe
 
   assert.equal(getResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(getResponse.body), {
-    events: [{ name: "shop_open" }, { name: "battle_start" }]
+    events: [{ name: "shop_open", playerId: "player-1" }, { name: "battle_start", playerId: "player-1" }]
   });
+});
+
+test("registerAnalyticsRoutes rejects public analytics ingest without an auth session", async () => {
+  let handler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+
+  registerAnalyticsRoutes({
+    use() {},
+    get() {},
+    post(_path, nextHandler) {
+      handler = nextHandler as never;
+    }
+  });
+
+  assert(handler);
+
+  const request = createRequest("POST", JSON.stringify({ events: [{ name: "session_start" }] }));
+  const response = createResponse();
+
+  await handler(request as never, response);
+
+  assert.equal(response.statusCode, 401);
+  assert.match(response.body, /Analytics ingestion requires an authenticated player session/);
 });
 
 test("registerAnalyticsRoutes queues accepted events for the configured analytics sink", async () => {
@@ -207,7 +239,10 @@ test("registerAnalyticsRoutes queues accepted events for the configured analytic
       }
     ]
   });
-  const request = createRequest("POST", requestBody);
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Veil Ranger" });
+  const request = createRequest("POST", requestBody, {
+    authorization: `Bearer ${session.token}`
+  });
   const response = createResponse();
 
   try {
@@ -279,7 +314,10 @@ test("registerAnalyticsRoutes rejects malformed analytics payloads", async () =>
 
   assert(handler);
 
-  const request = createRequest("POST", "{");
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Veil Ranger" });
+  const request = createRequest("POST", "{", {
+    authorization: `Bearer ${session.token}`
+  });
   const response = createResponse();
 
   await handler(request as never, response);
@@ -287,4 +325,31 @@ test("registerAnalyticsRoutes rejects malformed analytics payloads", async () =>
   assert.equal(response.statusCode, 400);
   assert.equal(response.headers["Content-Type"], "application/json; charset=utf-8");
   assert.match(response.body, /"code":"SyntaxError"/);
+});
+
+test("registerAnalyticsRoutes rejects unknown analytics event names", async () => {
+  let handler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+
+  registerAnalyticsRoutes({
+    use() {},
+    get() {},
+    post(_path, nextHandler) {
+      handler = nextHandler as never;
+    }
+  });
+
+  assert(handler);
+
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Veil Ranger" });
+  const request = createRequest("POST", JSON.stringify({ events: [{ name: "fake_purchase_completed" }] }), {
+    authorization: `Bearer ${session.token}`
+  });
+  const response = createResponse();
+
+  await handler(request as never, response);
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body, /analytics event name is not allowed/);
 });

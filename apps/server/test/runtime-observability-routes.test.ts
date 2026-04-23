@@ -15,6 +15,7 @@ import {
   type RuntimePersistenceHealth,
   resetRuntimeObservability
 } from "@server/domain/ops/observability";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 
 const RUNTIME_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "runtime-admin-token";
 process.env.VEIL_ADMIN_TOKEN = RUNTIME_ADMIN_TOKEN;
@@ -25,6 +26,7 @@ async function wait(ms: number): Promise<void> {
 
 async function startObservabilityServer(port: number, persistence?: RuntimePersistenceHealth): Promise<Server> {
   configureRoomSnapshotStore(null);
+  resetGuestAuthSessions();
   resetLobbyRoomRegistry();
   resetAccountTokenDeliveryState();
   resetRuntimeObservability();
@@ -239,7 +241,8 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   const analyticsIngestResponse = await fetch(`http://127.0.0.1:${port}/api/analytics/events`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${issueGuestAuthSession({ playerId: "player-1", displayName: "Veil Ranger" }).token}`
     },
     body: JSON.stringify({
       schemaVersion: 1,
@@ -327,9 +330,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(healthPayload.runtime.gameplayTraffic.worldActionsTotal, 1);
   assert.equal(healthPayload.runtime.gameplayTraffic.battleActionsTotal, 0);
   assert.equal(healthPayload.runtime.gameplayTraffic.actionMessagesTotal, 1);
-  assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 0);
+  assert.equal(healthPayload.runtime.auth.activeGuestSessionCount, 1);
   assert.equal(healthPayload.runtime.auth.activeAccountSessionCount, 0);
-  assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 0);
+  assert.equal(healthPayload.runtime.auth.counters.sessionChecksTotal, 1);
   assert.equal(healthPayload.runtime.matchmaking.counters.rateLimitedTotal, 2);
   assert.equal(healthPayload.runtime.antiCheat.counters.alertsTotal, 0);
   assert.equal(healthPayload.runtime.antiCheat.alertsTracked, 0);
@@ -354,7 +357,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.equal(readinessResponse.status, 200);
   assert.equal(readinessResponse.headers.get("access-control-allow-origin"), null);
   assert.equal(readinessPayload.status, "ok");
-  assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
+  assert.match(readinessPayload.headline, /guest=1 account=0 lockouts=0/);
 
   const featureFlagResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/feature-flags`, {
     headers: adminHeaders
@@ -498,9 +501,9 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(metricsText, /^veil_room_disposals_total 0$/m);
   assert.match(metricsText, /^veil_battle_completions_total 0$/m);
   assert.match(metricsText, /^veil_battle_aborts_total 0$/m);
-  assert.match(metricsText, /^veil_auth_guest_sessions 0$/m);
+  assert.match(metricsText, /^veil_auth_guest_sessions 1$/m);
   assert.match(metricsText, /^veil_auth_account_sessions 0$/m);
-  assert.match(metricsText, /^veil_auth_session_checks_total 0$/m);
+  assert.match(metricsText, /^veil_auth_session_checks_total 1$/m);
   assert.match(metricsText, /^veil_matchmaking_rate_limited_total 2$/m);
   assert.match(metricsText, /^veil_matchmaking_queue_depth 7$/m);
   assert.match(metricsText, /^veil_anti_cheat_alerts_total 0$/m);

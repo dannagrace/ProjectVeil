@@ -208,7 +208,7 @@ export interface DevServerBootstrapDependencies {
   createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
-  registerAnalyticsRoutes(app: unknown, options?: { enableTestRoutes?: boolean }): void;
+  registerAnalyticsRoutes(app: unknown, options?: { enableTestRoutes?: boolean; store?: DevServerRoomSnapshotStore | null }): void;
   registerClientErrorRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
@@ -330,7 +330,16 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createRedisPresence,
     createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
-    registerAnalyticsRoutes: (app, options) => registerAnalyticsRoutes(app as never, options),
+    registerAnalyticsRoutes: (app, options) => {
+      const routeOptions =
+        options === undefined
+          ? undefined
+          : {
+              ...(options.enableTestRoutes === undefined ? {} : { enableTestRoutes: options.enableTestRoutes }),
+              ...(options.store === undefined ? {} : { store: options.store as RoomSnapshotStore | null })
+            };
+      return registerAnalyticsRoutes(app as never, routeOptions);
+    },
     registerClientErrorRoutes: (app, store) => registerClientErrorRoutes(app as never, store as RoomSnapshotStore | null),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
@@ -494,7 +503,8 @@ export async function startDevServer(
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerAnalyticsRoutes(expressApp, {
-    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1"
+    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1",
+    store: effectiveSnapshotStore
   });
   deps.registerClientErrorRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
