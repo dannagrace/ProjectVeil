@@ -8,7 +8,7 @@ services:
       MYSQL_DATABASE: ${VEIL_MYSQL_DATABASE:-project_veil}
       MYSQL_USER: ${VEIL_MYSQL_USER}
       MYSQL_PASSWORD: ${VEIL_MYSQL_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change_me_root_password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD required for production compose}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
