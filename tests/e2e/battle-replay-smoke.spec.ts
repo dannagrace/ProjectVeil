@@ -8,7 +8,7 @@ import {
   resolveBattleToSettlement,
   withSmokeDiagnostics
 } from "./smoke-helpers";
-import { SERVER_BASE_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 
 interface PlayerBattleReplaySummary {
   id: string;
@@ -65,7 +65,11 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
   browser,
   request
 }, testInfo) => {
-  const resetResponse = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const resetResponse = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(resetResponse.ok()).toBeTruthy();
 
   const roomId = buildRoomId("e2e-battle-replay");

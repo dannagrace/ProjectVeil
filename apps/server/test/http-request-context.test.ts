@@ -8,6 +8,9 @@ import {
 } from "@server/infra/http-request-context";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
 
+const OBSERVABILITY_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "observability-admin-token";
+process.env.VEIL_ADMIN_TOKEN = OBSERVABILITY_ADMIN_TOKEN;
+
 interface TestLoggerEntry {
   message: string;
   error: unknown;
@@ -120,7 +123,11 @@ test("http request observability logs structured route failures and records them
   assert.equal(loggedError.errorMessage, "intentional route failure");
   assert.match(loggedError.stack ?? "", /intentional route failure/);
 
-  const diagnosticsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`);
+  const diagnosticsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/diagnostic-snapshot`, {
+    headers: {
+      "x-veil-admin-token": OBSERVABILITY_ADMIN_TOKEN
+    }
+  });
   const diagnosticsPayload = (await diagnosticsResponse.json()) as {
     diagnostics: {
       errorEvents: Array<{

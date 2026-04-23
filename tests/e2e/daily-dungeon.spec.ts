@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-import { SERVER_BASE_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 const ACTIVE_WINDOW_NOW = "2026-04-10T12:00:00.000Z";
 const INACTIVE_WINDOW_NOW = "2026-05-12T12:00:00.000Z";
 const ACTIVE_DUNGEON_ID = "shadow-archives";
@@ -75,7 +75,11 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 });
 

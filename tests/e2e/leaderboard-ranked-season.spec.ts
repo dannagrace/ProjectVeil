@@ -12,7 +12,7 @@ import {
   resolveBattleToSettlement,
   startDeterministicPvpBattle
 } from "./smoke-helpers";
-import { SERVER_BASE_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 
 interface GuestLoginPayload {
   session?: {
@@ -56,7 +56,10 @@ interface LeaderboardPayload {
 
 async function resetStore(): Promise<void> {
   const response = await fetch(`${SERVER_BASE_URL}/api/test/reset-store`, {
-    method: "POST"
+    method: "POST",
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
   });
   if (!response.ok) {
     throw new Error(`reset_store_failed:${response.status}`);

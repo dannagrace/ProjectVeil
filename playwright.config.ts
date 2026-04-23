@@ -89,12 +89,15 @@ const clientOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN, 
 const runId = process.env.VEIL_PLAYWRIGHT_RUN_ID?.trim() || `${path.basename(process.cwd())}-${process.pid}`;
 const playwrightOutputDir = process.env.PLAYWRIGHT_OUTPUT_DIR?.trim() || path.join("test-results", runId);
 const playwrightReportDir = process.env.PLAYWRIGHT_HTML_REPORT?.trim() || path.join("playwright-report", runId);
+const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
 
 process.env.VEIL_PLAYWRIGHT_SERVER_PORT = String(serverPort);
 process.env.VEIL_PLAYWRIGHT_CLIENT_PORT = String(clientPort);
 process.env.VEIL_PLAYWRIGHT_SERVER_ORIGIN = serverOrigin;
 process.env.VEIL_PLAYWRIGHT_SERVER_WS_URL = serverWsOrigin;
 process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN = clientOrigin;
+process.env.VEIL_ADMIN_TOKEN = adminToken;
+process.env.VEIL_ENABLE_TEST_ENDPOINTS = process.env.VEIL_ENABLE_TEST_ENDPOINTS?.trim() || "1";
 
 const SMOKE_PROJECT_NAME = "smoke";
 const H5_CONNECTIVITY_PROJECT_NAME = "h5-connectivity";
@@ -175,7 +178,8 @@ function createSharedWebServers(): WebServerPlugin[] {
         PORT: String(serverPort),
         ANALYTICS_ENDPOINT: `${serverOrigin}/api/test/analytics/events`,
         ANALYTICS_SINK: "http",
-        VEIL_ADMIN_TOKEN: process.env.VEIL_ADMIN_TOKEN ?? "dev-admin-token",
+        VEIL_ADMIN_TOKEN: adminToken,
+        VEIL_ENABLE_TEST_ENDPOINTS: "1",
         VEIL_DAILY_QUESTS_ENABLED: "1",
         VEIL_DAILY_QUEST_ROTATIONS_JSON: DAILY_QUEST_SMOKE_ROTATIONS,
         VEIL_RATE_LIMIT_AUTH_MAX: process.env.VEIL_RATE_LIMIT_AUTH_MAX ?? "120",
@@ -223,6 +227,9 @@ export default defineConfig({
   reporter: SHARED_REPORTER,
   use: {
     baseURL: clientOrigin,
+    extraHTTPHeaders: {
+      "x-veil-admin-token": adminToken
+    },
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

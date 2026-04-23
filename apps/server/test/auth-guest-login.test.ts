@@ -57,6 +57,12 @@ import type {
 import type { RoomPersistenceSnapshot } from "@server/index";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 
+const OBSERVABILITY_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "observability-admin-token";
+process.env.VEIL_ADMIN_TOKEN = OBSERVABILITY_ADMIN_TOKEN;
+const OBSERVABILITY_ADMIN_HEADERS = {
+  "x-veil-admin-token": OBSERVABILITY_ADMIN_TOKEN
+};
+
 class MemoryAuthStore implements RoomSnapshotStore {
   private readonly accounts = new Map<string, PlayerAccountSnapshot>();
   private readonly banHistoryByPlayerId = new Map<string, PlayerBanHistoryRecord[]>();
@@ -1752,7 +1758,9 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
   assert.equal(healthPayload.runtime.auth.counters.sessionFailuresTotal, 1);
   assert.equal(healthPayload.runtime.auth.sessionFailureReasons.session_revoked, 1);
 
-  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const readinessPayload = (await readinessResponse.json()) as {
     status: string;
     headline: string;
@@ -1770,7 +1778,9 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
   assert.equal(readinessPayload.auth.activeGuestSessionCount, 1);
   assert.equal(readinessPayload.auth.activeAccountSessionCount, 1);
 
-  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const metricsText = await metricsResponse.text();
 
   assert.equal(metricsResponse.status, 200);
@@ -2217,7 +2227,9 @@ test(
   assert.equal(blockedLegitimatePayload.error.code, "credential_stuffing_blocked");
   assert.ok(blockedLegitimatePayload.error.blockedUntil);
 
-  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`);
+  const readinessResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/auth-readiness`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const readinessPayload = (await readinessResponse.json()) as {
     status: string;
     headline: string;
@@ -2236,7 +2248,9 @@ test(
   assert.equal(readinessPayload.auth.activeCredentialStuffingSourceCount, 1);
   assert.equal(readinessPayload.auth.counters.credentialStuffingBlockedTotal, 2);
 
-  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+  const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const metricsText = await metricsResponse.text();
   assert.equal(metricsResponse.status, 200);
   assert.match(metricsText, /^veil_auth_credential_stuffing_sources 1$/m);
@@ -3221,7 +3235,9 @@ test("password recovery request schedules retry for retryable webhook failures a
   assert.equal(payload.recoveryToken, undefined);
   assert.equal(webhook.requests.length, 1);
 
-  const queuedResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const queuedResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const queuedPayload = (await queuedResponse.json()) as {
     status: string;
     delivery: {
@@ -3255,7 +3271,9 @@ test("password recovery request schedules retry for retryable webhook failures a
   assert.equal(webhook.requests.length, 2);
   assert.equal(webhook.requests[1]?.body.token, webhook.requests[0]?.body.token);
 
-  const recoveredResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const recoveredResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const recoveredPayload = (await recoveredResponse.json()) as {
     status: string;
     delivery: {
@@ -3333,7 +3351,9 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
   assert.match(payload.error.message, /400/);
   assert.equal(webhook.requests.length, 1);
 
-  const deliveryResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`);
+  const deliveryResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/account-token-delivery`, {
+    headers: OBSERVABILITY_ADMIN_HEADERS
+  });
   const deliveryPayload = (await deliveryResponse.json()) as {
     status: string;
     delivery: {

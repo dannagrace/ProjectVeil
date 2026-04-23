@@ -19,6 +19,7 @@ export const SERVER_WS_URL =
   process.env.VEIL_PLAYWRIGHT_SERVER_WS_URL?.trim() || `ws://${SERVER_HOST}:${SERVER_PORT}`;
 export const CLIENT_BASE_URL =
   process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN?.trim() || `http://${CLIENT_HOST}:${CLIENT_PORT}`;
+export const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
 export const ADMIN_BASE_URL = `${SERVER_BASE_URL}/admin`;
 export const ANALYTICS_CAPTURE_ENDPOINT = `${SERVER_BASE_URL}/api/test/analytics/events`;
 export const RESET_ENDPOINT = `${SERVER_BASE_URL}/api/test/reset-store`;

@@ -7,6 +7,9 @@ import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } 
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
 import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
 
+const OBSERVABILITY_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "observability-admin-token";
+process.env.VEIL_ADMIN_TOKEN = OBSERVABILITY_ADMIN_TOKEN;
+
 interface FakeClient {
   sessionId: string;
   state: number;
@@ -357,7 +360,11 @@ test("observability reports websocket action rate-limit violations and kicks", {
           };
         };
       };
-      const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`);
+      const metricsResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/metrics`, {
+        headers: {
+          "x-veil-admin-token": OBSERVABILITY_ADMIN_TOKEN
+        }
+      });
       const metricsText = await metricsResponse.text();
 
       assert.equal(healthResponse.status, 200);

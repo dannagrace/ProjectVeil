@@ -124,7 +124,11 @@ async function fetchProfile(request: APIRequestContext, authHeaders: Record<stri
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 });
 

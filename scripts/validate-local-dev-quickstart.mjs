@@ -11,6 +11,7 @@ export const QUICKSTART_H5_BUILD_SCRIPT = "build:client:h5";
 export const QUICKSTART_H5_DEV_SCRIPT = "dev:client:h5";
 export const QUICKSTART_SERVER_URL = "http://127.0.0.1:2567";
 export const QUICKSTART_HEALTH_CHECKS = ["/api/runtime/health", "/api/runtime/auth-readiness", "/api/lobby/rooms"];
+const QUICKSTART_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
 const startupTimeoutMs = 20_000;
 
 function logStep(message) {
@@ -63,7 +64,14 @@ async function waitForServer() {
 
 async function verifyEndpoints() {
   for (const path of QUICKSTART_HEALTH_CHECKS) {
-    const response = await fetch(`${QUICKSTART_SERVER_URL}${path}`);
+    const response = await fetch(`${QUICKSTART_SERVER_URL}${path}`, {
+      headers:
+        path === "/api/runtime/auth-readiness"
+          ? {
+              "x-veil-admin-token": QUICKSTART_ADMIN_TOKEN
+            }
+          : undefined
+    });
     if (path === "/api/runtime/health") {
       const payload = await response.json();
       assertBaselineRuntimeHealthResponse(response.status, payload, "runtime health");
@@ -91,6 +99,7 @@ export async function main() {
 
   logStep("starting the dev server without MySQL env overrides");
   const envWithoutMySql = { ...process.env };
+  envWithoutMySql.VEIL_ADMIN_TOKEN = envWithoutMySql.VEIL_ADMIN_TOKEN?.trim() || QUICKSTART_ADMIN_TOKEN;
   for (const key of Object.keys(envWithoutMySql)) {
     if (key.startsWith("VEIL_MYSQL_")) {
       delete envWithoutMySql[key];

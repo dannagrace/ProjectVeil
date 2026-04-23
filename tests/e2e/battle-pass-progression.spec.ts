@@ -6,7 +6,7 @@ import {
   type PlayerWorldView,
   type SessionStatePayload
 } from "../../packages/shared/src/index";
-import { SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, SERVER_BASE_URL, SERVER_WS_URL } from "./runtime-targets";
 const BATTLE_PASS_TIER = 2;
 const BATTLE_PASS_TIER_XP_REQUIRED = 500;
 const BATTLE_PASS_TIER_REWARD = {
@@ -237,7 +237,11 @@ async function fetchGoldBalance(
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`);
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    }
+  });
   expect(response.ok()).toBeTruthy();
 });
 

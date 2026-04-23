@@ -1,5 +1,5 @@
 import { test as base } from "@playwright/test";
-import { CLIENT_BASE_URL, RESET_ENDPOINT } from "./runtime-targets";
+import { ADMIN_TOKEN, CLIENT_BASE_URL, RESET_ENDPOINT } from "./runtime-targets";
 
 /**
  * Custom test fixture that automatically resets the server's in-memory store
@@ -18,11 +18,19 @@ export const test = base.extend({
   page: async ({ page }, use) => {
     // Reset the server's in-memory store before each test
     try {
-      let response = await page.context().request.post(RESET_ENDPOINT);
+      let response = await page.context().request.post(RESET_ENDPOINT, {
+        headers: {
+          "x-veil-admin-token": ADMIN_TOKEN
+        }
+      });
       for (let attempt = 0; attempt < 4 && response.status() === 429; attempt += 1) {
         const retryAfterSeconds = Math.max(1, Number(response.headers()["retry-after"] ?? "1"));
         await new Promise((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
-        response = await page.context().request.post(RESET_ENDPOINT);
+        response = await page.context().request.post(RESET_ENDPOINT, {
+          headers: {
+            "x-veil-admin-token": ADMIN_TOKEN
+          }
+        });
       }
       if (!response.ok()) {
         console.warn(`Store reset failed: ${response.status()}`);

@@ -59,6 +59,8 @@ import { createDefaultPaymentGatewayRegistry } from "@server/domain/payment/Defa
 import { captureServerError, isErrorMonitoringEnabled } from "@server/domain/ops/error-monitoring";
 import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "@server/domain/battle/battle-replay-retention";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 loadEnv();
 
@@ -229,7 +231,7 @@ export interface DevServerBootstrapDependencies {
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(
     app: unknown,
-    options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth }
+    options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth; enableTestRoutes?: boolean }
   ): void;
   validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -276,6 +278,35 @@ export function registerPrometheusMetricsMiddleware(app: DevServerHttpApp): void
 
 export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
   app.get("/metrics", async (_request, response) => {
+    const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+    if (!adminToken) {
+      response.statusCode = 503;
+      response.setHeader("Content-Type", "application/json; charset=utf-8");
+      response.end(
+        JSON.stringify({
+          error: {
+            code: "admin_token_not_configured",
+            message: "VEIL_ADMIN_TOKEN is not configured"
+          }
+        })
+      );
+      return;
+    }
+
+    if (!timingSafeCompareAdminToken(_request.headers["x-veil-admin-token"], adminToken)) {
+      response.statusCode = 403;
+      response.setHeader("Content-Type", "application/json; charset=utf-8");
+      response.end(
+        JSON.stringify({
+          error: {
+            code: "forbidden",
+            message: "Invalid admin token"
+          }
+        })
+      );
+      return;
+    }
+
     response.statusCode = 200;
     response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
     response.end(`${buildPrometheusMetricsDocument()}\n`);
@@ -483,7 +514,8 @@ export async function startDevServer(
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, {
     store: effectiveSnapshotStore,
-    persistence: persistenceHealth
+    persistence: persistenceHealth,
+    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1"
   });
   if ("get" in (expressApp as object)) {
     deps.registerRetentionSummaryRoute(expressApp, effectiveSnapshotStore);

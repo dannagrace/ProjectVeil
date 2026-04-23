@@ -4,6 +4,9 @@ import test from "node:test";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
 
+const RETENTION_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "retention-admin-token";
+process.env.VEIL_ADMIN_TOKEN = RETENTION_ADMIN_TOKEN;
+
 test("retention summary route returns cohort metrics from account timestamps", async () => {
   const routes = new Map<string, (request: unknown, response: FakeResponse) => void | Promise<void>>();
   const app = {
@@ -37,8 +40,18 @@ test("retention summary route returns cohort metrics from account timestamps", a
   } as Pick<RoomSnapshotStore, "listPlayerAccounts"> as RoomSnapshotStore;
 
   registerRetentionSummaryRoute(app as never, store);
+
+  const unauthorizedResponse = new FakeResponse();
+  await routes.get("/ops/retention-summary")?.({ headers: {} } as never, unauthorizedResponse);
+  assert.equal(unauthorizedResponse.statusCode, 403);
+  const unauthorizedPayload = JSON.parse(unauthorizedResponse.body);
+  assert.equal(unauthorizedPayload.error.code, "forbidden");
+
   const response = new FakeResponse();
-  await routes.get("/ops/retention-summary")?.({} as never, response);
+  await routes.get("/ops/retention-summary")?.(
+    { headers: { "x-veil-admin-token": RETENTION_ADMIN_TOKEN } } as never,
+    response
+  );
 
   assert.equal(response.statusCode, 200);
   const payload = JSON.parse(response.body);
