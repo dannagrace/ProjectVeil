@@ -467,6 +467,15 @@ const INVENTORY_METADATA: Record<string, InventoryMetadata> = {
       "No tracked artifact; exits non-zero when placeholder tokens or invalid configmap substitutions are detected.",
     ],
   },
+  "validate:k8s-image-tags": {
+    purpose: "Validate that Kubernetes deployment manifests pin each container image to an explicit tag or digest before rollout automation runs.",
+    requiredInputs: [
+      "Current repo deployment manifests and the checked-in image-pin validation rules.",
+    ],
+    producedArtifacts: [
+      "No tracked artifact; exits non-zero when a deployment image omits an explicit tag or digest.",
+    ],
+  },
   "validate:season-reward-config": {
     purpose:
       "Validate `configs/season-rewards.json` against the checked-in schema and server semantics before startup, build, or a seasonal reset can proceed.",

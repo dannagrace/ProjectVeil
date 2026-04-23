@@ -21,6 +21,8 @@ Pull requests that touch `k8s/` now run `npm run validate:k8s-configmap` in CI. 
 
 The matcher is intentionally narrow so valid production-shaped values do not trip it accidentally. For example, S3-compatible endpoints like `https://s3.example.com` are allowed because they do not use the placeholder bare `.example` top-level domain.
 
+Pull requests that touch `k8s/` should also run `npm run validate -- k8s-image-tags`. That gate scans `k8s/deployment.yaml` and fails if any container image omits an explicit tag or digest, which prevents the primary production deployment from silently falling back to `:latest`.
+
 ## External stateful services
 
 These manifests assume managed backing services instead of in-cluster MySQL:

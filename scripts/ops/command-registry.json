@@ -231,6 +231,11 @@
         "runner": "node --import tsx ./scripts/validate-k8s-configmap-placeholders.ts"
       },
       {
+        "name": "k8s-image-tags",
+        "legacyScript": "validate:k8s-image-tags",
+        "runner": "node --import tsx ./scripts/validate-k8s-image-tags.ts"
+      },
+      {
         "name": "map-object-visuals",
         "legacyScript": "validate:map-object-visuals",
         "runner": "node --import tsx ./scripts/validate-map-object-visuals.ts"
@@ -637,6 +642,11 @@
         "name": "validate:k8s-configmap",
         "legacyScript": "test:validate:k8s-configmap",
         "runner": "node --import tsx --test ./scripts/test/validate-k8s-configmap-placeholders.test.ts"
+      },
+      {
+        "name": "validate:k8s-image-tags",
+        "legacyScript": "test:validate:k8s-image-tags",
+        "runner": "node --import tsx --test ./scripts/test/validate-k8s-image-tags.test.ts"
       },
       {
         "name": "wechat-assets-hotfix",
