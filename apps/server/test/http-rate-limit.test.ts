@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { __httpRateLimitInternals } from "@server/infra/http-rate-limit";
 import { startDevServer } from "@server/infra/dev-server";
 import { resetRuntimeObservability } from "@server/domain/ops/observability";
 
@@ -145,4 +146,61 @@ test("HTTP rate limiting ignores spoofed forwarded headers from untrusted socket
   });
   assert.equal(spoofedFollowup.status, 429);
   assert.equal(spoofedFollowup.headers.get("Retry-After"), "60");
+});
+
+test("HTTP rate limiting uses a Redis-backed shared fixed window when REDIS_URL is available", async () => {
+  const counters = new Map<string, { value: number; expiresAt: number }>();
+  const fakeRedis = {
+    async eval(_script: string, _numKeys: number, key: string, max: string, windowMs: string) {
+      const currentTime = Date.now();
+      const existing = counters.get(key);
+      if (!existing || existing.expiresAt <= currentTime) {
+        counters.set(key, {
+          value: 1,
+          expiresAt: currentTime + Number(windowMs)
+        });
+        return [1, Number(windowMs)];
+      }
+
+      existing.value += 1;
+      counters.set(key, existing);
+      if (existing.value > Number(max)) {
+        return [0, existing.expiresAt - currentTime];
+      }
+
+      return [1, existing.expiresAt - currentTime];
+    }
+  };
+
+  const allowed = await __httpRateLimitInternals.consumeRedisBackedRateLimit(
+    fakeRedis as never,
+    "veil:http-rate-limit:global:203.0.113.20",
+    { windowMs: 60_000 },
+    1
+  );
+  assert.equal(allowed.allowed, true);
+
+  const limited = await __httpRateLimitInternals.consumeRedisBackedRateLimit(
+    fakeRedis as never,
+    "veil:http-rate-limit:global:203.0.113.20",
+    { windowMs: 60_000 },
+    1
+  );
+  assert.equal(limited.allowed, false);
+  assert.equal(limited.retryAfterSeconds, 60);
+});
+
+test("HTTP rate limiting prunes stale local counters during fallback cleanup", () => {
+  const state = {
+    counters: new Map<string, number[]>([
+      ["stale", [1_000]],
+      ["active", [55_000]]
+    ]),
+    lastPrunedAtMs: 0
+  };
+
+  __httpRateLimitInternals.pruneExpiredSlidingWindowCounters(state, { windowMs: 10_000 }, 60_000);
+
+  assert.equal(state.counters.has("stale"), false);
+  assert.deepEqual(state.counters.get("active"), [55_000]);
 });

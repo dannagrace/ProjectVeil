@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { recordHttpRateLimited } from "@server/domain/ops/observability";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 
 const DEFAULT_HTTP_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -7,6 +8,24 @@ const DEFAULT_HTTP_RATE_LIMIT_GLOBAL_MAX = 200;
 const DEFAULT_HTTP_RATE_LIMIT_SHOP_MAX = 30;
 const DEFAULT_HTTP_RATE_LIMIT_LEADERBOARD_MAX = 60;
 const DEFAULT_HTTP_RATE_LIMIT_ADMIN_MAX = 10;
+const LOCAL_COUNTER_PRUNE_INTERVAL_MS = 30_000;
+const REDIS_FIXED_WINDOW_RATE_LIMIT_SCRIPT = `
+local key = KEYS[1]
+local max = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local current = redis.call("INCR", key)
+if current == 1 then
+  redis.call("PEXPIRE", key, window_ms)
+end
+local ttl = redis.call("PTTL", key)
+if ttl < 0 then
+  ttl = window_ms
+end
+if current > max then
+  return {0, ttl}
+end
+return {1, ttl}
+`;
 
 type HttpRateLimitScope = "global" | "shop" | "leaderboard" | "admin";
 
@@ -26,6 +45,19 @@ interface HttpRateLimitConfig {
 interface RateLimitResult {
   allowed: boolean;
   retryAfterSeconds?: number;
+}
+
+interface LocalRateLimitState {
+  counters: Map<string, number[]>;
+  lastPrunedAtMs: number;
+}
+
+interface HttpRateLimitDependencies {
+  createRedisClient?: typeof createRedisClient;
+  env?: NodeJS.ProcessEnv;
+  now?: () => number;
+  redisClient?: RedisClientLike | null;
+  redisUrl?: string | null;
 }
 
 function parseEnvNumber(
@@ -88,27 +120,76 @@ function resolveHttpRateLimitPolicy(pathname: string, config = readHttpRateLimit
   return { scope: "global", max: config.globalMax };
 }
 
+function pruneExpiredSlidingWindowCounters(
+  state: LocalRateLimitState,
+  config: Pick<HttpRateLimitConfig, "windowMs">,
+  nowMs: number
+): void {
+  if (nowMs - state.lastPrunedAtMs < LOCAL_COUNTER_PRUNE_INTERVAL_MS) {
+    return;
+  }
+
+  const windowStart = nowMs - config.windowMs;
+  for (const [key, timestamps] of state.counters.entries()) {
+    const activeTimestamps = timestamps.filter((timestamp) => timestamp > windowStart);
+    if (activeTimestamps.length === 0) {
+      state.counters.delete(key);
+      continue;
+    }
+    state.counters.set(key, activeTimestamps);
+  }
+
+  state.lastPrunedAtMs = nowMs;
+}
+
 function consumeSlidingWindowRateLimit(
-  counters: Map<string, number[]>,
+  state: LocalRateLimitState,
   key: string,
   config: Pick<HttpRateLimitConfig, "windowMs">,
-  max: number
+  max: number,
+  nowMs: number
 ): RateLimitResult {
-  const currentTime = Date.now();
-  const windowStart = currentTime - config.windowMs;
-  const timestamps = (counters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+  pruneExpiredSlidingWindowCounters(state, config, nowMs);
+
+  const windowStart = nowMs - config.windowMs;
+  const timestamps = (state.counters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
   if (timestamps.length >= max) {
-    counters.set(key, timestamps);
-    const oldestTimestamp = timestamps[0] ?? currentTime;
+    state.counters.set(key, timestamps);
+    const oldestTimestamp = timestamps[0] ?? nowMs;
     return {
       allowed: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.windowMs - currentTime) / 1000))
+      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.windowMs - nowMs) / 1000))
     };
   }
 
-  timestamps.push(currentTime);
-  counters.set(key, timestamps);
+  timestamps.push(nowMs);
+  state.counters.set(key, timestamps);
   return { allowed: true };
+}
+
+async function consumeRedisBackedRateLimit(
+  redisClient: RedisClientLike,
+  key: string,
+  config: Pick<HttpRateLimitConfig, "windowMs">,
+  max: number
+): Promise<RateLimitResult> {
+  const result = (await redisClient.eval(
+    REDIS_FIXED_WINDOW_RATE_LIMIT_SCRIPT,
+    1,
+    key,
+    String(max),
+    String(config.windowMs)
+  )) as [number, number] | null;
+
+  const [allowedFlag, ttlMs] = Array.isArray(result) ? result : [1, config.windowMs];
+  if (allowedFlag === 1) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.max(1, Math.ceil((ttlMs ?? config.windowMs) / 1000))
+  };
 }
 
 function sendRateLimited(response: ServerResponse, retryAfterSeconds: number): void {
@@ -127,8 +208,16 @@ function sendRateLimited(response: ServerResponse, retryAfterSeconds: number): v
 
 export function registerHttpRateLimitMiddleware(app: {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
-}): void {
-  const counters = new Map<string, number[]>();
+}, deps: HttpRateLimitDependencies = {}): void {
+  const localState: LocalRateLimitState = {
+    counters: new Map<string, number[]>(),
+    lastPrunedAtMs: 0
+  };
+  const env = deps.env ?? process.env;
+  const now = deps.now ?? Date.now;
+  const redisUrl = deps.redisUrl ?? readRedisUrl(env);
+  const redisClient =
+    deps.redisClient ?? (redisUrl ? (deps.createRedisClient ?? createRedisClient)(redisUrl) : null);
 
   app.use((request, response, next) => {
     if (request.method === "OPTIONS") {
@@ -136,18 +225,49 @@ export function registerHttpRateLimitMiddleware(app: {
       return;
     }
 
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    const config = readHttpRateLimitConfig();
-    const policy = resolveHttpRateLimitPolicy(url.pathname, config);
-    const ipAddress = resolveRequestIp(request);
-    const result = consumeSlidingWindowRateLimit(counters, `${policy.scope}:${ipAddress}`, config, policy.max);
+    void (async () => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const config = readHttpRateLimitConfig(env);
+      const policy = resolveHttpRateLimitPolicy(url.pathname, config);
+      const ipAddress = resolveRequestIp(request);
+      const rateLimitKey = `${policy.scope}:${ipAddress}`;
+      const result = redisClient
+        ? await consumeRedisBackedRateLimit(redisClient, `veil:http-rate-limit:${rateLimitKey}`, config, policy.max)
+        : consumeSlidingWindowRateLimit(localState, rateLimitKey, config, policy.max, now());
 
-    if (result.allowed) {
-      next();
-      return;
-    }
+      if (result.allowed) {
+        next();
+        return;
+      }
 
-    recordHttpRateLimited();
-    sendRateLimited(response, result.retryAfterSeconds ?? 1);
+      recordHttpRateLimited();
+      sendRateLimited(response, result.retryAfterSeconds ?? 1);
+    })().catch(() => {
+      const fallbackConfig = readHttpRateLimitConfig(env);
+      const fallbackPolicy = resolveHttpRateLimitPolicy(new URL(request.url ?? "/", "http://127.0.0.1").pathname, fallbackConfig);
+      const fallbackIpAddress = resolveRequestIp(request);
+      const fallbackResult = consumeSlidingWindowRateLimit(
+        localState,
+        `${fallbackPolicy.scope}:${fallbackIpAddress}`,
+        fallbackConfig,
+        fallbackPolicy.max,
+        now()
+      );
+
+      if (fallbackResult.allowed) {
+        next();
+        return;
+      }
+
+      recordHttpRateLimited();
+      sendRateLimited(response, fallbackResult.retryAfterSeconds ?? 1);
+    });
   });
 }
+
+export const __httpRateLimitInternals = {
+  consumeRedisBackedRateLimit,
+  consumeSlidingWindowRateLimit,
+  pruneExpiredSlidingWindowCounters,
+  REDIS_FIXED_WINDOW_RATE_LIMIT_SCRIPT
+};
