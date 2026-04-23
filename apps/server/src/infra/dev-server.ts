@@ -208,7 +208,7 @@ export interface DevServerBootstrapDependencies {
   createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
-  registerAnalyticsRoutes(app: unknown): void;
+  registerAnalyticsRoutes(app: unknown, options?: { enableTestRoutes?: boolean }): void;
   registerClientErrorRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
@@ -330,7 +330,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     createRedisPresence,
     createRedisDriver,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
-    registerAnalyticsRoutes: (app) => registerAnalyticsRoutes(app as never),
+    registerAnalyticsRoutes: (app, options) => registerAnalyticsRoutes(app as never, options),
     registerClientErrorRoutes: (app, store) => registerClientErrorRoutes(app as never, store as RoomSnapshotStore | null),
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
@@ -493,7 +493,9 @@ export async function startDevServer(
   deps.registerHttpRateLimitMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerAnalyticsRoutes(expressApp);
+  deps.registerAnalyticsRoutes(expressApp, {
+    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1"
+  });
   deps.registerClientErrorRoutes(expressApp, effectiveSnapshotStore);
   deps.registerConfigCenterRoutes(expressApp, configCenterStore);
   deps.registerConfigViewerRoutes(expressApp, configCenterStore);

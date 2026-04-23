@@ -3132,10 +3132,8 @@ async function loadDailyQuestBoardFromServer(): Promise<DailyQuestBoard | undefi
   if (!authSession?.token) {
     return undefined;
   }
-  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
-
   try {
-    const response = await fetch(`${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567/api/player-accounts/me/daily-quests`, {
+    const response = await fetch(`${runtimeServerHttpUrl}/api/player-accounts/me/daily-quests`, {
       headers: buildAuthHeaders(authSession.token)
     });
     if (!response.ok) {
@@ -5490,11 +5488,10 @@ async function onClaimDailyQuestReward(questId: string): Promise<void> {
   state.dailyQuestClaimingId = questId;
   state.accountStatus = "正在领取每日任务奖励...";
   render();
-  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
 
   try {
     const response = await fetch(
-      `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567/api/player-accounts/me/daily-quests/${encodeURIComponent(questId)}/claim`,
+      `${runtimeServerHttpUrl}/api/player-accounts/me/daily-quests/${encodeURIComponent(questId)}/claim`,
       {
       method: "POST",
       headers: buildAuthHeaders(authSession.token)

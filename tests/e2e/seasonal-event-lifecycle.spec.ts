@@ -116,7 +116,26 @@ async function fetchActiveEvent(request: APIRequestContext, token: string): Prom
   return event as SeasonalEventResponse;
 }
 
-async function submitProgress(request: APIRequestContext, token: string, actionId: string): Promise<ProgressPayload> {
+async function seedVerifiedDailyDungeonClaim(request: APIRequestContext, playerId: string, runId: string): Promise<void> {
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/player-accounts/${encodeURIComponent(playerId)}/action-proofs`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    },
+    data: {
+      dailyDungeonClaims: [
+        {
+          runId,
+          dungeonId: OBJECTIVE_DUNGEON_ID,
+          floor: 1
+        }
+      ]
+    }
+  });
+  expect(response.status(), `expected ${runId} daily dungeon claim proof seeding to succeed`).toBe(200);
+}
+
+async function submitProgress(request: APIRequestContext, token: string, playerId: string, actionId: string): Promise<ProgressPayload> {
+  await seedVerifiedDailyDungeonClaim(request, playerId, actionId);
   const response = await request.post(`${SERVER_BASE_URL}/api/events/${EVENT_ID}/progress`, {
     headers: buildAuthHeaders(token),
     data: {
@@ -185,7 +204,7 @@ test("seasonal event smoke covers progress submission, reward claim settlement, 
 
   await test.step("api: repeated progress submissions unlock the event rewards and place the player on the leaderboard", async () => {
     for (let index = 1; index <= 5; index += 1) {
-      const payload = await submitProgress(request, token, `seasonal-progress-${index}`);
+      const payload = await submitProgress(request, token, playerId, `seasonal-progress-${index}`);
       expect(payload.applied).toBe(true);
       expect(payload.eventProgress).toEqual({
         eventId: EVENT_ID,

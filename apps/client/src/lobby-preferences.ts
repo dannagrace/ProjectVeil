@@ -1,3 +1,5 @@
+import { resolveRuntimeServerHttpUrl } from "./runtime-targets";
+
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const DEFAULT_LOBBY_ROOM_ID = "room-alpha";
 const LOBBY_REQUEST_TIMEOUT_MS = 1200;
@@ -32,8 +34,7 @@ function getLobbyStorage(): Storage | null {
 }
 
 function resolveLobbyApiBaseUrl(): string {
-  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
-  return `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567`;
+  return resolveRuntimeServerHttpUrl();
 }
 
 function normalizePlayerId(value?: string | null): string {

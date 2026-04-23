@@ -6,6 +6,7 @@ import {
   storeAuthSession,
   type StoredAuthSession
 } from "./auth-session";
+import { resolveRuntimeServerHttpUrl } from "./runtime-targets";
 import { type BattleReplayPlaybackCommand, type BattleReplayPlaybackState, findPlayerBattleReplaySummary, normalizePlayerBattleReportCenter, type PlayerBattleReplayQuery, type PlayerBattleReplaySummary, type PlayerBattleReportCenter, queryPlayerBattleReplaySummaries, restoreBattleReplayPlaybackState } from "@veil/shared/battle";
 import { type AchievementProgressQuery, type EventLogEntry, type EventLogQuery, normalizeEventLogEntries, normalizePlayerProgressionSnapshot, type PlayerAchievementProgress, type PlayerProgressionSnapshot, queryAchievementProgress } from "@veil/shared/event-log";
 import { type ExperimentAssignment, normalizeExperimentAssignments } from "@veil/shared/platform";
@@ -126,8 +127,7 @@ function getPlayerAccountStorage(): Storage | null {
 }
 
 function resolvePlayerAccountApiBaseUrl(): string {
-  const httpProtocol = window.location.protocol === "https:" ? "https" : "http";
-  return `${httpProtocol}://${window.location.hostname || "127.0.0.1"}:2567`;
+  return resolveRuntimeServerHttpUrl();
 }
 
 function toEventLogQueryString(query?: EventLogQuery): string {

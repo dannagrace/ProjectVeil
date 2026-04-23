@@ -37,6 +37,7 @@ interface PlayerProfilePayload {
 interface CampaignMissionPayload {
   id: string;
   chapterId: string;
+  mapId?: string;
   name?: string;
   status?: string;
   introDialogue?: Array<{ id?: string; text?: string }>;
@@ -122,7 +123,36 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
   return payload.session?.token ?? "";
 }
 
-async function completeMission(request: APIRequestContext, token: string, missionId: string): Promise<CampaignMissionCompletePayload> {
+async function seedVerifiedMissionReplay(
+  request: APIRequestContext,
+  playerId: string,
+  missionId: string,
+  mapId: string
+): Promise<void> {
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/player-accounts/${encodeURIComponent(playerId)}/action-proofs`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    },
+    data: {
+      campaignReplays: [
+        {
+          roomId: mapId,
+          battleId: `${missionId}-verified-smoke`
+        }
+      ]
+    }
+  });
+  expect(response.status(), `expected ${missionId} verified replay seeding to succeed`).toBe(200);
+}
+
+async function completeMission(
+  request: APIRequestContext,
+  token: string,
+  playerId: string,
+  missionId: string,
+  mapId: string
+): Promise<CampaignMissionCompletePayload> {
+  await seedVerifiedMissionReplay(request, playerId, missionId, mapId);
   const response = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/campaign/${missionId}/complete`, {
     headers: buildAuthHeaders(token)
   });
@@ -207,7 +237,7 @@ test("campaign mission smoke covers mission start, reward settlement, unlock pro
     expect(startPayload.mission?.id).toBe(FIRST_MISSION_ID);
     expect(startPayload.mission?.status).toBe("available");
 
-    const completePayload = await completeMission(request, token, FIRST_MISSION_ID);
+    const completePayload = await completeMission(request, token, playerId, FIRST_MISSION_ID, FIRST_MISSION_MAP_ID);
     expect(completePayload.completed).toBe(true);
     expect(completePayload.mission?.id).toBe(FIRST_MISSION_ID);
     expect(completePayload.mission?.status).toBe("completed");
@@ -271,8 +301,21 @@ test("campaign mission smoke covers mission start, reward settlement, unlock pro
   });
 
   await test.step("api: clearing the rest of chapter 1 unlocks chapter 2", async () => {
+    const latestCampaignResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/campaign`, {
+      headers: authHeaders
+    });
+    expect(latestCampaignResponse.status()).toBe(200);
+    const latestCampaignPayload = (await latestCampaignResponse.json()) as CampaignSummaryPayload;
+    const missionMapIds = new Map(
+      (latestCampaignPayload.campaign?.missions ?? [])
+        .filter((mission) => mission.id && mission.mapId)
+        .map((mission) => [mission.id, mission.mapId] as const)
+    );
+
     for (const missionId of CHAPTER_ONE_MISSION_IDS.slice(1)) {
-      await completeMission(request, token, missionId);
+      const mapId = missionMapIds.get(missionId);
+      expect(mapId, `expected ${missionId} to expose a campaign mapId`).toBeTruthy();
+      await completeMission(request, token, playerId, missionId, mapId ?? "");
     }
 
     const chapterUnlockResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/campaign`, {

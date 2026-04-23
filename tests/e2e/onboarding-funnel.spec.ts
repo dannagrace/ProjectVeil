@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { loadDailyQuestConfig } from "../../apps/server/src/domain/economy/daily-quest-config.ts";
 import { rotateDailyQuests } from "../../apps/server/src/domain/battle/event-engine.ts";
 import { expect, test } from "./fixtures";
@@ -11,6 +11,7 @@ import {
   waitForLobbyReady,
   withSmokeDiagnostics
 } from "./smoke-helpers";
+import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
 
 interface AuthSessionSnapshot {
   playerId?: string;
@@ -67,6 +68,7 @@ interface CampaignSummaryPayload {
     missions?: Array<{
       id?: string;
       chapterId?: string;
+      mapId?: string;
       name?: string;
       status?: string;
       introDialogue?: Array<{ id?: string; text?: string }>;
@@ -302,7 +304,44 @@ async function startCampaignMission(page: Page, campaignId: string, missionId: s
   return result.payload;
 }
 
-async function completeCampaignMission(page: Page, missionId: string): Promise<CampaignCompletePayload> {
+async function seedVerifiedCampaignReplay(
+  request: APIRequestContext,
+  missionId: string,
+  proofContext: {
+    playerId: string;
+    mapId: string;
+  }
+): Promise<void> {
+  const { mapId, playerId } = proofContext;
+  expect(playerId, `completeCampaignMission requires a player id for ${missionId}`).toBeTruthy();
+  expect(mapId, `completeCampaignMission requires a campaign map id for ${missionId}`).toBeTruthy();
+
+  const response = await request.post(`${SERVER_BASE_URL}/api/test/player-accounts/${encodeURIComponent(playerId)}/action-proofs`, {
+    headers: {
+      "x-veil-admin-token": ADMIN_TOKEN
+    },
+    data: {
+      campaignReplays: [
+        {
+          roomId: mapId,
+          battleId: `${missionId}-onboarding-smoke`
+        }
+      ]
+    }
+  });
+  expect(response.status(), `seed verified campaign replay failed: ${await response.text()}`).toBe(200);
+}
+
+async function completeCampaignMission(
+  page: Page,
+  request: APIRequestContext,
+  missionId: string,
+  proofContext: {
+    playerId: string;
+    mapId: string;
+  }
+): Promise<CampaignCompletePayload> {
+  await seedVerifiedCampaignReplay(request, missionId, proofContext);
   const result = await fetchAuthedJson<CampaignCompletePayload>(page, `/api/player-accounts/me/campaign/${missionId}/complete`, {
     method: "POST"
   });
@@ -422,7 +461,8 @@ test("onboarding funnel: tutorial progression advances step 1 to step 3 in order
 });
 
 test("onboarding funnel: tutorial completion hands off to chapter 1, settles the first battle, and unlocks the first claim", async ({
-  page
+  page,
+  request
 }, testInfo) => {
   test.setTimeout(60_000);
   const roomId = buildRoomId("onb-main");
@@ -454,7 +494,10 @@ test("onboarding funnel: tutorial completion hands off to chapter 1, settles the
 
     const campaignSummary = await fetchCampaignSummary(page);
     expect(campaignSummary.nextMissionId).toBe(firstMissionId);
-    expect(campaignSummary.missions?.find((mission) => mission.id === firstMissionId)?.status).toBe("available");
+    const firstMission = campaignSummary.missions?.find((mission) => mission.id === firstMissionId);
+    expect(firstMission?.status).toBe("available");
+    const firstMissionMapId = firstMission?.mapId ?? "";
+    expect(firstMissionMapId).toBeTruthy();
     expect(campaignSummary.missions?.find((mission) => mission.id === "chapter1-thornwall-road")?.status).toBe("locked");
 
     const missionDetail = await fetchAuthedJson<{ mission?: CampaignSummaryPayload["campaign"]["missions"][number] }>(
@@ -472,7 +515,10 @@ test("onboarding funnel: tutorial completion hands off to chapter 1, settles the
     expect(startPayload.mission?.id).toBe(firstMissionId);
     expect(startPayload.mission?.status).toBe("available");
 
-    const completePayload = await completeCampaignMission(page, firstMissionId);
+    const completePayload = await completeCampaignMission(page, request, firstMissionId, {
+      playerId,
+      mapId: firstMissionMapId
+    });
     expect(completePayload.completed).toBe(true);
     expect(completePayload.mission?.id).toBe(firstMissionId);
     expect(completePayload.mission?.status).toBe("completed");

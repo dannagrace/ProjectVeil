@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { applyBattleReplayPlaybackCommand, type BattleReplayPlaybackCommand, buildPlayerBattleReportCenter, findPlayerBattleReplaySummary, type PlayerBattleReplaySummary, queryPlayerBattleReplaySummaries } from "@veil/shared/battle";
+import { applyBattleReplayPlaybackCommand, type BattleReplayPlaybackCommand, type BattleReplayResult, buildPlayerBattleReportCenter, findPlayerBattleReplaySummary, type PlayerBattleReplaySummary, queryPlayerBattleReplaySummaries } from "@veil/shared/battle";
 import { normalizeCosmeticInventory } from "@veil/shared/economy";
 import { appendEventLogEntries, buildPlayerProgressionSnapshot, getAchievementDefinitions, normalizeAchievementProgressQuery, normalizeEventLogQuery, queryAchievementProgress, queryEventLogEntries } from "@veil/shared/event-log";
-import type { SeasonalEventState } from "@veil/shared/models";
+import type { BattleState, DailyDungeonRunRecord, SeasonalEventState } from "@veil/shared/models";
 import { DEFAULT_TUTORIAL_STEP, getRankDivisionForRating, isTutorialComplete, summarizePlayerMailbox } from "@veil/shared/progression";
 import {
   createDailyQuestClaimEventLogEntry,
@@ -24,6 +24,7 @@ import {
 import { recordAuthInvalidCredentials, removeAuthAccountSession, removeAuthAccountSessionsForPlayer } from "@server/domain/ops/observability";
 import type {
   PlayerAccountProfilePatch,
+  PlayerAccountProgressPatch,
   PlayerAccountSnapshot,
   PlayerEventHistoryQuery,
   RoomSnapshotStore,
@@ -275,6 +276,71 @@ function hasVerifiedCampaignMissionCompletion(account: PlayerAccountSnapshot, mi
       (replay) => replay.roomId === mission.mapId && replay.result === "attacker_victory"
     ) ?? false
   );
+}
+
+function areTestEndpointsEnabled(): boolean {
+  return process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1";
+}
+
+function readRequiredString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function createTestVerifiedBattleReplay(input: {
+  playerId: string;
+  roomId: string;
+  battleId: string;
+  result: BattleReplayResult;
+  completedAt: string;
+}): PlayerBattleReplaySummary {
+  const initialState: BattleState = {
+    id: input.battleId,
+    round: 1,
+    lanes: 1,
+    activeUnitId: "unit-1",
+    turnOrder: ["unit-1"],
+    units: {
+      "unit-1": {
+        id: "unit-1",
+        camp: "attacker",
+        templateId: "hero_guard_basic",
+        lane: 0,
+        stackName: "Test Guard",
+        initiative: 4,
+        attack: 2,
+        defense: 2,
+        minDamage: 1,
+        maxDamage: 2,
+        currentHp: 10,
+        count: 1,
+        maxHp: 10,
+        hasRetaliated: false,
+        defending: false
+      }
+    },
+    unitCooldowns: {
+      "unit-1": {}
+    },
+    environment: [],
+    log: [],
+    rng: { seed: 1, cursor: 0 }
+  };
+
+  return {
+    id: `test-proof:${input.playerId}:${input.battleId}`,
+    roomId: input.roomId,
+    playerId: input.playerId,
+    battleId: input.battleId,
+    battleKind: "neutral",
+    playerCamp: "attacker",
+    heroId: "hero-1",
+    neutralArmyId: "test-neutral-army",
+    startedAt: input.completedAt,
+    completedAt: input.completedAt,
+    initialState,
+    steps: [],
+    result: input.result
+  };
 }
 
 function sendActionSubmissionRateLimited(response: ServerResponse, retryAfterSeconds?: number): void {
@@ -970,6 +1036,153 @@ export function registerPlayerAccountRoutes(
 
     next();
   });
+
+  if (areTestEndpointsEnabled()) {
+    app.post("/api/test/player-accounts/:playerId/action-proofs", async (request, response) => {
+      if (!isAdminAuthorized(request)) {
+        sendJson(response, 403, {
+          error: {
+            code: "forbidden",
+            message: "Invalid admin token"
+          }
+        });
+        return;
+      }
+
+      if (!store) {
+        sendJson(response, 503, {
+          error: {
+            code: "player_account_persistence_unavailable",
+            message: "Player account action proof seeding requires configured room persistence storage"
+          }
+        });
+        return;
+      }
+
+      try {
+        const playerId = request.params.playerId?.trim();
+        if (!playerId) {
+          sendNotFound(response);
+          return;
+        }
+
+        const body = (await readJsonBody(request)) as {
+          campaignReplays?: Array<{
+            roomId?: unknown;
+            battleId?: unknown;
+            result?: unknown;
+          }>;
+          dailyDungeonClaims?: Array<{
+            runId?: unknown;
+            dungeonId?: unknown;
+            floor?: unknown;
+          }>;
+        };
+
+        const account =
+          (await store.loadPlayerAccount(playerId)) ??
+          (await store.ensurePlayerAccount({
+            playerId,
+            displayName: playerId
+          }));
+        const completedAt = new Date().toISOString();
+        const campaignReplays = (Array.isArray(body.campaignReplays) ? body.campaignReplays : [])
+          .map((entry, index) => {
+            const roomId = readRequiredString(entry.roomId);
+            if (!roomId) {
+              return null;
+            }
+            const battleId = readRequiredString(entry.battleId) ?? `${roomId}-test-battle-${index + 1}`;
+            const result = entry.result === "defender_victory" ? "defender_victory" : "attacker_victory";
+            return createTestVerifiedBattleReplay({
+              playerId,
+              roomId,
+              battleId,
+              result,
+              completedAt
+            });
+          })
+          .filter((entry): entry is PlayerBattleReplaySummary => Boolean(entry));
+        const dailyDungeonClaims: DailyDungeonRunRecord[] = [];
+        for (const [index, entry] of (Array.isArray(body.dailyDungeonClaims) ? body.dailyDungeonClaims : []).entries()) {
+          const runId = readRequiredString(entry.runId);
+          const dungeonId = readRequiredString(entry.dungeonId);
+          if (!runId || !dungeonId) {
+            continue;
+          }
+          const floor = Math.max(1, Math.floor(typeof entry.floor === "number" && Number.isFinite(entry.floor) ? entry.floor : index + 1));
+          dailyDungeonClaims.push({
+            runId,
+            dungeonId,
+            floor,
+            startedAt: completedAt,
+            rewardClaimedAt: completedAt
+          });
+        }
+
+        const existingDailyDungeonState = account.dailyDungeonState ?? {
+          dateKey: completedAt.slice(0, 10),
+          attemptsUsed: 0,
+          claimedRunIds: [],
+          runs: []
+        };
+        const dailyDungeonRunIds = new Set(dailyDungeonClaims.map((entry) => entry.runId));
+        const nextDailyDungeonState =
+          dailyDungeonClaims.length > 0
+            ? {
+                ...existingDailyDungeonState,
+                attemptsUsed: Math.max(existingDailyDungeonState.attemptsUsed ?? 0, dailyDungeonClaims.length),
+                claimedRunIds: Array.from(
+                  new Set([...(existingDailyDungeonState.claimedRunIds ?? []), ...dailyDungeonClaims.map((entry) => entry.runId)])
+                ).sort((left, right) => left.localeCompare(right)),
+                runs: [
+                  ...dailyDungeonClaims,
+                  ...(existingDailyDungeonState.runs ?? []).filter((entry) => !dailyDungeonRunIds.has(entry.runId))
+                ]
+              }
+            : undefined;
+
+        const progressPatch: PlayerAccountProgressPatch = {};
+        if (campaignReplays.length > 0) {
+          progressPatch.recentBattleReplays = [...campaignReplays, ...(account.recentBattleReplays ?? [])];
+        }
+        if (nextDailyDungeonState) {
+          progressPatch.dailyDungeonState = nextDailyDungeonState;
+        }
+
+        const updatedAccount =
+          campaignReplays.length > 0 || nextDailyDungeonState
+            ? await store.savePlayerAccountProgress(playerId, progressPatch)
+            : account;
+
+        sendJson(response, 200, {
+          seeded: {
+            campaignReplays: campaignReplays.length,
+            dailyDungeonClaims: dailyDungeonClaims.length
+          },
+          account: toPublicPlayerAccount(updatedAccount)
+        });
+      } catch (error) {
+        if (error instanceof PayloadTooLargeError) {
+          sendJson(response, 413, {
+            error: toErrorPayload(error)
+          });
+          return;
+        }
+        if (error instanceof SyntaxError) {
+          sendJson(response, 400, {
+            error: {
+              code: "invalid_json",
+              message: "Request body must be valid JSON"
+            }
+          });
+          return;
+        }
+
+        sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    });
+  }
 
   app.get("/api/player-accounts", async (request, response) => {
     if (!store) {
