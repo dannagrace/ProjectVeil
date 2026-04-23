@@ -88,6 +88,25 @@ test("network policy restricts ingress to ingress-nginx and narrows egress", asy
   }
 });
 
+test("ingresses inject baseline browser security response headers", async () => {
+  const [primaryIngress, canaryIngress] = await Promise.all([
+    readRepoFile("k8s/ingress.yaml"),
+    readRepoFile("k8s/canary/ingress-canary.yaml")
+  ]);
+
+  for (const ingress of [primaryIngress, canaryIngress]) {
+    assert.match(ingress, /nginx\.ingress\.kubernetes\.io\/configuration-snippet:\s*\|/);
+    assert.match(ingress, /Strict-Transport-Security: max-age=31536000; includeSubDomains; preload/);
+    assert.match(ingress, /Content-Security-Policy: default-src 'self'/);
+    assert.match(ingress, /connect-src 'self' https:\/\/\*\.sentry\.io wss:\/\/game\.projectveil\.prod/);
+    assert.match(ingress, /frame-ancestors 'none'/);
+    assert.match(ingress, /X-Frame-Options: DENY/);
+    assert.match(ingress, /X-Content-Type-Options: nosniff/);
+    assert.match(ingress, /Referrer-Policy: strict-origin-when-cross-origin/);
+    assert.match(ingress, /Permissions-Policy: camera=\(\), geolocation=\(\), microphone=\(\)/);
+  }
+});
+
 test("production runbook and secrets inventory document compose MYSQL_ROOT_PASSWORD requirements", async () => {
   const [runbook, secretsInventory] = await Promise.all([
     readRepoFile("docs/ops/production-deploy-runbook.md"),
