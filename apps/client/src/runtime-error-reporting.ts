@@ -2,6 +2,11 @@ import { buildAuthHeaders } from "./auth-session";
 
 const DEFAULT_CLIENT_RUNTIME_PLATFORM = "h5-shell";
 const DEFAULT_CLIENT_RUNTIME_VERSION = "development";
+const CLIENT_RUNTIME_ERROR_DEDUPE_WINDOW_MS = 60_000;
+const CLIENT_RUNTIME_ERROR_THROTTLE_WINDOW_MS = 60_000;
+const CLIENT_RUNTIME_ERROR_THROTTLE_LIMIT = 5;
+const CLIENT_RUNTIME_ERROR_FINGERPRINT_STACK_LIMIT = 120;
+const CLIENT_RUNTIME_ERROR_RECENT_FINGERPRINT_LIMIT = 128;
 
 interface GlobalErrorBoundaryEventLike {
   message?: string;
@@ -73,6 +78,34 @@ function normalizeRuntimeBoundaryFailure(event: GlobalErrorBoundaryEventLike): {
   };
 }
 
+function buildRuntimeErrorFingerprint(input: { errorMessage: string; stack?: string }): string {
+  const stackPrefix = input.stack?.slice(0, CLIENT_RUNTIME_ERROR_FINGERPRINT_STACK_LIMIT).trim() ?? "";
+  return stackPrefix ? `${input.errorMessage}:${stackPrefix}` : input.errorMessage;
+}
+
+function pruneRecentRuntimeErrorFingerprints(recentFingerprints: Map<string, number>, now: number): void {
+  const cutoff = now - CLIENT_RUNTIME_ERROR_DEDUPE_WINDOW_MS;
+  for (const [fingerprint, reportedAt] of recentFingerprints.entries()) {
+    if (reportedAt < cutoff) {
+      recentFingerprints.delete(fingerprint);
+    }
+  }
+  while (recentFingerprints.size > CLIENT_RUNTIME_ERROR_RECENT_FINGERPRINT_LIMIT) {
+    const oldestFingerprint = recentFingerprints.keys().next().value;
+    if (typeof oldestFingerprint !== "string") {
+      break;
+    }
+    recentFingerprints.delete(oldestFingerprint);
+  }
+}
+
+function pruneRuntimeErrorReportTimestamps(reportTimestamps: number[], now: number): void {
+  const cutoff = now - CLIENT_RUNTIME_ERROR_THROTTLE_WINDOW_MS;
+  while (reportTimestamps.length > 0 && reportTimestamps[0] !== undefined && reportTimestamps[0] < cutoff) {
+    reportTimestamps.shift();
+  }
+}
+
 export async function reportClientRuntimeError({
   apiBaseUrl,
   authToken,
@@ -106,20 +139,55 @@ export function bindClientRuntimeErrorBoundary({
     return null;
   }
 
+  const recentFingerprints = new Map<string, number>();
+  const reportTimestamps: number[] = [];
+  let isHandlingRuntimeFailure = false;
+
   const handleRuntimeFailure = (event: GlobalErrorBoundaryEventLike): void => {
-    const normalized = normalizeRuntimeBoundaryFailure(event);
-    void reportClientRuntimeError({
-      apiBaseUrl,
-      authToken: readAuthToken(),
-      fetchImpl,
-      payload: {
+    if (isHandlingRuntimeFailure) {
+      return;
+    }
+
+    isHandlingRuntimeFailure = true;
+    try {
+      const normalized = normalizeRuntimeBoundaryFailure(event);
+      const now = Date.now();
+      const fingerprint = buildRuntimeErrorFingerprint(normalized);
+
+      pruneRecentRuntimeErrorFingerprints(recentFingerprints, now);
+      if (recentFingerprints.has(fingerprint)) {
+        return;
+      }
+
+      pruneRuntimeErrorReportTimestamps(reportTimestamps, now);
+      if (reportTimestamps.length >= CLIENT_RUNTIME_ERROR_THROTTLE_LIMIT) {
+        return;
+      }
+
+      const payload = {
         platform,
         version,
         errorMessage: normalized.errorMessage,
         ...(normalized.stack ? { stack: normalized.stack } : {}),
         context: readContext()
-      }
-    }).catch(() => undefined);
+      };
+      const authToken = readAuthToken();
+
+      recentFingerprints.set(fingerprint, now);
+      pruneRecentRuntimeErrorFingerprints(recentFingerprints, now);
+      reportTimestamps.push(now);
+
+      void reportClientRuntimeError({
+        apiBaseUrl,
+        authToken,
+        fetchImpl,
+        payload
+      }).catch(() => undefined);
+    } catch {
+      return;
+    } finally {
+      isHandlingRuntimeFailure = false;
+    }
   };
 
   eventTarget.addEventListener("error", handleRuntimeFailure);
