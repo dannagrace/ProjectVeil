@@ -1,5 +1,5 @@
-import { CloseCode } from "@colyseus/shared-types";
-import { Room, type Client as ColyseusClient } from "colyseus";
+import { CloseCode, ErrorCode } from "@colyseus/shared-types";
+import { Room, ServerError, type AuthContext, type Client as ColyseusClient } from "colyseus";
 import type { ActionValidationFailure, PlayerBattleReplaySummary } from "@veil/shared/battle";
 import { normalizeCosmeticInventory, resolveCosmeticCatalog } from "@veil/shared/economy";
 import type { BattleAction, FriendLeaderboardEntry, GroupChallenge, MovementPlan, PlayerWorldView, WorldAction, WorldEvent } from "@veil/shared/models";
@@ -125,6 +125,11 @@ export {
   runZombieRoomCleanup
 } from "@server/transport/colyseus-room";
 
+type RemoteJoinIdentity = {
+  playerId: string;
+  authSession: GuestAuthSession | null;
+};
+
 export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   maxClients = 8;
   patchRate = null;
@@ -150,6 +155,30 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   private turnTimerTickInFlight = false;
   private roomRetired = false;
   private emptyRoomSinceAtMs: number | null = null;
+
+  async onAuth(
+    client: ColyseusClient,
+    options: JoinOptions & { authToken?: string },
+    _context: AuthContext
+  ): Promise<RemoteJoinIdentity> {
+    const authToken = options.authToken?.trim();
+    if (!authToken) {
+      return {
+        playerId: client.sessionId,
+        authSession: null
+      };
+    }
+
+    const authValidation = await validateGuestAuthToken(authToken, configuredRoomSnapshotStore);
+    if (!authValidation.session) {
+      throw new ServerError(ErrorCode.AUTH_FAILED, authValidation.errorCode ?? "unauthorized");
+    }
+
+    return {
+      playerId: authValidation.session.playerId,
+      authSession: authValidation.session
+    };
+  }
 
   async onCreate(options: JoinOptions): Promise<void> {
     const logicalRoomId = options.logicalRoomId ?? "room-alpha";
@@ -220,14 +249,15 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
-      const playerId = authSession?.playerId ?? this.getPlayerId(client, message.playerId);
+      const playerId = authSession?.playerId ?? this.resolveConnectPlayerId(client, message.playerId);
       if (!playerId) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
         return;
       }
 
+      const effectiveAuthSession = authSession ?? this.authSessionByPlayerId.get(playerId) ?? null;
       this.playerIdBySessionId.set(client.sessionId, playerId);
-      this.updatePlayerAuthSession(playerId, authSession);
+      this.updatePlayerAuthSession(playerId, effectiveAuthSession);
       this.disconnectedAtByPlayerId.delete(playerId);
       this.refreshEmptyRoomTracking();
       let ensuredAccount: PlayerAccountSnapshot | null = null;
@@ -235,8 +265,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         try {
           ensuredAccount = await configuredRoomSnapshotStore.ensurePlayerAccount({
             playerId,
-            ...((authSession?.displayName ?? message.displayName?.trim())
-              ? { displayName: authSession?.displayName ?? message.displayName?.trim() ?? playerId }
+            ...((effectiveAuthSession?.displayName ?? message.displayName?.trim())
+              ? { displayName: effectiveAuthSession?.displayName ?? message.displayName?.trim() ?? playerId }
               : {}),
             lastRoomId: logicalRoomId
           });
@@ -283,7 +313,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         roomId: logicalRoomId,
         payload: {
           roomId: logicalRoomId,
-          authMode: authSession?.authMode ?? "guest",
+          authMode: effectiveAuthSession?.authMode ?? "guest",
           platform: "colyseus"
         }
       });
@@ -893,8 +923,10 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     });
   }
 
-  onJoin(client: ColyseusClient, options?: JoinOptions): void {
-    this.playerIdBySessionId.set(client.sessionId, options?.playerId ?? client.sessionId);
+  onJoin(client: ColyseusClient, options?: JoinOptions, auth?: RemoteJoinIdentity): void {
+    const playerId = auth?.playerId ?? options?.playerId ?? client.sessionId;
+    this.playerIdBySessionId.set(client.sessionId, playerId);
+    this.updatePlayerAuthSession(playerId, auth?.authSession ?? null);
     this.refreshEmptyRoomTracking();
     this.publishLobbyRoomSummary();
   }
@@ -2418,6 +2450,17 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
 
     return playerId;
+  }
+
+  private resolveConnectPlayerId(client: ColyseusClient, requestedPlayerId?: string): string | undefined {
+    const normalizedRequestedPlayerId = requestedPlayerId?.trim();
+    const currentPlayerId = this.playerIdBySessionId.get(client.sessionId);
+    if (currentPlayerId === client.sessionId && normalizedRequestedPlayerId) {
+      this.playerIdBySessionId.set(client.sessionId, normalizedRequestedPlayerId);
+      return normalizedRequestedPlayerId;
+    }
+
+    return this.getPlayerId(client, normalizedRequestedPlayerId);
   }
 
   private readGroupChallengeSecret(): string {

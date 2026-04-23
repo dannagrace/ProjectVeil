@@ -24,7 +24,11 @@ import {
   resetGuestAuthSessions,
   type GuestAuthSession
 } from "@server/domain/account/auth";
-import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import {
+  configureRoomSnapshotStore,
+  getActiveRoomInstances,
+  VeilColyseusRoom
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
 import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import { resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
@@ -729,11 +733,17 @@ function createWechatPhonePayload(input: {
   };
 }
 
-async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
+async function joinRoom(
+  port: number,
+  logicalRoomId: string,
+  playerId: string,
+  authToken?: string
+): Promise<ColyseusRoom> {
   const client = new Client(`http://127.0.0.1:${port}`);
   return client.joinOrCreate("veil", {
     logicalRoomId,
     playerId,
+    ...(authToken ? { authToken } : {}),
     seed: 1001
   });
 }
@@ -1141,6 +1151,40 @@ test("connect message prefers auth token identity over a spoofed playerId", asyn
   );
 
   assert.equal(response.payload.world.playerId, "trusted-player");
+});
+
+test("remote room join ignores a spoofed playerId when an authenticated join token is provided", async (t) => {
+  const port = 44100 + Math.floor(Math.random() * 1000);
+  const server = await startAuthServer(port);
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "trusted-join-player",
+      displayName: "认证旅人",
+      privacyConsentAccepted: true
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  const room = await joinRoom(port, "auth-join-room", "spoofed-player", loginPayload.session.token);
+
+  t.after(async () => {
+    await room.leave(true).catch(() => undefined);
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const activeRoom = getActiveRoomInstances().get("auth-join-room");
+  const internalRoom = activeRoom as
+    | (VeilColyseusRoom & {
+        playerIdBySessionId: Map<string, string>;
+      })
+    | undefined;
+
+  assert.ok(internalRoom);
+  assert.equal(internalRoom.playerIdBySessionId.get(room.sessionId), "trusted-join-player");
 });
 
 test("guest auth connect claims a default hero slot for non-template player ids", async (t) => {
