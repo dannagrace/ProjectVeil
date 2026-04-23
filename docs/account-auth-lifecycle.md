@@ -93,7 +93,7 @@
 
 - 为“全新正式账号”预留 `loginId`，不依赖先创建游客档。
 - 校验 `loginId` 格式、口令账号占用情况，并按来源 IP 走现有滑动窗口限流。
-- 当前默认投递模式为 `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用；若切到 `smtp`、`webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
+- 非生产环境下，`VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE` 默认回退到 `dev-token`，会直接在响应体里回传 `registrationToken` 供联调使用；若切到 `smtp`、`webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。生产环境必须显式配置 `smtp`、`webhook` 或 `disabled`，否则服务启动会失败。
 - `request` 响应会额外返回 `deliveryStatus`；外部通道首次投递成功时是 `delivered`，若首次命中可重试故障则会返回 `retry_scheduled` 并附带 `deliveryAttemptCount / deliveryMaxAttempts / deliveryNextAttemptAt`，方便客户端把它识别为“临时投递异常但服务端仍会继续送达”。
 - 若同一个 `loginId` 仍有未过期的注册申请，服务端会复用现有令牌与到期时间，而不是生成新令牌，避免联调时旧令牌被静默顶掉。
 - `smtp` / `webhook` 模式都会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会复用同一枚未过期令牌，并在已有重试排队时直接返回当前排队状态，而不是重复生成新任务。
@@ -150,7 +150,7 @@
 
 - 仅对已绑定口令账号生效；不存在的 `loginId` 仍返回 `202`，避免泄漏账号存在性。
 - 服务端生成一次性短时效重置令牌，并按来源 IP 走现有滑动窗口限流。
-- 当前默认投递模式为 `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE=dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用；若切到 `smtp`、`webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。
+- 非生产环境下，`VEIL_PASSWORD_RECOVERY_DELIVERY_MODE` 默认回退到 `dev-token`，会直接在响应体里回传 `recoveryToken` 供联调使用；若切到 `smtp`、`webhook` 或 `disabled`，响应仍返回 `202`，但不会向客户端泄漏令牌。生产环境必须显式配置 `smtp`、`webhook` 或 `disabled`，否则服务启动会失败。
 - `request` 响应同样会附带 `deliveryStatus`；若外部通道首次投递命中可重试异常，接口仍返回 `202 recovery_requested`，但 `deliveryStatus=retry_scheduled`，并给出下一次后台重试时间。
 - 若同一账号已有未过期的找回申请，服务端会复用现有令牌与到期时间，避免重复请求导致先前令牌失效或连续追加重复审计事件。
 - `smtp` / `webhook` 模式都会把令牌投递到配置的后端通道；若同一申请被重复触发，服务端会复用同一枚未过期令牌，并优先复用已有的排队重试状态。
@@ -192,17 +192,17 @@
 ## 运行时参数
 
 - `VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE`
-  - `dev-token`：默认值，直接在响应里返回开发态注册令牌
+  - `dev-token`：仅非生产环境默认值，直接在响应里返回开发态注册令牌
   - `smtp`：通过 SMTP 邮件投递注册令牌，响应不回传 `registrationToken`
   - `webhook`：通过通用 webhook 投递注册令牌，响应不回传 `registrationToken`
-  - `disabled`：不向客户端直出令牌，保留接口占位
+  - `disabled`：不向客户端直出令牌，保留接口占位；生产环境可用的显式兜底
 - `VEIL_ACCOUNT_REGISTRATION_TTL_MINUTES`
   - 默认 `15`
 - `VEIL_PASSWORD_RECOVERY_DELIVERY_MODE`
-  - `dev-token`：默认值，直接在响应里返回开发态重置令牌
+  - `dev-token`：仅非生产环境默认值，直接在响应里返回开发态重置令牌
   - `smtp`：通过 SMTP 邮件投递重置令牌，响应不回传 `recoveryToken`
   - `webhook`：通过通用 webhook 投递重置令牌，响应不回传 `recoveryToken`
-  - `disabled`：不向客户端直出令牌，保留接口占位
+  - `disabled`：不向客户端直出令牌，保留接口占位；生产环境可用的显式兜底
 - `VEIL_PASSWORD_RECOVERY_TTL_MINUTES`
   - 默认 `15`
 - `VEIL_AUTH_TOKEN_DELIVERY_TIMEOUT_MS`
@@ -268,11 +268,11 @@
 - webhook 其他 `4xx` 会被视为非可重试故障：`request` 接口返回 `502 *_delivery_failed`，并把当前令牌投递任务记入 dead-letter，等待运维修复配置或通道契约。
 - 若后台重试最终耗尽，令牌会进入 dead-letter；客户端拿到的仍是原先的 `202 *_requested`，但运维可通过 `GET /api/runtime/account-token-delivery` 或 Prometheus 指标看到 `deadLetterCount` / `veil_auth_token_delivery_dead_letters_total` 变化。
 - 因此客户端可据此区分三类结果：`401/409` 等业务态错误代表账号 / 令牌本身无效；`503 *_delivery_misconfigured` 代表服务端投递配置缺失；`202 ... deliveryStatus=retry_scheduled` 代表临时通道异常且服务端已接管后续重试。
-- `disabled` 适合作为生产环境的显式兜底占位；`dev-token` 适合作为本地联调回退模式。
+- `disabled` 适合作为生产环境的显式兜底占位；`dev-token` 只适合作为本地联调回退模式。
 
 ## 本地联调建议
 
-- 本地默认继续使用 `dev-token`，H5 / Cocos 现有调试入口可以直接拿响应里的 token 完成注册或找回确认。
+- 本地默认继续使用 `dev-token`，H5 / Cocos 现有调试入口可以直接拿响应里的 token 完成注册或找回确认；生产环境若漏配或误配为 `dev-token`，启动会失败。
 - 若要联调真实投递链路，可把某一个流程切到 `smtp` 或 `webhook`：
   - `smtp`：建议本地启动 Mailpit / MailHog，然后配置 `VEIL_AUTH_TOKEN_DELIVERY_SMTP_HOST=127.0.0.1`、`VEIL_AUTH_TOKEN_DELIVERY_SMTP_PORT=<smtp-port>`、`VEIL_AUTH_TOKEN_DELIVERY_SMTP_FROM=noreply@example.test`、`VEIL_AUTH_TOKEN_DELIVERY_SMTP_RECIPIENT_DOMAIN=mail.example.test`。这样 `loginId=veil-ranger` 会投递到 `veil-ranger@mail.example.test`，可直接在本地收件箱查看 token。
   - `webhook`：把 URL 指向本地捕获器、邮件桥接器或反向代理入口。
