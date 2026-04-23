@@ -40,7 +40,7 @@ test("buildCocosAccountRegistrationPanelView surfaces validation errors for malf
     draft: createDraft({
       loginId: "BAD ID",
       token: "dev-registration-token",
-      password: "hunter2"
+      password: "hunter22"
     }),
     privacyConsentAccepted: true,
     showValidationErrors: true,
@@ -63,7 +63,7 @@ test("buildCocosAccountRegistrationPanelView disables submission actions while w
       loginId: "veil-ranger",
       displayName: "暮潮守望",
       token: "dev-registration-token",
-      password: "hunter2",
+      password: "hunter22",
       deliveryMode: "dev-token"
     }),
     privacyConsentAccepted: true,
@@ -94,7 +94,7 @@ test("buildCocosAccountRegistrationPanelView exposes bound identities after regi
       loginId: "veil-ranger",
       displayName: "暮潮守望",
       token: "dev-registration-token",
-      password: "hunter2",
+      password: "hunter22",
       deliveryMode: "dev-token"
     }),
     privacyConsentAccepted: true,

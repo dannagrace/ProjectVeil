@@ -122,10 +122,10 @@ test("h5 auth helpers forward privacy consent and clear storage after deletion",
     await loginGuestAuthSession("guest-privacy", "隐私旅人", {
       privacyConsentAccepted: true
     });
-    await loginPasswordAuthSession("Veil-Ranger", "hunter2", {
+    await loginPasswordAuthSession("Veil-Ranger", "hunter22", {
       privacyConsentAccepted: true
     });
-    await confirmAccountRegistration("Veil-Ranger", "dev-registration-token", "hunter2", {
+    await confirmAccountRegistration("Veil-Ranger", "dev-registration-token", "hunter22", {
       privacyConsentAccepted: true
     });
     const deleted = await deleteCurrentPlayerAccount();

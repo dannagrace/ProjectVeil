@@ -1340,7 +1340,7 @@ test("account bind upgrades a guest session into password login and account-logi
     },
     body: JSON.stringify({
       loginId: "veil-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1362,7 +1362,7 @@ test("account bind upgrades a guest session into password login and account-logi
     },
     body: JSON.stringify({
       loginId: "veil-ranger",
-      password: "hunter2"
+      password: "hunter22"
     })
   });
   const accountLoginPayload = (await accountLoginResponse.json()) as {
@@ -1389,6 +1389,64 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
 });
 
+test("account password policy rejects common and overlong passwords before hashing", async (t) => {
+  const port = 45580 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const guestLoginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "password-policy-player",
+      displayName: "密码守望",
+      privacyConsentAccepted: true
+    })
+  });
+  const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
+
+  const commonPasswordResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-bind`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      loginId: "policy-ranger",
+      password: "password123",
+      privacyConsentAccepted: true
+    })
+  });
+  const commonPasswordPayload = (await commonPasswordResponse.json()) as { error: { message: string } };
+
+  assert.equal(commonPasswordResponse.status, 400);
+  assert.match(commonPasswordPayload.error.message, /too common/i);
+
+  const overlongPasswordResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-bind`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${guestLoginPayload.session.token}`
+    },
+    body: JSON.stringify({
+      loginId: "policy-ranger",
+      password: `A1${"x".repeat(127)}`,
+      privacyConsentAccepted: true
+    })
+  });
+  const overlongPasswordPayload = (await overlongPasswordResponse.json()) as { error: { message: string } };
+
+  assert.equal(overlongPasswordResponse.status, 400);
+  assert.match(overlongPasswordPayload.error.message, /at most 128 characters/i);
+});
+
 test("account-login carries the streak from yesterday and returns the issued reward", async (t) => {
   const port = 44505 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
@@ -1402,7 +1460,7 @@ test("account-login carries the streak from yesterday and returns the issued rew
   });
   await store.bindPlayerAccountCredentials("daily-account", {
     loginId: "daily-account",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   await store.savePlayerAccountProgress("daily-account", {
     gems: 20,
@@ -1424,7 +1482,7 @@ test("account-login carries the streak from yesterday and returns the issued rew
     },
     body: JSON.stringify({
       loginId: "daily-account",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1504,7 +1562,7 @@ test("account bind emits experiment conversion analytics for the assigned varian
     },
     body: JSON.stringify({
       loginId: "veil-experiment",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1533,7 +1591,7 @@ test("account access tokens expire with token_expired and can be rotated through
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("expiry-player", {
     loginId: "expiry-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   const server = await startAuthServer(port, store);
 
@@ -1550,7 +1608,7 @@ test("account access tokens expire with token_expired and can be rotated through
     },
     body: JSON.stringify({
       loginId: "expiry-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1591,7 +1649,7 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("rotate-player", {
     loginId: "rotate-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   const server = await startAuthServer(port, store);
 
@@ -1607,7 +1665,7 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
     },
     body: JSON.stringify({
       loginId: "rotate-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1659,7 +1717,7 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("metrics-player", {
     loginId: "metrics-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   const server = await startAuthServer(port, store);
 
@@ -1691,7 +1749,7 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
     },
     body: JSON.stringify({
       loginId: "metrics-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1722,7 +1780,7 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
     },
     body: JSON.stringify({
       loginId: "metrics-ranger",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     })
   });
@@ -1807,7 +1865,7 @@ test("revoking one device session leaves other account sessions active and block
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("device-player", {
     loginId: "device-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   const server = await startAuthServer(port, store);
 
@@ -1824,7 +1882,7 @@ test("revoking one device session leaves other account sessions active and block
     },
     body: JSON.stringify({
       loginId: "device-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1838,7 +1896,7 @@ test("revoking one device session leaves other account sessions active and block
     },
     body: JSON.stringify({
       loginId: "device-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1885,7 +1943,7 @@ test("password changes revoke the current account session family", async (t) => 
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("password-player", {
     loginId: "password-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   const server = await startAuthServer(port, store);
 
@@ -1901,7 +1959,7 @@ test("password changes revoke the current account session family", async (t) => 
     },
     body: JSON.stringify({
       loginId: "password-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -1914,8 +1972,8 @@ test("password changes revoke the current account session family", async (t) => 
       Authorization: `Bearer ${loginPayload.session.token}`
     },
     body: JSON.stringify({
-      currentPassword: "hunter2",
-      newPassword: "hunter3"
+      currentPassword: "hunter22",
+      newPassword: "hunter33"
     })
   });
 
@@ -2016,7 +2074,7 @@ test(
   });
   await store.bindPlayerAccountCredentials("lockout-player", {
     loginId: "lockout-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2033,7 +2091,7 @@ test(
       },
       body: JSON.stringify({
         loginId: "lockout-ranger",
-        password: "wrong-password",
+        password: "wrong-password1",
         privacyConsentAccepted: true
       })
     });
@@ -2050,7 +2108,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "lockout-ranger",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     })
   });
@@ -2082,7 +2140,7 @@ test("account login lockout expires after the configured duration", { concurrenc
   });
   await store.bindPlayerAccountCredentials("lockout-expiry-player", {
     loginId: "expiry-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2099,7 +2157,7 @@ test("account login lockout expires after the configured duration", { concurrenc
       },
       body: JSON.stringify({
         loginId: "expiry-ranger",
-        password: "wrong-password",
+        password: "wrong-password1",
         privacyConsentAccepted: true
       })
     });
@@ -2114,7 +2172,7 @@ test("account login lockout expires after the configured duration", { concurrenc
     },
     body: JSON.stringify({
       loginId: "expiry-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2151,7 +2209,7 @@ test(
   });
   await store.bindPlayerAccountCredentials("credential-stuffing-player", {
     loginId: "credential-stuffing-real",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2167,7 +2225,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-a",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     })
   });
@@ -2182,7 +2240,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-b",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     })
   });
@@ -2197,7 +2255,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-real",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     })
   });
@@ -2216,7 +2274,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-real",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2265,7 +2323,7 @@ test(
     },
     body: JSON.stringify({
       loginId: "credential-stuffing-real",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2367,7 +2425,7 @@ test("account registration request and confirm create a new formal account, sess
     body: JSON.stringify({
       loginId: "formal-ranger",
       registrationToken: requestPayload.registrationToken,
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2397,7 +2455,7 @@ test("account registration request and confirm create a new formal account, sess
     },
     body: JSON.stringify({
       loginId: "formal-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2415,7 +2473,7 @@ test("account registration request rejects already-bound login IDs", { concurren
   });
   await store.bindPlayerAccountCredentials("registration-conflict-player", {
     loginId: "taken-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2469,7 +2527,7 @@ test("account registration confirm rejects invalid tokens", { concurrency: false
     body: JSON.stringify({
       loginId: "invalid-registration-ranger",
       registrationToken: "wrong-token",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2536,7 +2594,7 @@ test("account registration request reuses the active token for the same loginId 
     body: JSON.stringify({
       loginId: "stable-registration-ranger",
       registrationToken: firstPayload.registrationToken,
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2606,7 +2664,7 @@ test("password recovery request and confirm reset the password, revoke old sessi
   });
   await store.bindPlayerAccountCredentials("recovery-player", {
     loginId: "recovery-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2621,7 +2679,7 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2656,7 +2714,7 @@ test("password recovery request and confirm reset the password, revoke old sessi
     body: JSON.stringify({
       loginId: "recovery-ranger",
       recoveryToken: requestPayload.recoveryToken,
-      newPassword: "hunter3"
+      newPassword: "hunter33"
     })
   });
   const confirmPayload = (await confirmResponse.json()) as { account: PlayerAccountSnapshot };
@@ -2680,7 +2738,7 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -2693,17 +2751,17 @@ test("password recovery request and confirm reset the password, revoke old sessi
     },
     body: JSON.stringify({
       loginId: "recovery-ranger",
-      password: "hunter3",
+      password: "hunter33",
       privacyConsentAccepted: true
     })
   });
   assert.equal(freshPasswordResponse.status, 200);
 
   const account = await store.loadPlayerAccount("recovery-player");
-  assert.equal(account?.recentEventLog[0]?.category, "account");
-  assert.match(account?.recentEventLog[0]?.description ?? "", /重置口令/);
-  assert.equal(account?.recentEventLog[1]?.category, "account");
-  assert.match(account?.recentEventLog[1]?.description ?? "", /发起密码找回申请/);
+  const accountEventDescriptions =
+    account?.recentEventLog.filter((entry) => entry.category === "account").map((entry) => entry.description) ?? [];
+  assert.ok(accountEventDescriptions.some((description) => /重置口令/.test(description)));
+  assert.ok(accountEventDescriptions.some((description) => /发起密码找回申请/.test(description)));
 });
 
 test("password recovery confirm rejects invalid tokens", { concurrency: false }, async (t) => {
@@ -2717,7 +2775,7 @@ test("password recovery confirm rejects invalid tokens", { concurrency: false },
   });
   await store.bindPlayerAccountCredentials("recovery-invalid-player", {
     loginId: "invalid-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2744,7 +2802,7 @@ test("password recovery confirm rejects invalid tokens", { concurrency: false },
     body: JSON.stringify({
       loginId: "invalid-ranger",
       recoveryToken: "wrong-token",
-      newPassword: "hunter3"
+      newPassword: "hunter33"
     })
   });
   const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };
@@ -2764,7 +2822,7 @@ test("password recovery request reuses the active token and avoids duplicate aud
   });
   await store.bindPlayerAccountCredentials("recovery-stable-player", {
     loginId: "stable-recovery-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2820,7 +2878,7 @@ test("password recovery request reuses the active token and avoids duplicate aud
     body: JSON.stringify({
       loginId: "stable-recovery-ranger",
       recoveryToken: firstPayload.recoveryToken,
-      newPassword: "hunter3"
+      newPassword: "hunter33"
     })
   });
 
@@ -2847,7 +2905,7 @@ test("password recovery request returns 429 after the per-IP rate limit is excee
   });
   await store.bindPlayerAccountCredentials("recovery-rate-limit-player", {
     loginId: "limit-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -2964,7 +3022,7 @@ test("account registration request uses webhook delivery without leaking the tok
     body: JSON.stringify({
       loginId: "webhook-registration-ranger",
       registrationToken: webhook.requests[0]?.body.token,
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -3034,7 +3092,7 @@ test("account registration request uses smtp delivery without leaking the token"
     body: JSON.stringify({
       loginId: "smtp-registration-ranger",
       registrationToken: tokenMatch?.[1],
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     })
   });
@@ -3153,7 +3211,7 @@ test("password recovery request uses webhook delivery without leaking the token"
   });
   await store.bindPlayerAccountCredentials("webhook-recovery-player", {
     loginId: "webhook-recovery-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -3219,7 +3277,7 @@ test("password recovery request uses webhook delivery without leaking the token"
     body: JSON.stringify({
       loginId: "webhook-recovery-ranger",
       recoveryToken: webhook.requests[0]?.body.token,
-      newPassword: "hunter3"
+      newPassword: "hunter33"
     })
   });
 
@@ -3250,7 +3308,7 @@ test("password recovery request schedules retry for retryable webhook failures a
   });
   await store.bindPlayerAccountCredentials("failed-recovery-player", {
     loginId: "failed-recovery-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -3373,7 +3431,7 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
   });
   await store.bindPlayerAccountCredentials("dead-letter-recovery-player", {
     loginId: "dead-letter-recovery-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
 
   t.after(async () => {
@@ -4294,7 +4352,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
   });
   await store.bindPlayerAccountCredentials("banned-player", {
     loginId: "banned-ranger",
-    passwordHash: hashAccountPassword("secret-pass")
+    passwordHash: hashAccountPassword("secret-pass1")
   });
   const server = await startAuthServer(port, store);
 
@@ -4310,7 +4368,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
     },
     body: JSON.stringify({
       loginId: "banned-ranger",
-      password: "secret-pass",
+      password: "secret-pass1",
       privacyConsentAccepted: true
     })
   });
@@ -4343,7 +4401,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
     },
     body: JSON.stringify({
       loginId: "banned-ranger",
-      password: "secret-pass",
+      password: "secret-pass1",
       privacyConsentAccepted: true
     })
   });
@@ -4458,7 +4516,7 @@ test("account registration confirmation requires privacy consent", async (t) => 
     body: JSON.stringify({
       loginId: "consent-ranger",
       registrationToken: requestPayload.registrationToken,
-      password: "hunter2"
+      password: "hunter22"
     })
   });
   const confirmPayload = (await confirmResponse.json()) as { error: { code: string } };

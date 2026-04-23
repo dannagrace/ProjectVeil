@@ -502,7 +502,7 @@ test("real dev-server locks an account after 10 failed attempts and rejects atte
     playerId: "rate-limit-brute-force-player",
     displayName: "Rate Limit Ranger",
     loginId: "rate-limit-ranger",
-    password: "hunter2"
+    password: "hunter22"
   });
   const { app, runtime } = await startRateLimitDevServer(store);
 
@@ -517,7 +517,7 @@ test("real dev-server locks an account after 10 failed attempts and rejects atte
       path: "/api/auth/account-login",
       body: {
         loginId: "rate-limit-ranger",
-        password: "wrong-password",
+        password: "wrong-password1",
         privacyConsentAccepted: true
       }
     });
@@ -533,7 +533,7 @@ test("real dev-server locks an account after 10 failed attempts and rejects atte
     path: "/api/auth/account-login",
     body: {
       loginId: "rate-limit-ranger",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     }
   });
@@ -562,7 +562,7 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
     playerId: "credential-stuffing-player",
     displayName: "Credential Stuffing Ranger",
     loginId: "credential-stuffing-real",
-    password: "hunter2"
+    password: "hunter22"
   });
   const { app, runtime } = await startRateLimitDevServer(store);
 
@@ -582,7 +582,7 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
       },
       body: {
         loginId: `credential-burst-${index}`,
-        password: "wrong-password",
+        password: "wrong-password1",
         privacyConsentAccepted: true
       }
     });
@@ -602,7 +602,7 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
     },
     body: {
       loginId: "credential-burst-6",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     }
   });
@@ -631,7 +631,7 @@ test("real dev-server clears account lockout state after the configured recovery
     playerId: "rate-limit-recovery-player",
     displayName: "Recovery Ranger",
     loginId: "recovery-ranger",
-    password: "hunter2"
+    password: "hunter22"
   });
   const { app, runtime } = await startRateLimitDevServer(store);
 
@@ -646,7 +646,7 @@ test("real dev-server clears account lockout state after the configured recovery
       path: "/api/auth/account-login",
       body: {
         loginId: "recovery-ranger",
-        password: "wrong-password",
+        password: "wrong-password1",
         privacyConsentAccepted: true
       }
     });
@@ -658,7 +658,7 @@ test("real dev-server clears account lockout state after the configured recovery
     path: "/api/auth/account-login",
     body: {
       loginId: "recovery-ranger",
-      password: "wrong-password",
+      password: "wrong-password1",
       privacyConsentAccepted: true
     }
   });
@@ -673,7 +673,7 @@ test("real dev-server clears account lockout state after the configured recovery
     path: "/api/auth/account-login",
     body: {
       loginId: "recovery-ranger",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     }
   });

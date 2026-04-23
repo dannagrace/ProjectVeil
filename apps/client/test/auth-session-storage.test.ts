@@ -256,7 +256,7 @@ test("account registration helpers request a dev token and persist the confirmed
     const requestResult = await requestAccountRegistration("Veil-Ranger", "暮潮守望");
     assert.equal(requestResult.registrationToken, "dev-registration-token");
 
-    const session = await confirmAccountRegistration("Veil-Ranger", "dev-registration-token", "hunter2");
+    const session = await confirmAccountRegistration("Veil-Ranger", "dev-registration-token", "hunter22");
     assert.equal(session.loginId, "veil-ranger");
     assert.equal(session.token, "account.token");
     assert.match(requests[0]?.url ?? "", /\/api\/auth\/account-registration\/request$/);
@@ -330,7 +330,7 @@ test("password recovery helpers request a dev token and confirm reset without mu
     const requestResult = await requestPasswordRecovery("Veil-Ranger");
     assert.equal(requestResult.recoveryToken, "dev-recovery-token");
 
-    await confirmPasswordRecovery("Veil-Ranger", "dev-recovery-token", "hunter3");
+    await confirmPasswordRecovery("Veil-Ranger", "dev-recovery-token", "hunter33");
     assert.match(requests[0]?.url ?? "", /\/api\/auth\/password-recovery\/request$/);
     assert.match(requests[1]?.url ?? "", /\/api\/auth\/password-recovery\/confirm$/);
     assert.equal(values.size, 0);

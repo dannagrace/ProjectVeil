@@ -3214,7 +3214,7 @@ test("player account password changes revoke the current access session family",
   });
   await store.bindPlayerAccountCredentials("password-player", {
     loginId: "veil-ranger",
-    passwordHash: hashAccountPassword("hunter2")
+    passwordHash: hashAccountPassword("hunter22")
   });
   await store.savePlayerAccountAuthSession("password-player", {
     refreshSessionId: "session-password",
@@ -3243,8 +3243,8 @@ test("player account password changes revoke the current access session family",
       Authorization: `Bearer ${session.token}`
     },
     body: JSON.stringify({
-      currentPassword: "hunter2",
-      newPassword: "hunter3"
+      currentPassword: "hunter22",
+      newPassword: "hunter33"
     })
   });
   const updatePayload = (await updateResponse.json()) as { account: PlayerAccountSnapshot };
