@@ -124,13 +124,17 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
         let replaySummary: PlayerBattleReplaySummary | null = null;
         let replayId: string | null = null;
         const token = await createGuestSessionToken(request, replayPlayerId);
+        const authHeaders = {
+          Authorization: `Bearer ${token}`
+        };
 
         await expect
           .poll(
             async () => {
               const payload = await getJson<{ items: PlayerBattleReplaySummary[] }>(
                 request,
-                `/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays`
+                `/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays`,
+                authHeaders
               );
               replaySummary = payload.items.find((item) => item.battleId === battleId) ?? null;
               replayId = replaySummary?.id ?? null;
@@ -149,9 +153,7 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
         const detailPayload = await getJson<{ replay: PlayerBattleReplaySummary }>(
           request,
           `/api/player-accounts/${encodeURIComponent(replayPlayerId)}/battle-replays/${encodeURIComponent(replayId!)}`,
-          {
-            Authorization: `Bearer ${token}`
-          }
+          authHeaders
         );
         expect(detailPayload.replay.battleId).toBe(battleId);
         expect(detailPayload.replay.steps.length).toBeGreaterThan(0);

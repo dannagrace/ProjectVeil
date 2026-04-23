@@ -227,9 +227,6 @@ export default defineConfig({
   reporter: SHARED_REPORTER,
   use: {
     baseURL: clientOrigin,
-    extraHTTPHeaders: {
-      "x-veil-admin-token": adminToken
-    },
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
