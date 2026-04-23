@@ -31,10 +31,12 @@ import type {
   SupportTicketPriority
 } from "@server/persistence";
 import {
+  consumeActionSubmissionRateLimit,
   applySeasonalEventProgress,
   buildEventLeaderboard,
   findSeasonalEventState,
   getActiveSeasonalEvents,
+  isActionSubmissionRateLimitEnabled,
   resolveSeasonalEvents
 } from "@server/domain/battle/event-engine";
 import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "@server/domain/battle/feature-flags";
@@ -233,7 +235,18 @@ function parseOffset(request: IncomingMessage): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function isTestTimeOverrideEnabled(): boolean {
+  return (
+    process.env.NODE_ENV?.trim().toLowerCase() !== "production" ||
+    process.env.VEIL_ENABLE_TEST_TIME_OVERRIDE?.trim() === "1"
+  );
+}
+
 function readDailyDungeonNowOverride(request: IncomingMessage): Date | null {
+  if (!isTestTimeOverrideEnabled()) {
+    return null;
+  }
+
   const rawValue = request.headers["x-veil-test-now"];
   const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
   const trimmed = value?.trim();
@@ -247,6 +260,33 @@ function readDailyDungeonNowOverride(request: IncomingMessage): Date | null {
 
 function resolveDailyDungeonNow(request: IncomingMessage): Date {
   return readDailyDungeonNowOverride(request) ?? new Date();
+}
+
+export const __playerAccountRouteInternals = {
+  hasVerifiedCampaignMissionCompletion,
+  isTestTimeOverrideEnabled,
+  readDailyDungeonNowOverride,
+  resolveDailyDungeonNow
+} as const;
+
+function hasVerifiedCampaignMissionCompletion(account: PlayerAccountSnapshot, mission: { mapId: string }): boolean {
+  return (
+    account.recentBattleReplays?.some(
+      (replay) => replay.roomId === mission.mapId && replay.result === "attacker_victory"
+    ) ?? false
+  );
+}
+
+function sendActionSubmissionRateLimited(response: ServerResponse, retryAfterSeconds?: number): void {
+  if (retryAfterSeconds != null) {
+    response.setHeader("Retry-After", String(retryAfterSeconds));
+  }
+  sendJson(response, 429, {
+    error: {
+      code: "rate_limited",
+      message: "Too many requests, please retry later"
+    }
+  });
 }
 
 function parsePlayerIdFilter(request: IncomingMessage): string | undefined {
@@ -2232,6 +2272,14 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
+    if (isActionSubmissionRateLimitEnabled()) {
+      const rateLimitResult = consumeActionSubmissionRateLimit(`campaign-mission-complete:${authSession.playerId}`);
+      if (!rateLimitResult.allowed) {
+        sendActionSubmissionRateLimited(response, rateLimitResult.retryAfterSeconds);
+        return;
+      }
+    }
+
     try {
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
@@ -2239,7 +2287,45 @@ export function registerPlayerAccountRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
-      const result = completeCampaignMission(resolveCampaignConfig(), account.campaignProgress, missionId);
+      const missions = resolveCampaignConfig();
+      const mission = buildCampaignMissionStates(missions, account.campaignProgress).find((entry) => entry.id === missionId);
+      if (!mission) {
+        sendJson(response, 404, {
+          error: {
+            code: "campaign_mission_not_found",
+            message: "Campaign mission was not found"
+          }
+        });
+        return;
+      }
+      if (mission.status === "locked") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_locked",
+            message: "Campaign mission is not unlocked yet"
+          }
+        });
+        return;
+      }
+      if (mission.status === "completed") {
+        sendJson(response, 409, {
+          error: {
+            code: "campaign_mission_already_completed",
+            message: "Campaign mission has already been completed"
+          }
+        });
+        return;
+      }
+      if (!hasVerifiedCampaignMissionCompletion(account, mission)) {
+        sendJson(response, 403, {
+          error: {
+            code: "campaign_mission_action_not_verified",
+            message: "Campaign mission completion must follow a verified victory replay"
+          }
+        });
+        return;
+      }
+      const result = completeCampaignMission(missions, account.campaignProgress, missionId);
       const rewardMutation = toRewardMutation(account, result.reward);
       const nextAccount = await store.savePlayerAccountProgress(account.playerId, {
         campaignProgress: result.campaignProgress,
@@ -2346,6 +2432,14 @@ export function registerPlayerAccountRoutes(
         }
       });
       return;
+    }
+
+    if (isActionSubmissionRateLimitEnabled()) {
+      const rateLimitResult = consumeActionSubmissionRateLimit(`daily-dungeon-attempt:${authSession.playerId}`);
+      if (!rateLimitResult.allowed) {
+        sendActionSubmissionRateLimited(response, rateLimitResult.retryAfterSeconds);
+        return;
+      }
     }
 
     try {
@@ -3181,6 +3275,10 @@ export function registerPlayerAccountRoutes(
       sendNotFound(response);
       return;
     }
+    const authorizedPlayerScope = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authorizedPlayerScope) {
+      return;
+    }
 
     if (!store) {
       sendJson(response, 200, {
@@ -3217,6 +3315,10 @@ export function registerPlayerAccountRoutes(
     const playerId = request.params.playerId?.trim();
     if (!playerId) {
       sendNotFound(response);
+      return;
+    }
+    const authorizedPlayerScope = await requireAuthorizedPlayerScope(request, response, store, playerId);
+    if (!authorizedPlayerScope) {
       return;
     }
 

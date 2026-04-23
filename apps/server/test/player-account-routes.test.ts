@@ -1423,9 +1423,7 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.deepEqual(detailPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
 
   const publicReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/battle-replays`);
-  const publicReplayPayload = (await publicReplayResponse.json()) as { items: PlayerBattleReplaySummary[] };
-  assert.equal(publicReplayResponse.status, 200);
-  assert.deepEqual(publicReplayPayload.items, []);
+  assert.equal(publicReplayResponse.status, 401);
 
   const publicAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/achievements`);
   const publicAchievementPayload = (await publicAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
@@ -1571,9 +1569,7 @@ test("public guest player routes keep only intended public payloads exposed", as
   assert.deepEqual(accountPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
 
   const replayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/battle-replays`);
-  const replayPayload = (await replayResponse.json()) as { items: PlayerBattleReplaySummary[] };
-  assert.equal(replayResponse.status, 200);
-  assert.deepEqual(replayPayload.items, []);
+  assert.equal(replayResponse.status, 401);
 
   const eventLogResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/event-log?limit=2`);
   assert.equal(eventLogResponse.status, 401);
@@ -1607,27 +1603,41 @@ test("player account battle replay routes return normalized replay summaries wit
     lastSeenAt: new Date("2026-03-25T09:00:00.000Z").toISOString()
   });
   const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-1",
+    displayName: "灰烬领主"
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   const detailResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1`
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const detailPayload = (await detailResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(detailResponse.status, 200);
   assert.deepEqual(detailPayload.items.map((replay) => replay.id), ["replay-newer"]);
 
   const pagedResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1&offset=1`
+    `http://127.0.0.1:${port}/api/player-accounts/player-1/battle-replays?limit=1&offset=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const pagedPayload = (await pagedResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(pagedResponse.status, 200);
   assert.deepEqual(pagedPayload.items.map((replay) => replay.id), ["replay-older"]);
 
   const missingResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/missing/battle-replays`);
-  assert.equal(missingResponse.status, 404);
+  assert.equal(missingResponse.status, 401);
 });
 
 test("player account battle replay routes filter replay summaries by battle metadata", async (t) => {
@@ -1673,7 +1683,12 @@ test("player account battle replay routes filter replay summaries by battle meta
   });
 
   const publicResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-filtered/battle-replays?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`
+    `http://127.0.0.1:${port}/api/player-accounts/player-filtered/battle-replays?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const publicPayload = (await publicResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(publicResponse.status, 200);
@@ -1749,7 +1764,12 @@ test("player account battle report routes expose normalized report summaries wit
   });
 
   const publicResponse = await fetch(
-    `http://127.0.0.1:${port}/api/player-accounts/player-report/battle-reports?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`
+    `http://127.0.0.1:${port}/api/player-accounts/player-report/battle-reports?battleKind=neutral&heroId=hero-1&neutralArmyId=neutral-1`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
   );
   const publicPayload = (await publicResponse.json()) as PlayerBattleReportCenter;
   assert.equal(publicResponse.status, 200);
@@ -4553,9 +4573,21 @@ test("referral endpoint credits both accounts exactly once", async (t) => {
 test("campaign mission completion unlocks the next chapter 1 mission and grants rewards", async (t) => {
   const port = 44980 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
-  await store.ensurePlayerAccount({
+  const seededCampaignAccount = await store.ensurePlayerAccount({
     playerId: "campaign-player",
     displayName: "Campaign Hero"
+  });
+  store.seedAccount({
+    ...seededCampaignAccount,
+    recentBattleReplays: [
+      createReplaySummary("campaign-player-chapter1-ember-watch", "2026-04-23T08:00:00.000Z", {
+        playerId: "campaign-player",
+        roomId: "amber-fields",
+        battleId: "chapter1-ember-watch-battle"
+      })
+    ],
+    lastRoomId: "amber-fields",
+    lastSeenAt: new Date().toISOString()
   });
   const server = await startAccountRouteServer(port, store);
   const session = issueAccountAuthSession({
@@ -4773,6 +4805,7 @@ test("completed campaign mission returns 409 for both restart and re-completion 
 test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {
   const port = 45000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
+  const testNow = "2026-04-07T12:00:00.000Z";
   await store.ensurePlayerAccount({
     playerId: "dungeon-player",
     displayName: "Dungeon Hero"
@@ -4793,7 +4826,8 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.token}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Veil-Test-Now": testNow
       },
       body: JSON.stringify({ floor })
     });
@@ -4823,7 +4857,8 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${session.token}`
+        Authorization: `Bearer ${session.token}`,
+        "X-Veil-Test-Now": testNow
       }
     }
   );
@@ -4832,7 +4867,8 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${session.token}`
+        Authorization: `Bearer ${session.token}`,
+        "X-Veil-Test-Now": testNow
       }
     }
   );
@@ -4843,9 +4879,9 @@ test("daily dungeon attempts are capped per day and rewards can only be claimed 
     eventProgress?: Array<{ eventId: string; delta: number; points: number; objectiveId: string }>;
   };
   const claimAgainPayload = (await claimAgainResponse.json()) as { error: { code: string } };
-  const activeDungeon = resolveActiveDailyDungeon();
+  const activeDungeon = resolveActiveDailyDungeon(new Date(testNow));
   const expectedReward = activeDungeon.floors.find((floor) => floor.floor === 2)?.reward;
-  const activeSeasonalEvent = getActiveSeasonalEvents(resolveSeasonalEvents())[0];
+  const activeSeasonalEvent = getActiveSeasonalEvents(resolveSeasonalEvents(), new Date(testNow))[0];
 
   assert.equal(claimResponse.status, 200);
   assert.equal(claimPayload.claimed, true);
