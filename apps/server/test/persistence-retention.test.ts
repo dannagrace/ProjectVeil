@@ -80,6 +80,35 @@ test("mysql persistence config reads explicit pool tuning from env", () => {
   assert.equal(config.pool.waitForConnections, false);
 });
 
+test("mysql persistence config reads SSL/TLS env settings", () => {
+  const config = readMySqlPersistenceConfig({
+    VEIL_MYSQL_HOST: "127.0.0.1",
+    VEIL_MYSQL_USER: "root",
+    VEIL_MYSQL_PASSWORD: "secret",
+    VEIL_MYSQL_SSL_MODE: "verify-ca",
+    VEIL_MYSQL_SSL_CA_PATH: "/var/run/project-veil/mysql/rds-ca.pem"
+  });
+
+  assert.ok(config);
+  assert.deepEqual(config.ssl, {
+    mode: "verify-ca",
+    caPath: "/var/run/project-veil/mysql/rds-ca.pem"
+  });
+});
+
+test("mysql persistence config refuses plaintext MySQL in production", () => {
+  assert.throws(
+    () =>
+      readMySqlPersistenceConfig({
+        VEIL_MYSQL_HOST: "127.0.0.1",
+        VEIL_MYSQL_USER: "root",
+        VEIL_MYSQL_PASSWORD: "secret",
+        NODE_ENV: "production"
+      }),
+    /VEIL_MYSQL_SSL_MODE/
+  );
+});
+
 test("snapshotHasExpired respects ttl windows", () => {
   const now = new Date("2026-03-20T12:00:00.000Z");
   const recent = new Date("2026-03-20T10:30:00.000Z");

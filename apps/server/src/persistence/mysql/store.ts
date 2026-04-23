@@ -20,7 +20,10 @@ import {
   DEFAULT_MYSQL_POOL_MAX_IDLE,
   DEFAULT_MYSQL_POOL_QUEUE_LIMIT,
   DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS,
-  type MySqlPoolConfig
+  DEFAULT_MYSQL_SSL_MODE,
+  type MySqlPoolConfig,
+  type MySqlPoolSslConfig,
+  type MySqlSslMode
 } from "@server/infra/mysql-pool";
 import type { RoomPersistenceSnapshot } from "@server/index";
 import {
@@ -240,6 +243,7 @@ export interface MySqlPersistenceConfig {
   user: string;
   password: string;
   database: string;
+  ssl?: MySqlPoolSslConfig;
   pool: MySqlPoolConfig;
   retention: SnapshotRetentionPolicy;
   playerNameHistoryRetention: PlayerNameHistoryRetentionPolicy;
@@ -2702,12 +2706,15 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
     return null;
   }
 
+  const ssl = readMySqlSslConfig(env);
+
   return {
     host,
     port: Number(env.VEIL_MYSQL_PORT ?? 3306),
     user,
     password,
     database: env.VEIL_MYSQL_DATABASE ?? MYSQL_DEFAULT_DATABASE,
+    ssl,
     pool: {
       connectionLimit: readPositiveInteger(env.VEIL_MYSQL_POOL_CONNECTION_LIMIT, DEFAULT_MYSQL_POOL_CONNECTION_LIMIT),
       maxIdle: readPositiveInteger(env.VEIL_MYSQL_POOL_MAX_IDLE, DEFAULT_MYSQL_POOL_MAX_IDLE),
@@ -2740,6 +2747,33 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
       )
     }
   };
+}
+
+function readMySqlSslConfig(env: NodeJS.ProcessEnv): MySqlPoolSslConfig {
+  const rawMode = env.VEIL_MYSQL_SSL_MODE?.trim().toLowerCase();
+  const mode = rawMode ? parseMySqlSslMode(rawMode) : DEFAULT_MYSQL_SSL_MODE;
+  const isProductionEnvironment = env.NODE_ENV?.trim().toLowerCase() === "production";
+  if (isProductionEnvironment && mode === "disabled") {
+    throw new Error("VEIL_MYSQL_SSL_MODE must be set to required or verify-ca when NODE_ENV=production");
+  }
+
+  return {
+    mode,
+    caPath: env.VEIL_MYSQL_SSL_CA_PATH?.trim() || null
+  };
+}
+
+function parseMySqlSslMode(value: string): MySqlSslMode {
+  switch (value) {
+    case "disabled":
+    case "required":
+    case "verify-ca":
+      return value;
+    default:
+      throw new Error(
+        `Unsupported VEIL_MYSQL_SSL_MODE "${value}". Expected one of disabled, required, verify-ca`
+      );
+  }
 }
 
 export function buildMySqlSchemaSql(database = MYSQL_DEFAULT_DATABASE): string {

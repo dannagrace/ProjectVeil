@@ -71,10 +71,22 @@ export function createRedisDriver(redisUrl: string): RedisDriver {
   return new RedisDriver(redisUrl);
 }
 
+function redactRedisUrl(redisUrl: string): string {
+  try {
+    const url = new URL(redisUrl);
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return "[invalid-redis-url]";
+  }
+}
+
 export function createRedisClient(redisUrl: string, deps: CreateRedisClientDependencies = {}): RedisClientLike {
   const RedisCtor = deps.RedisCtor ?? (Redis as unknown as RedisConstructorLike);
   const logger = deps.logger ?? console;
   const captureRuntimeError = deps.recordRuntimeErrorEvent ?? recordRuntimeErrorEvent;
+  const redactedRedisUrl = redactRedisUrl(redisUrl);
   const client = new RedisCtor(redisUrl, {
     maxRetriesPerRequest: 3,
     enableReadyCheck: true,
@@ -103,7 +115,7 @@ export function createRedisClient(redisUrl: string, deps: CreateRedisClientDepen
         action: "redis.connect",
         statusCode: null,
         crash: false,
-        detail: redisUrl
+        detail: redactedRedisUrl
       }
     });
   });

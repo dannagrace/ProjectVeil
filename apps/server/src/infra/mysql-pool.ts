@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createPool, type Pool, type PoolOptions } from "mysql2/promise";
 
 export const DEFAULT_MYSQL_POOL_CONNECTION_LIMIT = 4;
@@ -5,6 +6,9 @@ export const DEFAULT_MYSQL_POOL_MAX_IDLE = 4;
 export const DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS = 60_000;
 export const DEFAULT_MYSQL_POOL_QUEUE_LIMIT = 128;
 export const DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS = true;
+export const DEFAULT_MYSQL_SSL_MODE = "disabled";
+
+export type MySqlSslMode = "disabled" | "required" | "verify-ca";
 
 export interface MySqlPoolConfig {
   connectionLimit: number;
@@ -14,12 +18,18 @@ export interface MySqlPoolConfig {
   waitForConnections: boolean;
 }
 
+export interface MySqlPoolSslConfig {
+  mode: MySqlSslMode;
+  caPath: string | null;
+}
+
 export interface MySqlPoolConnectionConfig {
   host: string;
   port: number;
   user: string;
   password: string;
   database: string;
+  ssl?: MySqlPoolSslConfig;
   pool: MySqlPoolConfig;
 }
 
@@ -136,6 +146,24 @@ export function createTrackedMySqlPool(
 }
 
 export function buildMySqlPoolOptions(config: MySqlPoolConnectionConfig): PoolOptions {
+  const sslMode = config.ssl?.mode ?? DEFAULT_MYSQL_SSL_MODE;
+  let ssl: Exclude<NonNullable<PoolOptions["ssl"]>, string> | undefined;
+
+  if (sslMode === "required") {
+    ssl = {
+      rejectUnauthorized: false
+    };
+  } else if (sslMode === "verify-ca") {
+    ssl = {
+      rejectUnauthorized: true,
+      verifyIdentity: true
+    };
+    const caPath = config.ssl?.caPath?.trim();
+    if (caPath) {
+      ssl.ca = readFileSync(caPath, "utf8");
+    }
+  }
+
   return {
     host: config.host,
     port: config.port,
@@ -147,6 +175,7 @@ export function buildMySqlPoolOptions(config: MySqlPoolConnectionConfig): PoolOp
     idleTimeout: config.pool.idleTimeoutMs,
     queueLimit: config.pool.queueLimit,
     waitForConnections: config.pool.waitForConnections,
+    ...(ssl ? { ssl } : {}),
     namedPlaceholders: true
   };
 }
