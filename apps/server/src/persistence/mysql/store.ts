@@ -8894,6 +8894,7 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
 
     const deletedAt = normalizePrivacyConsentAt(input.deletedAt) ?? new Date().toISOString();
     const anonymizedDisplayName = `deleted-${normalizedPlayerId}`;
+    const anonymizedPlayerReference = `deleted-player:${normalizedPlayerId}`;
     const retainedFinancialPlayerToken = createDeletedFinancialRecordPseudonym();
 
     const connection = await this.pool.getConnection();
@@ -8961,21 +8962,54 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         [normalizedPlayerId]
       );
       await connection.query(
+        `DELETE FROM \`${MYSQL_GEM_LEDGER_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `DELETE FROM \`${MYSQL_PLAYER_NAME_RESERVATION_TABLE}\`
+         WHERE player_id = ?`,
+        [normalizedPlayerId]
+      );
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_REPORT_TABLE}\`
+         SET reporter_id = ?
+         WHERE reporter_id = ?`,
+        [anonymizedPlayerReference, normalizedPlayerId]
+      );
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_REPORT_TABLE}\`
+         SET target_id = ?
+         WHERE target_id = ?`,
+        [anonymizedPlayerReference, normalizedPlayerId]
+      );
+      await connection.query(
+        `UPDATE \`${MYSQL_GUILD_AUDIT_LOG_TABLE}\`
+         SET actor_player_id = ?
+         WHERE actor_player_id = ?`,
+        [anonymizedPlayerReference, normalizedPlayerId]
+      );
+      await connection.query(
         `UPDATE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`
-         INNER JOIN \`${MYSQL_PAYMENT_ORDER_TABLE}\`
-           ON \`${MYSQL_PAYMENT_ORDER_TABLE}\`.order_id = \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.order_id
-         SET \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
-         WHERE \`${MYSQL_PAYMENT_RECEIPT_TABLE}\`.player_id = ?
-           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.player_id = ?
-           AND \`${MYSQL_PAYMENT_ORDER_TABLE}\`.status IN (?, ?)`,
-        [retainedFinancialPlayerToken, normalizedPlayerId, normalizedPlayerId, "settled", "dead_letter"]
+         SET player_id = ?
+         WHERE player_id = ?`,
+        [retainedFinancialPlayerToken, normalizedPlayerId]
       );
       await connection.query(
         `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          SET player_id = ?
-         WHERE player_id = ?
-           AND status IN (?, ?)`,
-        [retainedFinancialPlayerToken, normalizedPlayerId, "settled", "dead_letter"]
+         WHERE player_id = ?`,
+        [retainedFinancialPlayerToken, normalizedPlayerId]
       );
 
       const verificationChecks = [
@@ -9037,6 +9071,36 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
         {
           label: MYSQL_SEASON_REWARD_LOG_TABLE,
           sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SEASON_REWARD_LOG_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_GEM_LEDGER_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_GEM_LEDGER_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_SHOP_PURCHASE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_ROOM_PROFILE_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_ROOM_PROFILE_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_NAME_RESERVATION_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_NAME_RESERVATION_TABLE}\` WHERE player_id = ?`,
+          params: [normalizedPlayerId]
+        },
+        {
+          label: MYSQL_PLAYER_REPORT_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_PLAYER_REPORT_TABLE}\` WHERE reporter_id = ? OR target_id = ?`,
+          params: [normalizedPlayerId, normalizedPlayerId]
+        },
+        {
+          label: MYSQL_GUILD_AUDIT_LOG_TABLE,
+          sql: `SELECT COUNT(*) AS total FROM \`${MYSQL_GUILD_AUDIT_LOG_TABLE}\` WHERE actor_player_id = ?`,
           params: [normalizedPlayerId]
         },
         {
