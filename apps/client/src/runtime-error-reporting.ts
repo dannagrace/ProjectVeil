@@ -7,6 +7,7 @@ const CLIENT_RUNTIME_ERROR_THROTTLE_WINDOW_MS = 60_000;
 const CLIENT_RUNTIME_ERROR_THROTTLE_LIMIT = 5;
 const CLIENT_RUNTIME_ERROR_FINGERPRINT_STACK_LIMIT = 120;
 const CLIENT_RUNTIME_ERROR_RECENT_FINGERPRINT_LIMIT = 128;
+const CLIENT_RUNTIME_ERROR_ROUTE = "/api/client-error";
 
 interface GlobalErrorBoundaryEventLike {
   message?: string;
@@ -112,7 +113,7 @@ export async function reportClientRuntimeError({
   payload,
   fetchImpl = fetch
 }: ReportClientRuntimeErrorInput): Promise<void> {
-  await fetchImpl(`${apiBaseUrl}/api/errors`, {
+  await fetchImpl(`${apiBaseUrl}${CLIENT_RUNTIME_ERROR_ROUTE}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

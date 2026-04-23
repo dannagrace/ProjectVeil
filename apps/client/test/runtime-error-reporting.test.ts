@@ -27,7 +27,7 @@ test("reportClientRuntimeError posts the expected payload and auth header", asyn
   });
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.url, "http://127.0.0.1:2567/api/errors");
+  assert.equal(calls[0]?.url, "http://127.0.0.1:2567/api/client-error");
   assert.equal((calls[0]?.init?.headers as Record<string, string>).Authorization, "Bearer token-123");
   assert.equal((calls[0]?.init?.headers as Record<string, string>)["Content-Type"], "application/json");
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
