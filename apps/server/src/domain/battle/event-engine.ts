@@ -103,8 +103,59 @@ const DAILY_QUEST_TIER_WEIGHTS: Record<DailyQuestConfigDefinition["tier"], numbe
   rare: 0.3,
   epic: 0.1
 };
+const ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS = 5_000;
+const ACTION_SUBMISSION_RATE_LIMIT_MAX = 1;
 const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverride>();
 const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
+const actionSubmissionRateLimitHits = new Map<string, number[]>();
+
+export function isActionSubmissionRateLimitEnabled(): boolean {
+  return (
+    process.env.NODE_ENV?.trim().toLowerCase() === "production" &&
+    process.env.VEIL_DISABLE_ACTION_SUBMISSION_RATE_LIMIT?.trim() !== "1"
+  );
+}
+
+export function resetActionSubmissionRateLimitState(): void {
+  actionSubmissionRateLimitHits.clear();
+}
+
+export function consumeActionSubmissionRateLimit(
+  key: string,
+  nowMs = Date.now()
+): { allowed: boolean; retryAfterSeconds?: number } {
+  const windowStart = nowMs - ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS;
+  const timestamps = (actionSubmissionRateLimitHits.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+  if (timestamps.length >= ACTION_SUBMISSION_RATE_LIMIT_MAX) {
+    const oldestTimestamp = timestamps[0] ?? nowMs;
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS - nowMs) / 1000))
+    };
+  }
+
+  timestamps.push(nowMs);
+  actionSubmissionRateLimitHits.set(key, timestamps);
+  return { allowed: true };
+}
+
+export function hasVerifiedDailyDungeonClaim(
+  account: Pick<PlayerAccountSnapshot, "dailyDungeonState">,
+  actionId: string,
+  dungeonId: string
+): boolean {
+  const normalizedActionId = actionId.trim();
+  const normalizedDungeonId = dungeonId.trim();
+  if (!normalizedActionId || !normalizedDungeonId) {
+    return false;
+  }
+
+  return (
+    account.dailyDungeonState?.runs.some(
+      (run) => run.runId === normalizedActionId && run.dungeonId === normalizedDungeonId && run.rewardClaimedAt != null
+    ) ?? false
+  );
+}
 
 function isValidDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`));
@@ -1163,6 +1214,22 @@ export function registerEventRoutes(
       return;
     }
 
+    if (isActionSubmissionRateLimitEnabled()) {
+      const rateLimitResult = consumeActionSubmissionRateLimit(`seasonal-event-progress:${authSession.playerId}`);
+      if (!rateLimitResult.allowed) {
+        if (rateLimitResult.retryAfterSeconds != null) {
+          response.setHeader("Retry-After", String(rateLimitResult.retryAfterSeconds));
+        }
+        sendJson(response, 429, {
+          error: {
+            code: "rate_limited",
+            message: "Too many requests, please retry later"
+          }
+        });
+        return;
+      }
+    }
+
     if (!store) {
       sendJson(response, 503, {
         error: {
@@ -1223,6 +1290,20 @@ export function registerEventRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         }));
+      if (actionType === "daily_dungeon_reward_claimed") {
+        const expectedDungeonId = event.objectives.find(
+          (objective) => objective.actionType === actionType && objective.dungeonId
+        )?.dungeonId;
+        if (!expectedDungeonId || !hasVerifiedDailyDungeonClaim(account, actionId, expectedDungeonId)) {
+          sendJson(response, 403, {
+            error: {
+              code: "seasonal_event_action_not_verified",
+              message: "Seasonal event progress must reference a claimed daily dungeon run"
+            }
+          });
+          return;
+        }
+      }
       const progress = applySeasonalEventProgress(
         event,
         findSeasonalEventState(account.seasonalEventStates, event.id),
