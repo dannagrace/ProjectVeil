@@ -121,7 +121,7 @@
 {
   "loginId": "veil-ranger",
   "registrationToken": "dev-token-example",
-  "password": "hunter2"
+  "password": "hunter22"
 }
 ```
 

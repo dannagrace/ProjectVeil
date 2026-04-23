@@ -23,7 +23,7 @@ test("auth ui helper validates confirm drafts for registration and recovery", ()
     validateAccountLifecycleConfirm("registration", {
       loginId: "veil-ranger",
       token: "",
-      password: "hunter2"
+      password: "hunter22"
     }),
     {
       field: "token",
@@ -48,7 +48,7 @@ test("auth ui helper validates confirm drafts for registration and recovery", ()
     validateAccountLifecycleConfirm("registration", {
       loginId: "veil-ranger",
       token: "dev-registration-token",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: true
     }),
     null
@@ -58,7 +58,7 @@ test("auth ui helper validates confirm drafts for registration and recovery", ()
     validateAccountLifecycleConfirm("registration", {
       loginId: "veil-ranger",
       token: "dev-registration-token",
-      password: "hunter2",
+      password: "hunter22",
       privacyConsentAccepted: false
     }),
     {

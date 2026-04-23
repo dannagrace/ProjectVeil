@@ -378,7 +378,7 @@ test("loginCocosPasswordAuthSession stores account sessions with loginId", async
     }
   };
 
-  const session = await loginCocosPasswordAuthSession("http://127.0.0.1:2567", "Veil-Ranger", "hunter2", {
+  const session = await loginCocosPasswordAuthSession("http://127.0.0.1:2567", "Veil-Ranger", "hunter22", {
     storage,
     fetchImpl: async () =>
       new Response(
@@ -467,7 +467,7 @@ test("cocos account registration helpers request a dev token and persist the con
     "http://127.0.0.1:2567",
     "Veil-Ranger",
     "dev-registration-token",
-    "hunter2",
+    "hunter22",
     { fetchImpl, storage }
   );
   assert.equal(session.loginId, "veil-ranger");
@@ -508,7 +508,7 @@ test("cocos password recovery helpers request a dev token and confirm reset", as
   });
   assert.equal(requestResult.recoveryToken, "dev-recovery-token");
 
-  await confirmCocosPasswordRecovery("http://127.0.0.1:2567", "Veil-Ranger", "dev-recovery-token", "hunter3", {
+  await confirmCocosPasswordRecovery("http://127.0.0.1:2567", "Veil-Ranger", "dev-recovery-token", "hunter33", {
     fetchImpl
   });
   assert.match(requests[0]?.url ?? "", /\/api\/auth\/password-recovery\/request$/);

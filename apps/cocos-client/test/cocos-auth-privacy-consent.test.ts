@@ -66,11 +66,11 @@ test("cocos auth helpers forward privacy consent across guest, account, registra
     fetchImpl,
     privacyConsentAccepted: true
   });
-  await loginCocosPasswordAuthSession("http://127.0.0.1:2567", "Veil-Ranger", "hunter2", {
+  await loginCocosPasswordAuthSession("http://127.0.0.1:2567", "Veil-Ranger", "hunter22", {
     fetchImpl,
     privacyConsentAccepted: true
   });
-  await confirmCocosAccountRegistration("http://127.0.0.1:2567", "Veil-Ranger", "dev-registration-token", "hunter2", {
+  await confirmCocosAccountRegistration("http://127.0.0.1:2567", "Veil-Ranger", "dev-registration-token", "hunter22", {
     fetchImpl,
     privacyConsentAccepted: true
   });

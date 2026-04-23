@@ -11,7 +11,7 @@ test("buildCocosAccountLifecyclePanelView exposes registration dev-token guidanc
     loginId: "veil-ranger",
     displayName: "暮潮守望",
     token: "dev-registration-token",
-    password: "hunter2",
+    password: "hunter22",
     deliveryMode: "dev-token",
     expiresAt: "2026-03-29T05:51:00.000Z"
   });
@@ -69,7 +69,7 @@ test("buildCocosAccountLifecycleReadinessView reports blocked external token del
     loginId: "veil-ranger",
     displayName: "",
     token: "",
-    password: "hunter2",
+    password: "hunter22",
     deliveryMode: "external",
     expiresAt: "2026-03-29T06:00:00.000Z"
   });

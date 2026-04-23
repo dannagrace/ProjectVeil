@@ -167,7 +167,32 @@ interface AccountRegistrationState {
   expiresAt: string;
 }
 
-const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
+const MIN_ACCOUNT_PASSWORD_LENGTH = 8;
+const MAX_ACCOUNT_PASSWORD_LENGTH = 128;
+const COMMON_WEAK_ACCOUNT_PASSWORDS = new Set([
+  "123456",
+  "1234567",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "111111",
+  "000000",
+  "password",
+  "password1",
+  "password12",
+  "password123",
+  "qwerty",
+  "qwerty123",
+  "admin",
+  "admin123",
+  "letmein",
+  "letmein1",
+  "welcome",
+  "welcome1",
+  "iloveyou",
+  "abc123",
+  "hunter2"
+]);
 const DEFAULT_RATE_LIMIT_AUTH_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_AUTH_MAX = 10;
 const DEFAULT_AUTH_LOCKOUT_THRESHOLD = 10;
@@ -676,6 +701,15 @@ function normalizeAccountPassword(password?: string | null): string {
   const normalized = password.trim();
   if (normalized.length < MIN_ACCOUNT_PASSWORD_LENGTH) {
     throw new Error(`password must be at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters`);
+  }
+  if (normalized.length > MAX_ACCOUNT_PASSWORD_LENGTH) {
+    throw new Error(`password must be at most ${MAX_ACCOUNT_PASSWORD_LENGTH} characters`);
+  }
+  if (!/[A-Za-z]/.test(normalized) || !/\d/.test(normalized)) {
+    throw new Error("password must include at least one letter and one number");
+  }
+  if (COMMON_WEAK_ACCOUNT_PASSWORDS.has(normalized.toLowerCase())) {
+    throw new Error("password is too common");
   }
 
   return normalized;
