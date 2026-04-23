@@ -246,7 +246,7 @@ test("wechat payment callback settles the order, emits purchase analytics, and d
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
   });
   const server = await startWechatPaymentServer({
     port,
@@ -337,7 +337,7 @@ test("wechat payment verify settles a created order and emits purchase analytics
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
   });
   const server = await startWechatPaymentServer({
     port,
@@ -399,7 +399,7 @@ test("wechat payment verify returns amount mismatch without granting rewards and
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
   });
   const server = await startWechatPaymentServer({
     port,
@@ -468,7 +468,7 @@ test("wechat payment verify emits purchase_failed when settlement cannot grant r
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
   });
   const originalCompletePaymentOrder = store.completePaymentOrder.bind(store);
   store.completePaymentOrder = async (orderId, input) => {

@@ -1,5 +1,7 @@
-import { type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent } from "@veil/shared/platform";
+import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent } from "@veil/shared/platform";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
+import type { RoomSnapshotStore } from "@server/persistence";
 
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
 const ANALYTICS_BUFFER_FLUSH_DELAY_MS = 250;
@@ -74,6 +76,8 @@ interface AnalyticsRuntimeDependencies {
 
 interface AnalyticsRouteRegistrationOptions {
   enableTestRoutes?: boolean;
+  store?: RoomSnapshotStore | null;
+  allowedOrigins?: string[];
 }
 
 const defaultAnalyticsRuntimeDependencies: AnalyticsRuntimeDependencies = {
@@ -122,6 +126,10 @@ class PayloadTooLargeError extends Error {
 }
 
 const MAX_ANALYTICS_REQUEST_BYTES = 256 * 1024;
+const MAX_ANALYTICS_EVENTS_PER_REQUEST = 50;
+const ANALYTICS_INGEST_RATE_LIMIT_WINDOW_MS = 60_000;
+const ANALYTICS_INGEST_RATE_LIMIT_MAX = 120;
+const analyticsIngestRateLimitByPlayer = new Map<string, number[]>();
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -153,6 +161,94 @@ function recordIngestedEvents(events: Array<{ name?: unknown; source?: unknown }
   for (const event of events) {
     incrementCounter(analyticsPipelineCounters.ingestedByKey, buildAnalyticsCounterKey(event));
   }
+}
+
+function readHeaderValue(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0]?.trim() || null;
+  }
+  return value?.trim() || null;
+}
+
+function parseAllowedOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.VEIL_ANALYTICS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+}
+
+function applyAnalyticsCors(
+  request: IncomingMessage,
+  response: ServerResponse,
+  allowedOrigins: string[] = parseAllowedOrigins()
+): void {
+  const origin = readHeaderValue(request.headers.origin);
+  if (origin && allowedOrigins.includes(origin)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
+}
+
+function sendUnauthorized(response: ServerResponse, code = "unauthorized"): void {
+  sendJson(response, 401, {
+    error: {
+      code,
+      message: "Analytics ingestion requires an authenticated player session"
+    }
+  });
+}
+
+function sendTooManyRequests(response: ServerResponse): void {
+  sendJson(response, 429, {
+    error: {
+      code: "analytics_rate_limited",
+      message: "Too many analytics batches submitted for this player"
+    }
+  });
+}
+
+function consumeAnalyticsIngestRateLimit(playerId: string, nowMs = Date.now()): boolean {
+  const cutoff = nowMs - ANALYTICS_INGEST_RATE_LIMIT_WINDOW_MS;
+  const timestamps = analyticsIngestRateLimitByPlayer.get(playerId)?.filter((timestamp) => timestamp >= cutoff) ?? [];
+  if (timestamps.length >= ANALYTICS_INGEST_RATE_LIMIT_MAX) {
+    analyticsIngestRateLimitByPlayer.set(playerId, timestamps);
+    return false;
+  }
+  timestamps.push(nowMs);
+  analyticsIngestRateLimitByPlayer.set(playerId, timestamps);
+  return true;
+}
+
+function normalizeClientAnalyticsEvents(payload: unknown, playerId: string): AnalyticsEvent[] {
+  const rawEvents = Array.isArray((payload as { events?: unknown[] } | null)?.events)
+    ? ((payload as { events: unknown[] }).events ?? [])
+    : [];
+
+  if (rawEvents.length > MAX_ANALYTICS_EVENTS_PER_REQUEST) {
+    throw new Error(`analytics request accepts at most ${MAX_ANALYTICS_EVENTS_PER_REQUEST} events`);
+  }
+
+  return rawEvents.map((event) => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      throw new Error("analytics event must be an object");
+    }
+    const candidate = event as Record<string, unknown>;
+    if (typeof candidate.name !== "string" || !(candidate.name in ANALYTICS_EVENT_CATALOG)) {
+      throw new Error("analytics event name is not allowed");
+    }
+    if (candidate.source !== undefined && typeof candidate.source !== "string") {
+      throw new Error("analytics event source must be a string");
+    }
+    if (candidate.payload !== undefined && (!candidate.payload || typeof candidate.payload !== "object" || Array.isArray(candidate.payload))) {
+      throw new Error("analytics event payload must be an object");
+    }
+    return {
+      ...candidate,
+      playerId
+    } as AnalyticsEvent;
+  });
 }
 
 function recordFlushedEvents(events: Array<{ name?: unknown; source?: unknown }>): void {
@@ -344,6 +440,7 @@ export function resetAnalyticsRuntimeDependencies(): void {
   analyticsPipelineCounters.lastErrorMessage = null;
   analyticsPipelineCounters.ingestedByKey.clear();
   analyticsPipelineCounters.flushedByKey.clear();
+  analyticsIngestRateLimitByPlayer.clear();
 }
 
 export function resetCapturedAnalyticsEventsForTest(): void {
@@ -457,9 +554,7 @@ export function registerAnalyticsRoutes(
   options: AnalyticsRouteRegistrationOptions = {}
 ): void {
   app.use((request, response, next) => {
-    response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    applyAnalyticsCors(request, response, options.allowedOrigins);
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
@@ -505,13 +600,22 @@ export function registerAnalyticsRoutes(
 
   app.post("/api/analytics/events", async (request, response) => {
     try {
+      const authResult = await validateAuthSessionFromRequest(request, options.store ?? null);
+      if (!authResult.session) {
+        sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
+        return;
+      }
+      if (!consumeAnalyticsIngestRateLimit(authResult.session.playerId)) {
+        sendTooManyRequests(response);
+        return;
+      }
       const payload = await readJsonBody(request);
       const config = resolveAnalyticsPipelineConfig();
       emitAnalyticsAlerts(config);
-      const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
-        ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
-        : [];
-      capturedAnalyticsEvents.push(...events);
+      const events = normalizeClientAnalyticsEvents(payload, authResult.session.playerId);
+      if (options.enableTestRoutes) {
+        capturedAnalyticsEvents.push(...events);
+      }
       pendingEvents.push(...events);
       recordIngestedEvents(events);
       scheduleFlush();
