@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { RedisDriver } from "@colyseus/redis-driver";
 import { RedisPresence } from "@colyseus/redis-presence";
 import Redis from "ioredis";
+import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 
 export interface ClosableRedisResource {
   shutdown?(): Promise<void> | void;
@@ -32,6 +34,30 @@ export interface RedisClientLike {
   ): Promise<"OK" | null>;
 }
 
+interface RedisEventableClient {
+  on(event: "error", listener: (error: Error) => void): unknown;
+  on(event: "reconnecting", listener: (delayMs: number) => void): unknown;
+}
+
+interface RedisConstructorLike {
+  new (
+    url: string,
+    options: {
+      maxRetriesPerRequest: number;
+      enableReadyCheck: boolean;
+      connectTimeout: number;
+      commandTimeout: number;
+      retryStrategy: (attempt: number) => number;
+    }
+  ): RedisClientLike & RedisEventableClient;
+}
+
+export interface CreateRedisClientDependencies {
+  RedisCtor?: RedisConstructorLike;
+  logger?: Pick<Console, "warn">;
+  recordRuntimeErrorEvent?: typeof recordRuntimeErrorEvent;
+}
+
 export function readRedisUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   const redisUrl = env.REDIS_URL?.trim();
   return redisUrl ? redisUrl : null;
@@ -45,8 +71,48 @@ export function createRedisDriver(redisUrl: string): RedisDriver {
   return new RedisDriver(redisUrl);
 }
 
-export function createRedisClient(redisUrl: string): RedisClientLike {
-  return new Redis(redisUrl) as unknown as RedisClientLike;
+export function createRedisClient(redisUrl: string, deps: CreateRedisClientDependencies = {}): RedisClientLike {
+  const RedisCtor = deps.RedisCtor ?? (Redis as unknown as RedisConstructorLike);
+  const logger = deps.logger ?? console;
+  const captureRuntimeError = deps.recordRuntimeErrorEvent ?? recordRuntimeErrorEvent;
+  const client = new RedisCtor(redisUrl, {
+    maxRetriesPerRequest: 3,
+    enableReadyCheck: true,
+    connectTimeout: 5_000,
+    commandTimeout: 3_000,
+    retryStrategy: (attempt) => Math.min(attempt * 200, 2_000)
+  });
+
+  client.on("error", (error) => {
+    captureRuntimeError({
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "redis-client",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || "workspace",
+      featureArea: "runtime",
+      ownerArea: "infra",
+      severity: "error",
+      errorCode: "redis_client_error",
+      message: error.message || "Redis client emitted an error event",
+      context: {
+        roomId: null,
+        playerId: null,
+        requestId: null,
+        route: null,
+        action: "redis.connect",
+        statusCode: null,
+        crash: false,
+        detail: redisUrl
+      }
+    });
+  });
+
+  client.on("reconnecting", (delayMs) => {
+    logger.warn(`Redis client reconnect scheduled in ${delayMs}ms.`);
+  });
+
+  return client as RedisClientLike;
 }
 
 export async function closeRedisResource(resource: ClosableRedisResource | null | undefined): Promise<void> {

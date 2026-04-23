@@ -1,5 +1,7 @@
 import { createPrivateKey, createSign, createVerify, X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { resolve } from "node:path";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import {
@@ -32,6 +34,7 @@ export interface AppleIapRuntimeConfig {
   privateKey: string;
   productionApiUrl: string;
   sandboxApiUrl: string;
+  rootCertificates: string[];
 }
 
 export interface AppleVerifiedTransaction {
@@ -120,6 +123,23 @@ function normalizePemValue(value: string): string {
   return value.replace(/\\n/g, "\n").trim();
 }
 
+function splitPemCertificates(value: string): string[] {
+  return (
+    value.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)?.map((certificate) => certificate.trim()) ??
+    []
+  );
+}
+
+function readBundledAppleRootCertificates(): string[] {
+  const bundledPath = resolve(process.cwd(), "configs", "apple", "AppleRootCA-G3.pem");
+  try {
+    const contents = readFileSync(bundledPath, "utf8");
+    return splitPemCertificates(contents);
+  } catch {
+    return [];
+  }
+}
+
 function readPemValue(env: NodeJS.ProcessEnv, key: string): string | null {
   const direct = env[key]?.trim();
   if (direct) {
@@ -139,8 +159,12 @@ export function readAppleIapRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
   const issuerId = env.VEIL_APPLE_IAP_ISSUER_ID?.trim();
   const keyId = env.VEIL_APPLE_IAP_KEY_ID?.trim();
   const privateKey = readPemValue(env, "VEIL_APPLE_IAP_PRIVATE_KEY");
+  const inlineRootCertificates = readPemValue(env, "VEIL_APPLE_IAP_ROOT_CERTIFICATES");
+  const rootCertificates = inlineRootCertificates
+    ? splitPemCertificates(inlineRootCertificates)
+    : readBundledAppleRootCertificates();
 
-  if (!bundleId || !issuerId || !keyId || !privateKey) {
+  if (!bundleId || !issuerId || !keyId || !privateKey || rootCertificates.length === 0) {
     return null;
   }
 
@@ -150,7 +174,8 @@ export function readAppleIapRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
     keyId,
     privateKey,
     productionApiUrl: env.VEIL_APPLE_IAP_PRODUCTION_API_URL?.trim() || "https://api.storekit.itunes.apple.com",
-    sandboxApiUrl: env.VEIL_APPLE_IAP_SANDBOX_API_URL?.trim() || "https://api.storekit-sandbox.itunes.apple.com"
+    sandboxApiUrl: env.VEIL_APPLE_IAP_SANDBOX_API_URL?.trim() || "https://api.storekit-sandbox.itunes.apple.com",
+    rootCertificates
   };
 }
 
@@ -502,7 +527,85 @@ function normalizeAppleTransactionPayload(payload: AppleTransactionPayload, expe
   };
 }
 
-function verifySignedTransactionWithCertificateChain(
+function buildCertificatePemFromDer(certificateDer: string): string {
+  return `-----BEGIN CERTIFICATE-----\n${certificateDer.match(/.{1,64}/g)?.join("\n") ?? certificateDer}\n-----END CERTIFICATE-----`;
+}
+
+function assertCertificateIsCurrentlyValid(certificate: X509Certificate, now: Date): void {
+  const validFrom = new Date(certificate.validFrom);
+  const validTo = new Date(certificate.validTo);
+  if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime()) || now < validFrom || now > validTo) {
+    throw new AppleIapVerificationError({
+      code: "apple_certificate_invalid",
+      message: "Apple transaction signing certificate is not currently valid",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+}
+
+function isCertificateIssuedBy(child: X509Certificate, parent: X509Certificate): boolean {
+  if (!child.checkIssued(parent)) {
+    return false;
+  }
+  try {
+    return child.verify(parent.publicKey);
+  } catch {
+    return false;
+  }
+}
+
+function assertTrustedCertificateChain(
+  chain: X509Certificate[],
+  trustedRoots: X509Certificate[],
+  now: Date
+): void {
+  for (const certificate of chain) {
+    assertCertificateIsCurrentlyValid(certificate, now);
+  }
+  for (const trustedRoot of trustedRoots) {
+    assertCertificateIsCurrentlyValid(trustedRoot, now);
+  }
+
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    if (!isCertificateIssuedBy(chain[index]!, chain[index + 1]!)) {
+      throw new AppleIapVerificationError({
+        code: "apple_certificate_chain_invalid",
+        message: "Apple transaction certificate chain is not trusted",
+        retryable: false,
+        statusCode: 400,
+        category: "verification"
+      });
+    }
+  }
+
+  const chainRoot = chain.at(-1);
+  if (!chainRoot) {
+    throw new AppleIapVerificationError({
+      code: "apple_certificate_chain_invalid",
+      message: "Apple transaction certificate chain is not trusted",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  const trustedRoot = trustedRoots.find(
+    (root) => root.fingerprint256 === chainRoot.fingerprint256 || isCertificateIssuedBy(chainRoot, root)
+  );
+  if (!trustedRoot) {
+    throw new AppleIapVerificationError({
+      code: "apple_certificate_chain_invalid",
+      message: "Apple transaction certificate chain is not trusted",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+}
+
+export function verifySignedTransactionWithCertificateChain(
   signedTransactionInfo: string,
   config: AppleIapRuntimeConfig,
   now: Date
@@ -529,7 +632,8 @@ function verifySignedTransactionWithCertificateChain(
     });
   }
 
-  const leafCertificateDer = header.x5c[0];
+  const certificateDerChain = header.x5c.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  const leafCertificateDer = certificateDerChain[0];
   if (!leafCertificateDer) {
     throw new AppleIapVerificationError({
       code: "apple_signature_header_invalid",
@@ -539,19 +643,20 @@ function verifySignedTransactionWithCertificateChain(
       category: "verification"
     });
   }
-  const leafCertificatePem = `-----BEGIN CERTIFICATE-----\n${leafCertificateDer.match(/.{1,64}/g)?.join("\n") ?? leafCertificateDer}\n-----END CERTIFICATE-----`;
-  const leafCertificate = new X509Certificate(leafCertificatePem);
-  const validFrom = new Date(leafCertificate.validFrom);
-  const validTo = new Date(leafCertificate.validTo);
-  if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime()) || now < validFrom || now > validTo) {
+  const certificateChain = certificateDerChain.map((certificateDer) => new X509Certificate(buildCertificatePemFromDer(certificateDer)));
+  const trustedRoots = config.rootCertificates.map((certificatePem) => new X509Certificate(certificatePem));
+  if (trustedRoots.length === 0) {
     throw new AppleIapVerificationError({
-      code: "apple_certificate_invalid",
-      message: "Apple transaction signing certificate is not currently valid",
+      code: "apple_root_certificates_missing",
+      message: "Apple IAP root certificates are not configured",
       retryable: false,
-      statusCode: 400,
-      category: "verification"
+      statusCode: 500,
+      category: "configuration"
     });
   }
+
+  const leafCertificate = certificateChain[0]!;
+  assertTrustedCertificateChain(certificateChain, trustedRoots, now);
 
   const verifier = createVerify("SHA256");
   verifier.update(`${encodedHeader}.${encodedPayload}`);

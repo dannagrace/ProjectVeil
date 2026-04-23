@@ -30,7 +30,7 @@ The server reads these variables on startup:
 | `VEIL_MYSQL_POOL_CONNECTION_LIMIT` | No | `4` | Max concurrent connections opened by each Project Veil MySQL pool (`room_snapshot`, `config_center`, migration tooling) |
 | `VEIL_MYSQL_POOL_MAX_IDLE` | No | `4` | Max idle connections retained by each MySQL pool |
 | `VEIL_MYSQL_POOL_IDLE_TIMEOUT_MS` | No | `60000` | Idle-connection timeout for each MySQL pool |
-| `VEIL_MYSQL_POOL_QUEUE_LIMIT` | No | `0` | Queue depth cap when the pool is saturated. `0` keeps mysql2's unbounded queue behavior |
+| `VEIL_MYSQL_POOL_QUEUE_LIMIT` | No | `128` | Queue depth cap when the pool is saturated. Use `0` only for local development or controlled tests that intentionally exercise mysql2's unbounded queue behavior |
 | `VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS` | No | `true` | Whether callers wait for a free pooled connection instead of failing immediately |
 | `VEIL_MYSQL_SNAPSHOT_TTL_HOURS` | No | `72` | Snapshot retention window in hours. Set `0` or a negative value to disable expiry |
 | `VEIL_MYSQL_SNAPSHOT_CLEANUP_INTERVAL_MINUTES` | No | `30` | Periodic cleanup interval in minutes. Set `0` or a negative value to disable scheduled cleanup |
