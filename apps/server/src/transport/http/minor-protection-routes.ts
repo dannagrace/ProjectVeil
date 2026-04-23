@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buildMinorProtectionBlockDetails, getMinorProtectionDateKey, readMinorProtectionConfig } from "@server/domain/ops/minor-protection";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 interface MinorProtectionApp {
@@ -16,7 +17,7 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
-  return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
+  return timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken);
 }
 
 function readOptionalTrimmedQueryParam(request: IncomingMessage, key: string): string | undefined {

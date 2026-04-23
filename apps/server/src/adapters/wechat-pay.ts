@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { recordPaymentGrantRetry } from "@server/domain/ops/observability";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import {
   CallbackDeadLetterQueue,
   buildPaymentGrantRuntimePayload as buildSharedPaymentGrantRuntimePayload,
@@ -435,7 +436,7 @@ function readAdminToken(): string | null {
 
 function isAdminRequest(request: IncomingMessage): boolean {
   const adminToken = readAdminToken();
-  return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
+  return timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken);
 }
 
 function normalizePaymentGrantRetryPolicy(): { maxAttempts: number; baseDelayMs: number } {

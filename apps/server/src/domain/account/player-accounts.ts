@@ -11,6 +11,7 @@ import {
 import { issueDailyLoginReward } from "@server/domain/economy/daily-login-rewards";
 import { resolveBattlePassConfig } from "@server/domain/economy/battle-pass";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import {
   cachePlayerAccountAuthState,
   hashAccountPassword,
@@ -153,7 +154,7 @@ function emitExperimentExposureForSurface(
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
-  return Boolean(adminToken) && request.headers["x-veil-admin-token"] === adminToken;
+  return timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken);
 }
 
 function validateWechatSignatureEnvelope(

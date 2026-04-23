@@ -33,6 +33,7 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
   withEnvOverrides(
     {
       ADMIN_SECRET: "test-admin-secret",
+      VEIL_TRUSTED_PROXIES: "127.0.0.1",
       VEIL_RATE_LIMIT_HTTP_WINDOW_MS: "60000",
       VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX: "2",
       VEIL_RATE_LIMIT_HTTP_SHOP_MAX: "1",
@@ -111,4 +112,37 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
 
   assert.equal(metricsResponse.status, 200);
   assert.match(metricsText, /^veil_http_rate_limited_total 4$/m);
+});
+
+test("HTTP rate limiting ignores spoofed forwarded headers from untrusted sockets", { concurrency: false }, async (t) => {
+  resetRuntimeObservability();
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      ADMIN_SECRET: "test-admin-secret",
+      VEIL_RATE_LIMIT_HTTP_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX: "1"
+    },
+    cleanup
+  );
+
+  const port = 47000 + Math.floor(Math.random() * 1000);
+  const runtime = await startDevServer(port, "127.0.0.1");
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetRuntimeObservability();
+    await runtime.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const firstResponse = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
+    headers: withHeaders("198.51.100.20")
+  });
+  assert.equal(firstResponse.status, 200);
+
+  const spoofedFollowup = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
+    headers: withHeaders("203.0.113.200")
+  });
+  assert.equal(spoofedFollowup.status, 429);
+  assert.equal(spoofedFollowup.headers.get("Retry-After"), "60");
 });

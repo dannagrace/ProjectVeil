@@ -8,6 +8,7 @@ import { sendMobilePushNotification } from "@server/adapters/mobile-push";
 import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
+import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import { sendWechatSubscribeMessage } from "@server/adapters/wechat-subscribe";
 
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
@@ -104,15 +105,8 @@ function readHeaderValue(value: string | string[] | undefined): string | null {
   return Array.isArray(value) ? value[0]?.trim() || null : value?.trim() || null;
 }
 
-function readHeaderCsvValue(value: string | string[] | undefined): string | null {
-  const headerValue = readHeaderValue(value);
-  return headerValue?.split(",")[0]?.trim() || null;
-}
-
 function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">): string {
-  const forwardedFor = readHeaderCsvValue(request.headers["x-forwarded-for"]);
-  const rawIp = forwardedFor || request.socket.remoteAddress?.trim() || "unknown";
-  return rawIp.startsWith("::ffff:") ? rawIp.slice("::ffff:".length) : rawIp;
+  return resolveTrustedRequestIp(request);
 }
 
 function consumeSlidingWindowRateLimit(key: string, config = readMatchmakingRuntimeConfig()): RateLimitResult {
