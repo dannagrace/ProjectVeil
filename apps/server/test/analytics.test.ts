@@ -56,7 +56,25 @@ function createRequest(method: string, body?: string): Readable & {
   return request;
 }
 
-test("registerAnalyticsRoutes accepts analytics batches and logs the payload", async () => {
+test("registerAnalyticsRoutes keeps test capture routes disabled by default", () => {
+  const getPaths: string[] = [];
+  const postPaths: string[] = [];
+
+  registerAnalyticsRoutes({
+    use() {},
+    get(path) {
+      getPaths.push(path);
+    },
+    post(path) {
+      postPaths.push(path);
+    }
+  });
+
+  assert.deepEqual(getPaths, []);
+  assert.deepEqual(postPaths, ["/api/analytics/events"]);
+});
+
+test("registerAnalyticsRoutes accepts analytics batches and logs the payload when test capture routes are enabled", async () => {
   let middleware:
     | ((request: never, response: TestResponse, next: () => void) => void)
     | undefined;
@@ -77,28 +95,36 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload", a
     }
   });
 
-  registerAnalyticsRoutes({
-    use(nextMiddleware) {
-      middleware = nextMiddleware as never;
-    },
-    get(path, nextHandler) {
-      assert.equal(path, "/api/test/analytics/events");
-      getHandler = nextHandler as never;
-    },
-    post(path, nextHandler) {
-      if (path === "/api/test/analytics/events") {
-        testCaptureHandler = nextHandler as never;
-        return;
+  const getPaths: string[] = [];
+  const postPaths: string[] = [];
+
+  registerAnalyticsRoutes(
+    {
+      use(nextMiddleware) {
+        middleware = nextMiddleware as never;
+      },
+      get(path, nextHandler) {
+        getPaths.push(path);
+        getHandler = nextHandler as never;
+      },
+      post(path, nextHandler) {
+        postPaths.push(path);
+        if (path === "/api/test/analytics/events") {
+          testCaptureHandler = nextHandler as never;
+          return;
+        }
+        handler = nextHandler as never;
       }
-      assert.equal(path, "/api/analytics/events");
-      handler = nextHandler as never;
-    }
-  });
+    },
+    { enableTestRoutes: true }
+  );
 
   assert(middleware);
   assert(getHandler);
   assert(testCaptureHandler);
   assert(handler);
+  assert.deepEqual(getPaths, ["/api/test/analytics/events"]);
+  assert.deepEqual(postPaths, ["/api/test/analytics/events", "/api/analytics/events"]);
 
   const requestBody = JSON.stringify({
     schemaVersion: 1,
