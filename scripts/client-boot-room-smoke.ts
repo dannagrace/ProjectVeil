@@ -1,17 +1,35 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { Client, type Room } from "@colyseus/sdk";
 import type { ClientMessage, ServerMessage, SessionStatePayload } from "../packages/shared/src/index.ts";
 import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
 const FIXTURE_COMMAND = ["run", "validate", "--", "e2e:fixtures"] as const;
-const SERVER_URL = "http://127.0.0.1:2567";
-const CLIENT_URL = "http://127.0.0.1:4173";
-const SERVER_WS_URL = "ws://127.0.0.1:2567";
+const DEFAULT_SERVER_URL = "http://127.0.0.1:2567";
+const DEFAULT_CLIENT_URL = "http://127.0.0.1:4173";
+const DEFAULT_SERVER_WS_URL = "ws://127.0.0.1:2567";
 const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LIMIT = 80;
+
+interface SmokeRuntimeTargets {
+  serverUrl: string;
+  clientUrl: string;
+  serverWsUrl: string;
+}
+
+export function resolveSmokeRuntimeTargets(env: NodeJS.ProcessEnv): SmokeRuntimeTargets {
+  return {
+    serverUrl: env.VEIL_PLAYWRIGHT_SERVER_ORIGIN?.trim() || DEFAULT_SERVER_URL,
+    clientUrl: env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN?.trim() || DEFAULT_CLIENT_URL,
+    serverWsUrl: env.VEIL_PLAYWRIGHT_SERVER_WS_URL?.trim() || DEFAULT_SERVER_WS_URL
+  };
+}
+
+const SMOKE_RUNTIME_TARGETS = resolveSmokeRuntimeTargets(process.env);
+const { serverUrl: SERVER_URL, clientUrl: CLIENT_URL, serverWsUrl: SERVER_WS_URL } = SMOKE_RUNTIME_TARGETS;
 
 interface HttpJsonResponse<T> {
   status: number;
@@ -297,8 +315,10 @@ async function main(): Promise<void> {
   logStep(`passed in ${durationSeconds}s`);
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`[smoke:client:boot-room] failed: ${message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[smoke:client:boot-room] failed: ${message}\n`);
+    process.exitCode = 1;
+  });
+}
