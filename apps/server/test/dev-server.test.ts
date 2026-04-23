@@ -625,7 +625,7 @@ test("dev server falls back to in-memory persistence and warns when schema migra
       connectionLimit: 4,
       maxIdle: 4,
       idleTimeoutMs: 60_000,
-      queueLimit: 0,
+      queueLimit: 128,
       waitForConnections: true
     },
     retention: {
@@ -732,7 +732,7 @@ test("dev server exits non-zero in production when schema migrations are pending
       connectionLimit: 4,
       maxIdle: 4,
       idleTimeoutMs: 60_000,
-      queueLimit: 0,
+      queueLimit: 128,
       waitForConnections: true
     },
     retention: {
@@ -838,7 +838,7 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
       connectionLimit: 4,
       maxIdle: 4,
       idleTimeoutMs: 60_000,
-      queueLimit: 0,
+      queueLimit: 128,
       waitForConnections: true
     },
     retention: {
@@ -942,7 +942,7 @@ test("dev server logs and exports filesystem config center fallback when MySQL c
       connectionLimit: 4,
       maxIdle: 4,
       idleTimeoutMs: 60_000,
-      queueLimit: 0,
+      queueLimit: 128,
       waitForConnections: true
     },
     retention: {
@@ -1154,7 +1154,7 @@ test("dev server starts MySQL persistence, runs retention cleanup, schedules pru
       connectionLimit: 4,
       maxIdle: 4,
       idleTimeoutMs: 60_000,
-      queueLimit: 0,
+      queueLimit: 128,
       waitForConnections: true
     },
     retention,

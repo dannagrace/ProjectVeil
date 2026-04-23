@@ -3,7 +3,7 @@ import { createPool, type Pool, type PoolOptions } from "mysql2/promise";
 export const DEFAULT_MYSQL_POOL_CONNECTION_LIMIT = 4;
 export const DEFAULT_MYSQL_POOL_MAX_IDLE = 4;
 export const DEFAULT_MYSQL_POOL_IDLE_TIMEOUT_MS = 60_000;
-export const DEFAULT_MYSQL_POOL_QUEUE_LIMIT = 0;
+export const DEFAULT_MYSQL_POOL_QUEUE_LIMIT = 128;
 export const DEFAULT_MYSQL_POOL_WAIT_FOR_CONNECTIONS = true;
 
 export interface MySqlPoolConfig {
