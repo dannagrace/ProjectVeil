@@ -35,6 +35,7 @@ import {
 } from "@server/domain/ops/launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "@server/domain/ops/observability";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 class InvalidAdminJsonError extends Error {
   constructor() {
@@ -98,8 +99,7 @@ function readHeaderSecret(request: IncomingMessage): string | null {
 }
 
 function isAuthorized(request: IncomingMessage): boolean {
-  const adminSecret = readAdminSecret();
-  return adminSecret !== null && readHeaderSecret(request) === adminSecret;
+  return timingSafeCompareAdminToken(readHeaderSecret(request), readAdminSecret());
 }
 
 function readAdminRole(request: IncomingMessage): AdminRole | null {
@@ -108,13 +108,13 @@ function readAdminRole(request: IncomingMessage): AdminRole | null {
     return null;
   }
 
-  if (requestSecret === readAdminSecret()) {
+  if (timingSafeCompareAdminToken(requestSecret, readAdminSecret())) {
     return "admin";
   }
-  if (requestSecret === readSupportSupervisorSecret()) {
+  if (timingSafeCompareAdminToken(requestSecret, readSupportSupervisorSecret())) {
     return "support-supervisor";
   }
-  if (requestSecret === readSupportModeratorSecret()) {
+  if (timingSafeCompareAdminToken(requestSecret, readSupportModeratorSecret())) {
     return "support-moderator";
   }
   return null;
@@ -127,7 +127,6 @@ function hasRequiredRole(role: AdminRole | null, allowedRoles: AdminRole[]): boo
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, x-veil-admin-secret");
   response.end(JSON.stringify(payload));
@@ -1151,7 +1150,6 @@ export function registerAdminRoutes(
   const guildService = new GuildService(store);
   app.use((request, response, next) => {
     if (request.method === "OPTIONS") {
-      response.setHeader("Access-Control-Allow-Origin", "*");
       response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Content-Type, x-veil-admin-secret");
       response.statusCode = 204;

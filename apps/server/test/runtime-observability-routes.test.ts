@@ -312,6 +312,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   };
 
   assert.equal(healthResponse.status, 200);
+  assert.equal(healthResponse.headers.get("access-control-allow-origin"), "*");
   assert.equal(healthPayload.status, "ok");
   assert.equal(healthPayload.runtime.activeRoomCount, 1);
   assert.equal(healthPayload.runtime.connectionCount, 1);
@@ -334,6 +335,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   };
 
   assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessResponse.headers.get("access-control-allow-origin"), "*");
   assert.equal(readinessPayload.status, "ok");
   assert.match(readinessPayload.headline, /guest=0 account=0 lockouts=0/);
 
@@ -424,6 +426,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   };
 
   assert.equal(diagnosticResponse.status, 200);
+  assert.equal(diagnosticResponse.headers.get("access-control-allow-origin"), null);
   assert.equal(diagnosticPayload.source.surface, "server-observability");
   assert.equal(diagnosticPayload.source.mode, "server");
   assert.equal(diagnosticPayload.room, null);
@@ -442,6 +445,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   const diagnosticText = await diagnosticTextResponse.text();
 
   assert.equal(diagnosticTextResponse.status, 200);
+  assert.equal(diagnosticTextResponse.headers.get("access-control-allow-origin"), null);
   assert.match(diagnosticTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(diagnosticText, /Mode server \(server-observability\)/);
   assert.match(diagnosticText, /Runtime rooms 1 \/ connections 1 \/ battles 0/);
@@ -452,6 +456,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   const metricsText = await metricsResponse.text();
 
   assert.equal(metricsResponse.status, 200);
+  assert.equal(metricsResponse.headers.get("access-control-allow-origin"), null);
   assert.match(metricsResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(metricsText, /^veil_up 1$/m);
   assert.match(metricsText, /^veil_active_rooms_total 1$/m);
@@ -500,6 +505,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   };
 
   assert.equal(roomLifecycleResponse.status, 200);
+  assert.equal(roomLifecycleResponse.headers.get("access-control-allow-origin"), null);
   assert.equal(roomLifecyclePayload.status, "ok");
   assert.match(roomLifecyclePayload.headline, /created=1/);
   assert.equal(roomLifecyclePayload.summary.activeRoomCount, 1);
@@ -517,6 +523,7 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   const roomLifecycleText = await roomLifecycleTextResponse.text();
 
   assert.equal(roomLifecycleTextResponse.status, 200);
+  assert.equal(roomLifecycleTextResponse.headers.get("access-control-allow-origin"), null);
   assert.match(roomLifecycleTextResponse.headers.get("content-type") ?? "", /^text\/plain/);
   assert.match(roomLifecycleText, /^room_lifecycle status=ok/m);
   assert.match(roomLifecycleText, /room_creates=1/);
@@ -563,6 +570,13 @@ test("runtime observability routes expose live room counts and gameplay traffic"
   assert.match(analyticsPipelineText, /^analytics_pipeline status=ok/m);
   assert.match(analyticsPipelineText, /dataset=analytics_prod\.veil_analytics_events/);
   assert.match(analyticsPipelineText, /deletion_workflow=dsr-player-delete/);
+
+  const healthPreflightResponse = await fetch(`http://127.0.0.1:${port}/api/runtime/health`, {
+    method: "OPTIONS"
+  });
+
+  assert.equal(healthPreflightResponse.status, 204);
+  assert.equal(healthPreflightResponse.headers.get("access-control-allow-origin"), "*");
 
   const prometheusResponse = await fetch(`http://127.0.0.1:${port}/metrics`);
   const prometheusText = await prometheusResponse.text();

@@ -2170,6 +2170,16 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.paymentGrant.counters.deadLetterTotal = 0;
 }
 
+const PUBLIC_RUNTIME_CORS_PATHS = new Set(["/api/runtime/health", "/api/runtime/auth-readiness"]);
+
+function readRequestPathname(request: IncomingMessage): string {
+  try {
+    return new URL(request.url ?? "/", "http://runtime.local").pathname;
+  } catch {
+    return "/";
+  }
+}
+
 export function registerRuntimeObservabilityRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -2187,9 +2197,15 @@ export function registerRuntimeObservabilityRoutes(
   const persistence = options?.persistence;
 
   app.use((request, response, next) => {
-    response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (PUBLIC_RUNTIME_CORS_PATHS.has(readRequestPathname(request))) {
+      response.setHeader("Access-Control-Allow-Origin", "*");
+      response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    } else {
+      response.removeHeader("Access-Control-Allow-Origin");
+      response.removeHeader("Access-Control-Allow-Methods");
+      response.removeHeader("Access-Control-Allow-Headers");
+    }
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
