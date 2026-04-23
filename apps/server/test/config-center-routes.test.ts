@@ -97,6 +97,18 @@ function withAdminToken(t: TestContext, token = "config-center-admin-token"): st
   return token;
 }
 
+function withMissingAdminToken(t: TestContext): void {
+  const original = process.env.VEIL_ADMIN_TOKEN;
+  delete process.env.VEIL_ADMIN_TOKEN;
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+      return;
+    }
+    process.env.VEIL_ADMIN_TOKEN = original;
+  });
+}
+
 function createStore() {
   const savedDocuments: Array<{ id: string; content: string }> = [];
   const documents = new Map<string, string>([
@@ -187,33 +199,110 @@ function registerRoutes(store: ConfigCenterStore) {
   return { gets, posts, puts, uses };
 }
 
-test("config-center keeps read-only routes public and does not emit wildcard CORS headers", async () => {
+test("config-center read routes require the admin token", async (t) => {
+  withMissingAdminToken(t);
   const { store } = createStore();
   const { gets, posts, uses } = registerRoutes(store);
-  const listHandler = gets.get("/api/config-center/configs");
-  const validateHandler = posts.get("/api/config-center/configs/:id/validate");
-  const listResponse = createResponse();
-  const validateResponse = createResponse();
+  const routes: Array<{
+    method: "get" | "post";
+    path: string;
+    params?: Record<string, string>;
+    body?: string;
+    url: string;
+  }> = [
+    {
+      method: "get",
+      path: "/api/config-center/configs",
+      url: "/api/config-center/configs"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/configs/:id",
+      params: { id: "world" },
+      url: "/api/config-center/configs/world"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/configs/:id/diff-preview",
+      params: { id: "world" },
+      url: "/api/config-center/configs/world/diff-preview"
+    },
+    {
+      method: "post",
+      path: "/api/config-center/configs/:id/preview",
+      params: { id: "world" },
+      body: JSON.stringify({ content: "{\"width\":8}" }),
+      url: "/api/config-center/configs/world/preview"
+    },
+    {
+      method: "post",
+      path: "/api/config-center/configs/:id/validate",
+      params: { id: "world" },
+      body: JSON.stringify({ content: "{\"width\":8}" }),
+      url: "/api/config-center/configs/world/validate"
+    },
+    {
+      method: "post",
+      path: "/api/config-center/configs/:id/diff",
+      params: { id: "world" },
+      body: JSON.stringify({ snapshotId: "snapshot-1" }),
+      url: "/api/config-center/configs/world/diff"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/configs/:id/snapshots",
+      params: { id: "world" },
+      url: "/api/config-center/configs/world/snapshots"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/publish-stage",
+      url: "/api/config-center/publish-stage"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/publish-history",
+      url: "/api/config-center/publish-history"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/configs/:id/presets",
+      params: { id: "world" },
+      url: "/api/config-center/configs/world/presets"
+    },
+    {
+      method: "get",
+      path: "/api/config-center/configs/:id/export",
+      params: { id: "world" },
+      url: "/api/config-center/configs/world/export"
+    }
+  ];
 
   assert.equal(uses.length, 0);
-  assert.ok(listHandler);
-  assert.ok(validateHandler);
+  for (const route of routes) {
+    const handler = route.method === "get" ? gets.get(route.path) : posts.get(route.path);
+    const response = createResponse();
+    assert.ok(handler, `expected handler for ${route.method.toUpperCase()} ${route.path}`);
+    await handler(
+      createRequest({
+        method: route.method.toUpperCase(),
+        headers: {},
+        params: route.params,
+        body: route.body,
+        url: route.url
+      }),
+      response
+    );
 
-  await listHandler(createRequest({ url: "/api/config-center/configs" }), listResponse);
-  await validateHandler(
-    createRequest({
-      method: "POST",
-      url: "/api/config-center/configs/world/validate",
-      params: { id: "world" },
-      body: JSON.stringify({ content: "{\"width\":8}" })
-    }),
-    validateResponse
-  );
-
-  assert.equal(listResponse.statusCode, 200);
-  assert.equal(listResponse.headers["Access-Control-Allow-Origin"], undefined);
-  assert.equal(validateResponse.statusCode, 200);
-  assert.equal(validateResponse.headers["Access-Control-Allow-Origin"], undefined);
+    assert.equal(response.statusCode, 503, `${route.method.toUpperCase()} ${route.path}`);
+    assert.deepEqual(JSON.parse(response.body), {
+      error: {
+        code: "not_configured",
+        message: "Admin token not configured"
+      }
+    });
+    assert.equal(response.headers["Access-Control-Allow-Origin"], undefined);
+  }
 });
 
 test("config-center mutating routes return 503 when VEIL_ADMIN_TOKEN is not configured", async () => {
@@ -260,6 +349,43 @@ test("config-center mutating routes return 503 when VEIL_ADMIN_TOKEN is not conf
   }
 
   assert.deepEqual(savedDocuments, []);
+});
+
+test("config-center read routes accept a valid admin token", async (t) => {
+  const token = withAdminToken(t);
+  const { store } = createStore();
+  const { gets, posts } = registerRoutes(store);
+
+  const listHandler = gets.get("/api/config-center/configs");
+  const validateHandler = posts.get("/api/config-center/configs/:id/validate");
+  const listResponse = createResponse();
+  const validateResponse = createResponse();
+
+  assert.ok(listHandler);
+  assert.ok(validateHandler);
+
+  await listHandler(
+    createRequest({
+      url: "/api/config-center/configs",
+      headers: { "x-veil-admin-token": token }
+    }),
+    listResponse
+  );
+  await validateHandler(
+    createRequest({
+      method: "POST",
+      url: "/api/config-center/configs/world/validate",
+      params: { id: "world" },
+      headers: { "x-veil-admin-token": token },
+      body: JSON.stringify({ content: "{\"width\":8}" })
+    }),
+    validateResponse
+  );
+
+  assert.equal(listResponse.statusCode, 200);
+  assert.equal(listResponse.headers["Access-Control-Allow-Origin"], undefined);
+  assert.equal(validateResponse.statusCode, 200);
+  assert.equal(validateResponse.headers["Access-Control-Allow-Origin"], undefined);
 });
 
 test("config-center mutating routes reject invalid admin tokens and accept valid ones", async (t) => {

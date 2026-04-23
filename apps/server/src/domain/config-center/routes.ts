@@ -53,6 +53,16 @@ function protectMutatingRoute(handler: ConfigCenterRouteHandler): ConfigCenterRo
   };
 }
 
+function protectAdminRoute(handler: ConfigCenterRouteHandler): ConfigCenterRouteHandler {
+  return async (request, response) => {
+    if (!requireConfigCenterAdminToken(request, response)) {
+      return;
+    }
+
+    await handler(request, response);
+  };
+}
+
 export function registerConfigCenterRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -62,7 +72,7 @@ export function registerConfigCenterRoutes(
   },
   store: ConfigCenterStore
 ): void {
-  app.get("/api/config-center/configs", async (_request, response) => {
+  app.get("/api/config-center/configs", protectAdminRoute(async (_request, response) => {
     try {
       sendJson(response, 200, {
         storage: store.mode,
@@ -71,9 +81,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/configs/:id", async (request, response) => {
+  app.get("/api/config-center/configs/:id", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     if (!configId) {
       sendNotFound(response);
@@ -94,9 +104,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/configs/:id/diff-preview", async (request, response) => {
+  app.get("/api/config-center/configs/:id/diff-preview", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -112,9 +122,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/configs/:id/preview", async (request, response) => {
+  app.post("/api/config-center/configs/:id/preview", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     if (configId !== "world") {
       sendJson(response, 404, {
@@ -150,9 +160,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/configs/:id/validate", async (request, response) => {
+  app.post("/api/config-center/configs/:id/validate", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -179,9 +189,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/configs/:id/snapshots", async (request, response) => {
+  app.get("/api/config-center/configs/:id/snapshots", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -202,9 +212,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/publish-stage", async (_request, response) => {
+  app.get("/api/config-center/publish-stage", protectAdminRoute(async (_request, response) => {
     try {
       sendJson(response, 200, {
         storage: store.mode,
@@ -213,9 +223,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/publish-history", async (_request, response) => {
+  app.get("/api/config-center/publish-history", protectAdminRoute(async (_request, response) => {
     try {
       sendJson(response, 200, {
         storage: store.mode,
@@ -224,7 +234,7 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
   app.put("/api/config-center/publish-stage", protectMutatingRoute(async (request, response) => {
     try {
@@ -358,7 +368,7 @@ export function registerConfigCenterRoutes(
     }
   }));
 
-  app.post("/api/config-center/configs/:id/diff", async (request, response) => {
+  app.post("/api/config-center/configs/:id/diff", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -385,9 +395,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.get("/api/config-center/configs/:id/presets", async (request, response) => {
+  app.get("/api/config-center/configs/:id/presets", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -403,7 +413,7 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
   app.post("/api/config-center/configs/:id/presets", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
@@ -453,7 +463,7 @@ export function registerConfigCenterRoutes(
     }
   }));
 
-  app.get("/api/config-center/configs/:id/export", async (request, response) => {
+  app.get("/api/config-center/configs/:id/export", protectAdminRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -474,7 +484,7 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
   app.post("/api/config-center/configs/:id/import", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;

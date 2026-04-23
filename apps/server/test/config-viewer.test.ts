@@ -141,12 +141,26 @@ async function startConfigViewerServer(port: number, rootDir: string): Promise<{
   return { server, store };
 }
 
+function withAdminToken(t: import("node:test").TestContext, token = "config-viewer-admin-token"): string {
+  const original = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = token;
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = original;
+    }
+  });
+  return token;
+}
+
 test("config viewer page includes plain fetch-driven shell", () => {
   const html = buildConfigViewerPageForTest();
 
   assert.match(html, /Config Viewer/);
-  assert.match(html, /fetch\("\/api\/config"\)/);
-  assert.match(html, /fetch\("\/api\/config\/" \+ encodeURIComponent\(item.id\)\)/);
+  assert.match(html, /const adminToken = "";/);
+  assert.match(html, /fetch\("\/api\/config", \{\s*headers: adminToken \? \{ "x-veil-admin-token": adminToken \} : \{\}\s*\}\)/s);
+  assert.match(html, /fetch\("\/api\/config\/" \+ encodeURIComponent\(item.id\), \{\s*headers: adminToken \? \{ "x-veil-admin-token": adminToken \} : \{\}\s*\}\)/s);
 });
 
 test("config viewer exposes list and detail aliases plus html page", async (t) => {
@@ -160,13 +174,19 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
     await store.close();
   });
 
-  const pageResponse = await fetch(`http://127.0.0.1:${port}/config-viewer`);
+  const token = withAdminToken(t);
+
+  const pageResponse = await fetch(`http://127.0.0.1:${port}/config-viewer`, {
+    headers: { "x-veil-admin-token": token }
+  });
   const pageHtml = await pageResponse.text();
   assert.equal(pageResponse.status, 200);
   assert.match(pageResponse.headers.get("content-type") ?? "", /text\/html/);
   assert.match(pageHtml, /Loading config documents/);
 
-  const listResponse = await fetch(`http://127.0.0.1:${port}/api/config`);
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/config`, {
+    headers: { "x-veil-admin-token": token }
+  });
   const listPayload = (await listResponse.json()) as {
     items: Array<{
       id: string;
@@ -185,7 +205,9 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   );
   assert.ok(listPayload.items.every((item) => item.updatedAt && item.summary && item.storage && item.version >= 1));
 
-  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/config/world`);
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/config/world`, {
+    headers: { "x-veil-admin-token": token }
+  });
   const detailPayload = (await detailResponse.json()) as {
     document: {
       id: string;
@@ -205,6 +227,28 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   assert.equal(detailPayload.document.content.width, 8);
   assert.equal(detailPayload.document.content.height, 8);
 
-  const missingResponse = await fetch(`http://127.0.0.1:${port}/api/config/missing`);
+  const missingResponse = await fetch(`http://127.0.0.1:${port}/api/config/missing`, {
+    headers: { "x-veil-admin-token": token }
+  });
   assert.equal(missingResponse.status, 404);
+});
+
+test("config viewer routes reject missing admin tokens", async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-viewer-"));
+  await seedConfigRoot(rootDir);
+  const port = 43500 + Math.floor(Math.random() * 1000);
+  const { server, store } = await startConfigViewerServer(port, rootDir);
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+    await store.close();
+  });
+
+  const pageResponse = await fetch(`http://127.0.0.1:${port}/config-viewer`);
+  const listResponse = await fetch(`http://127.0.0.1:${port}/api/config`);
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/config/world`);
+
+  assert.equal(pageResponse.status, 503);
+  assert.equal(listResponse.status, 503);
+  assert.equal(detailResponse.status, 503);
 });

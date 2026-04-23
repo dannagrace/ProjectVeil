@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConfigCenterStore, ConfigDocumentId, ConfigDocumentSummary } from "@server/config-center";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -47,7 +49,34 @@ function normalizeSummaryItem(item: ConfigDocumentSummary) {
   };
 }
 
-function buildViewerHtml(): string {
+function requireConfigViewerAdminToken(request: IncomingMessage, response: ServerResponse): string | null {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  if (!adminToken) {
+    sendJson(response, 503, {
+      error: {
+        code: "not_configured",
+        message: "Admin token not configured"
+      }
+    });
+    return null;
+  }
+
+  const headerValue = request.headers["x-veil-admin-token"];
+  const requestToken = Array.isArray(headerValue) ? headerValue[0]?.trim() ?? null : headerValue?.trim() ?? null;
+  if (!timingSafeCompareAdminToken(requestToken, adminToken)) {
+    sendJson(response, 403, {
+      error: {
+        code: "forbidden",
+        message: "Invalid admin token"
+      }
+    });
+    return null;
+  }
+
+  return requestToken;
+}
+
+function buildViewerHtml(adminToken?: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -267,6 +296,7 @@ function buildViewerHtml(): string {
     <script>
       const statusNode = document.getElementById("status");
       const listNode = document.getElementById("list");
+      const adminToken = ${JSON.stringify(adminToken ?? "")};
 
       function setStatus(message, isError) {
         statusNode.textContent = message;
@@ -298,7 +328,9 @@ function buildViewerHtml(): string {
         button.textContent = "Loading...";
 
         try {
-          const response = await fetch("/api/config/" + encodeURIComponent(item.id));
+          const response = await fetch("/api/config/" + encodeURIComponent(item.id), {
+            headers: adminToken ? { "x-veil-admin-token": adminToken } : {}
+          });
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload && payload.error && payload.error.message ? payload.error.message : "Request failed");
@@ -384,7 +416,9 @@ function buildViewerHtml(): string {
 
       async function load() {
         try {
-          const response = await fetch("/api/config");
+          const response = await fetch("/api/config", {
+            headers: adminToken ? { "x-veil-admin-token": adminToken } : {}
+          });
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload && payload.error && payload.error.message ? payload.error.message : "Failed to load config list");
@@ -412,11 +446,21 @@ export function registerConfigViewerRoutes(
   },
   store: ConfigCenterStore
 ): void {
-  app.get("/config-viewer", (_request, response) => {
-    sendHtml(response, buildViewerHtml());
+  app.get("/config-viewer", (request, response) => {
+    const adminToken = requireConfigViewerAdminToken(request, response);
+    if (!adminToken) {
+      return;
+    }
+
+    sendHtml(response, buildViewerHtml(adminToken));
   });
 
-  app.get("/api/config", async (_request, response) => {
+  app.get("/api/config", async (request, response) => {
+    const adminToken = requireConfigViewerAdminToken(request, response);
+    if (!adminToken) {
+      return;
+    }
+
     try {
       const items = await store.listDocuments();
       sendJson(response, 200, {
@@ -428,6 +472,11 @@ export function registerConfigViewerRoutes(
   });
 
   app.get("/api/config/:id", async (request, response) => {
+    const adminToken = requireConfigViewerAdminToken(request, response);
+    if (!adminToken) {
+      return;
+    }
+
     const configId = request.params.id as ConfigDocumentId | undefined;
     if (!configId) {
       sendNotFound(response);
