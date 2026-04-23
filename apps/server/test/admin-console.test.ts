@@ -18,10 +18,13 @@ function createTestApp() {
   const gets = new Map<string, RouteHandler>();
   const posts = new Map<string, RouteHandler>();
   const deletes = new Map<string, RouteHandler>();
+  const uses: Array<(request: IncomingMessage, response: ServerResponse, next: () => void) => void> = [];
 
   return {
     app: {
-      use(_handler: any) {},
+      use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) {
+        uses.push(handler);
+      },
       get(path: string, handler: RouteHandler) {
         gets.set(path, handler);
       },
@@ -32,6 +35,7 @@ function createTestApp() {
         deletes.set(path, handler);
       }
     },
+    uses,
     gets,
     posts,
     deletes
@@ -149,9 +153,9 @@ async function withAnnouncementConfig(t: TestContext, payload: unknown): Promise
 }
 
 function registerRoutes(store: RoomSnapshotStore | null = null) {
-  const { app, gets, posts, deletes } = createTestApp();
+  const { app, uses, gets, posts, deletes } = createTestApp();
   registerAdminRoutes(app, store);
-  return { gets, posts, deletes };
+  return { uses, gets, posts, deletes };
 }
 
 function createStore(initialResourcesByPlayer: Record<string, { gold: number; wood: number; ore: number }> = {}) {
@@ -730,7 +734,41 @@ test("GET /api/admin/overview returns 401 without a valid admin secret", async (
   );
 
   assert.equal(response.statusCode, 401);
+  assert.equal(response.headers["Access-Control-Allow-Origin"], undefined);
   assert.deepEqual(JSON.parse(response.body), { error: "Unauthorized: Invalid Admin Secret" });
+});
+
+test("admin console auth uses timing-safe secret comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/ops/admin-console.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
+  assert.doesNotMatch(source, /requestSecret\s*===\s*read(?:Admin|SupportSupervisor|SupportModerator)Secret\(\)/);
+});
+
+test("OPTIONS /api/admin preflight omits wildcard CORS exposure", async (t) => {
+  withAdminSecret(t);
+  const { uses } = registerRoutes();
+  const middleware = uses[0];
+  assert.ok(middleware);
+
+  const response = createResponse();
+  let nextCalled = false;
+  await middleware(
+    createRequest({
+      method: "OPTIONS",
+      url: "/api/admin/overview"
+    }),
+    response,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(response.statusCode, 204);
+  assert.equal(response.headers["Access-Control-Allow-Origin"], undefined);
 });
 
 test("GET /api/admin/overview returns server overview payload with a valid admin secret", async (t) => {
@@ -758,6 +796,7 @@ test("GET /api/admin/overview returns server overview payload with a valid admin
   };
 
   assert.equal(response.statusCode, 200);
+  assert.equal(response.headers["Access-Control-Allow-Origin"], undefined);
   assert.equal(payload.activeRooms, 0);
   assert.equal(payload.activePlayers, 0);
   assert.equal(payload.nodeVersion, process.version);
