@@ -79,7 +79,7 @@ test("registerAnalyticsRoutes keeps test capture routes disabled by default", ()
   assert.deepEqual(postPaths, ["/api/analytics/events"]);
 });
 
-test("registerAnalyticsRoutes accepts analytics batches and logs the payload when test capture routes are enabled", async () => {
+test("registerAnalyticsRoutes accepts analytics batches and logs the payload when test capture routes are enabled", async (t) => {
   let middleware:
     | ((request: never, response: TestResponse, next: () => void) => void)
     | undefined;
@@ -93,6 +93,15 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload whe
     | ((request: never, response: TestResponse) => void | Promise<void>)
     | undefined;
   const logs: string[] = [];
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "analytics-test-admin";
+  t.after(() => {
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+    }
+  });
 
   configureAnalyticsRuntimeDependencies({
     log: (message) => {
@@ -158,12 +167,63 @@ test("registerAnalyticsRoutes accepts analytics batches and logs the payload whe
   assert.match(logs[0] ?? "", /^\[Analytics\] accepted 2 event\(s\) into stdout sink$/);
 
   const getResponse = createResponse();
-  await getHandler(createRequest("GET") as never, getResponse);
+  await getHandler(
+    createRequest("GET", undefined, {
+      "x-veil-admin-token": "analytics-test-admin"
+    }) as never,
+    getResponse
+  );
 
   assert.equal(getResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(getResponse.body), {
     events: [{ name: "shop_open", playerId: "player-1" }, { name: "battle_start", playerId: "player-1" }]
   });
+});
+
+test("registerAnalyticsRoutes protects test analytics capture routes with the admin token", async (t) => {
+  let getHandler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+  let testCaptureHandler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "analytics-test-admin";
+  t.after(() => {
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+    }
+  });
+
+  registerAnalyticsRoutes(
+    {
+      use() {},
+      get(_path, nextHandler) {
+        getHandler = nextHandler as never;
+      },
+      post(path, nextHandler) {
+        if (path === "/api/test/analytics/events") {
+          testCaptureHandler = nextHandler as never;
+        }
+      }
+    },
+    { enableTestRoutes: true }
+  );
+
+  assert(getHandler);
+  assert(testCaptureHandler);
+
+  const getResponse = createResponse();
+  await getHandler(createRequest("GET") as never, getResponse);
+  assert.equal(getResponse.statusCode, 403);
+  assert.equal(JSON.parse(getResponse.body).error.code, "forbidden");
+
+  const postResponse = createResponse();
+  await testCaptureHandler(createRequest("POST", JSON.stringify({ events: [] })) as never, postResponse);
+  assert.equal(postResponse.statusCode, 403);
+  assert.equal(JSON.parse(postResponse.body).error.code, "forbidden");
 });
 
 test("registerAnalyticsRoutes rejects public analytics ingest without an auth session", async () => {

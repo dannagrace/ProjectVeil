@@ -20,6 +20,8 @@ import {
 } from "@server/adapters/wechat-pay";
 import type { ShopProduct } from "@server/domain/economy/shop";
 
+const ANALYTICS_TEST_ADMIN_TOKEN = "analytics-test-admin";
+
 const TEST_PRODUCTS: Partial<ShopProduct>[] = [
   {
     productId: "gem-pack-premium",
@@ -234,7 +236,11 @@ function createSignedCallbackRequest(
 }
 
 async function fetchCapturedAnalytics(baseUrl: string): Promise<AnalyticsEvent[]> {
-  const response = await fetch(`${baseUrl}/api/test/analytics/events`);
+  const response = await fetch(`${baseUrl}/api/test/analytics/events`, {
+    headers: {
+      "x-veil-admin-token": ANALYTICS_TEST_ADMIN_TOKEN
+    }
+  });
   assert.equal(response.status, 200);
   const payload = (await response.json()) as { events?: AnalyticsEvent[] };
   return payload.events ?? [];
@@ -246,7 +252,8 @@ test("wechat payment callback settles the order, emits purchase analytics, and d
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`,
+    VEIL_ADMIN_TOKEN: ANALYTICS_TEST_ADMIN_TOKEN
   });
   const server = await startWechatPaymentServer({
     port,
@@ -337,7 +344,8 @@ test("wechat payment verify settles a created order and emits purchase analytics
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`,
+    VEIL_ADMIN_TOKEN: ANALYTICS_TEST_ADMIN_TOKEN
   });
   const server = await startWechatPaymentServer({
     port,
@@ -399,7 +407,8 @@ test("wechat payment verify returns amount mismatch without granting rewards and
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`,
+    VEIL_ADMIN_TOKEN: ANALYTICS_TEST_ADMIN_TOKEN
   });
   const server = await startWechatPaymentServer({
     port,
@@ -468,7 +477,8 @@ test("wechat payment verify emits purchase_failed when settlement cannot grant r
   const runtimeConfig = createWechatPayConfig();
   const store = await createVerifiedTestStore();
   const restoreEnv = withEnvOverrides({
-    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`
+    ANALYTICS_ENDPOINT: `${baseUrl}/api/test/analytics/events`,
+    VEIL_ADMIN_TOKEN: ANALYTICS_TEST_ADMIN_TOKEN
   });
   const originalCompletePaymentOrder = store.completePaymentOrder.bind(store);
   store.completePaymentOrder = async (orderId, input) => {
