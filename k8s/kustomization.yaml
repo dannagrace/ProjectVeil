@@ -8,6 +8,8 @@ resources:
   - service.yaml
   - ingress.yaml
   - hpa.yaml
+  - pdb.yaml
+  - network-policy.yaml
 images:
   - name: ghcr.io/dannagrace/projectveil-server
     newTag: v0.0.0

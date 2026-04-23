@@ -16,6 +16,16 @@ spec:
         app.kubernetes.io/track: canary
     spec:
       terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: server
           image: ghcr.io/dannagrace/projectveil-server:v0.0.0
@@ -34,6 +44,25 @@ spec:
           ports:
             - name: http
               containerPort: 2567
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 20"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           readinessProbe:
             httpGet:
               path: /api/runtime/health
@@ -42,3 +71,11 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/runtime/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4

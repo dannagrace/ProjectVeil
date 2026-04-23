@@ -26,18 +26,19 @@ Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](
 
 1. Start from the release commit you plan to deploy and record its git SHA plus intended image tag.
 2. Copy `ops/env/production.env.example` to `ops/env/production.env` on the host and fill in the non-sensitive values plus the Secrets Manager bootstrap settings.
-3. Confirm the AWS IAM role or instance profile attached to the host can call `secretsmanager:GetSecretValue` on the configured secret.
-4. Confirm the AWS secret payload includes every key listed in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
-5. Confirm `SENTRY_DSN` is present in `ops/env/production.env`; production startup now warns loudly when external error delivery is disabled.
-6. If this deploy should emit analytics events externally, confirm `ANALYTICS_SINK=http` is set in the runtime secret bundle and `ANALYTICS_ENDPOINT` is present in `ops/env/production.env`.
-7. Run `npm run validate -- production-env -- --env-file ops/env/production.env`.
-8. Confirm MySQL resolves from the deploy host:
+3. For the Compose production path, export or write `MYSQL_ROOT_PASSWORD` before any `docker compose -f docker-compose.prod.yml` command. The production compose file now fails fast when that variable is missing.
+4. Confirm the AWS IAM role or instance profile attached to the host can call `secretsmanager:GetSecretValue` on the configured secret.
+5. Confirm the AWS secret payload includes every key listed in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
+6. Confirm `SENTRY_DSN` is present in `ops/env/production.env`; production startup now warns loudly when external error delivery is disabled.
+7. If this deploy should emit analytics events externally, confirm `ANALYTICS_SINK=http` is set in the runtime secret bundle and `ANALYTICS_ENDPOINT` is present in `ops/env/production.env`.
+8. Run `npm run validate -- production-env -- --env-file ops/env/production.env`.
+9. Confirm MySQL resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm migrate`
-9. Confirm Redis resolves from the deploy host:
+10. Confirm Redis resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm server node --input-type=module -e "const Redis=(await import('ioredis')).default; const url=process.env.REDIS_URL||'redis://redis:6379/0'; const client=new Redis(url); console.log(await client.ping(), url); await client.quit();"`
-10. Review disk headroom for the persistent volumes used by MySQL and Redis.
-11. Confirm you have the previous image tag and previous git SHA available for rollback.
-12. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
+11. Review disk headroom for the persistent volumes used by MySQL and Redis.
+12. Confirm you have the previous image tag and previous git SHA available for rollback.
+13. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
 
 ## 3. Production Env Contract
 
@@ -52,6 +53,7 @@ Notes:
 - `SENTRY_DSN` should always be set for production deploys. Startup does not hard-fail without it, but it now emits a prominent warning because runtime errors will stay local-only.
 - `ANALYTICS_ENDPOINT` is required by the validator even if the runtime secret currently leaves `ANALYTICS_SINK=stdout`; use the production ingest URL so switching delivery back on does not require an emergency env-file edit.
 - Keep credentials out of `ops/env/production.env`; place them in the AWS secret JSON documented in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
+- `MYSQL_ROOT_PASSWORD` is the one Compose-only exception: it is required for the local MySQL service in `docker-compose.prod.yml` and must be pre-supplied via the deploy host environment or env-file workflow before Compose starts.
 - If you use managed MySQL or Redis, point `VEIL_MYSQL_HOST` and `REDIS_URL` at those services and leave the local `mysql` / `redis` services disabled by policy or removed in an override file.
 
 ## 4. First-Time Host Bootstrap

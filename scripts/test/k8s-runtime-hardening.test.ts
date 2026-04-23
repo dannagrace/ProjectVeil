@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+async function readRepoFile(relativePath: string): Promise<string> {
+  return readFile(resolve(repoRoot, relativePath), "utf8");
+}
+
+function assertDeploymentHardening(manifest: string): void {
+  assert.match(manifest, /terminationGracePeriodSeconds:\s*60/);
+  assert.match(manifest, /runAsNonRoot:\s*true/);
+  assert.match(manifest, /runAsUser:\s*10001/);
+  assert.match(manifest, /fsGroup:\s*10001/);
+  assert.match(manifest, /seccompProfile:\s*\n\s*type:\s*RuntimeDefault/);
+  assert.match(manifest, /emptyDir:\s*\{\}/);
+  assert.match(manifest, /mountPath:\s*\/tmp/);
+  assert.match(manifest, /preStop:\s*\n\s*exec:\s*\n\s*command:\s*\["\/bin\/sh", "-c", "sleep 20"\]/);
+  assert.match(manifest, /allowPrivilegeEscalation:\s*false/);
+  assert.match(manifest, /readOnlyRootFilesystem:\s*true/);
+  assert.match(manifest, /drop:\s*\["ALL"\]/);
+}
+
+function assertProbeAndResources(manifest: string): void {
+  assert.match(manifest, /resources:\s*\n\s*requests:\s*\n\s*cpu:\s*500m\s*\n\s*memory:\s*512Mi/);
+  assert.match(manifest, /limits:\s*\n\s*cpu:\s*"1"\s*\n\s*memory:\s*1Gi/);
+  assert.match(manifest, /livenessProbe:\s*\n\s*httpGet:\s*\n\s*path:\s*\/api\/runtime\/health\s*\n\s*port:\s*http/);
+}
+
+test("runtime Dockerfile runs as a non-root veil user", async () => {
+  const dockerfile = await readRepoFile("Dockerfile.server");
+
+  assert.match(dockerfile, /groupadd -r --gid 10001 veil/);
+  assert.match(dockerfile, /useradd -r --uid 10001 --gid veil veil/);
+  assert.match(dockerfile, /ENV HOME=\/tmp/);
+  assert.match(dockerfile, /USER 10001:10001/);
+});
+
+test("deployments apply runtime hardening controls", async () => {
+  const [primary, canary, stable] = await Promise.all([
+    readRepoFile("k8s/deployment.yaml"),
+    readRepoFile("k8s/canary/deployment-canary.yaml"),
+    readRepoFile("k8s/canary/deployment-stable.yaml")
+  ]);
+
+  assertDeploymentHardening(primary);
+  assertDeploymentHardening(canary);
+  assertDeploymentHardening(stable);
+  assertProbeAndResources(primary);
+  assertProbeAndResources(canary);
+  assertProbeAndResources(stable);
+});
+
+test("namespace and kustomizations include restricted pod security, PDB, and NetworkPolicy", async () => {
+  const [namespaceYaml, rootKustomization, canaryKustomization] = await Promise.all([
+    readRepoFile("k8s/namespace.yaml"),
+    readRepoFile("k8s/kustomization.yaml"),
+    readRepoFile("k8s/canary/kustomization.yaml")
+  ]);
+
+  assert.match(namespaceYaml, /pod-security\.kubernetes\.io\/enforce:\s*restricted/);
+  assert.match(namespaceYaml, /pod-security\.kubernetes\.io\/audit:\s*restricted/);
+  assert.match(rootKustomization, /- pdb\.yaml/);
+  assert.match(rootKustomization, /- network-policy\.yaml/);
+  assert.match(canaryKustomization, /- pdb\.yaml/);
+  assert.match(canaryKustomization, /- network-policy\.yaml/);
+});
+
+test("network policy restricts ingress to ingress-nginx and narrows egress", async () => {
+  const [rootPolicy, canaryPolicy] = await Promise.all([
+    readRepoFile("k8s/network-policy.yaml"),
+    readRepoFile("k8s/canary/network-policy.yaml")
+  ]);
+
+  for (const policy of [rootPolicy, canaryPolicy]) {
+    assert.match(policy, /kind:\s*NetworkPolicy/);
+    assert.match(policy, /kubernetes\.io\/metadata\.name:\s*ingress-nginx/);
+    assert.match(policy, /port:\s*2567/);
+    assert.match(policy, /kubernetes\.io\/metadata\.name:\s*kube-system/);
+    assert.match(policy, /port:\s*6379/);
+    assert.match(policy, /port:\s*3306/);
+    assert.match(policy, /port:\s*443/);
+  }
+});
+
+test("production runbook and secrets inventory document compose MYSQL_ROOT_PASSWORD requirements", async () => {
+  const [runbook, secretsInventory] = await Promise.all([
+    readRepoFile("docs/ops/production-deploy-runbook.md"),
+    readRepoFile("docs/ops/secrets-inventory.md")
+  ]);
+
+  assert.match(runbook, /MYSQL_ROOT_PASSWORD/);
+  assert.match(runbook, /fails fast when that variable is missing/);
+  assert.match(secretsInventory, /Compose-only local secret:/);
+  assert.match(secretsInventory, /MYSQL_ROOT_PASSWORD/);
+});

@@ -7,6 +7,8 @@ resources:
   - service-stable.yaml
   - service-canary.yaml
   - ingress-canary.yaml
+  - pdb.yaml
+  - network-policy.yaml
 images:
   - name: ghcr.io/dannagrace/projectveil-server
     newTag: v0.0.0

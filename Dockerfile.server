@@ -22,6 +22,8 @@ ENV npm_config_update_notifier=false
 ENV HOST=0.0.0.0
 ENV PORT=2567
 ENV VEIL_MIGRATIONS_PATH=/app/dist/scripts/migrations
+ENV HOME=/tmp
+ENV TMPDIR=/tmp
 
 COPY package.json package-lock.json ./
 COPY apps/client/package.json ./apps/client/package.json
@@ -35,9 +37,16 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/configs ./configs
 COPY --from=build /app/apps/client/admin.html ./apps/client/admin.html
 
+RUN groupadd -r --gid 10001 veil \
+  && useradd -r --uid 10001 --gid veil veil \
+  && mkdir -p /tmp \
+  && chown -R veil:veil /app /tmp
+
 EXPOSE 2567
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:2567/api/runtime/health').then((res) => { if (!res.ok) process.exit(1); }).catch(() => process.exit(1));"
+
+USER 10001:10001
 
 CMD ["node", "./dist/server/server.mjs"]

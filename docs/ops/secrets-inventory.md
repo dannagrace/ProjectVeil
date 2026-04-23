@@ -32,6 +32,10 @@ Non-sensitive values stay in env vars:
 - Public identifiers such as `WECHAT_APP_ID`, `VEIL_WECHAT_PAY_APP_ID`, merchant ids, notify URLs, certificate serials, `VEIL_APNS_KEY_ID`, `VEIL_APNS_TEAM_ID`, `VEIL_APNS_TOPIC`, `VEIL_APNS_HOST`
 - Mobile push routing knobs such as `VEIL_APNS_USE_SANDBOX` and `VEIL_FCM_SEND_URL`
 
+Compose-only local secret:
+
+- `MYSQL_ROOT_PASSWORD` is required by `docker-compose.prod.yml` whenever the in-stack MySQL service is used. Do not commit it to the repo; provide it through the deploy host environment or a host-local env file before running the production Compose stack.
+
 Additional sensitive mobile-push secrets belong in the same secret bundle:
 
 | Key | Used by | Purpose | Rotation |
