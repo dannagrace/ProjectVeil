@@ -47,7 +47,8 @@ export function buildRoomId(prefix: string): string {
 
 export async function resetSmokeStore(): Promise<void> {
   const response = await fetch(RESET_ENDPOINT, {
-    method: "POST"
+    method: "POST",
+    headers: getAdminHeaders()
   });
   if (!response.ok) {
     throw new Error(`reset_store_failed:${response.status}`);
