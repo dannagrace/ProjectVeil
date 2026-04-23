@@ -162,7 +162,7 @@ async function startWechatPaymentServer(input: {
 
   const transport = new WebSocketTransport();
   const app = transport.getExpressApp() as never;
-  registerAnalyticsRoutes(app);
+  registerAnalyticsRoutes(app, { enableTestRoutes: true });
   registerPlayerAccountRoutes(app, input.store);
   registerRuntimeObservabilityRoutes(app, { store: input.store });
   registerWechatPayRoutes(app, input.store, {

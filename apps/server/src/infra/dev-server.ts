@@ -113,8 +113,7 @@ const DEV_DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
 });
 
 function applyDevServerSmokeDefaults(env: NodeJS.ProcessEnv = process.env): void {
-  env.ANALYTICS_SINK ??= "http";
-  env.ANALYTICS_ENDPOINT ??= "http://127.0.0.1:2567/api/test/analytics/events";
+  env.ANALYTICS_SINK ??= env.ANALYTICS_ENDPOINT?.trim() || env.ANALYTICS_HTTP_ENDPOINT?.trim() ? "http" : "stdout";
   env.VEIL_ADMIN_TOKEN ??= "dev-admin-token";
   env.VEIL_DAILY_QUESTS_ENABLED ??= "1";
   env.VEIL_DAILY_QUEST_ROTATIONS_JSON ??= DEV_DAILY_QUEST_SMOKE_ROTATIONS;

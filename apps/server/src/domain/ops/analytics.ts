@@ -72,6 +72,10 @@ interface AnalyticsRuntimeDependencies {
   clearTimeout(handle: NodeJS.Timeout): void;
 }
 
+interface AnalyticsRouteRegistrationOptions {
+  enableTestRoutes?: boolean;
+}
+
 const defaultAnalyticsRuntimeDependencies: AnalyticsRuntimeDependencies = {
   fetch: (input, init) => fetch(input, init),
   log: (message) => console.log(message),
@@ -449,7 +453,8 @@ export function registerAnalyticsRoutes(
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
     post: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
-  }
+  },
+  options: AnalyticsRouteRegistrationOptions = {}
 ): void {
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -465,36 +470,38 @@ export function registerAnalyticsRoutes(
     next();
   });
 
-  app.get("/api/test/analytics/events", async (_request, response) => {
-    sendJson(response, 200, {
-      events: getCapturedAnalyticsEventsForTest()
-    });
-  });
-
-  app.post("/api/test/analytics/events", async (request, response) => {
-    try {
-      const payload = await readJsonBody(request);
-      const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
-        ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
-        : [];
-      capturedAnalyticsEvents.push(...events);
-      analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into test capture`);
-      sendJson(response, 202, {
-        accepted: events.length
+  if (options.enableTestRoutes) {
+    app.get("/api/test/analytics/events", async (_request, response) => {
+      sendJson(response, 200, {
+        events: getCapturedAnalyticsEventsForTest()
       });
-    } catch (error) {
-      if (error instanceof PayloadTooLargeError) {
-        sendJson(response, 413, {
+    });
+
+    app.post("/api/test/analytics/events", async (request, response) => {
+      try {
+        const payload = await readJsonBody(request);
+        const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
+          ? ((payload as { events: AnalyticsEvent[] }).events ?? [])
+          : [];
+        capturedAnalyticsEvents.push(...events);
+        analyticsRuntimeDependencies.log(`[Analytics] accepted ${events.length} event(s) into test capture`);
+        sendJson(response, 202, {
+          accepted: events.length
+        });
+      } catch (error) {
+        if (error instanceof PayloadTooLargeError) {
+          sendJson(response, 413, {
+            error: toErrorPayload(error)
+          });
+          return;
+        }
+
+        sendJson(response, 400, {
           error: toErrorPayload(error)
         });
-        return;
       }
-
-      sendJson(response, 400, {
-        error: toErrorPayload(error)
-      });
-    }
-  });
+    });
+  }
 
   app.post("/api/analytics/events", async (request, response) => {
     try {

@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { MapObjectsConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { ConfigCenterStore, ConfigDocumentId, ConfigStageDocumentInput } from "@server/domain/config-center/types";
 import { CONFIG_DEFINITIONS } from "@server/domain/config-center/constants";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import {
   configDefinitionFor,
   normalizePreviewSeed,
@@ -13,29 +15,53 @@ import {
 import { buildConfigDiffEntries, buildConfigImpactSummary } from "@server/domain/config-center/diff";
 import { createWorldConfigPreview, parseConfigDocument } from "@server/domain/config-center/preview";
 
-export function registerConfigCenterRoutes(
-  app: {
-    use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
-    get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
-    post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
-    put: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
-  },
-  store: ConfigCenterStore
-): void {
-  app.use((request, response, next) => {
-    response.setHeader("Access-Control-Allow-Origin", "*");
-    response.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+type ConfigCenterRouteRequest = IncomingMessage & { params: Record<string, string> };
+type ConfigCenterRouteHandler = (request: ConfigCenterRouteRequest, response: ServerResponse) => void | Promise<void>;
 
-    if (request.method === "OPTIONS") {
-      response.statusCode = 204;
-      response.end();
+function requireConfigCenterAdminToken(request: IncomingMessage, response: ServerResponse): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  if (!adminToken) {
+    sendJson(response, 503, {
+      error: {
+        code: "not_configured",
+        message: "Admin token not configured"
+      }
+    });
+    return false;
+  }
+
+  if (!timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken)) {
+    sendJson(response, 403, {
+      error: {
+        code: "forbidden",
+        message: "Invalid admin token"
+      }
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function protectMutatingRoute(handler: ConfigCenterRouteHandler): ConfigCenterRouteHandler {
+  return async (request, response) => {
+    if (!requireConfigCenterAdminToken(request, response)) {
       return;
     }
 
-    next();
-  });
+    await handler(request, response);
+  };
+}
 
+export function registerConfigCenterRoutes(
+  app: {
+    use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
+    get: (path: string, handler: ConfigCenterRouteHandler) => void;
+    post: (path: string, handler: ConfigCenterRouteHandler) => void;
+    put: (path: string, handler: ConfigCenterRouteHandler) => void;
+  },
+  store: ConfigCenterStore
+): void {
   app.get("/api/config-center/configs", async (_request, response) => {
     try {
       sendJson(response, 200, {
@@ -200,7 +226,7 @@ export function registerConfigCenterRoutes(
     }
   });
 
-  app.put("/api/config-center/publish-stage", async (request, response) => {
+  app.put("/api/config-center/publish-stage", protectMutatingRoute(async (request, response) => {
     try {
       const body = (await readJsonBody(request)) as {
         documents?: Array<{ id?: string; content?: string }>;
@@ -236,9 +262,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/publish-stage/publish", async (request, response) => {
+  app.post("/api/config-center/publish-stage/publish", protectMutatingRoute(async (request, response) => {
     try {
       const body = (await readJsonBody(request)) as {
         author?: string;
@@ -272,9 +298,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/configs/:id/snapshots", async (request, response) => {
+  app.post("/api/config-center/configs/:id/snapshots", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -301,9 +327,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/configs/:id/rollback", async (request, response) => {
+  app.post("/api/config-center/configs/:id/rollback", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -330,7 +356,7 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
   app.post("/api/config-center/configs/:id/diff", async (request, response) => {
     const configId = request.params.id;
@@ -379,7 +405,7 @@ export function registerConfigCenterRoutes(
     }
   });
 
-  app.post("/api/config-center/configs/:id/presets", async (request, response) => {
+  app.post("/api/config-center/configs/:id/presets", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -406,9 +432,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.post("/api/config-center/configs/:id/presets/:presetId/apply", async (request, response) => {
+  app.post("/api/config-center/configs/:id/presets/:presetId/apply", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     const presetId = request.params.presetId;
     const definition = configId ? configDefinitionFor(configId) : undefined;
@@ -425,7 +451,7 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
   app.get("/api/config-center/configs/:id/export", async (request, response) => {
     const configId = request.params.id;
@@ -450,7 +476,7 @@ export function registerConfigCenterRoutes(
     }
   });
 
-  app.post("/api/config-center/configs/:id/import", async (request, response) => {
+  app.post("/api/config-center/configs/:id/import", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     const definition = configId ? configDefinitionFor(configId) : undefined;
     if (!definition) {
@@ -477,9 +503,9 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 
-  app.put("/api/config-center/configs/:id", async (request, response) => {
+  app.put("/api/config-center/configs/:id", protectMutatingRoute(async (request, response) => {
     const configId = request.params.id;
     if (!configId) {
       sendNotFound(response);
@@ -515,5 +541,5 @@ export function registerConfigCenterRoutes(
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
     }
-  });
+  }));
 }
