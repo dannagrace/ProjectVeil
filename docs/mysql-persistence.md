@@ -27,6 +27,8 @@ The server reads these variables on startup:
 | `VEIL_MYSQL_USER` | Yes | - | MySQL username |
 | `VEIL_MYSQL_PASSWORD` | Yes | - | MySQL password |
 | `VEIL_MYSQL_DATABASE` | No | `project_veil` | Database name |
+| `VEIL_MYSQL_SSL_MODE` | No | `disabled` | Transport mode for MySQL connections: `disabled`, `required`, or `verify-ca`. Production startup now rejects `disabled` so managed deployments must opt into TLS explicitly |
+| `VEIL_MYSQL_SSL_CA_PATH` | No | - | Optional PEM CA bundle path used when `VEIL_MYSQL_SSL_MODE=verify-ca`; omit it to use the runtime's default trust store |
 | `VEIL_MYSQL_POOL_CONNECTION_LIMIT` | No | `4` | Max concurrent connections opened by each Project Veil MySQL pool (`room_snapshot`, `config_center`, migration tooling) |
 | `VEIL_MYSQL_POOL_MAX_IDLE` | No | `4` | Max idle connections retained by each MySQL pool |
 | `VEIL_MYSQL_POOL_IDLE_TIMEOUT_MS` | No | `60000` | Idle-connection timeout for each MySQL pool |
@@ -40,6 +42,14 @@ The server reads these variables on startup:
 | `VEIL_DISPLAY_NAME_RULES_PATH` | No | `configs/display-name-rules.json` | Display-name moderation rules file path. The server hot-reloads this file without a redeploy |
 | `VEIL_DISPLAY_NAME_RULES_RELOAD_INTERVAL_MS` | No | `30000` | How often the server rechecks the display-name rules file for updates |
 | `VEIL_DISPLAY_NAME_RULES_JSON` | No | - | Optional JSON override for display-name moderation rules, useful for ops validation |
+
+### TLS modes
+
+- `disabled`: do not send an `ssl` option to mysql2. This remains acceptable for local development only.
+- `required`: encrypt transport, but do not verify the server certificate. Use this only as an intermediate step when the server presents a certificate chain the runtime does not trust yet.
+- `verify-ca`: encrypt transport and require certificate validation. If `VEIL_MYSQL_SSL_CA_PATH` is set, Project Veil reads that PEM bundle and passes it to mysql2; otherwise Node's default trust store is used.
+
+When `NODE_ENV=production`, Project Veil now rejects `VEIL_MYSQL_SSL_MODE=disabled` during MySQL config bootstrap so the server cannot silently fall back to plaintext database traffic.
 
 ## Database And Table
 

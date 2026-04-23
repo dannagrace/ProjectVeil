@@ -11,6 +11,8 @@ data:
   VEIL_MYSQL_PORT: "3306"
   VEIL_MYSQL_USER: project_veil
   VEIL_MYSQL_DATABASE: project_veil
+  VEIL_MYSQL_SSL_MODE: verify-ca
+  VEIL_MYSQL_SSL_CA_PATH: /var/run/project-veil/mysql/rds-ca.pem
   VEIL_MYSQL_POOL_QUEUE_LIMIT: "128"
   VEIL_MYSQL_POOL_WAIT_FOR_CONNECTIONS: "true"
   VEIL_MYSQL_SNAPSHOT_TTL_HOURS: "72"

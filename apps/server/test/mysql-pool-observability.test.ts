@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import type { Pool } from "mysql2/promise";
-import { createTrackedMySqlPool } from "@server/infra/mysql-pool";
+import { buildMySqlPoolOptions, createTrackedMySqlPool } from "@server/infra/mysql-pool";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 test("prometheus metrics expose mysql pool pressure gauges when mysql pools are configured", async (t) => {
@@ -92,4 +95,65 @@ test("prometheus db pool gauges track active and queued requests from pool callb
   metrics = buildPrometheusMetricsDocument();
   assert.match(metrics, /^veil_db_pool_queue_depth\{pool="config_center"\} 0$/m);
   assert.match(metrics, /^veil_mysql_pool_queue_depth\{pool="config_center"\} 0$/m);
+});
+
+test("buildMySqlPoolOptions enables encrypted MySQL transport in required mode", () => {
+  const options = buildMySqlPoolOptions({
+    host: "127.0.0.1",
+    port: 3306,
+    user: "veil",
+    password: "veil",
+    database: "project_veil",
+    ssl: {
+      mode: "required",
+      caPath: null
+    },
+    pool: {
+      connectionLimit: 4,
+      maxIdle: 4,
+      idleTimeoutMs: 60_000,
+      queueLimit: 0,
+      waitForConnections: true
+    }
+  });
+
+  assert.deepEqual(options.ssl, {
+    rejectUnauthorized: false
+  });
+});
+
+test("buildMySqlPoolOptions verifies the server certificate when verify-ca mode is configured", () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "project-veil-mysql-ca-"));
+  const caPath = join(tempDirectory, "rds-ca.pem");
+  const caBundle = "-----BEGIN CERTIFICATE-----\nmock-ca\n-----END CERTIFICATE-----\n";
+  writeFileSync(caPath, caBundle, "utf8");
+
+  try {
+    const options = buildMySqlPoolOptions({
+      host: "127.0.0.1",
+      port: 3306,
+      user: "veil",
+      password: "veil",
+      database: "project_veil",
+      ssl: {
+        mode: "verify-ca",
+        caPath
+      },
+      pool: {
+        connectionLimit: 4,
+        maxIdle: 4,
+        idleTimeoutMs: 60_000,
+        queueLimit: 0,
+        waitForConnections: true
+      }
+    });
+
+    assert.deepEqual(options.ssl, {
+      rejectUnauthorized: true,
+      verifyIdentity: true,
+      ca: caBundle
+    });
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
 });

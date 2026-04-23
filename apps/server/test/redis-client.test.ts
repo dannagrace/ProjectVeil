@@ -86,3 +86,23 @@ test("createRedisClient captures error events in runtime observability and logs 
   ]);
   assert.deepEqual(warnings, ["Redis client reconnect scheduled in 600ms."]);
 });
+
+test("createRedisClient redacts Redis credentials from runtime error detail", () => {
+  FakeRedisClient.instances.length = 0;
+  const runtimeDetails: string[] = [];
+
+  createRedisClient("redis://secure-user:hunter2@project-veil-redis:6379/0", {
+    RedisCtor: FakeRedisClient as never,
+    recordRuntimeErrorEvent: (event) => {
+      runtimeDetails.push(event.context.detail ?? "");
+    },
+    logger: { warn() {} }
+  });
+
+  const client = FakeRedisClient.instances[0];
+  client.emit("error", new Error("redis auth failed"));
+
+  assert.deepEqual(runtimeDetails, ["redis://project-veil-redis:6379/0"]);
+  assert.equal(runtimeDetails[0]?.includes("secure-user"), false);
+  assert.equal(runtimeDetails[0]?.includes("hunter2"), false);
+});

@@ -28,10 +28,13 @@ Pull requests that touch `k8s/` should also run `npm run validate -- k8s-image-t
 These manifests assume managed backing services instead of in-cluster MySQL:
 
 - `VEIL_MYSQL_HOST` points at an external RDS endpoint
+- `VEIL_MYSQL_SSL_MODE` should stay at `verify-ca` for managed MySQL so pod-to-RDS traffic is encrypted and certificate-validated
 - `REDIS_URL` points at an external Redis endpoint or dedicated Redis service
 - no MySQL `PersistentVolumeClaim` is included because the database is expected to live outside the cluster
 
 If you decide to run MySQL in-cluster instead, add a StatefulSet and PVC, then replace `VEIL_MYSQL_HOST` with the MySQL Service DNS name.
+
+If your container image does not already trust the managed MySQL server certificate chain, mount the CA bundle into the pod and set `VEIL_MYSQL_SSL_CA_PATH` to that PEM file.
 
 ## Secrets
 
