@@ -1,6 +1,8 @@
 import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent } from "@veil/shared/platform";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import type { RoomSnapshotStore } from "@server/persistence";
 
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
@@ -188,7 +190,7 @@ function applyAnalyticsCors(
     response.setHeader("Vary", "Origin");
   }
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Veil-Auth, X-Veil-Admin-Token");
 }
 
 function sendUnauthorized(response: ServerResponse, code = "unauthorized"): void {
@@ -198,6 +200,68 @@ function sendUnauthorized(response: ServerResponse, code = "unauthorized"): void
       message: "Analytics ingestion requires an authenticated player session"
     }
   });
+}
+
+function sendAdminTokenNotConfigured(response: ServerResponse): void {
+  sendJson(response, 503, {
+    error: {
+      code: "admin_token_not_configured",
+      message: "VEIL_ADMIN_TOKEN is not configured"
+    }
+  });
+}
+
+function sendInvalidAdminToken(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error: {
+      code: "forbidden",
+      message: "Invalid admin token"
+    }
+  });
+}
+
+function shouldAttachAdminTokenToAnalyticsSink(endpoint: string | null): boolean {
+  if (!endpoint) {
+    return false;
+  }
+
+  try {
+    const url = new URL(endpoint);
+    return (
+      url.pathname === "/api/test/analytics/events" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildAnalyticsSinkHeaders(endpoint: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json; charset=utf-8"
+  };
+  if (shouldAttachAdminTokenToAnalyticsSink(endpoint)) {
+    const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+    if (adminToken) {
+      headers["X-Veil-Admin-Token"] = adminToken;
+    }
+  }
+  return headers;
+}
+
+function requireAnalyticsTestAdminToken(request: IncomingMessage, response: ServerResponse): boolean {
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
+  if (!adminToken) {
+    sendAdminTokenNotConfigured(response);
+    return false;
+  }
+
+  if (!timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken)) {
+    sendInvalidAdminToken(response);
+    return false;
+  }
+
+  return true;
 }
 
 function sendTooManyRequests(response: ServerResponse): void {
@@ -488,9 +552,7 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
   try {
     const response = await analyticsRuntimeDependencies.fetch(config.endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8"
-      },
+      headers: buildAnalyticsSinkHeaders(config.endpoint),
       body: JSON.stringify(envelope)
     });
 
@@ -566,13 +628,19 @@ export function registerAnalyticsRoutes(
   });
 
   if (options.enableTestRoutes) {
-    app.get("/api/test/analytics/events", async (_request, response) => {
+    app.get("/api/test/analytics/events", async (request, response) => {
+      if (!requireAnalyticsTestAdminToken(request, response)) {
+        return;
+      }
       sendJson(response, 200, {
         events: getCapturedAnalyticsEventsForTest()
       });
     });
 
     app.post("/api/test/analytics/events", async (request, response) => {
+      if (!requireAnalyticsTestAdminToken(request, response)) {
+        return;
+      }
       try {
         const payload = await readJsonBody(request);
         const events = Array.isArray((payload as { events?: unknown[] } | null)?.events)
