@@ -182,9 +182,19 @@ const guestSessionsById = new Map<string, GuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
+let nonProductionAuthSecret: string | null = null;
 
 function readAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
-  return readRuntimeSecret("VEIL_AUTH_SECRET", env) || "project-veil-dev-secret";
+  const configuredSecret = readRuntimeSecret("VEIL_AUTH_SECRET", env);
+  if (configuredSecret) {
+    return configuredSecret;
+  }
+  if (env.NODE_ENV?.trim().toLowerCase() === "production") {
+    throw new Error("VEIL_AUTH_SECRET must be configured for production auth signing");
+  }
+
+  nonProductionAuthSecret ??= randomBytes(32).toString("hex");
+  return nonProductionAuthSecret;
 }
 
 function countActiveAccountLockouts(): number {

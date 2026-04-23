@@ -91,3 +91,36 @@ test("loadRuntimeSecrets fails when the AWS secret bundle is missing required ke
 
   resetRuntimeSecretsForTest();
 });
+
+test("loadRuntimeSecrets rejects production env startup when VEIL_AUTH_SECRET is missing", { concurrency: false }, async () => {
+  resetRuntimeSecretsForTest();
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousAuthSecret = process.env.VEIL_AUTH_SECRET;
+
+  delete process.env.VEIL_AUTH_SECRET;
+  process.env.NODE_ENV = "production";
+
+  try {
+    await assert.rejects(
+      loadRuntimeSecrets({
+        ...process.env,
+        NODE_ENV: "production",
+        VEIL_SECRET_PROVIDER: "env",
+        VEIL_AUTH_SECRET: undefined
+      }),
+      /VEIL_AUTH_SECRET/
+    );
+  } finally {
+    resetRuntimeSecretsForTest();
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+    if (previousAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = previousAuthSecret;
+    }
+  }
+});

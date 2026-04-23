@@ -990,6 +990,8 @@ test("stale leave after a successful reconnect does not clear the resumed player
 test("reconnect with an expired tracked auth token sends SESSION_EXPIRED and rejects the resumed client", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+  const previousAuthSecret = process.env.VEIL_AUTH_SECRET;
+  process.env.VEIL_AUTH_SECRET = "test-room-auth-secret";
   const room = await createTestRoom(`lifecycle-reconnect-expired-token-${Date.now()}`);
   const originalClient = createFakeClient("session-expired-token-original");
   const reconnectedClient = createFakeClient("session-expired-token-resumed");
@@ -1010,6 +1012,11 @@ test("reconnect with an expired tracked auth token sends SESSION_EXPIRED and rej
     cleanupRoom(room);
     resetLobbyRoomRegistry();
     configureRoomSnapshotStore(null);
+    if (previousAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = previousAuthSecret;
+    }
   });
 
   await connectPlayer(room, originalClient, "player-1", "connect-expired-token", expiringSession.token);
@@ -1031,6 +1038,8 @@ test("reconnect with an expired tracked auth token sends SESSION_EXPIRED and rej
 test("TOKEN_REFRESH updates the tracked auth session so reconnect accepts the refreshed token", async (t) => {
   resetLobbyRoomRegistry();
   configureRoomSnapshotStore(null);
+  const previousAuthSecret = process.env.VEIL_AUTH_SECRET;
+  process.env.VEIL_AUTH_SECRET = "test-room-auth-secret";
   const room = await createTestRoom(`lifecycle-reconnect-token-refresh-${Date.now()}`);
   const originalClient = createFakeClient("session-token-refresh-original");
   const reconnectedClient = createFakeClient("session-token-refresh-resumed");
@@ -1059,6 +1068,11 @@ test("TOKEN_REFRESH updates the tracked auth session so reconnect accepts the re
     cleanupRoom(room);
     resetLobbyRoomRegistry();
     configureRoomSnapshotStore(null);
+    if (previousAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = previousAuthSecret;
+    }
   });
 
   await connectPlayer(room, originalClient, "player-1", "connect-token-refresh", expiringSession.token);
