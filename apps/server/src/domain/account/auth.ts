@@ -2266,6 +2266,9 @@ export function registerAuthRoutes(
   },
   store: RoomSnapshotStore | null
 ): void {
+  const accountRegistrationDeliveryMode = readAccountRegistrationDeliveryMode();
+  const passwordRecoveryDeliveryMode = readPasswordRecoveryDeliveryMode();
+
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -2778,7 +2781,6 @@ export function registerAuthRoutes(
 
       const requestedDisplayName = normalizeRequestedRegistrationDisplayName(loginId, body.displayName);
       await assertDisplayNameAvailableOrThrow(store, requestedDisplayName);
-      const deliveryMode = readAccountRegistrationDeliveryMode();
       const existingRegistrationState = getAccountRegistrationState(loginId);
       const registrationState =
         existingRegistrationState?.requestedDisplayName === requestedDisplayName
@@ -2786,7 +2788,7 @@ export function registerAuthRoutes(
           : storeAccountRegistrationState(loginId, requestedDisplayName, createAccountRegistrationToken());
 
       try {
-        const delivery = await deliverAccountToken(deliveryMode, {
+        const delivery = await deliverAccountToken(accountRegistrationDeliveryMode, {
           kind: "account-registration",
           loginId,
           token: registrationState.deliveryToken,
@@ -2968,7 +2970,6 @@ export function registerAuthRoutes(
       if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
         return;
       }
-      const deliveryMode = readPasswordRecoveryDeliveryMode();
       const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (!authAccount) {
         sendJson(response, 202, {
@@ -2983,12 +2984,12 @@ export function registerAuthRoutes(
         await appendAccountAuditLog(
           store,
           authAccount.playerId,
-          deliveryMode === "dev-token" ? "发起密码找回申请，已生成开发态重置令牌。" : "发起密码找回申请。"
+          passwordRecoveryDeliveryMode === "dev-token" ? "发起密码找回申请，已生成开发态重置令牌。" : "发起密码找回申请。"
         );
       }
 
       try {
-        const delivery = await deliverAccountToken(deliveryMode, {
+        const delivery = await deliverAccountToken(passwordRecoveryDeliveryMode, {
           kind: "password-recovery",
           loginId,
           playerId: authAccount.playerId,

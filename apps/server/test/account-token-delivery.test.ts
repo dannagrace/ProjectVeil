@@ -167,6 +167,33 @@ test("delivery mode readers default to dev-token and accept smtp webhook or disa
   assert.equal(readPasswordRecoveryDeliveryMode({ VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "disabled" }), "disabled");
 });
 
+test("production delivery mode readers reject missing, unknown, and dev-token modes", () => {
+  assert.throws(
+    () =>
+      readAccountRegistrationDeliveryMode({
+        NODE_ENV: "production",
+        VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: undefined
+      }),
+    AccountTokenDeliveryConfigurationError
+  );
+  assert.throws(
+    () =>
+      readAccountRegistrationDeliveryMode({
+        NODE_ENV: "production",
+        VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "dev-token"
+      }),
+    AccountTokenDeliveryConfigurationError
+  );
+  assert.throws(
+    () =>
+      readPasswordRecoveryDeliveryMode({
+        NODE_ENV: "production",
+        VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "not-a-real-mode"
+      }),
+    AccountTokenDeliveryConfigurationError
+  );
+});
+
 test("dev-token delivery returns the token in-band", async () => {
   const result = await deliverAccountToken("dev-token", {
     kind: "account-registration",
@@ -181,6 +208,26 @@ test("dev-token delivery returns the token in-band", async () => {
     deliveryStatus: "dev-token",
     responseToken: "dev-token-value"
   });
+});
+
+test("production dev-token delivery is rejected before a token can be returned in-band", async () => {
+  await assert.rejects(
+    () =>
+      deliverAccountToken(
+        "dev-token",
+        {
+          kind: "password-recovery",
+          loginId: "prod-ranger",
+          playerId: "player-123",
+          token: "prod-token-value",
+          expiresAt: "2026-03-29T00:00:00.000Z"
+        },
+        {
+          NODE_ENV: "production"
+        }
+      ),
+    (error: unknown) => error instanceof AccountTokenDeliveryConfigurationError
+  );
 });
 
 test("smtp delivery sends the token to a real mail transport without returning it in-band", async (t) => {

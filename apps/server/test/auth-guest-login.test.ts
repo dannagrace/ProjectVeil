@@ -3079,6 +3079,58 @@ test("account registration request returns 503 when webhook delivery is misconfi
   assert.match(payload.error.message, /VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL/);
 });
 
+test("production startup rejects a missing account registration delivery mode", { concurrency: false }, async () => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      NODE_ENV: "production",
+      VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: undefined,
+      VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "disabled"
+    },
+    cleanup
+  );
+
+  const port = 44750 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+
+  try {
+    await assert.rejects(
+      () => startAuthServer(port, store),
+      /VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE must be configured before production startup/
+    );
+  } finally {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    resetAccountTokenDeliveryState();
+  }
+});
+
+test("production startup rejects dev-token password recovery delivery mode", { concurrency: false }, async () => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      NODE_ENV: "production",
+      VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "disabled",
+      VEIL_PASSWORD_RECOVERY_DELIVERY_MODE: "dev-token"
+    },
+    cleanup
+  );
+
+  const port = 44751 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+
+  try {
+    await assert.rejects(
+      () => startAuthServer(port, store),
+      /VEIL_PASSWORD_RECOVERY_DELIVERY_MODE cannot use dev-token in production/
+    );
+  } finally {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    resetAccountTokenDeliveryState();
+  }
+});
+
 test("password recovery request uses webhook delivery without leaking the token", { concurrency: false }, async (t) => {
   const cleanup: Array<() => void> = [];
   const webhook = await startTokenDeliveryWebhookServer();

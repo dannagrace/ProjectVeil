@@ -160,18 +160,41 @@ function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean 
   return fallback;
 }
 
-function readDeliveryMode(rawMode: string | undefined): AccountTokenDeliveryMode {
+function isProductionEnvironment(env: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV?.trim().toLowerCase() === "production";
+}
+
+function readDeliveryMode(
+  rawMode: string | undefined,
+  env: NodeJS.ProcessEnv,
+  envKey: string
+): AccountTokenDeliveryMode {
   const normalized = rawMode?.trim().toLowerCase();
-  if (normalized === "disabled") {
-    return "disabled";
+  if (!normalized) {
+    if (isProductionEnvironment(env)) {
+      throw new AccountTokenDeliveryConfigurationError(
+        `${envKey} must be configured before production startup`
+      );
+    }
+    return "dev-token";
   }
-  if (normalized === "smtp") {
-    return "smtp";
+
+  if (normalized === "disabled" || normalized === "smtp" || normalized === "webhook") {
+    return normalized;
   }
-  if (normalized === "webhook") {
-    return "webhook";
+
+  if (normalized === "dev-token") {
+    if (isProductionEnvironment(env)) {
+      throw new AccountTokenDeliveryConfigurationError(
+        `${envKey} cannot use dev-token in production`
+      );
+    }
+    return "dev-token";
   }
-  return "dev-token";
+
+  throw new AccountTokenDeliveryConfigurationError(
+    `Unsupported value "${rawMode}" for ${envKey}`
+  );
 }
 
 function readSharedTransportConfig(env: NodeJS.ProcessEnv): Pick<
@@ -878,11 +901,11 @@ function readTransportDeliveryConfig(mode: Extract<AccountTokenDeliveryMode, "sm
 }
 
 export function readAccountRegistrationDeliveryMode(env: NodeJS.ProcessEnv = process.env): AccountTokenDeliveryMode {
-  return readDeliveryMode(env.VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE);
+  return readDeliveryMode(env.VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE, env, "VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE");
 }
 
 export function readPasswordRecoveryDeliveryMode(env: NodeJS.ProcessEnv = process.env): AccountTokenDeliveryMode {
-  return readDeliveryMode(env.VEIL_PASSWORD_RECOVERY_DELIVERY_MODE);
+  return readDeliveryMode(env.VEIL_PASSWORD_RECOVERY_DELIVERY_MODE, env, "VEIL_PASSWORD_RECOVERY_DELIVERY_MODE");
 }
 
 export function clearAccountTokenDeliveryState(kind: AccountTokenDeliveryKind, loginId: string): void {
@@ -923,6 +946,12 @@ export async function deliverAccountToken(
   }
 
   if (mode === "dev-token") {
+    if (isProductionEnvironment(env)) {
+      throw new AccountTokenDeliveryConfigurationError(
+        "dev-token account token delivery is not allowed in production"
+      );
+    }
+
     recordAuthTokenDeliveryAttempt({
       kind: payload.kind,
       loginId: payload.loginId,
