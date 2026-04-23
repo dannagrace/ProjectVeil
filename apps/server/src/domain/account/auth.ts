@@ -44,6 +44,7 @@ import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/displa
 import { resolveFeatureEntitlementsForPlayer } from "@server/domain/battle/feature-flags";
 import { loadLaunchRuntimeState, resolveLaunchMaintenanceAccess } from "@server/domain/ops/launch-runtime-state";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
 
 export type AuthMode = "guest" | "account";
@@ -142,6 +143,12 @@ interface AccountAuthSessionState {
   refreshTokenExpiresAt?: string;
 }
 
+interface GuestSessionClusterDependencies {
+  createRedisClient?: typeof createRedisClient;
+  env?: NodeJS.ProcessEnv;
+  redisClient?: RedisClientLike | null;
+}
+
 interface PasswordRecoveryState {
   playerId: string;
   loginId: string;
@@ -183,6 +190,10 @@ const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
 let nonProductionAuthSecret: string | null = null;
+let guestSessionClusterClientOverride: RedisClientLike | null | undefined;
+let guestSessionClusterClientCache: RedisClientLike | null | undefined;
+const GUEST_SESSION_CLUSTER_KEY_PREFIX = "veil:guest-session:";
+const GUEST_SESSION_CLUSTER_ORDER_KEY = "veil:guest-session-order";
 
 function readAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
   const configuredSecret = readRuntimeSecret("VEIL_AUTH_SECRET", env);
@@ -195,6 +206,147 @@ function readAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
 
   nonProductionAuthSecret ??= randomBytes(32).toString("hex");
   return nonProductionAuthSecret;
+}
+
+function resolveGuestSessionClusterClient(
+  deps: GuestSessionClusterDependencies = {}
+): RedisClientLike | null {
+  if (deps.redisClient !== undefined) {
+    return deps.redisClient;
+  }
+  if (guestSessionClusterClientOverride !== undefined) {
+    return guestSessionClusterClientOverride;
+  }
+  if (guestSessionClusterClientCache !== undefined) {
+    return guestSessionClusterClientCache;
+  }
+
+  const env = deps.env ?? process.env;
+  const redisUrl = readRedisUrl(env);
+  guestSessionClusterClientCache = redisUrl
+    ? (deps.createRedisClient ?? createRedisClient)(redisUrl)
+    : null;
+  return guestSessionClusterClientCache;
+}
+
+function buildGuestSessionClusterKey(sessionId: string): string {
+  return `${GUEST_SESSION_CLUSTER_KEY_PREFIX}${sessionId}`;
+}
+
+function getGuestSessionTtlMs(session: Pick<GuestAuthSession, "expiresAt">): number {
+  return Math.max(1, new Date(session.expiresAt).getTime() - nowMs());
+}
+
+async function persistGuestSessionClusterState(
+  session: GuestAuthSession,
+  config = readAuthRuntimeConfig(),
+  deps: GuestSessionClusterDependencies = {}
+): Promise<void> {
+  if (session.authMode !== "guest" || !session.sessionId) {
+    return;
+  }
+
+  const redisClient = resolveGuestSessionClusterClient(deps);
+  if (!redisClient) {
+    return;
+  }
+
+  await redisClient.set(
+    buildGuestSessionClusterKey(session.sessionId),
+    JSON.stringify(session),
+    "PX",
+    getGuestSessionTtlMs(session)
+  );
+  await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, session.sessionId);
+  await redisClient.rpush(GUEST_SESSION_CLUSTER_ORDER_KEY, session.sessionId);
+
+  for (;;) {
+    const size = await redisClient.llen(GUEST_SESSION_CLUSTER_ORDER_KEY);
+    if (size <= config.maxGuestSessions) {
+      break;
+    }
+    const oldestSessionId = await redisClient.lindex(GUEST_SESSION_CLUSTER_ORDER_KEY, 0);
+    if (!oldestSessionId) {
+      break;
+    }
+    await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 1, oldestSessionId);
+    await redisClient.del(buildGuestSessionClusterKey(oldestSessionId));
+  }
+}
+
+async function touchGuestSessionClusterState(
+  sessionId: string,
+  token: string,
+  deps: GuestSessionClusterDependencies = {}
+): Promise<GuestAuthSession | null> {
+  const redisClient = resolveGuestSessionClusterClient(deps);
+  if (!redisClient) {
+    return touchGuestSession(sessionId, token);
+  }
+
+  const serializedSession = await redisClient.get(buildGuestSessionClusterKey(sessionId));
+  if (!serializedSession) {
+    return null;
+  }
+
+  try {
+    const existingSession = JSON.parse(serializedSession) as GuestAuthSession;
+    if (existingSession.token !== token) {
+      return null;
+    }
+
+    const nextSession: GuestAuthSession = {
+      ...existingSession,
+      lastUsedAt: new Date().toISOString()
+    };
+
+    await redisClient.set(
+      buildGuestSessionClusterKey(sessionId),
+      JSON.stringify(nextSession),
+      "PX",
+      getGuestSessionTtlMs(nextSession)
+    );
+    await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, sessionId);
+    await redisClient.rpush(GUEST_SESSION_CLUSTER_ORDER_KEY, sessionId);
+    return nextSession;
+  } catch {
+    return null;
+  }
+}
+
+async function revokeGuestSessionClusterState(
+  sessionId: string,
+  deps: GuestSessionClusterDependencies = {}
+): Promise<boolean> {
+  const redisClient = resolveGuestSessionClusterClient(deps);
+  if (!redisClient) {
+    const revoked = guestSessionsById.delete(sessionId);
+    syncAuthStateTelemetry();
+    return revoked;
+  }
+
+  const deletedCount = await redisClient.del(buildGuestSessionClusterKey(sessionId));
+  await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, sessionId);
+  guestSessionsById.delete(sessionId);
+  syncAuthStateTelemetry();
+  return deletedCount > 0;
+}
+
+async function finalizeGuestSessionForResponse(session: GuestAuthSession): Promise<GuestAuthSession> {
+  if (session.authMode === "guest" && session.sessionId) {
+    await persistGuestSessionClusterState(session);
+  }
+  return session;
+}
+
+function timingSafeCompareTokenSignature(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, "base64url");
+  const expectedBuffer = Buffer.from(expected, "base64url");
+  if (actualBuffer.length !== expectedBuffer.length) {
+    timingSafeEqual(Buffer.alloc(expectedBuffer.length), expectedBuffer);
+    return false;
+  }
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function countActiveAccountLockouts(): number {
@@ -1481,7 +1633,7 @@ function resolveAuthSession(token: string): GuestAuthSession | null {
   }
 
   const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
-  if (signature !== expectedSignature) {
+  if (!timingSafeCompareTokenSignature(signature, expectedSignature)) {
     return null;
   }
 
@@ -1517,14 +1669,6 @@ function resolveAuthSession(token: string): GuestAuthSession | null {
     }
     if (payload.tokenKind !== "refresh" && session.authMode === "guest" && session.sessionId) {
       return touchGuestSession(session.sessionId, normalizedToken);
-    }
-    if (session.authMode === "account") {
-      const cachedState = accountAuthStateByPlayerId.get(session.playerId);
-      if (cachedState) {
-        if (session.sessionVersion != null && session.sessionVersion !== cachedState.sessionVersion) {
-          return null;
-        }
-      }
     }
 
     return session;
@@ -1579,7 +1723,7 @@ async function validateAuthToken(
   }
 
   const expectedSignature = createHmac("sha256", readAuthSecret()).update(encodedPayload).digest("base64url");
-  if (signature !== expectedSignature) {
+  if (!timingSafeCompareTokenSignature(signature, expectedSignature)) {
     recordAuthSessionFailure("unauthorized");
     return { session: null, errorCode: "unauthorized" };
   }
@@ -1633,13 +1777,13 @@ async function validateAuthToken(
       const account = store ? await store.loadPlayerAccount(session.playerId) : null;
       if (account?.guestMigratedToPlayerId) {
         if (session.sessionId) {
-          revokeGuestAuthSession(session.sessionId);
+          await revokeGuestSessionClusterState(session.sessionId);
         }
         recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
       if (session.sessionId) {
-        const touchedSession = touchGuestSession(session.sessionId, normalizedToken);
+        const touchedSession = await touchGuestSessionClusterState(session.sessionId, normalizedToken);
         if (!touchedSession) {
           recordAuthSessionFailure("session_revoked");
           return { session: null, errorCode: "session_revoked" };
@@ -2070,6 +2214,7 @@ function registerGuestSession(session: GuestAuthSession, config = readAuthRuntim
 
   guestSessionsById.set(session.sessionId, session);
   syncAuthStateTelemetry();
+  void persistGuestSessionClusterState(session, config).catch(() => undefined);
 }
 
 function touchGuestSession(sessionId: string, token: string): GuestAuthSession | null {
@@ -2089,6 +2234,7 @@ function touchGuestSession(sessionId: string, token: string): GuestAuthSession |
 
 export function revokeGuestAuthSession(sessionId: string): boolean {
   const revoked = guestSessionsById.delete(sessionId);
+  void revokeGuestSessionClusterState(sessionId).catch(() => undefined);
   syncAuthStateTelemetry();
   return revoked;
 }
@@ -2101,8 +2247,15 @@ export function resetGuestAuthSessions(): void {
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
   passwordRecoveryStateByLoginId.clear();
+  guestSessionClusterClientOverride = undefined;
+  guestSessionClusterClientCache = undefined;
   resetWechatSessionKeyCache();
   syncAuthStateTelemetry();
+}
+
+export function setGuestSessionClusterClientForTest(client: RedisClientLike | null | undefined): void {
+  guestSessionClusterClientOverride = client;
+  guestSessionClusterClientCache = undefined;
 }
 
 export function registerAuthRoutes(
@@ -2154,7 +2307,7 @@ export function registerAuthRoutes(
       }
 
       sendJson(response, 200, {
-        session: nextSession
+        session: await finalizeGuestSessionForResponse(nextSession)
       });
     } catch (error) {
       sendJson(response, 400, { error: toErrorPayload(error) });
@@ -2372,11 +2525,12 @@ export function registerAuthRoutes(
         playerId = account.playerId;
         displayName = account.displayName;
         const dailyLoginReward = await issueDailyLoginReward(store, account);
+        const session = issueGuestAuthSession({
+          playerId,
+          displayName
+        });
         sendJson(response, 200, {
-          session: issueGuestAuthSession({
-            playerId,
-            displayName
-          }),
+          session: await finalizeGuestSessionForResponse(session),
           ...(dailyLoginReward.claimed
             ? {
                 dailyLoginReward: {
@@ -2390,11 +2544,12 @@ export function registerAuthRoutes(
         return;
       }
 
+      const session = issueGuestAuthSession({
+        playerId,
+        displayName
+      });
       sendJson(response, 200, {
-        session: issueGuestAuthSession({
-          playerId,
-          displayName
-        })
+        session: await finalizeGuestSessionForResponse(session)
       });
       recordAuthGuestLogin();
     } catch (error) {
@@ -2486,12 +2641,13 @@ export function registerAuthRoutes(
         }
         
         const dailyLoginReward = store ? await issueDailyLoginReward(store, account) : null;
+        const session = issueGuestAuthSession({
+          playerId: account.playerId,
+          displayName: account.displayName
+        });
         sendJson(response, 200, {
           account: dailyLoginReward?.account ?? account,
-          session: issueGuestAuthSession({
-            playerId: account.playerId,
-            displayName: account.displayName
-          }),
+          session: await finalizeGuestSessionForResponse(session),
           ...(dailyLoginReward?.claimed
             ? {
                 dailyLoginReward: {
