@@ -1,9 +1,10 @@
-import { createPrivateKey, createSign, createVerify, X509Certificate } from "node:crypto";
+import { createPrivateKey, createSign, createVerify, randomUUID, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
+import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 import {
   CallbackDeadLetterQueue,
   normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
@@ -89,6 +90,12 @@ interface RegisterApplePaymentRoutesOptions extends RegisterShopRoutesOptions {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   runtimeConfig?: AppleIapRuntimeConfig | null;
+  verifyNotificationPayload?: (
+    signedPayload: string,
+    config: AppleIapRuntimeConfig,
+    now: Date
+  ) => AppleVerifiedNotificationPayload | Promise<AppleVerifiedNotificationPayload>;
+  notificationHandler?: (event: AppleNotificationEvent) => AppleNotificationHandlerResult | Promise<AppleNotificationHandlerResult>;
 }
 
 interface AppleTransactionPayload {
@@ -103,6 +110,43 @@ interface AppleTransactionPayload {
 
 interface AppleTransactionLookupResponse {
   signedTransactionInfo?: string;
+}
+
+interface AppleNotificationDataPayload {
+  bundleId?: string;
+  appAppleId?: string | number;
+  bundleVersion?: string;
+  environment?: string;
+  signedTransactionInfo?: string;
+  signedRenewalInfo?: string;
+}
+
+interface AppleNotificationPayload {
+  notificationUUID?: string;
+  notificationType?: string;
+  subtype?: string;
+  version?: string;
+  signedDate?: string | number;
+  data?: AppleNotificationDataPayload | null;
+  summary?: Record<string, unknown> | null;
+}
+
+export interface AppleVerifiedNotificationPayload {
+  notificationId: string;
+  notificationType: string;
+  subtype?: string;
+  signedDate: string;
+  rawPayload: AppleNotificationPayload;
+  transaction?: AppleVerifiedTransaction;
+  renewalInfo?: Record<string, unknown>;
+}
+
+export interface AppleNotificationEvent extends AppleVerifiedNotificationPayload {
+  orderId?: string;
+}
+
+export interface AppleNotificationHandlerResult {
+  status?: "processed" | "ignored" | "duplicate";
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -527,6 +571,26 @@ function normalizeAppleTransactionPayload(payload: AppleTransactionPayload, expe
   };
 }
 
+function normalizeAppleSignedDate(value: string | number | undefined): string {
+  const timestamp =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  const parsedDate = new Date(timestamp);
+  if (!Number.isFinite(parsedDate.getTime())) {
+    throw new AppleIapVerificationError({
+      code: "apple_notification_payload_invalid",
+      message: "Apple notification payload is incomplete",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+  return parsedDate.toISOString();
+}
+
 function buildCertificatePemFromDer(certificateDer: string): string {
   return `-----BEGIN CERTIFICATE-----\n${certificateDer.match(/.{1,64}/g)?.join("\n") ?? certificateDer}\n-----END CERTIFICATE-----`;
 }
@@ -605,16 +669,21 @@ function assertTrustedCertificateChain(
   }
 }
 
-export function verifySignedTransactionWithCertificateChain(
-  signedTransactionInfo: string,
+function verifyAppleSignedPayloadWithCertificateChain<T>(
+  signedPayload: string,
   config: AppleIapRuntimeConfig,
-  now: Date
-): AppleVerifiedTransaction {
-  const [encodedHeader, encodedPayload, encodedSignature] = signedTransactionInfo.split(".");
+  now: Date,
+  inputLabel: string,
+  invalidHeaderCode: string,
+  invalidHeaderMessage: string,
+  invalidSignatureCode: string,
+  invalidSignatureMessage: string
+): T {
+  const [encodedHeader, encodedPayload, encodedSignature] = signedPayload.split(".");
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
     throw new AppleIapVerificationError({
-      code: "apple_jws_malformed",
-      message: "signedTransactionInfo is not a valid compact JWS",
+      code: `${inputLabel}_malformed`,
+      message: `${inputLabel} is not a valid compact JWS`,
       retryable: false,
       statusCode: 400,
       category: "invalid_request"
@@ -624,8 +693,8 @@ export function verifySignedTransactionWithCertificateChain(
   const header = JSON.parse(decodeCompactJwsPart(encodedHeader)) as { alg?: string; x5c?: string[] };
   if (header.alg !== "ES256" || !Array.isArray(header.x5c) || header.x5c.length === 0) {
     throw new AppleIapVerificationError({
-      code: "apple_signature_header_invalid",
-      message: "Apple transaction JWS header is invalid",
+      code: invalidHeaderCode,
+      message: invalidHeaderMessage,
       retryable: false,
       statusCode: 400,
       category: "verification"
@@ -636,8 +705,8 @@ export function verifySignedTransactionWithCertificateChain(
   const leafCertificateDer = certificateDerChain[0];
   if (!leafCertificateDer) {
     throw new AppleIapVerificationError({
-      code: "apple_signature_header_invalid",
-      message: "Apple transaction JWS header is invalid",
+      code: invalidHeaderCode,
+      message: invalidHeaderMessage,
       retryable: false,
       statusCode: 400,
       category: "verification"
@@ -664,16 +733,100 @@ export function verifySignedTransactionWithCertificateChain(
   const signature = joseToDerEcdsaSignature(Buffer.from(encodedSignature, "base64url"));
   if (!verifier.verify(leafCertificate.publicKey, signature)) {
     throw new AppleIapVerificationError({
-      code: "apple_signature_invalid",
-      message: "Apple transaction signature validation failed",
+      code: invalidSignatureCode,
+      message: invalidSignatureMessage,
       retryable: false,
       statusCode: 400,
       category: "verification"
     });
   }
 
-  const payload = JSON.parse(decodeCompactJwsPart(encodedPayload)) as AppleTransactionPayload;
+  return JSON.parse(decodeCompactJwsPart(encodedPayload)) as T;
+}
+
+export function verifySignedTransactionWithCertificateChain(
+  signedTransactionInfo: string,
+  config: AppleIapRuntimeConfig,
+  now: Date
+): AppleVerifiedTransaction {
+  const payload = verifyAppleSignedPayloadWithCertificateChain<AppleTransactionPayload>(
+    signedTransactionInfo,
+    config,
+    now,
+    "apple_jws",
+    "apple_signature_header_invalid",
+    "Apple transaction JWS header is invalid",
+    "apple_signature_invalid",
+    "Apple transaction signature validation failed"
+  );
   return normalizeAppleTransactionPayload(payload, config.bundleId);
+}
+
+export function verifyAppleNotificationPayloadWithCertificateChain(
+  signedPayload: string,
+  config: AppleIapRuntimeConfig,
+  now: Date
+): AppleVerifiedNotificationPayload {
+  const payload = verifyAppleSignedPayloadWithCertificateChain<AppleNotificationPayload>(
+    signedPayload,
+    config,
+    now,
+    "apple_notification_signed_payload",
+    "apple_notification_signature_header_invalid",
+    "Apple notification JWS header is invalid",
+    "apple_notification_signature_invalid",
+    "Apple notification signature validation failed"
+  );
+  const notificationId = payload.notificationUUID?.trim() || "";
+  const notificationType = payload.notificationType?.trim() || "";
+  if (!notificationId || !notificationType) {
+    throw new AppleIapVerificationError({
+      code: "apple_notification_payload_invalid",
+      message: "Apple notification payload is incomplete",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  const bundleId = payload.data?.bundleId?.trim();
+  if (bundleId && bundleId !== config.bundleId) {
+    throw new AppleIapVerificationError({
+      code: "apple_bundle_id_mismatch",
+      message: "Apple transaction bundleId does not match this server",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  const signedTransactionInfo = payload.data?.signedTransactionInfo?.trim();
+  const signedRenewalInfo = payload.data?.signedRenewalInfo?.trim();
+  const transaction = signedTransactionInfo
+    ? verifySignedTransactionWithCertificateChain(signedTransactionInfo, config, now)
+    : undefined;
+  const renewalInfo = signedRenewalInfo
+    ? verifyAppleSignedPayloadWithCertificateChain<Record<string, unknown>>(
+        signedRenewalInfo,
+        config,
+        now,
+        "apple_notification_signed_renewal_info",
+        "apple_notification_signature_header_invalid",
+        "Apple notification JWS header is invalid",
+        "apple_notification_signature_invalid",
+        "Apple notification signature validation failed"
+      )
+    : undefined;
+
+  return {
+    notificationId,
+    notificationType,
+    ...(payload.subtype?.trim() ? { subtype: payload.subtype.trim() } : {}),
+    signedDate: normalizeAppleSignedDate(payload.signedDate),
+    rawPayload: payload,
+    ...(transaction ? { transaction } : {}),
+    ...(renewalInfo ? { renewalInfo } : {})
+  };
 }
 
 function isAppleTransactionNotFound(statusCode: number, payload: unknown): boolean {
@@ -824,6 +977,45 @@ export function createAppleStoreKitVerificationAdapter(input: {
   };
 }
 
+function normalizeAppleNotificationHandlerStatus(status: AppleNotificationHandlerResult["status"]): "processed" | "ignored" | "duplicate" {
+  return status === "processed" || status === "duplicate" ? status : "ignored";
+}
+
+function recordAppleNotificationAuditEvent(
+  errorCode: string,
+  message: string,
+  details: Record<string, unknown> = {},
+  severity: "warn" | "error" = "warn"
+): void {
+  try {
+    recordRuntimeErrorEvent({
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "apple-iap",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+      featureArea: "payment",
+      ownerArea: "commerce",
+      severity,
+      errorCode,
+      message,
+      tags: ["apple-iap", "payment-notification", errorCode],
+      context: {
+        roomId: null,
+        playerId: null,
+        requestId: null,
+        route: "/api/payments/apple/notifications",
+        action: null,
+        statusCode: null,
+        crash: false,
+        detail: JSON.stringify(details)
+      }
+    });
+  } catch {
+    // Notification audit logging must never block payment callback handling.
+  }
+}
+
 export function registerApplePaymentRoutes(
   app: HttpApp,
   store: RoomSnapshotStore | null,
@@ -832,6 +1024,28 @@ export function registerApplePaymentRoutes(
   const products = resolveShopProducts(options);
   const now = options.now ?? (() => new Date());
   const runtimeConfig = options.runtimeConfig ?? readAppleIapRuntimeConfig();
+  const verifyNotificationPayload =
+    (options.verifyNotificationPayload
+      ? (signedPayload: string, _config: AppleIapRuntimeConfig, currentTime: Date) =>
+          options.verifyNotificationPayload!(
+            signedPayload,
+            runtimeConfig ?? {
+              bundleId: "",
+              issuerId: "",
+              keyId: "",
+              privateKey: "",
+              productionApiUrl: "",
+              sandboxApiUrl: "",
+              rootCertificates: []
+            },
+            currentTime
+          )
+      : null) ??
+    (runtimeConfig
+      ? (signedPayload: string, config: AppleIapRuntimeConfig, currentTime: Date) =>
+          verifyAppleNotificationPayloadWithCertificateChain(signedPayload, config, currentTime)
+      : null);
+  const notificationHandler = options.notificationHandler ?? null;
   const adapter =
     options.adapter ??
     (runtimeConfig
@@ -854,6 +1068,87 @@ export function registerApplePaymentRoutes(
     }
 
     next();
+  });
+
+  app.post("/api/payments/apple/notifications", async (request, response) => {
+    if (!verifyNotificationPayload) {
+      sendJson(response, 503, {
+        error: {
+          code: "apple_iap_not_configured",
+          message: "Apple IAP runtime configuration is incomplete",
+          retryable: false,
+          category: "configuration"
+        }
+      });
+      return;
+    }
+
+    try {
+      const body = (await readJsonBody(request)) as { signedPayload?: string | null };
+      const signedPayload = body.signedPayload?.trim();
+      if (!signedPayload) {
+        throw new AppleIapVerificationError({
+          code: "apple_notification_signed_payload_required",
+          message: "signedPayload is required",
+          retryable: false,
+          statusCode: 400,
+          category: "invalid_request"
+        });
+      }
+
+      const verified = await verifyNotificationPayload(
+        signedPayload,
+        runtimeConfig ?? {
+          bundleId: "",
+          issuerId: "",
+          keyId: "",
+          privateKey: "",
+          productionApiUrl: "",
+          sandboxApiUrl: "",
+          rootCertificates: []
+        },
+        now()
+      );
+      const event: AppleNotificationEvent = {
+        ...verified,
+        ...(verified.transaction ? { orderId: `apple:${verified.transaction.transactionId}` } : {})
+      };
+      const handlerResult = notificationHandler ? await notificationHandler(event) : undefined;
+
+      sendJson(response, 200, {
+        acknowledged: true,
+        status: normalizeAppleNotificationHandlerStatus(handlerResult?.status),
+        notificationId: event.notificationId,
+        notificationType: event.notificationType
+      });
+    } catch (error) {
+      if (error instanceof AppleIapVerificationError) {
+        if (error.statusCode >= 400 && error.statusCode < 500) {
+          recordAppleNotificationAuditEvent(error.name, error.message, {
+            category: error.category
+          });
+        }
+        sendJson(response, error.statusCode, error.toResponseBody());
+        return;
+      }
+
+      recordAppleNotificationAuditEvent(
+        "apple_notification_processing_failed",
+        "Apple notification processing failed",
+        {
+          reason: error instanceof Error ? error.message : String(error)
+        },
+        "error"
+      );
+      sendJson(response, 503, {
+        error: {
+          code: "apple_notification_processing_failed",
+          message: "Apple notification processing failed",
+          retryable: true,
+          category: "upstream"
+        }
+      });
+    }
   });
 
   app.post("/api/payments/apple/verify", async (request, response) => {
@@ -1074,7 +1369,7 @@ export function registerApplePaymentRoutes(
 
 const applePaymentGateway: PaymentGateway = {
   channel: "apple",
-  supportedOperations: ["grantRewards"],
+  supportedOperations: ["verifyCallback", "grantRewards"],
   createOrder: (input) =>
     unsupportedPaymentGatewayOperation(
       "apple",
@@ -1085,7 +1380,7 @@ const applePaymentGateway: PaymentGateway = {
     unsupportedPaymentGatewayOperation(
       "apple",
       "verifyCallback",
-      "Apple IAP uses signed transaction verification instead of a server callback contract."
+      "Use the Apple payment route adapter to verify App Store server notifications and StoreKit signed transactions."
     ),
   grantRewards: () =>
     unsupportedPaymentGatewayOperation(

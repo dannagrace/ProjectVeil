@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
   type AppleIapRuntimeConfig,
   AppleIapVerificationError,
+  verifyAppleNotificationPayloadWithCertificateChain,
   verifySignedTransactionWithCertificateChain
 } from "@server/adapters/apple-iap";
 
@@ -206,6 +207,41 @@ function createSignedTransactionJws(input: {
   return `${encodedHeader}.${encodedPayload}.${joseSignature}`;
 }
 
+function createSignedNotificationJws(input: {
+  certificateChain: string[];
+  privateKeyPem: string;
+  bundleId?: string;
+}): string {
+  const signedTransactionInfo = createSignedTransactionJws({
+    certificateChain: input.certificateChain,
+    privateKeyPem: input.privateKeyPem,
+    bundleId: input.bundleId
+  });
+  const header = {
+    alg: "ES256",
+    x5c: input.certificateChain.map((certificatePem) => new X509Certificate(certificatePem).raw.toString("base64"))
+  };
+  const payload = {
+    notificationUUID: "apple-notification-1",
+    notificationType: "REFUND",
+    subtype: "VOLUNTARY",
+    version: "2.0",
+    signedDate: Date.now(),
+    data: {
+      bundleId: input.bundleId ?? "com.projectveil.app",
+      signedTransactionInfo
+    }
+  };
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signer = createSign("SHA256");
+  signer.update(`${encodedHeader}.${encodedPayload}`);
+  signer.end();
+  const derSignature = signer.sign(createPrivateKey(input.privateKeyPem));
+  const joseSignature = derToJoseEcdsaSignature(derSignature, 32).toString("base64url");
+  return `${encodedHeader}.${encodedPayload}.${joseSignature}`;
+}
+
 test("verifySignedTransactionWithCertificateChain accepts a JWS signed by a trusted root chain", async () => {
   const trustedChain = await createTrustedCertificateChain();
   const runtimeConfig = createAppleRuntimeConfig([trustedChain.rootPem]);
@@ -235,4 +271,20 @@ test("verifySignedTransactionWithCertificateChain rejects self-signed attacker c
       error.name === "apple_certificate_chain_invalid" &&
       error.statusCode === 400
   );
+});
+
+test("verifyAppleNotificationPayloadWithCertificateChain accepts a trusted notification payload and decodes nested transactions", async () => {
+  const trustedChain = await createTrustedCertificateChain();
+  const runtimeConfig = createAppleRuntimeConfig([trustedChain.rootPem]);
+  const signedPayload = createSignedNotificationJws({
+    certificateChain: [trustedChain.leafPem, trustedChain.rootPem],
+    privateKeyPem: trustedChain.leafPrivateKeyPem
+  });
+
+  const verified = verifyAppleNotificationPayloadWithCertificateChain(signedPayload, runtimeConfig, new Date());
+
+  assert.equal(verified.notificationId, "apple-notification-1");
+  assert.equal(verified.notificationType, "REFUND");
+  assert.equal(verified.subtype, "VOLUNTARY");
+  assert.equal(verified.transaction?.transactionId, "1000001234567890");
 });

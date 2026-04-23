@@ -1,7 +1,8 @@
-import { createHash, createSign } from "node:crypto";
+import { createHash, createSign, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
+import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 import {
   CallbackDeadLetterQueue,
   normalizePaymentGrantRetryPolicy as normalizeSharedPaymentGrantRetryPolicy,
@@ -31,6 +32,10 @@ export interface GooglePlayBillingRuntimeConfig {
   privateKey: string;
   oauthTokenUrl: string;
   androidPublisherApiUrl: string;
+  rtdnSharedSecret?: string | null;
+  rtdnAudience?: string | null;
+  rtdnServiceAccountEmail?: string | null;
+  rtdnTokenInfoUrl?: string;
 }
 
 export interface GoogleVerifiedProductPurchase {
@@ -88,6 +93,7 @@ interface RegisterGooglePlayRoutesOptions extends RegisterShopRoutesOptions {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   runtimeConfig?: GooglePlayBillingRuntimeConfig | null;
+  notificationHandler?: (event: GooglePlayNotificationEvent) => GooglePlayNotificationHandlerResult | Promise<GooglePlayNotificationHandlerResult>;
 }
 
 interface GoogleAccessTokenResponse {
@@ -103,6 +109,61 @@ interface GoogleProductPurchaseResponse {
   consumptionState?: number;
   acknowledgementState?: number;
   purchaseType?: number;
+}
+
+interface GooglePubSubPushEnvelope {
+  message?: {
+    data?: string;
+    messageId?: string;
+    publishTime?: string;
+    attributes?: Record<string, string> | null;
+  } | null;
+  subscription?: string;
+}
+
+interface GoogleSubscriptionNotificationPayload {
+  version?: string;
+  notificationType?: number;
+  purchaseToken?: string;
+  subscriptionId?: string;
+}
+
+interface GoogleOneTimeProductNotificationPayload {
+  version?: string;
+  notificationType?: number;
+  purchaseToken?: string;
+  sku?: string;
+}
+
+interface GoogleVoidedPurchaseNotificationPayload {
+  purchaseToken?: string;
+  orderId?: string;
+  productType?: number;
+  refundType?: number;
+}
+
+interface GoogleDeveloperNotificationPayload {
+  version?: string;
+  packageName?: string;
+  eventTimeMillis?: string | number;
+  subscriptionNotification?: GoogleSubscriptionNotificationPayload | null;
+  oneTimeProductNotification?: GoogleOneTimeProductNotificationPayload | null;
+  voidedPurchaseNotification?: GoogleVoidedPurchaseNotificationPayload | null;
+  testNotification?: Record<string, unknown> | null;
+}
+
+export interface GooglePlayNotificationEvent {
+  eventId: string;
+  kind: "subscription" | "one_time_product" | "voided_purchase" | "test";
+  notificationType: string;
+  eventTime: string;
+  orderId?: string;
+  purchaseTokenHash?: string;
+  rawPayload: GoogleDeveloperNotificationPayload;
+}
+
+export interface GooglePlayNotificationHandlerResult {
+  status?: "processed" | "ignored" | "duplicate";
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -153,7 +214,11 @@ export function readGooglePlayBillingRuntimeConfig(env: NodeJS.ProcessEnv = proc
     privateKey,
     oauthTokenUrl: env.VEIL_GOOGLE_PLAY_OAUTH_TOKEN_URL?.trim() || "https://oauth2.googleapis.com/token",
     androidPublisherApiUrl:
-      env.VEIL_GOOGLE_PLAY_ANDROID_PUBLISHER_API_URL?.trim() || "https://androidpublisher.googleapis.com/androidpublisher/v3"
+      env.VEIL_GOOGLE_PLAY_ANDROID_PUBLISHER_API_URL?.trim() || "https://androidpublisher.googleapis.com/androidpublisher/v3",
+    rtdnSharedSecret: env.VEIL_GOOGLE_PLAY_RTDN_SHARED_SECRET?.trim() || null,
+    rtdnAudience: env.VEIL_GOOGLE_PLAY_RTDN_AUDIENCE?.trim() || null,
+    rtdnServiceAccountEmail: env.VEIL_GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL?.trim() || null,
+    rtdnTokenInfoUrl: env.VEIL_GOOGLE_PLAY_RTDN_TOKEN_INFO_URL?.trim() || "https://oauth2.googleapis.com/tokeninfo"
   };
 }
 
@@ -643,6 +708,320 @@ function hashPurchaseToken(purchaseToken: string): string {
   return createHash("sha256").update(purchaseToken).digest("hex");
 }
 
+function safeCompareSecret(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function parseRequestSearchParams(request: IncomingMessage): URLSearchParams {
+  return new URL(request.url ?? "/", "http://google-rtdn.local").searchParams;
+}
+
+function normalizeGoogleNotificationHandlerStatus(
+  status: GooglePlayNotificationHandlerResult["status"]
+): "processed" | "ignored" | "duplicate" {
+  return status === "processed" || status === "duplicate" ? status : "ignored";
+}
+
+function normalizeGoogleNotificationTime(value: string | number | undefined): string {
+  const timestamp =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  const parsedDate = new Date(timestamp);
+  if (!Number.isFinite(parsedDate.getTime())) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_payload_invalid",
+      message: "Google RTDN payload is incomplete",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+  return parsedDate.toISOString();
+}
+
+function mapGoogleSubscriptionNotificationType(notificationType: number): string {
+  const mapped = {
+    1: "SUBSCRIPTION_RECOVERED",
+    2: "SUBSCRIPTION_RENEWED",
+    3: "SUBSCRIPTION_CANCELED",
+    4: "SUBSCRIPTION_PURCHASED",
+    5: "SUBSCRIPTION_ON_HOLD",
+    6: "SUBSCRIPTION_IN_GRACE_PERIOD",
+    7: "SUBSCRIPTION_RESTARTED",
+    8: "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED",
+    9: "SUBSCRIPTION_DEFERRED",
+    10: "SUBSCRIPTION_PAUSED",
+    11: "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
+    12: "SUBSCRIPTION_REVOKED",
+    13: "SUBSCRIPTION_EXPIRED",
+    17: "SUBSCRIPTION_ITEMS_CHANGED",
+    18: "SUBSCRIPTION_CANCELLATION_SCHEDULED",
+    19: "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
+    20: "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
+    22: "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED"
+  }[Math.floor(notificationType)];
+  if (!mapped) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_notification_type_invalid",
+      message: "Google RTDN notificationType is not supported",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+  return mapped;
+}
+
+function mapGoogleOneTimeProductNotificationType(notificationType: number): string {
+  const mapped = {
+    1: "ONE_TIME_PRODUCT_PURCHASED",
+    2: "ONE_TIME_PRODUCT_CANCELED"
+  }[Math.floor(notificationType)];
+  if (!mapped) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_notification_type_invalid",
+      message: "Google RTDN notificationType is not supported",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+  return mapped;
+}
+
+async function validateGoogleRtdnAuth(input: {
+  request: IncomingMessage;
+  config: GooglePlayBillingRuntimeConfig;
+  fetchImpl: typeof fetch;
+  now: Date;
+}): Promise<void> {
+  const providedSecret =
+    parseRequestSearchParams(input.request).get("token")?.trim() ||
+    (typeof input.request.headers["x-veil-google-rtdn-secret"] === "string"
+      ? input.request.headers["x-veil-google-rtdn-secret"].trim()
+      : "");
+  if (input.config.rtdnSharedSecret && providedSecret && safeCompareSecret(providedSecret, input.config.rtdnSharedSecret)) {
+    return;
+  }
+
+  const authorizationHeader = input.request.headers.authorization?.trim() || "";
+  const bearerToken = authorizationHeader.startsWith("Bearer ") ? authorizationHeader.slice("Bearer ".length).trim() : "";
+  if (!bearerToken || !input.config.rtdnAudience || !input.config.rtdnServiceAccountEmail) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_unauthorized",
+      message: "Google RTDN request is unauthorized",
+      retryable: false,
+      statusCode: 401,
+      category: "verification"
+    });
+  }
+
+  const tokenInfoUrl = `${input.config.rtdnTokenInfoUrl ?? "https://oauth2.googleapis.com/tokeninfo"}?id_token=${encodeURIComponent(bearerToken)}`;
+  const response = await input.fetchImpl(tokenInfoUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  let payload:
+    | {
+        aud?: string;
+        email?: string;
+        email_verified?: string | boolean;
+        exp?: string | number;
+        iss?: string;
+      }
+    | null = null;
+  try {
+    payload = (await response.json()) as {
+      aud?: string;
+      email?: string;
+      email_verified?: string | boolean;
+      exp?: string | number;
+      iss?: string;
+    };
+  } catch {
+    payload = null;
+  }
+
+  const exp = payload?.exp == null ? Number.NaN : Number(payload.exp);
+  const emailVerified = payload?.email_verified === true || payload?.email_verified === "true";
+  const issuer = payload?.iss?.trim() || "";
+  if (
+    !response.ok ||
+    payload?.aud?.trim() !== input.config.rtdnAudience ||
+    payload?.email?.trim() !== input.config.rtdnServiceAccountEmail ||
+    !emailVerified ||
+    (issuer !== "https://accounts.google.com" && issuer !== "accounts.google.com") ||
+    !Number.isFinite(exp) ||
+    exp * 1000 <= input.now.getTime()
+  ) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_unauthorized",
+      message: "Google RTDN request is unauthorized",
+      retryable: false,
+      statusCode: 401,
+      category: "verification"
+    });
+  }
+}
+
+function parseGooglePlayNotificationEvent(
+  envelope: GooglePubSubPushEnvelope,
+  config: GooglePlayBillingRuntimeConfig
+): GooglePlayNotificationEvent {
+  const messageId = envelope.message?.messageId?.trim() || "";
+  const encodedData = envelope.message?.data?.trim() || "";
+  if (!encodedData) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_payload_invalid",
+      message: "Google RTDN payload is incomplete",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  let payload: GoogleDeveloperNotificationPayload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedData, "base64").toString("utf8")) as GoogleDeveloperNotificationPayload;
+  } catch {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_rtdn_payload_invalid",
+      message: "Google RTDN payload is incomplete",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  if (payload.packageName?.trim() !== config.packageName) {
+    throw new GooglePlayBillingVerificationError({
+      code: "google_package_name_mismatch",
+      message: "Google RTDN packageName does not match this server",
+      retryable: false,
+      statusCode: 400,
+      category: "verification"
+    });
+  }
+
+  const eventTime = normalizeGoogleNotificationTime(payload.eventTimeMillis);
+  if (payload.subscriptionNotification) {
+    const purchaseToken = payload.subscriptionNotification.purchaseToken?.trim() || "";
+    if (!purchaseToken) {
+      throw new GooglePlayBillingVerificationError({
+        code: "google_rtdn_payload_invalid",
+        message: "Google RTDN payload is incomplete",
+        retryable: false,
+        statusCode: 400,
+        category: "verification"
+      });
+    }
+    const purchaseTokenHash = hashPurchaseToken(purchaseToken);
+    return {
+      eventId: messageId || `google-rtdn:${purchaseTokenHash}:${eventTime}`,
+      kind: "subscription",
+      notificationType: mapGoogleSubscriptionNotificationType(payload.subscriptionNotification.notificationType ?? -1),
+      eventTime,
+      orderId: `google:${purchaseTokenHash}`,
+      purchaseTokenHash,
+      rawPayload: payload
+    };
+  }
+  if (payload.oneTimeProductNotification) {
+    const purchaseToken = payload.oneTimeProductNotification.purchaseToken?.trim() || "";
+    if (!purchaseToken) {
+      throw new GooglePlayBillingVerificationError({
+        code: "google_rtdn_payload_invalid",
+        message: "Google RTDN payload is incomplete",
+        retryable: false,
+        statusCode: 400,
+        category: "verification"
+      });
+    }
+    const purchaseTokenHash = hashPurchaseToken(purchaseToken);
+    return {
+      eventId: messageId || `google-rtdn:${purchaseTokenHash}:${eventTime}`,
+      kind: "one_time_product",
+      notificationType: mapGoogleOneTimeProductNotificationType(payload.oneTimeProductNotification.notificationType ?? -1),
+      eventTime,
+      orderId: `google:${purchaseTokenHash}`,
+      purchaseTokenHash,
+      rawPayload: payload
+    };
+  }
+  if (payload.voidedPurchaseNotification) {
+    const purchaseToken = payload.voidedPurchaseNotification.purchaseToken?.trim() || "";
+    const purchaseTokenHash = purchaseToken ? hashPurchaseToken(purchaseToken) : undefined;
+    return {
+      eventId: messageId || `google-rtdn:voided:${purchaseTokenHash ?? eventTime}`,
+      kind: "voided_purchase",
+      notificationType: "VOIDED_PURCHASE",
+      eventTime,
+      ...(purchaseTokenHash ? { orderId: `google:${purchaseTokenHash}`, purchaseTokenHash } : {}),
+      rawPayload: payload
+    };
+  }
+  if (payload.testNotification) {
+    return {
+      eventId: messageId || `google-rtdn:test:${eventTime}`,
+      kind: "test",
+      notificationType: "TEST_NOTIFICATION",
+      eventTime,
+      rawPayload: payload
+    };
+  }
+
+  throw new GooglePlayBillingVerificationError({
+    code: "google_rtdn_payload_invalid",
+    message: "Google RTDN payload is incomplete",
+    retryable: false,
+    statusCode: 400,
+    category: "verification"
+  });
+}
+
+function recordGoogleNotificationAuditEvent(
+  errorCode: string,
+  message: string,
+  details: Record<string, unknown> = {},
+  severity: "warn" | "error" = "warn"
+): void {
+  try {
+    recordRuntimeErrorEvent({
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      source: "server",
+      surface: "google-play",
+      candidateRevision: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+      featureArea: "payment",
+      ownerArea: "commerce",
+      severity,
+      errorCode,
+      message,
+      tags: ["google-play", "payment-notification", errorCode],
+      context: {
+        roomId: null,
+        playerId: null,
+        requestId: null,
+        route: "/api/payments/google/rtdn",
+        action: null,
+        statusCode: null,
+        crash: false,
+        detail: JSON.stringify(details)
+      }
+    });
+  } catch {
+    // Notification audit logging must never block payment callback handling.
+  }
+}
+
 export function registerGooglePlayRoutes(
   app: HttpApp,
   store: RoomSnapshotStore | null,
@@ -650,7 +1029,9 @@ export function registerGooglePlayRoutes(
 ): void {
   const products = resolveShopProducts(options);
   const now = options.now ?? (() => new Date());
+  const fetchImpl = options.fetchImpl ?? fetch;
   const runtimeConfig = options.runtimeConfig ?? readGooglePlayBillingRuntimeConfig();
+  const notificationHandler = options.notificationHandler ?? null;
   const adapter =
     options.adapter ??
     (runtimeConfig
@@ -673,6 +1054,82 @@ export function registerGooglePlayRoutes(
     }
 
     next();
+  });
+
+  app.post("/api/payments/google/rtdn", async (request, response) => {
+    if (!runtimeConfig) {
+      sendJson(response, 503, {
+        error: {
+          code: "google_play_not_configured",
+          message: "Google Play Billing runtime configuration is incomplete",
+          retryable: false,
+          category: "configuration"
+        }
+      });
+      return;
+    }
+    if (
+      !runtimeConfig.rtdnSharedSecret &&
+      (!runtimeConfig.rtdnAudience || !runtimeConfig.rtdnServiceAccountEmail)
+    ) {
+      sendJson(response, 503, {
+        error: {
+          code: "google_rtdn_not_configured",
+          message: "Google RTDN authentication is not configured",
+          retryable: false,
+          category: "configuration"
+        }
+      });
+      return;
+    }
+
+    try {
+      await validateGoogleRtdnAuth({
+        request,
+        config: runtimeConfig,
+        fetchImpl,
+        now: now()
+      });
+      const payload = parseGooglePlayNotificationEvent(
+        (await readJsonBody(request)) as GooglePubSubPushEnvelope,
+        runtimeConfig
+      );
+      const handlerResult = notificationHandler ? await notificationHandler(payload) : undefined;
+      sendJson(response, 200, {
+        acknowledged: true,
+        status: normalizeGoogleNotificationHandlerStatus(handlerResult?.status),
+        eventId: payload.eventId,
+        notificationType: payload.notificationType,
+        ...(payload.purchaseTokenHash ? { purchaseTokenHash: payload.purchaseTokenHash } : {})
+      });
+    } catch (error) {
+      if (error instanceof GooglePlayBillingVerificationError) {
+        if (error.statusCode >= 400 && error.statusCode < 500) {
+          recordGoogleNotificationAuditEvent(error.name, error.message, {
+            category: error.category
+          });
+        }
+        sendJson(response, error.statusCode, error.toResponseBody());
+        return;
+      }
+
+      recordGoogleNotificationAuditEvent(
+        "google_rtdn_processing_failed",
+        "Google RTDN processing failed",
+        {
+          reason: error instanceof Error ? error.message : String(error)
+        },
+        "error"
+      );
+      sendJson(response, 503, {
+        error: {
+          code: "google_rtdn_processing_failed",
+          message: "Google RTDN processing failed",
+          retryable: true,
+          category: "upstream"
+        }
+      });
+    }
   });
 
   app.post("/api/payments/google/verify", async (request, response) => {
@@ -961,7 +1418,7 @@ export function registerGooglePlayRoutes(
 
 const googlePlayPaymentGateway: PaymentGateway = {
   channel: "google",
-  supportedOperations: ["grantRewards"],
+  supportedOperations: ["verifyCallback", "grantRewards"],
   createOrder: (input) =>
     unsupportedPaymentGatewayOperation(
       "google",
@@ -972,7 +1429,7 @@ const googlePlayPaymentGateway: PaymentGateway = {
     unsupportedPaymentGatewayOperation(
       "google",
       "verifyCallback",
-      "Google Play Billing uses purchase-token verification instead of a server callback contract."
+      "Use the Google Play route adapter to verify authenticated RTDN callbacks and purchase tokens."
     ),
   grantRewards: () =>
     unsupportedPaymentGatewayOperation(

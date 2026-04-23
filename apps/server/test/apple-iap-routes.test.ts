@@ -252,6 +252,144 @@ test("apple verify returns a permanent structured error when signature validatio
   assert.equal(payload.error.category, "verification");
 });
 
+test("apple notifications verify signed payloads and surface duplicate-safe handler results", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+  const seenEvents: Array<{
+    notificationId: string;
+    notificationType: string;
+    subtype?: string;
+    orderId?: string;
+    transactionId?: string;
+  }> = [];
+
+  registerApplePaymentRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    verifyNotificationPayload: async () => ({
+      notificationId: "apple-notification-1",
+      notificationType: "REFUND",
+      subtype: "VOLUNTARY",
+      signedDate: "2026-04-23T09:00:00.000Z",
+      transaction: createVerifiedTransaction({
+        originalTransactionId: "1000001234500000"
+      }),
+      rawPayload: {
+        notificationUUID: "apple-notification-1",
+        notificationType: "REFUND",
+        subtype: "VOLUNTARY"
+      }
+    }),
+    notificationHandler: async (event) => {
+      seenEvents.push({
+        notificationId: event.notificationId,
+        notificationType: event.notificationType,
+        subtype: event.subtype,
+        orderId: event.orderId,
+        transactionId: event.transaction?.transactionId
+      });
+
+      return {
+        status: seenEvents.length === 1 ? "processed" : "duplicate"
+      };
+    }
+  });
+
+  const firstResponse = await app.invoke("/api/payments/apple/notifications", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      signedPayload: "apple-notification-jws"
+    })
+  });
+  const secondResponse = await app.invoke("/api/payments/apple/notifications", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      signedPayload: "apple-notification-jws"
+    })
+  });
+
+  const firstPayload = firstResponse.json as {
+    acknowledged: boolean;
+    status: string;
+    notificationId: string;
+    notificationType: string;
+  };
+  const secondPayload = secondResponse.json as {
+    acknowledged: boolean;
+    status: string;
+    notificationId: string;
+    notificationType: string;
+  };
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 200);
+  assert.deepEqual(seenEvents, [
+    {
+      notificationId: "apple-notification-1",
+      notificationType: "REFUND",
+      subtype: "VOLUNTARY",
+      orderId: "apple:1000001234567890",
+      transactionId: "1000001234567890"
+    },
+    {
+      notificationId: "apple-notification-1",
+      notificationType: "REFUND",
+      subtype: "VOLUNTARY",
+      orderId: "apple:1000001234567890",
+      transactionId: "1000001234567890"
+    }
+  ]);
+  assert.deepEqual(firstPayload, {
+    acknowledged: true,
+    status: "processed",
+    notificationId: "apple-notification-1",
+    notificationType: "REFUND"
+  });
+  assert.deepEqual(secondPayload, {
+    acknowledged: true,
+    status: "duplicate",
+    notificationId: "apple-notification-1",
+    notificationType: "REFUND"
+  });
+  assert.equal("signedPayload" in firstPayload, false);
+});
+
+test("apple notifications return structured verification errors for invalid signed payloads", async () => {
+  const app = new TestApp();
+  const store = new MemoryRoomSnapshotStore();
+
+  registerApplePaymentRoutes(app as never, store, {
+    products: TEST_PRODUCTS,
+    verifyNotificationPayload: async () => {
+      throw new AppleIapVerificationError({
+        code: "apple_notification_signature_invalid",
+        message: "Apple notification signature validation failed",
+        retryable: false,
+        statusCode: 400,
+        category: "verification"
+      });
+    }
+  });
+
+  const response = await app.invoke("/api/payments/apple/notifications", {
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      signedPayload: "bad-notification-jws"
+    })
+  });
+
+  const payload = response.json as { error: { code: string; retryable: boolean; category: string } };
+  assert.equal(response.statusCode, 400);
+  assert.equal(payload.error.code, "apple_notification_signature_invalid");
+  assert.equal(payload.error.retryable, false);
+  assert.equal(payload.error.category, "verification");
+});
+
 test("apple adapter retries sandbox after a production transaction lookup miss", async () => {
   const runtimeConfig = createAppleRuntimeConfig();
   const seenUrls: string[] = [];
