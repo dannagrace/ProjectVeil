@@ -206,6 +206,25 @@ const DEFAULT_AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_GUEST_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_ACCOUNT_REGISTRATION_TTL_MINUTES = 15;
 const DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES = 15;
+const AUTH_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:auth-rate-limit:";
+const ACCOUNT_LOCKOUT_CLUSTER_KEY_PREFIX = "veil:auth-account-lockout:";
+const AUTH_RATE_LIMIT_REDIS_SCRIPT = `
+local key = KEYS[1]
+local max = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
+local current = redis.call("INCR", key)
+if current == 1 then
+  redis.call("PEXPIRE", key, window_ms)
+end
+local ttl = redis.call("PTTL", key)
+if ttl < 0 then
+  ttl = window_ms
+end
+if current > max then
+  return {0, ttl}
+end
+return {1, ttl}
+`;
 
 const authRateLimitCounters = new Map<string, number[]>();
 const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
@@ -2100,12 +2119,47 @@ function consumeSlidingWindowRateLimit(key: string, config = readAuthRuntimeConf
   return { allowed: true };
 }
 
-function enforceAuthRateLimit(
+async function consumeClusterRateLimit(
+  redisClient: RedisClientLike,
+  key: string,
+  config = readAuthRuntimeConfig()
+): Promise<RateLimitResult> {
+  const result = (await redisClient.eval(
+    AUTH_RATE_LIMIT_REDIS_SCRIPT,
+    1,
+    `${AUTH_RATE_LIMIT_CLUSTER_KEY_PREFIX}${key}`,
+    String(config.rateLimitMax),
+    String(config.rateLimitWindowMs)
+  )) as [number, number] | null;
+  const [allowedFlag, ttlMs] = Array.isArray(result) ? result : [1, config.rateLimitWindowMs];
+  if (allowedFlag === 1) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.max(1, Math.ceil((ttlMs ?? config.rateLimitWindowMs) / 1000))
+  };
+}
+
+async function consumeAuthRateLimit(key: string, config = readAuthRuntimeConfig()): Promise<RateLimitResult> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    return consumeSlidingWindowRateLimit(key, config);
+  }
+
+  try {
+    return await consumeClusterRateLimit(redisClient, key, config);
+  } catch {
+    return consumeSlidingWindowRateLimit(key, config);
+  }
+}
+
+async function enforceAuthRateLimit(
   request: Pick<IncomingMessage, "headers" | "socket">,
   response: ServerResponse,
   endpointKey: string
-): boolean {
-  const rateLimitResult = consumeSlidingWindowRateLimit(`${endpointKey}:${resolveRequestIp(request)}`);
+): Promise<boolean> {
+  const rateLimitResult = await consumeAuthRateLimit(`${endpointKey}:${resolveRequestIp(request)}`);
   if (rateLimitResult.allowed) {
     return true;
   }
@@ -2121,14 +2175,22 @@ function enforceAuthRateLimit(
   return false;
 }
 
+function pruneAccountLockoutSnapshot(
+  state: AccountLockoutState,
+  config = readAuthRuntimeConfig(),
+  currentTime = nowMs()
+): AccountLockoutState {
+  const windowStart = currentTime - config.rateLimitWindowMs;
+  return {
+    failedAttempts: state.failedAttempts.filter((timestamp) => timestamp > windowStart),
+    ...(state.lockedUntil && state.lockedUntil > currentTime ? { lockedUntil: state.lockedUntil } : {})
+  };
+}
+
 function pruneAccountLockoutState(loginId: string, config = readAuthRuntimeConfig()): AccountLockoutState {
   const currentTime = nowMs();
-  const windowStart = currentTime - config.rateLimitWindowMs;
   const existingState = accountLockoutStateByLoginId.get(loginId) ?? { failedAttempts: [] };
-  const nextState: AccountLockoutState = {
-    failedAttempts: existingState.failedAttempts.filter((timestamp) => timestamp > windowStart),
-    ...(existingState.lockedUntil && existingState.lockedUntil > currentTime ? { lockedUntil: existingState.lockedUntil } : {})
-  };
+  const nextState = pruneAccountLockoutSnapshot(existingState, config, currentTime);
 
   if (nextState.failedAttempts.length === 0 && !nextState.lockedUntil) {
     accountLockoutStateByLoginId.delete(loginId);
@@ -2141,23 +2203,102 @@ function pruneAccountLockoutState(loginId: string, config = readAuthRuntimeConfi
   return nextState;
 }
 
-function getAccountLockedUntil(loginId: string): number | null {
-  return pruneAccountLockoutState(loginId).lockedUntil ?? null;
+function buildAccountLockoutClusterKey(loginId: string): string {
+  return `${ACCOUNT_LOCKOUT_CLUSTER_KEY_PREFIX}${loginId}`;
 }
 
-function recordAccountLoginFailure(loginId: string, config = readAuthRuntimeConfig()): number | null {
+function getAccountLockoutTtlMs(state: AccountLockoutState, config = readAuthRuntimeConfig()): number {
+  const lockoutTtlMs = state.lockedUntil ? state.lockedUntil - nowMs() : 0;
+  return Math.max(1, config.rateLimitWindowMs, lockoutTtlMs);
+}
+
+async function loadAccountLockoutState(loginId: string, config = readAuthRuntimeConfig()): Promise<AccountLockoutState> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    return pruneAccountLockoutState(loginId, config);
+  }
+
+  try {
+    const serialized = await redisClient.get(buildAccountLockoutClusterKey(loginId));
+    if (!serialized) {
+      return { failedAttempts: [] };
+    }
+    const parsed = JSON.parse(serialized) as AccountLockoutState;
+    const nextState = pruneAccountLockoutSnapshot(
+      {
+        failedAttempts: Array.isArray(parsed.failedAttempts) ? parsed.failedAttempts : [],
+        ...(typeof parsed.lockedUntil === "number" ? { lockedUntil: parsed.lockedUntil } : {})
+      },
+      config
+    );
+    if (nextState.failedAttempts.length === 0 && !nextState.lockedUntil) {
+      await redisClient.del(buildAccountLockoutClusterKey(loginId));
+    }
+    return nextState;
+  } catch {
+    return pruneAccountLockoutState(loginId, config);
+  }
+}
+
+async function saveAccountLockoutState(
+  loginId: string,
+  state: AccountLockoutState,
+  config = readAuthRuntimeConfig()
+): Promise<void> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    if (state.failedAttempts.length === 0 && !state.lockedUntil) {
+      accountLockoutStateByLoginId.delete(loginId);
+    } else {
+      accountLockoutStateByLoginId.set(loginId, state);
+    }
+    syncAuthStateTelemetry();
+    return;
+  }
+
+  try {
+    if (state.failedAttempts.length === 0 && !state.lockedUntil) {
+      await redisClient.del(buildAccountLockoutClusterKey(loginId));
+      return;
+    }
+    await redisClient.set(
+      buildAccountLockoutClusterKey(loginId),
+      JSON.stringify(state),
+      "PX",
+      getAccountLockoutTtlMs(state, config)
+    );
+  } catch {
+    accountLockoutStateByLoginId.set(loginId, state);
+    syncAuthStateTelemetry();
+  }
+}
+
+async function getAccountLockedUntil(loginId: string): Promise<number | null> {
+  return (await loadAccountLockoutState(loginId)).lockedUntil ?? null;
+}
+
+async function recordAccountLoginFailure(loginId: string, config = readAuthRuntimeConfig()): Promise<number | null> {
   const currentTime = nowMs();
-  const nextState = pruneAccountLockoutState(loginId, config);
+  const nextState = await loadAccountLockoutState(loginId, config);
   nextState.failedAttempts.push(currentTime);
   if (nextState.failedAttempts.length > config.lockoutThreshold) {
     nextState.lockedUntil = currentTime + config.lockoutDurationMs;
   }
-  accountLockoutStateByLoginId.set(loginId, nextState);
-  syncAuthStateTelemetry();
+  await saveAccountLockoutState(loginId, nextState, config);
   return nextState.lockedUntil ?? null;
 }
 
-function clearAccountLoginFailures(loginId: string): void {
+async function clearAccountLoginFailures(loginId: string): Promise<void> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (redisClient) {
+    try {
+      await redisClient.del(buildAccountLockoutClusterKey(loginId));
+    } catch {
+      accountLockoutStateByLoginId.delete(loginId);
+      syncAuthStateTelemetry();
+    }
+    return;
+  }
   accountLockoutStateByLoginId.delete(loginId);
   syncAuthStateTelemetry();
 }
@@ -2291,6 +2432,12 @@ export function setGuestSessionClusterClientForTest(client: RedisClientLike | nu
   guestSessionClusterClientOverride = client;
   guestSessionClusterClientCache = undefined;
 }
+
+export const __authRateLimitInternals = {
+  consumeAuthRateLimit,
+  consumeSlidingWindowRateLimit,
+  AUTH_RATE_LIMIT_REDIS_SCRIPT
+};
 
 export function registerAuthRoutes(
   app: {
@@ -2486,7 +2633,7 @@ export function registerAuthRoutes(
   });
 
   app.post("/api/auth/guest-login", async (request, response) => {
-    if (!enforceAuthRateLimit(request, response, "guest-login")) {
+    if (!(await enforceAuthRateLimit(request, response, "guest-login"))) {
       return;
     }
 
@@ -2610,7 +2757,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "account-login")) {
+    if (!(await enforceAuthRateLimit(request, response, "account-login"))) {
       return;
     }
 
@@ -2697,7 +2844,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      const lockedUntil = getAccountLockedUntil(loginId);
+      const lockedUntil = await getAccountLockedUntil(loginId);
       if (lockedUntil) {
         sendAccountLocked(response, lockedUntil);
         return;
@@ -2707,7 +2854,7 @@ export function registerAuthRoutes(
       if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
         recordAuthInvalidCredentials();
         const credentialStuffingBlockedUntil = recordCredentialStuffingFailure(requestIp, loginId);
-        const nextLockedUntil = recordAccountLoginFailure(loginId);
+        const nextLockedUntil = await recordAccountLoginFailure(loginId);
         if (credentialStuffingBlockedUntil) {
           sendCredentialStuffingBlocked(response, credentialStuffingBlockedUntil);
         } else if (nextLockedUntil) {
@@ -2723,7 +2870,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      clearAccountLoginFailures(loginId);
+      await clearAccountLoginFailures(loginId);
       let account = await store.ensurePlayerAccount({
         playerId: authAccount.playerId,
         displayName: authAccount.displayName
@@ -2768,7 +2915,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "account-registration-request")) {
+    if (!(await enforceAuthRateLimit(request, response, "account-registration-request"))) {
       return;
     }
 
@@ -2853,7 +3000,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "account-registration-confirm")) {
+    if (!(await enforceAuthRateLimit(request, response, "account-registration-confirm"))) {
       return;
     }
 
@@ -2981,7 +3128,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "password-recovery-request")) {
+    if (!(await enforceAuthRateLimit(request, response, "password-recovery-request"))) {
       return;
     }
 
@@ -3054,7 +3201,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "password-recovery-confirm")) {
+    if (!(await enforceAuthRateLimit(request, response, "password-recovery-confirm"))) {
       return;
     }
 
@@ -3146,7 +3293,7 @@ export function registerAuthRoutes(
         });
       }
       removeAuthAccountSessionsForPlayer(authAccount.playerId);
-      clearAccountLoginFailures(loginId);
+      await clearAccountLoginFailures(loginId);
       await appendAccountAuditLog(store, authAccount.playerId, "通过密码找回流程重置口令，并撤销旧会话。", credentialBoundAt);
       const account =
         (await store.loadPlayerAccount(authAccount.playerId)) ??
@@ -3169,7 +3316,7 @@ export function registerAuthRoutes(
       return;
     }
 
-    if (!enforceAuthRateLimit(request, response, "account-bind")) {
+    if (!(await enforceAuthRateLimit(request, response, "account-bind"))) {
       return;
     }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Redis from "ioredis-mock";
 import {
+  __authRateLimitInternals,
   issueGuestAuthSession,
   resetGuestAuthSessions,
   revokeGuestAuthSession,
@@ -105,6 +106,46 @@ test("shared Redis guest session order enforces the global guest-session limit a
     } else {
       process.env.VEIL_MAX_GUEST_SESSIONS = previousMaxGuestSessions;
     }
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+  }
+});
+
+test("auth rate limit counters are shared through Redis across local resets", async () => {
+  const redis = new Redis();
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+  const rateLimitConfig = {
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 2,
+    lockoutThreshold: 10,
+    lockoutDurationMs: 15 * 60_000,
+    credentialStuffingWindowMs: 5 * 60_000,
+    credentialStuffingDistinctLoginIdThreshold: 5,
+    credentialStuffingBlockDurationMs: 15 * 60_000,
+    maxGuestSessions: 10_000,
+    authAccessTtlSeconds: 60 * 60,
+    authRefreshTtlSeconds: 30 * 24 * 60 * 60,
+    guestTokenTtlSeconds: 7 * 24 * 60 * 60,
+    accountRegistrationTtlMs: 15 * 60_000,
+    passwordRecoveryTtlMs: 15 * 60_000
+  };
+
+  try {
+    const first = await __authRateLimitInternals.consumeAuthRateLimit("guest-login:198.51.100.20", rateLimitConfig);
+    resetGuestAuthSessions();
+    setGuestSessionClusterClientForTest(redis as never);
+    const second = await __authRateLimitInternals.consumeAuthRateLimit("guest-login:198.51.100.20", rateLimitConfig);
+    resetGuestAuthSessions();
+    setGuestSessionClusterClientForTest(redis as never);
+    const third = await __authRateLimitInternals.consumeAuthRateLimit("guest-login:198.51.100.20", rateLimitConfig);
+
+    assert.equal(first.allowed, true);
+    assert.equal(second.allowed, true);
+    assert.equal(third.allowed, false);
+    assert.equal(third.retryAfterSeconds, 60);
+  } finally {
     setGuestSessionClusterClientForTest(undefined);
     await redis.quit();
     resetGuestAuthSessions();
