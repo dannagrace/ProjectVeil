@@ -72,6 +72,7 @@ import {
   resolveRoomFeedbackTone
 } from "./room-feedback";
 import { createMainSessionRuntime } from "./main-session-runtime";
+import { bindClientRuntimeErrorBoundary } from "./runtime-error-reporting";
 import {
   clampWorldCoordinate,
   diagnosticsConnectionStatusLabel,
@@ -466,6 +467,23 @@ let achievementToastTaskId: number | null = null;
 const seenAchievementToastEventIds = new Set<string>();
 const pendingAchievementToasts: Array<{ eventId: string; title: string; detail: string }> = [];
 let hasHydratedAchievementFeed = false;
+
+bindClientRuntimeErrorBoundary({
+  apiBaseUrl: runtimeServerHttpUrl,
+  readAuthToken: () => readStoredAuthSession()?.token ?? null,
+  readContext: () => ({
+    runtimeTarget: runtimeServerHttpUrl,
+    route: window.location.href,
+    userAgent: globalThis.navigator?.userAgent ?? "unknown",
+    roomId: state.world.meta.roomId,
+    playerId,
+    diagnostics: {
+      lastUpdateAt: state.diagnostics.lastUpdateAt,
+      lastUpdateSource: state.diagnostics.lastUpdateSource,
+      lastUpdateReason: state.diagnostics.lastUpdateReason
+    }
+  })
+});
 
 interface PendingPrediction {
   world: PlayerWorldView;
