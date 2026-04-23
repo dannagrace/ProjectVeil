@@ -69,6 +69,7 @@ Commands:
   content-smoke         Validate Content Smoke.
   e2e:fixtures          Validate E2E Fixtures.
   k8s-configmap         Validate K8s Configmap.
+  k8s-image-tags        Validate K8s Image Tags.
   map-object-visuals    Validate Map Object Visuals.
   production-env        Validate Production Env.
   quickstart            Validate Quickstart.
@@ -173,6 +174,7 @@ Commands:
   validate-map-object-visuals              Run the Validate Map Object Visuals test suite.
   validate-production-env                  Run the Validate Production Env test suite.
   validate:k8s-configmap                   Run the Validate K8s Configmap test suite.
+  validate:k8s-image-tags                  Run the Validate K8s Image Tags test suite.
   wechat-assets-hotfix                     Run the WeChat Assets Hotfix test suite.
   wechat-commercial-verification           Run the WeChat Commercial Verification test suite.
 ```

@@ -742,7 +742,9 @@ test("dev server exits non-zero in production when schema migrations are pending
     playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   const originalNodeEnv = process.env.NODE_ENV;
+  const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
   process.env.NODE_ENV = "production";
+  process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
   let memoryStoreCreated = false;
   let mysqlStoreCreated = false;
   let mysqlConfigStoreCreated = false;
@@ -810,6 +812,11 @@ test("dev server exits non-zero in production when schema migrations are pending
     } else {
       process.env.NODE_ENV = originalNodeEnv;
     }
+    if (originalAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = originalAuthSecret;
+    }
   }
 
   assert.equal(memoryStoreCreated, false);
@@ -848,7 +855,9 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
     playerNameHistoryRetention: defaultPlayerNameHistoryRetention
   };
   const originalNodeEnv = process.env.NODE_ENV;
+  const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
   process.env.NODE_ENV = "production";
+  process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
   let memoryStoreCreated = false;
 
   try {
@@ -907,6 +916,11 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
       delete process.env.NODE_ENV;
     } else {
       process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = originalAuthSecret;
     }
   }
 
@@ -1371,8 +1385,10 @@ test("dev server emits a prominent production warning when SENTRY_DSN is absent"
   const memoryStore = createMemoryStore();
   const originalNodeEnv = process.env.NODE_ENV;
   const originalSentryDsn = process.env.SENTRY_DSN;
+  const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
   process.env.NODE_ENV = "production";
   delete process.env.SENTRY_DSN;
+  process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
 
   try {
     await startDevServer(3112, "127.0.0.1", {
@@ -1429,6 +1445,11 @@ test("dev server emits a prominent production warning when SENTRY_DSN is absent"
       delete process.env.SENTRY_DSN;
     } else {
       process.env.SENTRY_DSN = originalSentryDsn;
+    }
+    if (originalAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = originalAuthSecret;
     }
   }
 

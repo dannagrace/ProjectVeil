@@ -80,6 +80,10 @@ class TestResponse {
     return this.headers.get(name.toLowerCase());
   }
 
+  removeHeader(name: string): void {
+    this.headers.delete(name.toLowerCase());
+  }
+
   end(chunk?: string | Buffer): void {
     if (chunk) {
       this.body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
@@ -485,6 +489,7 @@ test("real dev-server locks an account after 10 failed attempts and rejects atte
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
+      VEIL_AUTH_SECRET: "rate-limit-test-auth-secret",
       VEIL_RATE_LIMIT_AUTH_MAX: "100",
       VEIL_AUTH_LOCKOUT_THRESHOLD: "10",
       VEIL_AUTH_LOCKOUT_DURATION_MINUTES: "0.01"
@@ -516,7 +521,11 @@ test("real dev-server locks an account after 10 failed attempts and rejects atte
         privacyConsentAccepted: true
       }
     });
-    assert.equal(response.status, 401, `attempt ${attempt} should still count as a failed credential check`);
+    assert.equal(
+      response.status,
+      401,
+      `attempt ${attempt} should still count as a failed credential check: ${JSON.stringify(response.body)}`
+    );
     assert.equal((response.body.error as { code: string }).code, "invalid_credentials");
   }
 
@@ -540,6 +549,7 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
+      VEIL_AUTH_SECRET: "rate-limit-test-auth-secret",
       VEIL_RATE_LIMIT_AUTH_MAX: "100",
       VEIL_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_IDS: "5",
       VEIL_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES: "0.01"
@@ -576,7 +586,11 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
         privacyConsentAccepted: true
       }
     });
-    assert.equal(response.status, 401, `attempt ${index} should still be counted before the source is blocked`);
+    assert.equal(
+      response.status,
+      401,
+      `attempt ${index} should still be counted before the source is blocked: ${JSON.stringify(response.body)}`
+    );
     assert.equal((response.body.error as { code: string }).code, "invalid_credentials");
   }
 
@@ -604,6 +618,7 @@ test("real dev-server clears account lockout state after the configured recovery
   const cleanup: Array<() => void> = [];
   withEnvOverrides(
     {
+      VEIL_AUTH_SECRET: "rate-limit-test-auth-secret",
       VEIL_RATE_LIMIT_AUTH_MAX: "100",
       VEIL_AUTH_LOCKOUT_THRESHOLD: "2",
       VEIL_AUTH_LOCKOUT_DURATION_MINUTES: "0.002"
@@ -635,7 +650,7 @@ test("real dev-server clears account lockout state after the configured recovery
         privacyConsentAccepted: true
       }
     });
-    assert.equal(response.status, 401);
+    assert.equal(response.status, 401, `attempt ${attempt} should count before lockout: ${JSON.stringify(response.body)}`);
     assert.equal((response.body.error as { code: string }).code, "invalid_credentials");
   }
 
