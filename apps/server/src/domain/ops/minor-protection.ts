@@ -177,33 +177,6 @@ function deriveAgeFromBirthdate(
   return age;
 }
 
-function isMinorAgeRange(ageRange: string): boolean | undefined {
-  const normalized = ageRange.trim().toLowerCase();
-  if (!normalized) {
-    return undefined;
-  }
-
-  if (normalized.includes("adult") || normalized.includes("18+")) {
-    return false;
-  }
-
-  if (normalized.includes("minor") || normalized.includes("under18") || normalized.includes("<18")) {
-    return true;
-  }
-
-  const rangeMatch = normalized.match(/^(\d{1,2})\s*[-~]\s*(\d{1,2})$/);
-  if (!rangeMatch) {
-    return undefined;
-  }
-
-  const maxAge = Number(rangeMatch[2]);
-  if (!Number.isFinite(maxAge)) {
-    return undefined;
-  }
-
-  return maxAge < 18;
-}
-
 export function readMinorProtectionConfig(env: NodeJS.ProcessEnv = process.env): MinorProtectionConfig {
   const holidayDates = new Set(
     (env.VEIL_MINOR_PROTECTION_HOLIDAY_DATES ?? "")
@@ -367,36 +340,11 @@ export function deriveWechatMinorProtection(
   config = readMinorProtectionConfig()
 ): { ageVerified?: boolean; isMinor?: boolean } {
   if (typeof input.birthdate === "string") {
-    const normalizedBirthdate = normalizeMinorProtectionBirthdate(input.birthdate, now, config);
-    const birthdate = parseBirthdate(normalizedBirthdate);
-    return {
-      ageVerified: true,
-      isMinor: birthdate != null && deriveAgeFromBirthdate(birthdate, now, config.timeZone) < 18
-    };
+    normalizeMinorProtectionBirthdate(input.birthdate, now, config);
   }
 
-  if (typeof input.isAdult === "boolean") {
-    return {
-      ageVerified: true,
-      isMinor: !input.isAdult
-    };
-  }
-
-  if (typeof input.ageRange === "string") {
-    const isMinor = isMinorAgeRange(input.ageRange);
-    if (typeof isMinor === "boolean") {
-      return {
-        ageVerified: true,
-        isMinor
-      };
-    }
-  }
-
-  if (typeof input.ageVerified === "boolean") {
-    return {
-      ageVerified: input.ageVerified
-    };
-  }
-
-  return {};
+  return {
+    ageVerified: false,
+    isMinor: true
+  };
 }
