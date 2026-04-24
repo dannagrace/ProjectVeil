@@ -3,6 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
+import { consumeRedisBackedOrLocalRateLimit, createLocalRateLimitState } from "@server/infra/http-rate-limit";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import type { RoomSnapshotStore } from "@server/persistence";
 
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
@@ -80,6 +82,9 @@ interface AnalyticsRouteRegistrationOptions {
   enableTestRoutes?: boolean;
   store?: RoomSnapshotStore | null;
   allowedOrigins?: string[];
+  rateLimitRedisClient?: RedisClientLike | null;
+  rateLimitRedisUrl?: string | null;
+  rateLimitCreateRedisClient?: typeof createRedisClient;
 }
 
 const defaultAnalyticsRuntimeDependencies: AnalyticsRuntimeDependencies = {
@@ -131,7 +136,8 @@ const MAX_ANALYTICS_REQUEST_BYTES = 256 * 1024;
 const MAX_ANALYTICS_EVENTS_PER_REQUEST = 50;
 const ANALYTICS_INGEST_RATE_LIMIT_WINDOW_MS = 60_000;
 const ANALYTICS_INGEST_RATE_LIMIT_MAX = 120;
-const analyticsIngestRateLimitByPlayer = new Map<string, number[]>();
+const ANALYTICS_INGEST_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:analytics-ingest-rate-limit:";
+const analyticsIngestRateLimitState = createLocalRateLimitState();
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -273,16 +279,21 @@ function sendTooManyRequests(response: ServerResponse): void {
   });
 }
 
-function consumeAnalyticsIngestRateLimit(playerId: string, nowMs = Date.now()): boolean {
-  const cutoff = nowMs - ANALYTICS_INGEST_RATE_LIMIT_WINDOW_MS;
-  const timestamps = analyticsIngestRateLimitByPlayer.get(playerId)?.filter((timestamp) => timestamp >= cutoff) ?? [];
-  if (timestamps.length >= ANALYTICS_INGEST_RATE_LIMIT_MAX) {
-    analyticsIngestRateLimitByPlayer.set(playerId, timestamps);
-    return false;
-  }
-  timestamps.push(nowMs);
-  analyticsIngestRateLimitByPlayer.set(playerId, timestamps);
-  return true;
+async function consumeAnalyticsIngestRateLimit(
+  playerId: string,
+  redisClient: RedisClientLike | null,
+  now: () => number = Date.now
+): Promise<boolean> {
+  const result = await consumeRedisBackedOrLocalRateLimit({
+    redisClient,
+    localState: analyticsIngestRateLimitState,
+    key: playerId,
+    redisKey: `${ANALYTICS_INGEST_RATE_LIMIT_CLUSTER_KEY_PREFIX}${playerId}`,
+    config: { windowMs: ANALYTICS_INGEST_RATE_LIMIT_WINDOW_MS },
+    max: ANALYTICS_INGEST_RATE_LIMIT_MAX,
+    now
+  });
+  return result.allowed;
 }
 
 function normalizeClientAnalyticsEvents(payload: unknown, playerId: string): AnalyticsEvent[] {
@@ -504,7 +515,8 @@ export function resetAnalyticsRuntimeDependencies(): void {
   analyticsPipelineCounters.lastErrorMessage = null;
   analyticsPipelineCounters.ingestedByKey.clear();
   analyticsPipelineCounters.flushedByKey.clear();
-  analyticsIngestRateLimitByPlayer.clear();
+  analyticsIngestRateLimitState.counters.clear();
+  analyticsIngestRateLimitState.lastPrunedAtMs = 0;
 }
 
 export function resetCapturedAnalyticsEventsForTest(): void {
@@ -607,6 +619,15 @@ export function flushAnalyticsEventsForTest(env: NodeJS.ProcessEnv = process.env
   return flushEvents(env);
 }
 
+function resolveAnalyticsIngestRateLimitRedisClient(options: AnalyticsRouteRegistrationOptions): RedisClientLike | null {
+  if (options.rateLimitRedisClient !== undefined) {
+    return options.rateLimitRedisClient;
+  }
+
+  const redisUrl = options.rateLimitRedisUrl ?? readRedisUrl();
+  return redisUrl ? (options.rateLimitCreateRedisClient ?? createRedisClient)(redisUrl) : null;
+}
+
 export function registerAnalyticsRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -615,6 +636,8 @@ export function registerAnalyticsRoutes(
   },
   options: AnalyticsRouteRegistrationOptions = {}
 ): void {
+  const rateLimitRedisClient = resolveAnalyticsIngestRateLimitRedisClient(options);
+
   app.use((request, response, next) => {
     applyAnalyticsCors(request, response, options.allowedOrigins);
 
@@ -673,7 +696,7 @@ export function registerAnalyticsRoutes(
         sendUnauthorized(response, authResult.errorCode ?? "unauthorized");
         return;
       }
-      if (!consumeAnalyticsIngestRateLimit(authResult.session.playerId)) {
+      if (!(await consumeAnalyticsIngestRateLimit(authResult.session.playerId, rateLimitRedisClient))) {
         sendTooManyRequests(response);
         return;
       }

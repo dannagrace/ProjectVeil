@@ -9,6 +9,7 @@ import {
   resetAnalyticsRuntimeDependencies
 } from "@server/domain/ops/analytics";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { createFakeRedisRateLimitClient } from "./fake-redis-rate-limit.ts";
 
 afterEach(() => {
   resetAnalyticsRuntimeDependencies();
@@ -59,6 +60,45 @@ function createRequest(method: string, body?: string, headers: Record<string, st
     request.read();
   };
   return request;
+}
+
+function capturePublicAnalyticsPostHandler(options: Record<string, unknown> = {}): (
+  request: never,
+  response: TestResponse
+) => void | Promise<void> {
+  let handler:
+    | ((request: never, response: TestResponse) => void | Promise<void>)
+    | undefined;
+
+  registerAnalyticsRoutes(
+    {
+      use() {},
+      get() {},
+      post(path, nextHandler) {
+        if (path === "/api/analytics/events") {
+          handler = nextHandler as never;
+        }
+      }
+    },
+    options as never
+  );
+
+  assert(handler);
+  return handler;
+}
+
+async function postEmptyAnalyticsBatch(
+  handler: (request: never, response: TestResponse) => void | Promise<void>,
+  token: string
+): Promise<TestResponse> {
+  const response = createResponse();
+  await handler(
+    createRequest("POST", JSON.stringify({ events: [] }), {
+      authorization: `Bearer ${token}`
+    }) as never,
+    response
+  );
+  return response;
 }
 
 test("registerAnalyticsRoutes keeps test capture routes disabled by default", () => {
@@ -412,4 +452,30 @@ test("registerAnalyticsRoutes rejects unknown analytics event names", async () =
 
   assert.equal(response.statusCode, 400);
   assert.match(response.body, /analytics event name is not allowed/);
+});
+
+test("registerAnalyticsRoutes shares public ingest rate limits through Redis across local resets", async () => {
+  configureAnalyticsRuntimeDependencies({
+    log: () => {}
+  });
+  const redis = createFakeRedisRateLimitClient();
+  const session = issueGuestAuthSession({ playerId: "analytics-shared-limit", displayName: "Analytics Shared" });
+  let handler = capturePublicAnalyticsPostHandler({ rateLimitRedisClient: redis });
+
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const accepted = await postEmptyAnalyticsBatch(handler, session.token);
+    assert.equal(accepted.statusCode, 202);
+  }
+
+  resetAnalyticsRuntimeDependencies();
+  configureAnalyticsRuntimeDependencies({
+    log: () => {}
+  });
+  handler = capturePublicAnalyticsPostHandler({ rateLimitRedisClient: redis });
+
+  const limited = await postEmptyAnalyticsBatch(handler, session.token);
+  const limitedPayload = JSON.parse(limited.body) as { error: { code: string } };
+
+  assert.equal(limited.statusCode, 429);
+  assert.equal(limitedPayload.error.code, "analytics_rate_limited");
 });

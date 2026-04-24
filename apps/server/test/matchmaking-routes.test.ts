@@ -17,6 +17,7 @@ import {
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import { resetRuntimeObservability } from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
+import { createFakeRedisRateLimitClient } from "./fake-redis-rate-limit.ts";
 
 function withEnvOverrides(overrides: Record<string, string | undefined>, cleanup: Array<() => void>): void {
   for (const [key, value] of Object.entries(overrides)) {
@@ -108,6 +109,61 @@ async function startMatchmakingServer(
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;
+}
+
+interface TestResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+  setHeader(name: string, value: string): void;
+  end(body?: string): void;
+}
+
+function createTestResponse(): TestResponse {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: "",
+    setHeader(name, value) {
+      this.headers[name] = value;
+    },
+    end(body = "") {
+      this.body = body;
+    }
+  };
+}
+
+function createRateLimitRequest(ipAddress: string): {
+  headers: Record<string, string>;
+  socket: { remoteAddress: string };
+  url: string;
+  method: string;
+} {
+  return {
+    headers: {},
+    socket: { remoteAddress: ipAddress },
+    url: "/api/matchmaking/status",
+    method: "GET"
+  };
+}
+
+function createMatchmakingRouteCaptureApp(): {
+  getHandlers: Map<string, (request: never, response: never) => void | Promise<void>>;
+  use(): void;
+  get(path: string, handler: (request: never, response: never) => void | Promise<void>): void;
+  post(): void;
+  delete(): void;
+} {
+  const getHandlers = new Map<string, (request: never, response: never) => void | Promise<void>>();
+  return {
+    getHandlers,
+    use() {},
+    get(path, handler) {
+      getHandlers.set(path, handler);
+    },
+    post() {},
+    delete() {}
+  };
 }
 
 function seedQueue(service: MatchmakingService, requests: MatchmakingRequest[]): void {
@@ -775,6 +831,94 @@ test("matchmaking routes return 429 with Retry-After after the per-IP rate limit
   assert.equal(limitedCancelResponse.status, 429);
   assert.equal(limitedCancelPayload.error.code, "rate_limited");
   assert.equal(limitedCancelResponse.headers.get("Retry-After"), "60");
+});
+
+test("matchmaking route rate limits are shared through Redis across local resets", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      REDIS_URL: undefined,
+      VEIL_RATE_LIMIT_MATCHMAKING_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_MATCHMAKING_MAX: "1"
+    },
+    cleanup
+  );
+  const redis = createFakeRedisRateLimitClient();
+
+  t.after(() => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetMatchmakingService();
+    resetRuntimeObservability();
+  });
+
+  const firstApp = createMatchmakingRouteCaptureApp();
+  registerMatchmakingRoutes(firstApp as never, {
+    store: null,
+    rateLimitRedisClient: redis as never
+  } as never);
+  const firstResponse = createTestResponse();
+  await firstApp.getHandlers.get("/api/matchmaking/status")?.(
+    createRateLimitRequest("198.51.100.70") as never,
+    firstResponse as never
+  );
+  assert.equal(firstResponse.statusCode, 401);
+
+  resetMatchmakingService();
+
+  const secondApp = createMatchmakingRouteCaptureApp();
+  registerMatchmakingRoutes(secondApp as never, {
+    store: null,
+    rateLimitRedisClient: redis as never
+  } as never);
+  const secondResponse = createTestResponse();
+  await secondApp.getHandlers.get("/api/matchmaking/status")?.(
+    createRateLimitRequest("198.51.100.70") as never,
+    secondResponse as never
+  );
+  const secondPayload = JSON.parse(secondResponse.body) as { error: { code: string } };
+
+  assert.equal(secondResponse.statusCode, 429);
+  assert.equal(secondPayload.error.code, "rate_limited");
+  assert.equal(secondResponse.headers["Retry-After"], "60");
+});
+
+test("matchmaking route rate limits remain local when Redis is not configured", { concurrency: false }, async (t) => {
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      REDIS_URL: undefined,
+      VEIL_RATE_LIMIT_MATCHMAKING_WINDOW_MS: "60000",
+      VEIL_RATE_LIMIT_MATCHMAKING_MAX: "1"
+    },
+    cleanup
+  );
+
+  t.after(() => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetMatchmakingService();
+    resetRuntimeObservability();
+  });
+
+  const firstApp = createMatchmakingRouteCaptureApp();
+  registerMatchmakingRoutes(firstApp as never, { store: null });
+  const firstResponse = createTestResponse();
+  await firstApp.getHandlers.get("/api/matchmaking/status")?.(
+    createRateLimitRequest("198.51.100.71") as never,
+    firstResponse as never
+  );
+  assert.equal(firstResponse.statusCode, 401);
+
+  resetMatchmakingService();
+
+  const secondApp = createMatchmakingRouteCaptureApp();
+  registerMatchmakingRoutes(secondApp as never, { store: null });
+  const secondResponse = createTestResponse();
+  await secondApp.getHandlers.get("/api/matchmaking/status")?.(
+    createRateLimitRequest("198.51.100.71") as never,
+    secondResponse as never
+  );
+
+  assert.equal(secondResponse.statusCode, 401);
 });
 
 test("matchmaking enqueue returns 429 with Retry-After after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {

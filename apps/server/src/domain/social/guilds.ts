@@ -7,6 +7,12 @@ import { createGuild, createGuildRosterView, createGuildSummaryView, type GuildC
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { loadDisplayNameValidationRules } from "@server/domain/account/display-name-rules";
 import { recordHttpRateLimited } from "@server/domain/ops/observability";
+import {
+  consumeRedisBackedOrLocalRateLimit,
+  createLocalRateLimitState,
+  type RateLimitResult
+} from "@server/infra/http-rate-limit";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import type { GuildAuditLogRecord, GuildChatMessageRecord, RoomSnapshotStore } from "@server/persistence";
 
@@ -32,11 +38,6 @@ const DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_MAX = 10;
 const DEFAULT_GUILD_CHAT_MESSAGE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-interface RateLimitResult {
-  allowed: boolean;
-  retryAfterSeconds?: number;
-}
-
 interface GuildChatEventEnvelope {
   type: "guild.chat.message" | "guild.chat.deleted";
   guildId: string;
@@ -53,6 +54,19 @@ export interface GuildChatRealtimeTransport {
 }
 
 const GUILD_CHAT_REALTIME_TOPIC_PREFIX = "veil:guild-chat";
+const GUILD_CHAT_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:guild-chat-rate-limit:";
+
+interface GuildChatRateLimiterOptions {
+  redisClient?: RedisClientLike | null;
+  now?: () => number;
+}
+
+interface GuildRouteRegistrationOptions {
+  chatRealtimeTransport?: GuildChatRealtimeTransport | null;
+  rateLimitRedisClient?: RedisClientLike | null;
+  rateLimitRedisUrl?: string | null;
+  rateLimitCreateRedisClient?: typeof createRedisClient;
+}
 
 function buildGuildChatRealtimeTopic(guildId: string): string {
   return `${GUILD_CHAT_REALTIME_TOPIC_PREFIX}:${guildId.trim()}`;
@@ -137,27 +151,23 @@ function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">):
 }
 
 class GuildChatRateLimiter {
-  private readonly counters = new Map<string, number[]>();
+  private readonly localState = createLocalRateLimitState();
   private readonly windowMs = readGuildChatMessageRateLimitWindowMs();
   private readonly max = readGuildChatMessageRateLimitMax();
 
-  consume(playerId: string, request: Pick<IncomingMessage, "headers" | "socket">): RateLimitResult {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    const key = `${playerId.trim()}:${resolveRequestIp(request)}`;
-    const timestamps = (this.counters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
-    if (timestamps.length >= this.max) {
-      this.counters.set(key, timestamps);
-      const oldestTimestamp = timestamps[0] ?? now;
-      return {
-        allowed: false,
-        retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + this.windowMs - now) / 1000))
-      };
-    }
+  constructor(private readonly options: GuildChatRateLimiterOptions = {}) {}
 
-    timestamps.push(now);
-    this.counters.set(key, timestamps);
-    return { allowed: true };
+  async consume(playerId: string, request: Pick<IncomingMessage, "headers" | "socket">): Promise<RateLimitResult> {
+    const key = `${playerId.trim()}:${resolveRequestIp(request)}`;
+    return consumeRedisBackedOrLocalRateLimit({
+      redisClient: this.options.redisClient ?? null,
+      localState: this.localState,
+      key,
+      redisKey: `${GUILD_CHAT_RATE_LIMIT_CLUSTER_KEY_PREFIX}${key}`,
+      config: { windowMs: this.windowMs },
+      max: this.max,
+      now: this.options.now ?? Date.now
+    });
   }
 }
 
@@ -532,7 +542,7 @@ export class GuildService {
       typeof action.content === "string" ? action.content : "",
       loadDisplayNameValidationRules()
     );
-    const rateLimitResult = this.guildChatRateLimiter.consume(authSession.playerId, request);
+    const rateLimitResult = await this.guildChatRateLimiter.consume(authSession.playerId, request);
     if (!rateLimitResult.allowed) {
       throw new Error(`guild_chat_rate_limited: retry after ${rateLimitResult.retryAfterSeconds ?? 1} seconds`);
     }
@@ -748,6 +758,15 @@ export class GuildService {
   }
 }
 
+function resolveGuildChatRateLimitRedisClient(options: GuildRouteRegistrationOptions): RedisClientLike | null {
+  if (options.rateLimitRedisClient !== undefined) {
+    return options.rateLimitRedisClient;
+  }
+
+  const redisUrl = options.rateLimitRedisUrl ?? readRedisUrl();
+  return redisUrl ? (options.rateLimitCreateRedisClient ?? createRedisClient)(redisUrl) : null;
+}
+
 export function registerGuildRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -755,9 +774,11 @@ export function registerGuildRoutes(
     post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
   store: RoomSnapshotStore | null,
-  options: { chatRealtimeTransport?: GuildChatRealtimeTransport | null } = {}
+  options: GuildRouteRegistrationOptions = {}
 ): void {
-  const service = new GuildService(store);
+  const service = new GuildService(store, new GuildChatRateLimiter({
+    redisClient: resolveGuildChatRateLimitRedisClient(options)
+  }));
   const guildChatHub = new GuildChatRealtimeHub(options.chatRealtimeTransport);
 
   app.use((request, response, next) => {

@@ -42,14 +42,28 @@ interface HttpRateLimitConfig {
   adminMax: number;
 }
 
-interface RateLimitResult {
+export interface RateLimitResult {
   allowed: boolean;
   retryAfterSeconds?: number;
 }
 
-interface LocalRateLimitState {
+export interface RateLimitWindowConfig {
+  windowMs: number;
+}
+
+export interface LocalRateLimitState {
   counters: Map<string, number[]>;
   lastPrunedAtMs: number;
+}
+
+interface RedisBackedOrLocalRateLimitOptions {
+  redisClient?: RedisClientLike | null;
+  localState: LocalRateLimitState;
+  key: string;
+  redisKey?: string;
+  config: RateLimitWindowConfig;
+  max: number;
+  now?: () => number;
 }
 
 interface HttpRateLimitDependencies {
@@ -120,9 +134,16 @@ function resolveHttpRateLimitPolicy(pathname: string, config = readHttpRateLimit
   return { scope: "global", max: config.globalMax };
 }
 
+export function createLocalRateLimitState(): LocalRateLimitState {
+  return {
+    counters: new Map<string, number[]>(),
+    lastPrunedAtMs: 0
+  };
+}
+
 function pruneExpiredSlidingWindowCounters(
   state: LocalRateLimitState,
-  config: Pick<HttpRateLimitConfig, "windowMs">,
+  config: RateLimitWindowConfig,
   nowMs: number
 ): void {
   if (nowMs - state.lastPrunedAtMs < LOCAL_COUNTER_PRUNE_INTERVAL_MS) {
@@ -145,7 +166,7 @@ function pruneExpiredSlidingWindowCounters(
 function consumeSlidingWindowRateLimit(
   state: LocalRateLimitState,
   key: string,
-  config: Pick<HttpRateLimitConfig, "windowMs">,
+  config: RateLimitWindowConfig,
   max: number,
   nowMs: number
 ): RateLimitResult {
@@ -170,7 +191,7 @@ function consumeSlidingWindowRateLimit(
 async function consumeRedisBackedRateLimit(
   redisClient: RedisClientLike,
   key: string,
-  config: Pick<HttpRateLimitConfig, "windowMs">,
+  config: RateLimitWindowConfig,
   max: number
 ): Promise<RateLimitResult> {
   const result = (await redisClient.eval(
@@ -192,6 +213,26 @@ async function consumeRedisBackedRateLimit(
   };
 }
 
+export async function consumeRedisBackedOrLocalRateLimit(
+  options: RedisBackedOrLocalRateLimitOptions
+): Promise<RateLimitResult> {
+  const now = options.now ?? Date.now;
+  if (!options.redisClient) {
+    return consumeSlidingWindowRateLimit(options.localState, options.key, options.config, options.max, now());
+  }
+
+  try {
+    return await consumeRedisBackedRateLimit(
+      options.redisClient,
+      options.redisKey ?? options.key,
+      options.config,
+      options.max
+    );
+  } catch {
+    return consumeSlidingWindowRateLimit(options.localState, options.key, options.config, options.max, now());
+  }
+}
+
 function sendRateLimited(response: ServerResponse, retryAfterSeconds: number): void {
   response.statusCode = 429;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -209,10 +250,7 @@ function sendRateLimited(response: ServerResponse, retryAfterSeconds: number): v
 export function registerHttpRateLimitMiddleware(app: {
   use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
 }, deps: HttpRateLimitDependencies = {}): void {
-  const localState: LocalRateLimitState = {
-    counters: new Map<string, number[]>(),
-    lastPrunedAtMs: 0
-  };
+  const localState = createLocalRateLimitState();
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
   const redisUrl = deps.redisUrl ?? readRedisUrl(env);
