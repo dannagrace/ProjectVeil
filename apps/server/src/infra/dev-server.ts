@@ -513,6 +513,12 @@ export async function startDevServer(
   const backupStorage = await deps.validateBackupStorage();
   setDbBackupLastSuccessTimestamp(backupStorage.lastSuccessTimestamp);
   if (backupStorage.status === "warn") {
+    if (isProductionEnvironment) {
+      await failStartup(
+        "Backup storage validation failed during production startup",
+        new Error(`Backup storage validation failed during production startup: ${backupStorage.message}`)
+      );
+    }
     deps.logger.warn(`BACKUP WARNING: ${backupStorage.message}`);
   } else {
     deps.logger.log(backupStorage.message);
