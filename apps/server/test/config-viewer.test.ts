@@ -129,6 +129,11 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
     `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
     "utf8"
   );
+  await writeFile(
+    join(rootDir, "ugc-banned-keywords.json"),
+    `${JSON.stringify({ schemaVersion: 1, reviewThreshold: 40, approvedTerms: [], candidateTerms: ["vx"] }, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 async function startConfigViewerServer(port: number, rootDir: string): Promise<{ server: Server; store: FileSystemConfigCenterStore }> {
@@ -198,10 +203,10 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   };
 
   assert.equal(listResponse.status, 200);
-  assert.equal(listPayload.items.length, 6);
+  assert.equal(listPayload.items.length, 7);
   assert.deepEqual(
     listPayload.items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds", "ugcBannedKeywords"]
   );
   assert.ok(listPayload.items.every((item) => item.updatedAt && item.summary && item.storage && item.version >= 1));
 

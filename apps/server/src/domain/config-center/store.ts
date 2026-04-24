@@ -870,7 +870,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
       [id, serialized]
     );
 
-    await this.exportDocumentToFile(id, serialized);
+    if (id !== "ugcBannedKeywords") {
+      await this.exportDocumentToFile(id, serialized);
+    }
     if (bundle) {
       applyRuntimeBundle(bundle);
     }
@@ -915,7 +917,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
          VALUES (?, ?, NULL)`,
         [definition.id, serialized]
       );
-      await this.exportDocumentToFile(definition.id, serialized);
+      if (definition.id !== "ugcBannedKeywords") {
+        await this.exportDocumentToFile(definition.id, serialized);
+      }
     }
   }
 
@@ -943,4 +947,3 @@ export async function createConfiguredConfigCenterStore(
 
   return MySqlConfigCenterStore.create(mysqlConfig, rootDir);
 }
-

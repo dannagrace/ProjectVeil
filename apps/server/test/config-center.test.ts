@@ -172,6 +172,11 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
     `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
     "utf8"
   );
+  await writeFile(
+    join(rootDir, "ugc-banned-keywords.json"),
+    `${JSON.stringify({ schemaVersion: 1, reviewThreshold: 40, approvedTerms: [], candidateTerms: ["vx"] }, null, 2)}\n`,
+    "utf8"
+  );
 }
 
 test.afterEach(() => {
@@ -195,7 +200,7 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds"]
+    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds", "ugcBannedKeywords"]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
 });

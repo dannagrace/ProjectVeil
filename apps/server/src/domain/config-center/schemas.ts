@@ -348,6 +348,26 @@ export const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> =
         }
       }
     }
+  },
+  ugcBannedKeywords: {
+    type: "object",
+    title: "UGC Banned Keywords",
+    description: "UGC 人工复核阈值、白名单词与候选敏感词。",
+    required: ["schemaVersion", "reviewThreshold", "approvedTerms", "candidateTerms"],
+    properties: {
+      schemaVersion: { type: "integer", minimum: 1, description: "配置格式版本。" },
+      reviewThreshold: { type: "integer", minimum: 10, description: "进入人工复核队列的最低分。" },
+      approvedTerms: {
+        type: "array",
+        description: "审核通过的白名单词。",
+        items: { type: "string", description: "白名单词。" }
+      },
+      candidateTerms: {
+        type: "array",
+        description: "人工拒绝后沉淀的候选敏感词。",
+        items: { type: "string", description: "候选敏感词。" }
+      }
+    }
   }
 };
 

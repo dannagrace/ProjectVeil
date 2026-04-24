@@ -45,6 +45,12 @@ export const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     fileName: "leaderboard-tier-thresholds.json",
     title: "排行榜段位阈值",
     description: "排行榜 tier 展示与运营调参使用的评分阈值。"
+  },
+  {
+    id: "ugcBannedKeywords",
+    fileName: "ugc-banned-keywords.json",
+    title: "UGC 敏感词",
+    description: "UGC 人工复核阈值、白名单词与候选敏感词。"
   }
 ];
 
@@ -190,7 +196,8 @@ export const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
   units: ["战斗模拟器", "招募面板"],
   battleSkills: ["技能编辑器", "战斗模拟器"],
   battleBalance: ["战斗平衡计算", "PVP 匹配"],
-  leaderboardTierThresholds: ["排行榜展示", "赛季运营调参"]
+  leaderboardTierThresholds: ["排行榜展示", "赛季运营调参"],
+  ugcBannedKeywords: ["UGC 人工复核队列", "客服审核后台"]
 };
 export const CONFIG_IMPACT_RULES: Record<
   ConfigDocumentId,
@@ -229,6 +236,10 @@ export const CONFIG_IMPACT_RULES: Record<
     defaultRisk: "medium",
     impactedModules: ["排行榜展示", "赛季 reset 调参", "运营阈值发布"],
     suggestedValidationActions: ["排行榜 API smoke", "赛季阈值回归检查"]
+  },
+  ugcBannedKeywords: {
+    defaultRisk: "medium",
+    impactedModules: ["UGC 复核队列", "客服审核后台", "玩家昵称/公会/聊天审核"],
+    suggestedValidationActions: ["UGC 审核队列回归", "客服拒绝流程 smoke"]
   }
 };
-
