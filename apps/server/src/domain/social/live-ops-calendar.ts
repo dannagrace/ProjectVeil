@@ -19,6 +19,7 @@ import {
   type LaunchMaintenanceModeRecord
 } from "@server/domain/ops/launch-runtime-state";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 type CalendarRequest = IncomingMessage & { params?: Record<string, string | undefined> };
 type CalendarRouteHandler = (request: CalendarRequest, response: ServerResponse) => void | Promise<void>;
@@ -651,7 +652,7 @@ function readHeaderSecret(request: IncomingMessage): string | null {
 
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
-  return Boolean(adminSecret && readHeaderSecret(request) === adminSecret);
+  return timingSafeCompareAdminToken(readHeaderSecret(request), adminSecret);
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

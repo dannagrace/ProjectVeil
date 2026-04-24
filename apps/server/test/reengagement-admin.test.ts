@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import { registerReengagementAdminRoutes } from "@server/transport/http/reengagement-admin";
@@ -115,4 +117,33 @@ test("reengagement admin routes preview candidates and run a sweep", async (t) =
   const runPayload = JSON.parse(runResponse.body) as { deliveries: Array<{ playerId: string }> };
   assert.equal(runResponse.statusCode, 200);
   assert.equal(runPayload.deliveries[0]?.playerId, "player-reengage");
+});
+
+test("reengagement admin routes reject invalid admin secret", async (t) => {
+  const secret = withAdminSecret(t);
+  const { app, gets } = createTestApp();
+  registerReengagementAdminRoutes(app, null);
+
+  const summaryHandler = gets.get("/api/admin/reengagement/summary");
+  assert.ok(summaryHandler);
+
+  const response = createResponse();
+  await summaryHandler(
+    createRequest({
+      headers: { "x-veil-admin-secret": `${secret}-wrong` },
+      url: "/api/admin/reengagement/summary"
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(JSON.parse(response.body), { error: "Unauthorized: Invalid Admin Secret" });
+});
+
+test("reengagement admin auth uses timing-safe secret comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/transport/http/reengagement-admin.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /header\s*===\s*adminSecret/);
 });
