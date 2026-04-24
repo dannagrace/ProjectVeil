@@ -10,9 +10,47 @@ interface GuildRouteTestServer {
   shutdown(): Promise<void>;
 }
 
-async function startGuildRouteServer(store: RoomSnapshotStore | null, port: number): Promise<GuildRouteTestServer> {
+interface TestGuildChatRealtimeTransport {
+  subscribe(topic: string, callback: (message: unknown) => void): Promise<unknown> | unknown;
+  unsubscribe(topic: string, callback?: (message: unknown) => void): Promise<unknown> | unknown;
+  publish(topic: string, data: unknown): Promise<unknown> | unknown;
+}
+
+function createSharedRealtimeTransport(): TestGuildChatRealtimeTransport {
+  const listenersByTopic = new Map<string, Set<(message: unknown) => void>>();
+  return {
+    subscribe(topic, callback) {
+      const listeners = listenersByTopic.get(topic) ?? new Set<(message: unknown) => void>();
+      listeners.add(callback);
+      listenersByTopic.set(topic, listeners);
+    },
+    unsubscribe(topic, callback) {
+      if (!callback) {
+        listenersByTopic.delete(topic);
+        return;
+      }
+
+      const listeners = listenersByTopic.get(topic);
+      listeners?.delete(callback);
+      if (listeners?.size === 0) {
+        listenersByTopic.delete(topic);
+      }
+    },
+    publish(topic, data) {
+      for (const listener of listenersByTopic.get(topic) ?? []) {
+        listener(data);
+      }
+    }
+  };
+}
+
+async function startGuildRouteServer(
+  store: RoomSnapshotStore | null,
+  port: number,
+  options: { chatRealtimeTransport?: TestGuildChatRealtimeTransport | null } = {}
+): Promise<GuildRouteTestServer> {
   const transport = new WebSocketTransport();
-  registerGuildRoutes(transport.getExpressApp() as never, store);
+  registerGuildRoutes(transport.getExpressApp() as never, store, options);
   await new Promise<void>((resolve, reject) => {
     transport.listen(port, "127.0.0.1", undefined, (error?: Error | null) => {
       if (error) {
@@ -1129,4 +1167,112 @@ test("guild chat stream pushes live message and delete events to online guild me
     (pushedDelete.data as { messageId?: string }).messageId,
     createdMessagePayload.message.messageId
   );
+});
+
+test("guild chat stream fans out through shared realtime transport without duplicating local delivery", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  const chatRealtimeTransport = createSharedRealtimeTransport();
+  const firstPort = 45800 + Math.floor(Math.random() * 500);
+  const secondPort = firstPort + 1000;
+  const firstServer = await startGuildRouteServer(store, firstPort, { chatRealtimeTransport });
+  const secondServer = await startGuildRouteServer(store, secondPort, { chatRealtimeTransport });
+  const founderSession = issueGuestAuthSession({ playerId: "chat-fanout-founder", displayName: "Fanout Founder" });
+  const recruitSession = issueGuestAuthSession({ playerId: "chat-fanout-recruit", displayName: "Fanout Recruit" });
+  const localController = new AbortController();
+  const remoteController = new AbortController();
+  let localReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let remoteReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  t.after(async () => {
+    localController.abort();
+    remoteController.abort();
+    for (const reader of [localReader, remoteReader]) {
+      if (!reader) {
+        continue;
+      }
+
+      void reader.cancel().catch(() => undefined);
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore reader cleanup races after aborting the streams
+      }
+    }
+    await store.close();
+    await firstServer.shutdown().catch(() => undefined);
+    await secondServer.shutdown().catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${firstPort}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Fanout Chat", tag: "FOUT" })
+  });
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+  assert.equal(created.status, 201);
+
+  const joined = await fetch(`http://127.0.0.1:${firstPort}/api/guilds/${createdPayload.guild.guildId}/join`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${recruitSession.token}`
+    }
+  });
+  assert.equal(joined.status, 200);
+
+  const localStreamResponse = await fetch(
+    `http://127.0.0.1:${firstPort}/api/guilds/${createdPayload.guild.guildId}/chat/stream`,
+    {
+      headers: {
+        Authorization: `Bearer ${founderSession.token}`,
+        Accept: "text/event-stream"
+      },
+      signal: localController.signal
+    }
+  );
+  assert.equal(localStreamResponse.status, 200);
+  assert.ok(localStreamResponse.body);
+  localReader = localStreamResponse.body.getReader();
+
+  const remoteStreamResponse = await fetch(
+    `http://127.0.0.1:${secondPort}/api/guilds/${createdPayload.guild.guildId}/chat/stream`,
+    {
+      headers: {
+        Authorization: `Bearer ${recruitSession.token}`,
+        Accept: "text/event-stream"
+      },
+      signal: remoteController.signal
+    }
+  );
+  assert.equal(remoteStreamResponse.status, 200);
+  assert.ok(remoteStreamResponse.body);
+  remoteReader = remoteStreamResponse.body.getReader();
+
+  const createdMessage = await fetch(`http://127.0.0.1:${firstPort}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Cross-pod message delivered once." })
+  });
+  const createdMessagePayload = (await createdMessage.json()) as { message: { content: string } };
+  assert.equal(createdMessage.status, 201);
+
+  const localMessage = await readSseEvent(localReader, 2_000);
+  const remoteMessage = await readSseEvent(remoteReader, 2_000);
+  assert.equal(localMessage.event, "guild.chat.message");
+  assert.equal(remoteMessage.event, "guild.chat.message");
+  assert.equal(
+    (localMessage.data as { message?: { content?: string } }).message?.content,
+    createdMessagePayload.message.content
+  );
+  assert.equal(
+    (remoteMessage.data as { message?: { content?: string } }).message?.content,
+    createdMessagePayload.message.content
+  );
+
+  await assert.rejects(() => readSseEvent(localReader, 150), /sse_timeout/);
 });

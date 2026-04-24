@@ -1101,8 +1101,18 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
   const base = createBaseDependencies();
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
+  const guildRouteOptions: unknown[] = [];
   const redisPresence = {
     shutdownCalls: 0,
+    subscribe() {
+      return undefined;
+    },
+    unsubscribe() {
+      return undefined;
+    },
+    publish() {
+      return undefined;
+    },
     shutdown() {
       this.shutdownCalls += 1;
     }
@@ -1126,7 +1136,9 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
-    registerGuildRoutes: () => undefined,
+    registerGuildRoutes: (_app, _store, options) => {
+      guildRouteOptions.push(options);
+    },
     registerPlayerAccountRoutes: () => undefined,
     registerShopRoutes: () => undefined,
     registerWechatPayRoutes: () => undefined,
@@ -1155,6 +1167,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
   });
 
   assert.deepEqual(base.gameServer.realtimeOptions, [{ driver: redisDriver, presence: redisPresence }]);
+  assert.deepEqual(guildRouteOptions, [{ chatRealtimeTransport: redisPresence }]);
   assertStartupLogIncludes(base.logger, [/Redis-backed Colyseus presence\/driver enabled via REDIS_URL/]);
 
   base.process.handlers.SIGTERM?.();

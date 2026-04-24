@@ -44,6 +44,50 @@ interface GuildChatEventEnvelope {
   messageId?: string;
 }
 
+type GuildChatRealtimeListener = (event: GuildChatEventEnvelope) => void;
+
+export interface GuildChatRealtimeTransport {
+  subscribe(topic: string, callback: (message: unknown) => void): Promise<unknown> | unknown;
+  unsubscribe(topic: string, callback?: (message: unknown) => void): Promise<unknown> | unknown;
+  publish(topic: string, data: unknown): Promise<unknown> | unknown;
+}
+
+const GUILD_CHAT_REALTIME_TOPIC_PREFIX = "veil:guild-chat";
+
+function buildGuildChatRealtimeTopic(guildId: string): string {
+  return `${GUILD_CHAT_REALTIME_TOPIC_PREFIX}:${guildId.trim()}`;
+}
+
+function decodeGuildChatRealtimeEvent(payload: unknown): GuildChatEventEnvelope | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const event = payload as Partial<GuildChatEventEnvelope>;
+  const guildId = typeof event.guildId === "string" ? event.guildId.trim() : "";
+  if (!guildId) {
+    return null;
+  }
+
+  if (event.type === "guild.chat.message" && event.message) {
+    return {
+      type: event.type,
+      guildId,
+      message: event.message
+    };
+  }
+
+  if (event.type === "guild.chat.deleted" && typeof event.messageId === "string") {
+    return {
+      type: event.type,
+      guildId,
+      messageId: event.messageId
+    };
+  }
+
+  return null;
+}
+
 function readGuildChatMessageRateLimitWindowMs(env: NodeJS.ProcessEnv = process.env): number {
   const value = Number(env.VEIL_GUILD_CHAT_RATE_LIMIT_WINDOW_MS);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_GUILD_CHAT_MESSAGE_RATE_LIMIT_WINDOW_MS;
@@ -118,13 +162,51 @@ class GuildChatRateLimiter {
 }
 
 class GuildChatRealtimeHub {
-  private readonly subscribers = new Map<string, Set<(event: GuildChatEventEnvelope) => void>>();
+  private readonly subscribers = new Map<string, Set<GuildChatRealtimeListener>>();
+  private readonly transportHandlers = new Map<string, (message: unknown) => void>();
+  private readonly transportSubscriptions = new Map<string, Promise<void>>();
 
-  subscribe(guildId: string, listener: (event: GuildChatEventEnvelope) => void): () => void {
+  constructor(private readonly transport?: GuildChatRealtimeTransport | null) {}
+
+  async subscribe(guildId: string, listener: GuildChatRealtimeListener): Promise<() => void> {
     const normalizedGuildId = guildId.trim();
-    const listeners = this.subscribers.get(normalizedGuildId) ?? new Set<(event: GuildChatEventEnvelope) => void>();
+    const listeners = this.subscribers.get(normalizedGuildId) ?? new Set<GuildChatRealtimeListener>();
     listeners.add(listener);
     this.subscribers.set(normalizedGuildId, listeners);
+
+    if (this.transport) {
+      let subscription = this.transportSubscriptions.get(normalizedGuildId);
+      if (!subscription) {
+        const handler = (message: unknown): void => {
+          const event = decodeGuildChatRealtimeEvent(message);
+          if (!event || event.guildId !== normalizedGuildId) {
+            return;
+          }
+
+          this.publishLocal(event);
+        };
+        this.transportHandlers.set(normalizedGuildId, handler);
+        subscription = Promise.resolve(this.transport.subscribe(buildGuildChatRealtimeTopic(normalizedGuildId), handler))
+          .then(() => undefined)
+          .catch((error) => {
+            this.transportHandlers.delete(normalizedGuildId);
+            this.transportSubscriptions.delete(normalizedGuildId);
+            throw error;
+          });
+        this.transportSubscriptions.set(normalizedGuildId, subscription);
+      }
+      try {
+        await subscription;
+      } catch (error) {
+        const activeListeners = this.subscribers.get(normalizedGuildId);
+        activeListeners?.delete(listener);
+        if (activeListeners?.size === 0) {
+          this.subscribers.delete(normalizedGuildId);
+        }
+        throw error;
+      }
+    }
+
     return () => {
       const activeListeners = this.subscribers.get(normalizedGuildId);
       if (!activeListeners) {
@@ -134,11 +216,29 @@ class GuildChatRealtimeHub {
       activeListeners.delete(listener);
       if (activeListeners.size === 0) {
         this.subscribers.delete(normalizedGuildId);
+        const handler = this.transportHandlers.get(normalizedGuildId);
+        if (handler) {
+          this.transportHandlers.delete(normalizedGuildId);
+          this.transportSubscriptions.delete(normalizedGuildId);
+          void Promise.resolve(
+            this.transport?.unsubscribe(buildGuildChatRealtimeTopic(normalizedGuildId), handler)
+          ).catch(() => undefined);
+        }
       }
     };
   }
 
-  publish(event: GuildChatEventEnvelope): void {
+  async publish(event: GuildChatEventEnvelope): Promise<void> {
+    const normalizedEvent = { ...event, guildId: event.guildId.trim() };
+    if (this.transport) {
+      await this.transport.publish(buildGuildChatRealtimeTopic(normalizedEvent.guildId), normalizedEvent);
+      return;
+    }
+
+    this.publishLocal(normalizedEvent);
+  }
+
+  private publishLocal(event: GuildChatEventEnvelope): void {
     for (const listener of this.subscribers.get(event.guildId.trim()) ?? []) {
       listener(event);
     }
@@ -654,10 +754,11 @@ export function registerGuildRoutes(
     get: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
     post: (path: string, handler: (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>) => void;
   },
-  store: RoomSnapshotStore | null
+  store: RoomSnapshotStore | null,
+  options: { chatRealtimeTransport?: GuildChatRealtimeTransport | null } = {}
 ): void {
   const service = new GuildService(store);
-  const guildChatHub = new GuildChatRealtimeHub();
+  const guildChatHub = new GuildChatRealtimeHub(options.chatRealtimeTransport);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -745,15 +846,15 @@ export function registerGuildRoutes(
       response.setHeader("Cache-Control", "no-cache, no-transform");
       response.setHeader("Connection", "keep-alive");
       response.setHeader("X-Accel-Buffering", "no");
-      response.flushHeaders?.();
 
       const writeEvent = (event: GuildChatEventEnvelope): void => {
         response.write(`event: ${event.type}\n`);
         response.write(`data: ${JSON.stringify(event)}\n\n`);
       };
 
+      const unsubscribe = await guildChatHub.subscribe(guildId, writeEvent);
+      response.flushHeaders?.();
       response.write(": connected\n\n");
-      const unsubscribe = guildChatHub.subscribe(guildId, writeEvent);
       const heartbeat = setInterval(() => {
         response.write(": keepalive\n\n");
       }, 25_000);
@@ -851,7 +952,7 @@ export function registerGuildRoutes(
       const guildId = request.params.guildId ?? "";
       const payload = (await readJsonBody(request)) as GuildChatSendAction;
       const message = await service.createGuildChatMessageForPlayer(authSession, guildId, payload, request);
-      guildChatHub.publish({
+      await guildChatHub.publish({
         type: "guild.chat.message",
         guildId,
         message
@@ -876,7 +977,7 @@ export function registerGuildRoutes(
       const guildId = request.params.guildId ?? "";
       const messageId = request.params.messageId ?? "";
       const deleted = await service.deleteGuildChatMessageForPlayer(authSession, guildId, messageId);
-      guildChatHub.publish({
+      await guildChatHub.publish({
         type: "guild.chat.deleted",
         guildId,
         messageId: deleted.messageId

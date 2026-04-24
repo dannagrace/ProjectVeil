@@ -15,7 +15,7 @@ import {
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { registerConfigViewerRoutes } from "@server/transport/http/config-viewer";
 import { registerEventRoutes } from "@server/domain/battle/event-engine";
-import { registerGuildRoutes } from "@server/domain/social/guilds";
+import { registerGuildRoutes, type GuildChatRealtimeTransport } from "@server/domain/social/guilds";
 import { registerHttpRateLimitMiddleware } from "@server/infra/http-rate-limit";
 import { installHttpRequestObservability } from "@server/infra/http-request-context";
 import { registerLeaderboardRoutes } from "@server/domain/social/leaderboard";
@@ -224,7 +224,11 @@ export interface DevServerBootstrapDependencies {
   registerConfigCenterRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerConfigViewerRoutes(app: unknown, store: DevServerConfigCenterStore): void;
   registerEventRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
-  registerGuildRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
+  registerGuildRoutes(
+    app: unknown,
+    store: DevServerRoomSnapshotStore,
+    options?: { chatRealtimeTransport?: GuildChatRealtimeTransport | null }
+  ): void;
   registerPlayerAccountRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerShopRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerApplePaymentRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
@@ -364,7 +368,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerConfigCenterRoutes: (app, store) => registerConfigCenterRoutes(app as never, store as ConfigCenterStore),
     registerConfigViewerRoutes: (app, store) => registerConfigViewerRoutes(app as never, store as ConfigCenterStore),
     registerEventRoutes: (app, store) => registerEventRoutes(app as never, store as RoomSnapshotStore | null),
-    registerGuildRoutes: (app, store) => registerGuildRoutes(app as never, store as RoomSnapshotStore),
+    registerGuildRoutes: (app, store, options) =>
+      registerGuildRoutes(app as never, store as RoomSnapshotStore, options),
     registerPlayerAccountRoutes: (app, store) => registerPlayerAccountRoutes(app as never, store as RoomSnapshotStore),
     registerShopRoutes: (app, store) => registerShopRoutes(app as never, store as RoomSnapshotStore),
     registerApplePaymentRoutes: (app, store) =>
@@ -533,7 +538,15 @@ export async function startDevServer(
   if ("use" in (expressApp as object) && "get" in (expressApp as object)) {
     deps.registerEventRoutes(expressApp, effectiveSnapshotStore);
   }
-  deps.registerGuildRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerGuildRoutes(
+    expressApp,
+    effectiveSnapshotStore,
+    redisPresence
+      ? {
+          chatRealtimeTransport: redisPresence as unknown as GuildChatRealtimeTransport
+        }
+      : undefined
+  );
   deps.registerPlayerAccountRoutes(expressApp, effectiveSnapshotStore);
   deps.registerShopRoutes(expressApp, effectiveSnapshotStore);
   deps.registerApplePaymentRoutes(expressApp, effectiveSnapshotStore);
