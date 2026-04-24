@@ -8,6 +8,7 @@ import { loadDisplayNameValidationRules } from "@server/domain/account/display-n
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
 
 const DEFAULT_UGC_BANNED_KEYWORDS_PATH = path.resolve(process.cwd(), "configs", "ugc-banned-keywords.json");
+const UGC_MODERATION_CONFIG_DOCUMENT_ID = "ugcBannedKeywords";
 
 export type UgcReviewItemKind = "display_name" | "guild_name" | "guild_chat_message";
 export type UgcReviewStatus = "pending" | "approved" | "rejected";
@@ -17,6 +18,20 @@ export interface UgcModerationConfig {
   reviewThreshold: number;
   approvedTerms: string[];
   candidateTerms: string[];
+}
+
+export interface UgcModerationConfigStorage {
+  load(): Promise<Partial<UgcModerationConfig> | UgcModerationConfig | null | undefined>;
+  save(config: UgcModerationConfig): Promise<Partial<UgcModerationConfig> | UgcModerationConfig | null | undefined | void>;
+}
+
+export interface UgcModerationRuntimeOptions {
+  configStorage?: UgcModerationConfigStorage | null;
+}
+
+export interface UgcModerationConfigDocumentStore {
+  loadDocument(id: typeof UGC_MODERATION_CONFIG_DOCUMENT_ID): Promise<{ content: string }>;
+  saveDocument(id: typeof UGC_MODERATION_CONFIG_DOCUMENT_ID, content: string): Promise<{ content: string }>;
 }
 
 export interface UgcReviewQueueEntry {
@@ -123,6 +138,52 @@ export function appendUgcCandidateKeyword(term: string, configPath?: string): Ug
   });
   saveUgcModerationConfig(next, configPath);
   return next;
+}
+
+async function loadUgcModerationConfigForRuntime(options: UgcModerationRuntimeOptions = {}): Promise<UgcModerationConfig> {
+  if (!options.configStorage) {
+    return loadUgcModerationConfig();
+  }
+  return normalizeUgcModerationConfig(await options.configStorage.load());
+}
+
+export async function appendUgcCandidateKeywordForRuntime(
+  term: string,
+  options: UgcModerationRuntimeOptions = {}
+): Promise<UgcModerationConfig> {
+  const normalized = normalizeTextForModeration(term);
+  const current = await loadUgcModerationConfigForRuntime(options);
+  if (!normalized || current.candidateTerms.includes(normalized) || current.approvedTerms.includes(normalized)) {
+    return current;
+  }
+  const next = normalizeUgcModerationConfig({
+    ...current,
+    candidateTerms: [...current.candidateTerms, normalized]
+  });
+  if (!options.configStorage) {
+    saveUgcModerationConfig(next);
+    return next;
+  }
+  return normalizeUgcModerationConfig((await options.configStorage.save(next)) ?? next);
+}
+
+export function createUgcModerationConfigStorageFromConfigCenter(
+  store: UgcModerationConfigDocumentStore | null | undefined
+): UgcModerationConfigStorage | null {
+  if (!store) {
+    return null;
+  }
+
+  return {
+    async load() {
+      const document = await store.loadDocument(UGC_MODERATION_CONFIG_DOCUMENT_ID);
+      return JSON.parse(document.content) as Partial<UgcModerationConfig>;
+    },
+    async save(config) {
+      const document = await store.saveDocument(UGC_MODERATION_CONFIG_DOCUMENT_ID, `${JSON.stringify(config, null, 2)}\n`);
+      return JSON.parse(document.content) as Partial<UgcModerationConfig>;
+    }
+  };
 }
 
 export function scoreUgcContent(
@@ -282,8 +343,8 @@ function createChatQueueEntry(
   };
 }
 
-export async function buildUgcReviewQueue(store: RoomSnapshotStore): Promise<UgcReviewQueueEntry[]> {
-  const config = loadUgcModerationConfig();
+export async function buildUgcReviewQueue(store: RoomSnapshotStore, options: UgcModerationRuntimeOptions = {}): Promise<UgcReviewQueueEntry[]> {
+  const config = await loadUgcModerationConfigForRuntime(options);
   const rules = loadDisplayNameValidationRules();
   const audits = await listUgcAudits(store);
   const entries: UgcReviewQueueEntry[] = [];
@@ -350,8 +411,8 @@ function resolveCandidateKeyword(input: UgcReviewDecisionInput, entry: UgcReview
   return normalizeTextForModeration(input.candidateKeyword?.trim() || entry.submittedValue);
 }
 
-async function findQueueEntry(store: RoomSnapshotStore, itemId: string): Promise<UgcReviewQueueEntry> {
-  const queue = await buildUgcReviewQueue(store);
+async function findQueueEntry(store: RoomSnapshotStore, itemId: string, options: UgcModerationRuntimeOptions): Promise<UgcReviewQueueEntry> {
+  const queue = await buildUgcReviewQueue(store, options);
   const entry = queue.find((item) => item.itemId === itemId);
   if (!entry) {
     throw new Error("ugc_review_item_not_found");
@@ -428,8 +489,12 @@ async function rejectGuildChatMessage(store: RoomSnapshotStore, entry: UgcReview
   return { deleted };
 }
 
-export async function resolveUgcReviewEntry(store: RoomSnapshotStore, input: UgcReviewDecisionInput): Promise<{ entry: UgcReviewQueueEntry; result?: unknown; config: UgcModerationConfig }> {
-  const entry = await findQueueEntry(store, input.itemId);
+export async function resolveUgcReviewEntry(
+  store: RoomSnapshotStore,
+  input: UgcReviewDecisionInput,
+  options: UgcModerationRuntimeOptions = {}
+): Promise<{ entry: UgcReviewQueueEntry; result?: unknown; config: UgcModerationConfig }> {
+  const entry = await findQueueEntry(store, input.itemId, options);
   const candidateKeyword = input.action === "reject" ? resolveCandidateKeyword(input, entry) : undefined;
   const metadata: UgcReviewAuditMetadata = {
     itemId: entry.itemId,
@@ -441,7 +506,7 @@ export async function resolveUgcReviewEntry(store: RoomSnapshotStore, input: Ugc
 
   if (input.action === "approve") {
     await appendReviewAudit(store, "ugc_review_approved", input, metadata);
-    return { entry: { ...entry, reviewStatus: "approved" }, config: loadUgcModerationConfig() };
+    return { entry: { ...entry, reviewStatus: "approved" }, config: await loadUgcModerationConfigForRuntime(options) };
   }
 
   let result: unknown;
@@ -453,7 +518,9 @@ export async function resolveUgcReviewEntry(store: RoomSnapshotStore, input: Ugc
     result = await rejectGuildChatMessage(store, entry, input);
   }
 
-  const config = candidateKeyword ? appendUgcCandidateKeyword(candidateKeyword) : loadUgcModerationConfig();
+  const config = candidateKeyword
+    ? await appendUgcCandidateKeywordForRuntime(candidateKeyword, options)
+    : await loadUgcModerationConfigForRuntime(options);
   await appendReviewAudit(store, "ugc_review_rejected", input, metadata);
   return { entry: { ...entry, reviewStatus: "rejected" }, result, config };
 }

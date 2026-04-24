@@ -35,6 +35,11 @@ import { registerReengagementAdminRoutes } from "@server/transport/http/reengage
 import { registerRiskReviewAdminRoutes } from "@server/transport/http/risk-review-admin";
 import { registerUgcReviewAdminRoutes } from "@server/transport/http/ugc-review-admin";
 import {
+  createUgcModerationConfigStorageFromConfigCenter,
+  type UgcModerationConfigDocumentStore,
+  type UgcModerationConfigStorage
+} from "@server/domain/social/ugc-moderation";
+import {
   buildPrometheusMetricsDocument,
   recordHttpRequestDuration,
   registerRuntimeObservabilityRoutes,
@@ -172,9 +177,10 @@ interface CleanupTimerHandle {
   unref?(): void;
 }
 
-interface DevServerConfigCenterStore {
+interface DevServerConfigCenterStore extends UgcModerationConfigDocumentStore {
   initializeRuntimeConfigs(): Promise<void>;
-  loadDocument(id: "leaderboardTierThresholds"): Promise<{ content: string }>;
+  loadDocument(id: "leaderboardTierThresholds" | "ugcBannedKeywords"): Promise<{ content: string }>;
+  saveDocument(id: "ugcBannedKeywords", content: string): Promise<{ content: string }>;
   loadRuntimeStateDocument: ConfigCenterStore["loadRuntimeStateDocument"];
   saveRuntimeStateDocument: ConfigCenterStore["saveRuntimeStateDocument"];
   close(): Promise<void>;
@@ -246,7 +252,11 @@ export interface DevServerBootstrapDependencies {
   registerAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore, gameServer: DevServerGameServer): void;
   registerReengagementAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRiskReviewAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
-  registerUgcReviewAdminRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
+  registerUgcReviewAdminRoutes(
+    app: unknown,
+    store: DevServerRoomSnapshotStore | null,
+    options?: { configStorage?: UgcModerationConfigStorage | null }
+  ): void;
   createGameServer(transport: DevServerTransport, realtimeOptions?: DevServerRealtimeOptions): DevServerGameServer;
   logger: DevServerLogger;
   process: DevServerProcess;
@@ -382,7 +392,8 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
       registerAdminRoutes(app as never, store as RoomSnapshotStore, gameServer),
     registerReengagementAdminRoutes: (app, store) => registerReengagementAdminRoutes(app as never, store as RoomSnapshotStore | null),
     registerRiskReviewAdminRoutes: (app, store) => registerRiskReviewAdminRoutes(app as never, store as RoomSnapshotStore | null),
-    registerUgcReviewAdminRoutes: (app, store) => registerUgcReviewAdminRoutes(app as never, store as RoomSnapshotStore | null),
+    registerUgcReviewAdminRoutes: (app, store, options) =>
+      registerUgcReviewAdminRoutes(app as never, store as RoomSnapshotStore | null, options),
     createGameServer: (transport, realtimeOptions) =>
       new Server({
         transport: transport as WebSocketTransport,
@@ -549,7 +560,9 @@ export async function startDevServer(
     presence: redisPresence ?? undefined
   });
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
-  deps.registerUgcReviewAdminRoutes(expressApp, effectiveSnapshotStore);
+  deps.registerUgcReviewAdminRoutes(expressApp, effectiveSnapshotStore, {
+    configStorage: createUgcModerationConfigStorageFromConfigCenter(configCenterStore)
+  });
   deps.registerRiskReviewAdminRoutes(expressApp, effectiveSnapshotStore);
   deps.registerReengagementAdminRoutes(expressApp, effectiveSnapshotStore);
   const liveOpsCalendarScheduler = createLiveOpsCalendarScheduler({

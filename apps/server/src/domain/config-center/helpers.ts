@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
+import type { UgcModerationConfig } from "@server/domain/social/ugc-moderation";
 import type {
   ConfigDefinition,
   ConfigDocumentId,
@@ -262,6 +263,11 @@ export function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
     return `${config.tiers.length} tier(s) · ${config.key}`;
   }
 
+  if (id === "ugcBannedKeywords") {
+    const config = parsed as UgcModerationConfig;
+    return `${config.candidateTerms.length} candidate term(s) · ${config.approvedTerms.length} approved term(s) · threshold ${config.reviewThreshold}`;
+  }
+
   const config = parsed as BattleBalanceConfig;
   return `damage/env/timer/pvp · ${config.turnTimerSeconds}s/${config.afkStrikesBeforeForfeit} AFK · K=${config.pvp.eloK} · trap=${config.environment.trapDamage}`;
 }
@@ -327,4 +333,3 @@ export function formatTimestamp(value: Date | string | null | undefined): string
   const date = typeof value === "string" ? new Date(value) : value;
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
-

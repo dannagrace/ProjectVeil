@@ -920,13 +920,18 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
       [id, serialized]
     );
 
-    await this.exportDocumentToFile(id, serialized);
+    if (id !== "ugcBannedKeywords") {
+      await this.exportDocumentToFile(id, serialized);
+    }
     if (bundle) {
       applyRuntimeBundle(bundle);
     }
 
     const saved = await this.loadDocument(id);
-    await this.createAutomaticSnapshot(saved);
+    if (id !== "ugcBannedKeywords") {
+      // UGC moderation updates run inside the support-review request path; keep MySQL writes free of root-fs sidecars.
+      await this.createAutomaticSnapshot(saved);
+    }
     return saved;
   }
 
@@ -1002,7 +1007,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
          VALUES (?, ?, NULL)`,
         [definition.id, serialized]
       );
-      await this.exportDocumentToFile(definition.id, serialized);
+      if (definition.id !== "ugcBannedKeywords") {
+        await this.exportDocumentToFile(definition.id, serialized);
+      }
     }
   }
 

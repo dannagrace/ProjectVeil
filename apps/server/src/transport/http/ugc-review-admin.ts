@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
-import { buildUgcReviewQueue, resolveUgcReviewEntry } from "@server/domain/social/ugc-moderation";
+import { buildUgcReviewQueue, resolveUgcReviewEntry, type UgcModerationConfigStorage } from "@server/domain/social/ugc-moderation";
 
 type AdminRouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 type AdminApp = {
@@ -43,7 +43,11 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-export function registerUgcReviewAdminRoutes(app: AdminApp, store: RoomSnapshotStore | null): void {
+export function registerUgcReviewAdminRoutes(
+  app: AdminApp,
+  store: RoomSnapshotStore | null,
+  options: { configStorage?: UgcModerationConfigStorage | null } = {}
+): void {
   app.get("/api/admin/ugc-review", async (request, response) => {
     if (!readRuntimeSecret("SUPPORT_MODERATOR_SECRET") && !readRuntimeSecret("ADMIN_SECRET")) {
       sendJson(response, 503, { error: "Support moderation secrets are not configured" });
@@ -57,7 +61,7 @@ export function registerUgcReviewAdminRoutes(app: AdminApp, store: RoomSnapshotS
       sendJson(response, 503, { error: "UGC moderation queue requires configured room persistence storage" });
       return;
     }
-    sendJson(response, 200, { items: await buildUgcReviewQueue(store) });
+    sendJson(response, 200, { items: await buildUgcReviewQueue(store, options) });
   });
 
   app.post("/api/admin/ugc-review/:itemId/resolve", async (request, response) => {
@@ -89,14 +93,18 @@ export function registerUgcReviewAdminRoutes(app: AdminApp, store: RoomSnapshotS
       return;
     }
     try {
-      const payload = await resolveUgcReviewEntry(store, {
-        itemId,
-        action: body.action,
-        reason: body.reason.trim(),
-        actorPlayerId: `${role}:ugc-review`,
-        actorRole: role,
-        ...(body.candidateKeyword?.trim() ? { candidateKeyword: body.candidateKeyword.trim() } : {})
-      });
+      const payload = await resolveUgcReviewEntry(
+        store,
+        {
+          itemId,
+          action: body.action,
+          reason: body.reason.trim(),
+          actorPlayerId: `${role}:ugc-review`,
+          actorRole: role,
+          ...(body.candidateKeyword?.trim() ? { candidateKeyword: body.candidateKeyword.trim() } : {})
+        },
+        options
+      );
       sendJson(response, 200, { ok: true, ...payload });
     } catch (error) {
       if (error instanceof SyntaxError) {

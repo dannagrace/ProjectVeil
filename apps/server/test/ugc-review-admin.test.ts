@@ -154,3 +154,60 @@ test("ugc review admin routes list queue entries and resolve a rejection", async
   assert.equal(payload.ok, true);
   assert.equal(payload.entry.reviewStatus, "rejected");
 });
+
+test("ugc review admin rejection uses injected config storage instead of local keyword file", async (t) => {
+  const { moderator } = withSupportSecrets(t);
+  const previousPath = process.env.VEIL_UGC_BANNED_KEYWORDS_PATH;
+  process.env.VEIL_UGC_BANNED_KEYWORDS_PATH = "/dev/null/ugc-banned-keywords.json";
+  t.after(() => {
+    if (previousPath === undefined) {
+      delete process.env.VEIL_UGC_BANNED_KEYWORDS_PATH;
+    } else {
+      process.env.VEIL_UGC_BANNED_KEYWORDS_PATH = previousPath;
+    }
+  });
+
+  let sharedConfig = {
+    schemaVersion: 1,
+    reviewThreshold: 40,
+    approvedTerms: [],
+    candidateTerms: ["vx"]
+  };
+  const store = createMemoryRoomSnapshotStore();
+  const { app, posts } = createTestApp();
+  registerUgcReviewAdminRoutes(app, store, {
+    configStorage: {
+      async load() {
+        return sharedConfig;
+      },
+      async save(config) {
+        sharedConfig = config;
+        return sharedConfig;
+      }
+    }
+  });
+
+  t.after(async () => {
+    await store.close();
+  });
+
+  await store.ensurePlayerAccount({ playerId: "ugc-shared-route-player", displayName: "vx77777" });
+
+  const resolveHandler = posts.get("/api/admin/ugc-review/:itemId/resolve");
+  assert.ok(resolveHandler);
+
+  const response = createResponse();
+  await resolveHandler!(
+    createRequest({
+      headers: { "x-veil-admin-secret": moderator },
+      params: { itemId: "display_name:ugc-shared-route-player" },
+      body: JSON.stringify({ action: "reject", reason: "人工复核拒绝", candidateKeyword: "Telegram Drop" })
+    }),
+    response
+  );
+
+  const payload = JSON.parse(response.body) as { ok: boolean; config: { candidateTerms: string[] } };
+  assert.equal(payload.ok, true);
+  assert.equal(sharedConfig.candidateTerms.includes("telegramdrop"), true);
+  assert.equal(payload.config.candidateTerms.includes("telegramdrop"), true);
+});

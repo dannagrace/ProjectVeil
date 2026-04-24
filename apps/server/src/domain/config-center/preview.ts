@@ -22,6 +22,7 @@ import {
   parseLeaderboardTierThresholdsConfigDocument,
   type LeaderboardTierThresholdsConfigDocument
 } from "@server/domain/social/leaderboard-tier-thresholds";
+import { normalizeUgcModerationConfig, type UgcModerationConfig } from "@server/domain/social/ugc-moderation";
 import type {
   ConfigDocumentId,
   ParsedConfigDocument,
@@ -72,6 +73,10 @@ export function parseConfigDocument(
     const nextSkillCatalog = parsed as BattleSkillCatalogConfig;
     validateBattleSkillCatalog(nextSkillCatalog);
     return nextSkillCatalog;
+  }
+
+  if (id === "ugcBannedKeywords") {
+    return normalizeUgcModerationConfig(parsed as Partial<UgcModerationConfig>);
   }
 
   const nextBattleBalance = parsed as BattleBalanceConfig;
@@ -247,4 +252,3 @@ export function createWorldConfigPreview(
     tiles
   };
 }
-

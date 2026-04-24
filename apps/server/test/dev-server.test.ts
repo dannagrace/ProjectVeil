@@ -78,7 +78,18 @@ function createConfigCenterStore(mode: "filesystem" | "mysql") {
     mode,
     initializeCalls: 0,
     closeCalls: 0,
-    async loadDocument() {
+    savedDocuments: [] as Array<{ id: string; content: string }>,
+    async loadDocument(id = "leaderboardTierThresholds") {
+      if (id === "ugcBannedKeywords") {
+        return {
+          content: JSON.stringify({
+            schemaVersion: 1,
+            reviewThreshold: 40,
+            approvedTerms: [],
+            candidateTerms: ["vx"]
+          })
+        };
+      }
       return {
         content: JSON.stringify({
           key: "leaderboard.tier_thresholds",
@@ -115,6 +126,10 @@ function createConfigCenterStore(mode: "filesystem" | "mysql") {
         version: 1,
         content
       };
+    },
+    async saveDocument(id: string, content: string) {
+      this.savedDocuments.push({ id, content });
+      return { content };
     },
     async initializeRuntimeConfigs() {
       this.initializeCalls += 1;
@@ -261,6 +276,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   let matchmakingStore: unknown;
   let lobbyListRooms: unknown;
   let persistenceHealth: RuntimePersistenceHealth | undefined;
+  let ugcReviewOptions: unknown;
 
   await startDevServer(3101, "0.0.0.0", {
     readMySqlPersistenceConfig: () => null,
@@ -359,6 +375,12 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
       assert.equal(gameServer, base.gameServer);
       base.routeCalls.push("admin");
     },
+    registerUgcReviewAdminRoutes: (app, store, options) => {
+      assert.equal(app, base.expressApp);
+      assert.equal(store, memoryStore);
+      ugcReviewOptions = options;
+      base.routeCalls.push("ugc-review");
+    },
     createGameServer: (_transport, realtimeOptions) => {
       base.gameServer.realtimeOptions.push(realtimeOptions);
       return base.gameServer;
@@ -397,8 +419,10 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     "leaderboard",
     "seasons",
     "runtime-observability",
-    "admin"
+    "admin",
+    "ugc-review"
   ]);
+  assert.equal(typeof (ugcReviewOptions as { configStorage?: { load?: unknown } } | undefined)?.configStorage?.load, "function");
   assert.deepEqual(base.gameServer.defineCalls.map((call) => call.name), ["veil"]);
   assert.deepEqual(base.gameServer.filterByCalls, [["logicalRoomId"]]);
   assert.deepEqual(base.gameServer.listenCalls, [{ port: 3101, host: "0.0.0.0" }]);

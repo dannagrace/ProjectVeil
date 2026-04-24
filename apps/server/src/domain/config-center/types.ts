@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { ContentPackValidationReport, RuntimeConfigBundle } from "@veil/shared/world";
 import type { LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
+import type { UgcModerationConfig } from "@server/domain/social/ugc-moderation";
 
 export type ConfigDocumentId =
   | "world"
@@ -9,7 +10,8 @@ export type ConfigDocumentId =
   | "units"
   | "battleSkills"
   | "battleBalance"
-  | "leaderboardTierThresholds";
+  | "leaderboardTierThresholds"
+  | "ugcBannedKeywords";
 
 export type RuntimeConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
 export type LiveOpsRuntimeDocumentId = "liveOpsCalendar" | "launchRuntimeState";
@@ -27,7 +29,8 @@ export type ParsedConfigDocument =
   | UnitCatalogConfig
   | BattleSkillCatalogConfig
   | BattleBalanceConfig
-  | LeaderboardTierThresholdsConfigDocument;
+  | LeaderboardTierThresholdsConfigDocument
+  | UgcModerationConfig;
 
 export interface ErrorPayload {
   code: string;

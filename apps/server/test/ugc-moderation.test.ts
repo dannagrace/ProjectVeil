@@ -134,3 +134,55 @@ test("appendUgcCandidateKeyword appends unique normalized terms", async (t) => {
   const config = appendUgcCandidateKeyword("Discord-123", filePath);
   assert.equal(config.candidateTerms.includes("discord123"), true);
 });
+
+test("resolveUgcReviewEntry persists rejected candidate keywords through injected config storage", async (t) => {
+  const previousPath = process.env.VEIL_UGC_BANNED_KEYWORDS_PATH;
+  process.env.VEIL_UGC_BANNED_KEYWORDS_PATH = "/dev/null/ugc-banned-keywords.json";
+  t.after(() => {
+    if (previousPath === undefined) {
+      delete process.env.VEIL_UGC_BANNED_KEYWORDS_PATH;
+    } else {
+      process.env.VEIL_UGC_BANNED_KEYWORDS_PATH = previousPath;
+    }
+  });
+
+  let sharedConfig = {
+    schemaVersion: 1,
+    reviewThreshold: 40,
+    approvedTerms: [],
+    candidateTerms: ["vx"]
+  };
+  const store = createMemoryRoomSnapshotStore();
+  t.after(async () => {
+    await store.close();
+  });
+
+  await store.ensurePlayerAccount({ playerId: "shared-ugc-player", displayName: "vx99999" });
+
+  const result = await resolveUgcReviewEntry(
+    store,
+    {
+      itemId: "display_name:shared-ugc-player",
+      action: "reject",
+      reason: "导流昵称",
+      actorPlayerId: "support-moderator:ugc",
+      actorRole: "support-moderator",
+      candidateKeyword: "Discord Drop"
+    },
+    {
+      configStorage: {
+        async load() {
+          return sharedConfig;
+        },
+        async save(config) {
+          sharedConfig = config;
+          return sharedConfig;
+        }
+      }
+    }
+  );
+
+  assert.equal(result.entry.reviewStatus, "rejected");
+  assert.equal(sharedConfig.candidateTerms.includes("discorddrop"), true);
+  assert.equal(result.config.candidateTerms.includes("discorddrop"), true);
+});
