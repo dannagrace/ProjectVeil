@@ -946,3 +946,81 @@ test("debitGems rejects overspend and rolls back without writing a ledger entry"
   assert.equal(queries.length, 1);
   assert.match(queries[0].sql, /SELECT gems/);
 });
+
+test("refundPaymentOrder marks the order refunded and appends a refund ledger debit in one transaction", async () => {
+  const store = createStoreHarness();
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    beginTransaction: async () => {},
+    query: async (sql: string, params: unknown[]) => {
+      queries.push({ sql, params });
+      if (/FROM `orders`/.test(sql)) {
+        return [[{
+          order_id: "google:purchase-token-hash",
+          player_id: "player-1",
+          product_id: "gem-pack-android",
+          wechat_order_id: "purchase-token-hash",
+          status: "settled",
+          amount: 499,
+          gem_amount: 60,
+          created_at: new Date("2026-04-23T08:00:00.000Z"),
+          paid_at: new Date("2026-04-23T08:00:01.000Z"),
+          last_grant_attempt_at: new Date("2026-04-23T08:00:01.000Z"),
+          next_grant_retry_at: null,
+          settled_at: new Date("2026-04-23T08:00:01.000Z"),
+          dead_lettered_at: null,
+          grant_attempt_count: 1,
+          last_grant_error: null,
+          refunded_at: null,
+          refund_reason: null,
+          external_refund_id: null,
+          refund_clawback_gems: 0,
+          updated_at: new Date("2026-04-23T08:00:01.000Z")
+        }]];
+      }
+      if (/FROM `player_accounts`/.test(sql)) {
+        return [[{
+          player_id: "player-1",
+          display_name: "player-1",
+          gems: 75,
+          global_resources_json: JSON.stringify({ gold: 0, wood: 0, ore: 0 }),
+          achievements_json: "[]",
+          recent_event_log_json: "[]",
+          recent_battle_replays_json: "[]",
+          created_at: new Date("2026-04-20T00:00:00.000Z"),
+          updated_at: new Date("2026-04-23T08:00:01.000Z")
+        }]];
+      }
+
+      return [{}];
+    },
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {}
+  };
+
+  store.ensurePlayerAccount = async () => createExistingAccount({ gems: 75 });
+  store.loadPlayerAccount = async () => createExistingAccount({ gems: 15 });
+  store.loadPlayerAccountByLoginId = async () => null;
+  store.pool = {
+    query: async () => {
+      throw new Error("pool.query should not be used inside payment refund transactions");
+    },
+    getConnection: async () => connection
+  };
+
+  const settlement = await store.refundPaymentOrder("google:purchase-token-hash", {
+    reasonCode: "google:VOIDED_PURCHASE",
+    refundedAt: "2026-04-23T09:00:00.000Z",
+    externalRefundId: "GPA.1234-5678-9012-34567"
+  });
+
+  assert.equal(settlement.refunded, true);
+  assert.equal(settlement.clawedBackGems, 60);
+  assert.equal(settlement.account.gems, 15);
+  assert.ok(queries.some((entry) => /UPDATE `orders`/.test(entry.sql) && entry.params[1] === "google:VOIDED_PURCHASE"));
+  assert.ok(queries.some((entry) => /UPDATE `player_accounts`/.test(entry.sql) && entry.params[0] === 15));
+  const ledgerInsert = queries.find((entry) => /INSERT INTO `gem_ledger`/.test(entry.sql));
+  assert.ok(ledgerInsert);
+  assert.deepEqual(ledgerInsert.params.slice(1), ["player-1", -60, "refund", "google:purchase-token-hash"]);
+});

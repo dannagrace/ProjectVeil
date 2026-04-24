@@ -20,6 +20,8 @@ import {
   type PaymentOrderCreateInput,
   type PaymentOrderGrantRetryInput,
   type PaymentOrderListOptions,
+  type PaymentOrderRefundInput,
+  type PaymentOrderRefundSettlement,
   type PaymentReceiptSnapshot,
   type PaymentOrderSettlement,
   type PaymentOrderSnapshot,
@@ -122,6 +124,20 @@ function computePaymentRetryDelayMs(attemptCount: number, baseDelayMs: number): 
 function normalizePaymentGrantError(value: unknown): string {
   const normalized = (value instanceof Error ? value.message : String(value)).trim();
   return (normalized || "grant_failed").slice(0, 512);
+}
+
+function normalizePaymentRefundReason(reasonCode: string): string {
+  const normalized = reasonCode.trim();
+  if (!normalized) {
+    throw new Error("refund reasonCode must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentRefundExternalId(externalRefundId?: string): string | undefined {
+  const normalized = externalRefundId?.trim();
+  return normalized ? normalized.slice(0, 191) : undefined;
 }
 
 function normalizePlayerId(playerId: string): string {
@@ -1170,6 +1186,29 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
     };
   }
 
+  private createPaymentRefundEventLogEntry(
+    playerId: string,
+    input: {
+      orderId: string;
+      reasonCode: string;
+      clawedBackGems: number;
+      refundedAt: string;
+    }
+  ): EventLogEntry {
+    return {
+      id: `${playerId}:${input.refundedAt}:payment-refund:${input.orderId}`,
+      timestamp: input.refundedAt,
+      roomId: "shop",
+      playerId,
+      category: "account",
+      description:
+        input.clawedBackGems > 0
+          ? `Payment refund ${input.reasonCode} clawed back ${input.clawedBackGems} gems.`
+          : `Payment refund ${input.reasonCode} was recorded.`,
+      rewards: []
+    };
+  }
+
   async createPaymentOrder(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot> {
     const orderId = input.orderId.trim();
     const playerId = normalizePlayerId(input.playerId);
@@ -1409,6 +1448,67 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
         receipt: structuredClone(receipt)
       };
     }
+  }
+
+  async refundPaymentOrder(orderId: string, input: PaymentOrderRefundInput): Promise<PaymentOrderRefundSettlement> {
+    const normalizedOrderId = orderId.trim();
+    if (!normalizedOrderId) {
+      throw new Error("orderId must not be empty");
+    }
+    const existingOrder = this.paymentOrders.get(normalizedOrderId);
+    if (!existingOrder) {
+      throw new Error("payment_order_not_found");
+    }
+    const account = await this.ensurePlayerAccount({ playerId: existingOrder.playerId });
+    if (existingOrder.refundedAt) {
+      return {
+        order: structuredClone(existingOrder),
+        account,
+        refunded: false,
+        clawedBackGems: existingOrder.refundClawbackGems ?? 0
+      };
+    }
+
+    const refundedAt = new Date(input.refundedAt ?? Date.now());
+    if (Number.isNaN(refundedAt.getTime())) {
+      throw new Error("refundedAt must be a valid ISO timestamp");
+    }
+    const refundedAtIso = refundedAt.toISOString();
+    const reasonCode = normalizePaymentRefundReason(input.reasonCode);
+    const externalRefundId = normalizePaymentRefundExternalId(input.externalRefundId);
+    const clawedBackGems = existingOrder.status === "settled" ? Math.min(account.gems ?? 0, existingOrder.gemAmount) : 0;
+    const nextRecentEventLog = appendEventLogEntries(account.recentEventLog, [
+      this.createPaymentRefundEventLogEntry(existingOrder.playerId, {
+        orderId: existingOrder.orderId,
+        reasonCode,
+        clawedBackGems,
+        refundedAt: refundedAtIso
+      })
+    ]);
+    const nextAccount: PlayerAccountSnapshot = {
+      ...account,
+      gems: (account.gems ?? 0) - clawedBackGems,
+      recentEventLog: nextRecentEventLog,
+      updatedAt: refundedAtIso
+    };
+    const refundedOrder: PaymentOrderSnapshot = {
+      ...structuredClone(existingOrder),
+      refundedAt: refundedAtIso,
+      refundReason: reasonCode,
+      ...(externalRefundId ? { externalRefundId } : {}),
+      ...(clawedBackGems > 0 ? { refundClawbackGems: clawedBackGems } : {}),
+      updatedAt: refundedAtIso
+    };
+
+    this.paymentOrders.set(normalizedOrderId, structuredClone(refundedOrder));
+    this.accounts.set(existingOrder.playerId, cloneAccount(nextAccount));
+
+    return {
+      order: structuredClone(refundedOrder),
+      account: cloneAccount(nextAccount),
+      refunded: true,
+      clawedBackGems
+    };
   }
 
   async purchaseShopProduct(playerId: string, input: ShopPurchaseMutationInput): Promise<ShopPurchaseResult> {

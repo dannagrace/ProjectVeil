@@ -179,6 +179,7 @@ export interface RoomSnapshotStore {
   createPaymentOrder?(input: PaymentOrderCreateInput): Promise<PaymentOrderSnapshot>;
   completePaymentOrder?(orderId: string, input: PaymentOrderCompleteInput): Promise<PaymentOrderSettlement>;
   retryPaymentOrderGrant?(orderId: string, input: PaymentOrderGrantRetryInput): Promise<PaymentOrderSettlement>;
+  refundPaymentOrder?(orderId: string, input: PaymentOrderRefundInput): Promise<PaymentOrderRefundSettlement>;
   creditGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   debitGems(playerId: string, amount: number, reason: GemLedgerReason, refId: string): Promise<PlayerAccountSnapshot>;
   claimPlayerReferral?(referrerId: string, newPlayerId: string, rewardGems: number): Promise<PlayerReferralClaimResult>;
@@ -475,6 +476,10 @@ interface PaymentOrderRow extends RowDataPacket {
   dead_lettered_at: Date | string | null;
   grant_attempt_count: number;
   last_grant_error: string | null;
+  refunded_at: Date | string | null;
+  refund_reason: string | null;
+  external_refund_id: string | null;
+  refund_clawback_gems: number | null;
   updated_at: Date | string;
 }
 
@@ -697,7 +702,7 @@ export interface GuildChatMessageCreateInput {
   expiresAt: string;
 }
 
-export type GemLedgerReason = "purchase" | "reward" | "spend";
+export type GemLedgerReason = "purchase" | "reward" | "spend" | "refund";
 
 export interface ShopPurchaseGrant {
   gems?: number;
@@ -753,6 +758,10 @@ export interface PaymentOrderSnapshot {
   lastGrantError?: string;
   settledAt?: string;
   deadLetteredAt?: string;
+  refundedAt?: string;
+  refundReason?: string;
+  externalRefundId?: string;
+  refundClawbackGems?: number;
 }
 
 export interface PaymentOrderCreateInput {
@@ -777,6 +786,19 @@ export interface PaymentOrderSettlement {
   account: PlayerAccountSnapshot;
   credited: boolean;
   receipt?: PaymentReceiptSnapshot;
+}
+
+export interface PaymentOrderRefundInput {
+  reasonCode: string;
+  refundedAt?: string;
+  externalRefundId?: string;
+}
+
+export interface PaymentOrderRefundSettlement {
+  order: PaymentOrderSnapshot;
+  account: PlayerAccountSnapshot;
+  refunded: boolean;
+  clawedBackGems: number;
 }
 
 export interface PaymentReceiptSnapshot {
@@ -1397,6 +1419,10 @@ function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
   const settledAt = formatTimestamp(row.settled_at);
   const deadLetteredAt = formatTimestamp(row.dead_lettered_at);
   const lastGrantError = normalizePaymentGrantError(row.last_grant_error);
+  const refundedAt = formatTimestamp(row.refunded_at);
+  const refundReason = row.refund_reason?.trim();
+  const externalRefundId = row.external_refund_id?.trim();
+  const refundClawbackGems = normalizeGemAmount(row.refund_clawback_gems ?? 0);
 
   return {
     orderId: normalizePaymentOrderId(row.order_id),
@@ -1414,7 +1440,11 @@ function toPaymentOrderSnapshot(row: PaymentOrderRow): PaymentOrderSnapshot {
     ...(nextGrantRetryAt ? { nextGrantRetryAt } : {}),
     ...(lastGrantError ? { lastGrantError } : {}),
     ...(settledAt ? { settledAt } : {}),
-    ...(deadLetteredAt ? { deadLetteredAt } : {})
+    ...(deadLetteredAt ? { deadLetteredAt } : {}),
+    ...(refundedAt ? { refundedAt } : {}),
+    ...(refundReason ? { refundReason } : {}),
+    ...(externalRefundId ? { externalRefundId } : {}),
+    ...(refundClawbackGems > 0 ? { refundClawbackGems } : {})
   };
 }
 
@@ -1678,6 +1708,26 @@ function createShopPurchaseEventLogEntry(playerId: string, input: {
         ? `Purchased ${input.productName} x${input.quantity} and unlocked ${input.granted.cosmeticIds.length} cosmetic item(s).`
         : `Purchased ${input.productName} x${input.quantity}.`,
     rewards: resourceRewards
+  };
+}
+
+function createPaymentRefundEventLogEntry(playerId: string, input: {
+  orderId: string;
+  reasonCode: string;
+  clawedBackGems: number;
+  refundedAt: string;
+}): EventLogEntry {
+  return {
+    id: `${playerId}:${input.refundedAt}:payment-refund:${input.orderId}`,
+    timestamp: input.refundedAt,
+    roomId: "shop",
+    playerId,
+    category: "account",
+    description:
+      input.clawedBackGems > 0
+        ? `Payment refund ${input.reasonCode} clawed back ${input.clawedBackGems} gems.`
+        : `Payment refund ${input.reasonCode} was recorded.`,
+    rewards: []
   };
 }
 
@@ -2249,11 +2299,11 @@ function normalizePositiveGemDelta(amount: number): number {
 }
 
 function normalizeGemLedgerReason(reason: GemLedgerReason): GemLedgerReason {
-  if (reason === "purchase" || reason === "reward" || reason === "spend") {
+  if (reason === "purchase" || reason === "reward" || reason === "spend" || reason === "refund") {
     return reason;
   }
 
-  throw new Error("gem reason must be purchase, reward, or spend");
+  throw new Error("gem reason must be purchase, reward, spend, or refund");
 }
 
 function normalizeGemLedgerRefId(refId: string): string {
@@ -2263,6 +2313,20 @@ function normalizeGemLedgerRefId(refId: string): string {
   }
 
   return normalized.slice(0, 191);
+}
+
+function normalizePaymentRefundReason(reasonCode: string): string {
+  const normalized = reasonCode.trim();
+  if (!normalized) {
+    throw new Error("refund reasonCode must not be empty");
+  }
+
+  return normalized.slice(0, 191);
+}
+
+function normalizePaymentRefundExternalId(externalRefundId?: string): string | undefined {
+  const normalized = externalRefundId?.trim();
+  return normalized ? normalized.slice(0, 191) : undefined;
 }
 
 function normalizeLastPlayDate(value?: string | Date | null): string | undefined {
@@ -2959,6 +3023,10 @@ CREATE TABLE IF NOT EXISTS \`${MYSQL_PAYMENT_ORDER_TABLE}\` (
   dead_lettered_at DATETIME NULL DEFAULT NULL,
   grant_attempt_count INT NOT NULL DEFAULT 0,
   last_grant_error VARCHAR(512) NULL DEFAULT NULL,
+  refunded_at DATETIME NULL DEFAULT NULL,
+  refund_reason VARCHAR(191) NULL DEFAULT NULL,
+  external_refund_id VARCHAR(191) NULL DEFAULT NULL,
+  refund_clawback_gems INT NOT NULL DEFAULT 0,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -4208,6 +4276,78 @@ SET @veil_payment_orders_last_grant_error_sql := IF(
 PREPARE veil_payment_orders_last_grant_error_stmt FROM @veil_payment_orders_last_grant_error_sql;
 EXECUTE veil_payment_orders_last_grant_error_stmt;
 DEALLOCATE PREPARE veil_payment_orders_last_grant_error_stmt;
+
+SET @veil_payment_orders_refunded_at_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'refunded_at'
+);
+
+SET @veil_payment_orders_refunded_at_sql := IF(
+  @veil_payment_orders_refunded_at_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`refunded_at\` DATETIME NULL DEFAULT NULL AFTER \`last_grant_error\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_refunded_at_stmt FROM @veil_payment_orders_refunded_at_sql;
+EXECUTE veil_payment_orders_refunded_at_stmt;
+DEALLOCATE PREPARE veil_payment_orders_refunded_at_stmt;
+
+SET @veil_payment_orders_refund_reason_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'refund_reason'
+);
+
+SET @veil_payment_orders_refund_reason_sql := IF(
+  @veil_payment_orders_refund_reason_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`refund_reason\` VARCHAR(191) NULL DEFAULT NULL AFTER \`refunded_at\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_refund_reason_stmt FROM @veil_payment_orders_refund_reason_sql;
+EXECUTE veil_payment_orders_refund_reason_stmt;
+DEALLOCATE PREPARE veil_payment_orders_refund_reason_stmt;
+
+SET @veil_payment_orders_external_refund_id_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'external_refund_id'
+);
+
+SET @veil_payment_orders_external_refund_id_sql := IF(
+  @veil_payment_orders_external_refund_id_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`external_refund_id\` VARCHAR(191) NULL DEFAULT NULL AFTER \`refund_reason\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_external_refund_id_stmt FROM @veil_payment_orders_external_refund_id_sql;
+EXECUTE veil_payment_orders_external_refund_id_stmt;
+DEALLOCATE PREPARE veil_payment_orders_external_refund_id_stmt;
+
+SET @veil_payment_orders_refund_clawback_gems_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = '${MYSQL_PAYMENT_ORDER_TABLE}'
+    AND COLUMN_NAME = 'refund_clawback_gems'
+);
+
+SET @veil_payment_orders_refund_clawback_gems_sql := IF(
+  @veil_payment_orders_refund_clawback_gems_exists = 0,
+  'ALTER TABLE \`${MYSQL_PAYMENT_ORDER_TABLE}\` ADD COLUMN \`refund_clawback_gems\` INT NOT NULL DEFAULT 0 AFTER \`external_refund_id\`',
+  'SELECT 1'
+);
+
+PREPARE veil_payment_orders_refund_clawback_gems_stmt FROM @veil_payment_orders_refund_clawback_gems_sql;
+EXECUTE veil_payment_orders_refund_clawback_gems_stmt;
+DEALLOCATE PREPARE veil_payment_orders_refund_clawback_gems_stmt;
 
 UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
 SET status = 'created'
@@ -5865,6 +6005,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          dead_lettered_at,
          grant_attempt_count,
          last_grant_error,
+         refunded_at,
+         refund_reason,
+         external_refund_id,
+         refund_clawback_gems,
          updated_at
        FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
        WHERE order_id = ?
@@ -5911,6 +6055,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
          dead_lettered_at,
          grant_attempt_count,
          last_grant_error,
+         refunded_at,
+         refund_reason,
+         external_refund_id,
+         refund_clawback_gems,
          updated_at
        FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
        ${whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ""}
@@ -7740,6 +7888,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            dead_lettered_at,
            grant_attempt_count,
            last_grant_error,
+           refunded_at,
+           refund_reason,
+           external_refund_id,
+           refund_clawback_gems,
            updated_at
          FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          WHERE order_id = ?
@@ -7974,6 +8126,10 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
            dead_lettered_at,
            grant_attempt_count,
            last_grant_error,
+           refunded_at,
+           refund_reason,
+           external_refund_id,
+           refund_clawback_gems,
            updated_at
          FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
          WHERE order_id = ?
@@ -8130,6 +8286,154 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
           receipt
         };
       }
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async refundPaymentOrder(orderId: string, input: PaymentOrderRefundInput): Promise<PaymentOrderRefundSettlement> {
+    const normalizedOrderId = normalizePaymentOrderId(orderId);
+    const refundedAt = input.refundedAt ? new Date(input.refundedAt) : new Date();
+    if (Number.isNaN(refundedAt.getTime())) {
+      throw new Error("refundedAt must be a valid ISO timestamp");
+    }
+    const reasonCode = normalizePaymentRefundReason(input.reasonCode);
+    const externalRefundId = normalizePaymentRefundExternalId(input.externalRefundId);
+
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [orderRows] = await connection.query<PaymentOrderRow[]>(
+        `SELECT
+           order_id,
+           player_id,
+           product_id,
+           wechat_order_id,
+           status,
+           amount,
+           gem_amount,
+           created_at,
+           paid_at,
+           last_grant_attempt_at,
+           next_grant_retry_at,
+           settled_at,
+           dead_lettered_at,
+           grant_attempt_count,
+           last_grant_error,
+           refunded_at,
+           refund_reason,
+           external_refund_id,
+           refund_clawback_gems,
+           updated_at
+         FROM \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         WHERE order_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [normalizedOrderId]
+      );
+      const currentOrderRow = orderRows[0];
+      if (!currentOrderRow) {
+        throw new Error("payment_order_not_found");
+      }
+
+      const currentOrder = toPaymentOrderSnapshot(currentOrderRow);
+      const [accountRows] = await connection.query<PlayerAccountRow[]>(
+        `SELECT *
+         FROM \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         WHERE player_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [currentOrder.playerId]
+      );
+      const currentAccount =
+        accountRows[0] != null
+          ? toPlayerAccountSnapshot(accountRows[0])
+          : normalizePlayerAccountSnapshot({
+              playerId: currentOrder.playerId,
+              displayName: currentOrder.playerId,
+              globalResources: normalizeResourceLedger()
+            });
+
+      if (currentOrder.refundedAt) {
+        await connection.commit();
+        return {
+          order: currentOrder,
+          account: currentAccount,
+          refunded: false,
+          clawedBackGems: currentOrder.refundClawbackGems ?? 0
+        };
+      }
+
+      const refundedAtIso = refundedAt.toISOString();
+      const currentGems = normalizeGemAmount(currentAccount.gems);
+      const clawedBackGems = currentOrder.status === "settled" ? Math.min(currentGems, currentOrder.gemAmount) : 0;
+      const nextGems = currentGems - clawedBackGems;
+      const nextRecentEventLog = appendEventLogEntries(currentAccount.recentEventLog, [
+        createPaymentRefundEventLogEntry(currentOrder.playerId, {
+          orderId: currentOrder.orderId,
+          reasonCode,
+          clawedBackGems,
+          refundedAt: refundedAtIso
+        })
+      ]);
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PAYMENT_ORDER_TABLE}\`
+         SET refunded_at = ?,
+             refund_reason = ?,
+             external_refund_id = ?,
+             refund_clawback_gems = ?
+         WHERE order_id = ?`,
+        [refundedAt, reasonCode, externalRefundId ?? null, clawedBackGems, currentOrder.orderId]
+      );
+
+      await connection.query(
+        `UPDATE \`${MYSQL_PLAYER_ACCOUNT_TABLE}\`
+         SET gems = ?,
+             recent_event_log_json = ?,
+             version = version + 1
+         WHERE player_id = ?`,
+        [nextGems, JSON.stringify(nextRecentEventLog), currentOrder.playerId]
+      );
+
+      if (clawedBackGems > 0) {
+        await appendGemLedgerEntry(connection, {
+          entryId: randomUUID(),
+          playerId: currentOrder.playerId,
+          delta: -clawedBackGems,
+          reason: "refund",
+          refId: currentOrder.orderId
+        });
+      }
+
+      await appendPlayerEventHistoryEntries(connection, currentOrder.playerId, nextRecentEventLog.slice(0, 1));
+      await connection.commit();
+
+      const nextOrder: PaymentOrderSnapshot = {
+        ...currentOrder,
+        refundedAt: refundedAtIso,
+        refundReason: reasonCode,
+        ...(externalRefundId ? { externalRefundId } : {}),
+        ...(clawedBackGems > 0 ? { refundClawbackGems: clawedBackGems } : {}),
+        updatedAt: refundedAtIso
+      };
+      const nextAccount = normalizePlayerAccountSnapshot({
+        ...currentAccount,
+        gems: nextGems,
+        recentEventLog: nextRecentEventLog,
+        updatedAt: refundedAtIso
+      });
+
+      return {
+        order: nextOrder,
+        account: nextAccount,
+        refunded: true,
+        clawedBackGems
+      };
     } catch (error) {
       await connection.rollback();
       throw error;

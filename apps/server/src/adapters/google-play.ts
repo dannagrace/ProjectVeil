@@ -15,6 +15,7 @@ import {
   isPaymentOpsStoreReady as isSharedPaymentOpsStoreReady,
   isPaymentStoreReady as isSharedPaymentStoreReady
 } from "@server/domain/payment/OrderIdempotencyStore";
+import { handlePaymentRefundNotification } from "@server/domain/payment/PaymentRefundNotifications";
 import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
 import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "@server/domain/payment/PaymentGateway";
 import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
@@ -1443,5 +1444,18 @@ const googlePlayPaymentGateway: PaymentGateway = {
 
 export const googlePlayPaymentGatewayRegistration: PaymentGatewayRegistration = {
   gateway: googlePlayPaymentGateway,
-  registerRoutes: (app, store) => registerGooglePlayRoutes(app as HttpApp, store)
+  registerRoutes: (app, store) =>
+    registerGooglePlayRoutes(app as HttpApp, store, {
+      notificationHandler: (event) =>
+        handlePaymentRefundNotification(store, {
+          channel: "google",
+          notificationType: event.notificationType,
+          ...(event.orderId ? { orderId: event.orderId } : {}),
+          eventId: event.eventId,
+          eventTime: event.eventTime,
+          ...(event.rawPayload.voidedPurchaseNotification?.orderId
+            ? { externalRefundId: event.rawPayload.voidedPurchaseNotification.orderId }
+            : {})
+        })
+    })
 };

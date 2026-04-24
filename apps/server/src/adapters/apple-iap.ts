@@ -17,6 +17,7 @@ import {
   isPaymentOpsStoreReady as isSharedPaymentOpsStoreReady,
   isPaymentStoreReady as isSharedPaymentStoreReady
 } from "@server/domain/payment/OrderIdempotencyStore";
+import { handlePaymentRefundNotification } from "@server/domain/payment/PaymentRefundNotifications";
 import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
 import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "@server/domain/payment/PaymentGateway";
 import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
@@ -1394,5 +1395,16 @@ const applePaymentGateway: PaymentGateway = {
 
 export const applePaymentGatewayRegistration: PaymentGatewayRegistration = {
   gateway: applePaymentGateway,
-  registerRoutes: (app, store) => registerApplePaymentRoutes(app as HttpApp, store)
+  registerRoutes: (app, store) =>
+    registerApplePaymentRoutes(app as HttpApp, store, {
+      notificationHandler: (event) =>
+        handlePaymentRefundNotification(store, {
+          channel: "apple",
+          notificationType: event.notificationType,
+          ...(event.orderId ? { orderId: event.orderId } : {}),
+          eventId: event.notificationId,
+          eventTime: event.signedDate,
+          ...(event.transaction?.originalTransactionId ? { externalRefundId: event.transaction.originalTransactionId } : {})
+        })
+    })
 };

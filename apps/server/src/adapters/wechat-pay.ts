@@ -17,6 +17,7 @@ import {
   isPaymentRetryOpsStoreReady,
   isPaymentStoreReady as isSharedPaymentStoreReady
 } from "@server/domain/payment/OrderIdempotencyStore";
+import { handlePaymentRefundNotification } from "@server/domain/payment/PaymentRefundNotifications";
 import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
 import {
   type PaymentGateway,
@@ -51,6 +52,7 @@ interface RegisterWechatPayRoutesOptions extends RegisterShopRoutesOptions {
   now?: () => Date;
   orderIdGenerator?: () => string;
   runtimeConfig?: WechatPayRuntimeConfig | null;
+  notificationHandler?: (event: WechatPayNotificationEvent) => WechatPayNotificationHandlerResult | Promise<WechatPayNotificationHandlerResult>;
 }
 
 interface WechatPayTransactionsJsapiResponse {
@@ -73,7 +75,7 @@ interface WechatPayTransactionQueryResponse {
   } | null;
 }
 
-interface WechatPayCallbackEnvelope {
+export interface WechatPayCallbackEnvelope {
   id?: string;
   event_type?: string;
   resource_type?: string;
@@ -98,6 +100,30 @@ interface WechatPayCallbackTransaction {
   payer?: {
     openid?: string;
   } | null;
+}
+
+export interface WechatPayRefundCallback {
+  mchid?: string;
+  transaction_id?: string;
+  out_trade_no?: string;
+  refund_id?: string;
+  out_refund_no?: string;
+  refund_status?: string;
+  success_time?: string;
+}
+
+export interface WechatPayNotificationEvent {
+  eventId: string;
+  notificationType: string;
+  eventTime: string;
+  orderId?: string;
+  externalRefundId?: string;
+  rawPayload: WechatPayCallbackEnvelope;
+  resource: WechatPayRefundCallback;
+}
+
+export interface WechatPayNotificationHandlerResult {
+  status?: "processed" | "ignored" | "duplicate";
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -299,6 +325,15 @@ function resolveVerifiedPaidAmount(
   return Math.max(0, Math.floor(payerTotal ?? amount?.total ?? 0));
 }
 
+function normalizeWechatEventType(eventType?: string): string {
+  return eventType?.trim().toUpperCase() ?? "";
+}
+
+function isWechatRefundEventType(eventType?: string): boolean {
+  const normalized = normalizeWechatEventType(eventType);
+  return normalized === "REFUND" || normalized === "REFUND.SUCCESS";
+}
+
 function emitPaymentFraudSignal(
   playerId: string,
   signal: string,
@@ -358,7 +393,7 @@ function isWechatCallbackTimestampFresh(headers: IncomingMessage["headers"], now
   return Math.abs(Math.floor(now.getTime() / 1000) - parsedSeconds) <= MAX_CALLBACK_TIMESTAMP_SKEW_SECONDS;
 }
 
-function decryptWechatCallbackResource(config: WechatPayRuntimeConfig, envelope: WechatPayCallbackEnvelope): WechatPayCallbackTransaction {
+function decryptWechatCallbackResource(config: WechatPayRuntimeConfig, envelope: WechatPayCallbackEnvelope): unknown {
   const resource = envelope.resource;
   if (
     !resource ||
@@ -384,7 +419,7 @@ function decryptWechatCallbackResource(config: WechatPayRuntimeConfig, envelope:
   decipher.setAuthTag(authTag);
 
   const plainText = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
-  return JSON.parse(plainText) as WechatPayCallbackTransaction;
+  return JSON.parse(plainText) as unknown;
 }
 
 function sendUnauthorized(
@@ -586,6 +621,7 @@ export function registerWechatPayRoutes(
   const now = options.now ?? (() => new Date());
   const orderIdGenerator = options.orderIdGenerator ?? randomUUID;
   const runtimeConfig = options.runtimeConfig ?? readWechatPayRuntimeConfig();
+  const notificationHandler = options.notificationHandler ?? null;
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -967,7 +1003,50 @@ export function registerWechatPayRoutes(
       }
 
       const envelope = JSON.parse(bodyText) as WechatPayCallbackEnvelope;
-      const transaction = decryptWechatCallbackResource(runtimeConfig, envelope);
+      const callbackResource = decryptWechatCallbackResource(runtimeConfig, envelope);
+      const callbackEventType = normalizeWechatEventType(envelope.event_type);
+      if (isWechatRefundEventType(callbackEventType)) {
+        const refund = callbackResource as WechatPayRefundCallback;
+        if (refund.mchid?.trim() !== runtimeConfig.merchantId) {
+          sendCallbackResponse(response, 400, {
+            code: "FAIL",
+            message: "merchant validation failed"
+          });
+          return;
+        }
+        if (refund.refund_status && refund.refund_status.trim().toUpperCase() !== "SUCCESS") {
+          sendCallbackResponse(response, 200);
+          return;
+        }
+        const orderId = refund.out_trade_no?.trim();
+        if (!orderId) {
+          sendCallbackResponse(response, 400, {
+            code: "FAIL",
+            message: "order identifiers are missing"
+          });
+          return;
+        }
+        const eventTime =
+          refund.success_time && !Number.isNaN(new Date(refund.success_time).getTime())
+            ? new Date(refund.success_time).toISOString()
+            : now().toISOString();
+        if (notificationHandler) {
+          const externalRefundId = refund.refund_id?.trim() || refund.out_refund_no?.trim();
+          await notificationHandler({
+            eventId: envelope.id?.trim() || `wechat-refund:${orderId}:${refund.refund_id ?? refund.out_refund_no ?? eventTime}`,
+            notificationType: callbackEventType,
+            eventTime,
+            orderId,
+            ...(externalRefundId ? { externalRefundId } : {}),
+            rawPayload: envelope,
+            resource: refund
+          });
+        }
+        sendCallbackResponse(response, 200);
+        return;
+      }
+
+      const transaction = callbackResource as WechatPayCallbackTransaction;
       if (transaction.trade_state !== "SUCCESS") {
         sendCallbackResponse(response, 400, {
           code: "FAIL",
@@ -1406,7 +1485,18 @@ const wechatPaymentGateway: PaymentGateway = {
 
 export const wechatPaymentGatewayRegistration: PaymentGatewayRegistration = {
   gateway: wechatPaymentGateway,
-  registerRoutes: (app, store) => registerWechatPayRoutes(app as HttpApp, store)
+  registerRoutes: (app, store) =>
+    registerWechatPayRoutes(app as HttpApp, store, {
+      notificationHandler: (event) =>
+        handlePaymentRefundNotification(store, {
+          channel: "wechat",
+          notificationType: event.notificationType,
+          ...(event.orderId ? { orderId: event.orderId } : {}),
+          eventId: event.eventId,
+          eventTime: event.eventTime,
+          ...(event.externalRefundId ? { externalRefundId: event.externalRefundId } : {})
+        })
+    })
 };
 
 export type { RegisterWechatPayRoutesOptions, WechatPayRuntimeConfig, PaymentOrderSnapshot };
