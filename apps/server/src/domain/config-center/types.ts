@@ -12,6 +12,7 @@ export type ConfigDocumentId =
   | "leaderboardTierThresholds";
 
 export type RuntimeConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+export type LiveOpsRuntimeDocumentId = "liveOpsCalendar" | "launchRuntimeState";
 
 export interface ConfigDefinition {
   id: ConfigDocumentId;
@@ -55,6 +56,15 @@ export interface ConfigDocumentSummary {
 }
 
 export interface ConfigDocument extends ConfigDocumentSummary {
+  content: string;
+}
+
+export interface LiveOpsRuntimeDocument {
+  id: LiveOpsRuntimeDocumentId;
+  fileName: string;
+  updatedAt: string;
+  storage: "filesystem" | "mysql";
+  version?: number;
   content: string;
 }
 
@@ -340,6 +350,8 @@ export interface ConfigCenterStore {
   listDocuments(): Promise<ConfigDocumentSummary[]>;
   loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;
   saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument>;
+  loadRuntimeStateDocument(id: LiveOpsRuntimeDocumentId): Promise<LiveOpsRuntimeDocument | null>;
+  saveRuntimeStateDocument(id: LiveOpsRuntimeDocumentId, content: string): Promise<LiveOpsRuntimeDocument>;
   validateDocument(id: ConfigDocumentId, content: string): Promise<ValidationReport>;
   listSnapshots(id: ConfigDocumentId): Promise<ConfigSnapshotSummary[]>;
   createSnapshot(id: ConfigDocumentId, content: string, label?: string): Promise<ConfigSnapshotSummary>;

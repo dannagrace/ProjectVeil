@@ -27,6 +27,11 @@ export interface LaunchRuntimeState {
   updatedAt: string;
 }
 
+export interface LaunchRuntimeStateStorage {
+  loadLaunchRuntimeState(now?: Date): Promise<LaunchRuntimeState>;
+  saveLaunchRuntimeState(state: LaunchRuntimeState): Promise<LaunchRuntimeState>;
+}
+
 export interface LaunchMaintenanceAccessInput {
   playerId?: string | null;
   loginId?: string | null;
@@ -52,6 +57,12 @@ const DEFAULT_RUNTIME_STATE: LaunchRuntimeState = {
   },
   updatedAt: "1970-01-01T00:00:00.000Z"
 };
+
+let configuredLaunchRuntimeStateStorage: LaunchRuntimeStateStorage | null = null;
+
+export function configureLaunchRuntimeStateStorage(storage: LaunchRuntimeStateStorage | null): void {
+  configuredLaunchRuntimeStateStorage = storage;
+}
 
 function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -155,11 +166,15 @@ export function readLaunchRuntimeStatePath(env: NodeJS.ProcessEnv = process.env)
 }
 
 export async function loadLaunchRuntimeState(
-  filePath = readLaunchRuntimeStatePath(),
+  filePath?: string,
   now = new Date()
 ): Promise<LaunchRuntimeState> {
+  if (!filePath && configuredLaunchRuntimeStateStorage) {
+    return configuredLaunchRuntimeStateStorage.loadLaunchRuntimeState(now);
+  }
+  const resolvedFilePath = filePath ?? readLaunchRuntimeStatePath();
   try {
-    const raw = await readFile(filePath, "utf8");
+    const raw = await readFile(resolvedFilePath, "utf8");
     return normalizeLaunchRuntimeState(JSON.parse(raw), now);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -171,11 +186,15 @@ export async function loadLaunchRuntimeState(
 
 export async function saveLaunchRuntimeState(
   state: LaunchRuntimeState,
-  filePath = readLaunchRuntimeStatePath()
+  filePath?: string
 ): Promise<LaunchRuntimeState> {
+  if (!filePath && configuredLaunchRuntimeStateStorage) {
+    return configuredLaunchRuntimeStateStorage.saveLaunchRuntimeState(state);
+  }
+  const resolvedFilePath = filePath ?? readLaunchRuntimeStatePath();
   const normalized = normalizeLaunchRuntimeState(state, new Date());
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  await mkdir(dirname(resolvedFilePath), { recursive: true });
+  await writeFile(resolvedFilePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   return normalized;
 }
 

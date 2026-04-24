@@ -73,6 +73,7 @@ function createProcessStub(): DevServerBootstrapDependencies["process"] & TestPr
 }
 
 function createConfigCenterStore(mode: "filesystem" | "mysql") {
+  const runtimeDocuments = new Map<string, string>();
   return {
     mode,
     initializeCalls: 0,
@@ -89,6 +90,30 @@ function createConfigCenterStore(mode: "filesystem" | "mysql") {
             { tier: "diamond", minRating: 1800 }
           ]
         })
+      };
+    },
+    async loadRuntimeStateDocument(id: "liveOpsCalendar" | "launchRuntimeState") {
+      const content = runtimeDocuments.get(id);
+      return content
+        ? {
+            id,
+            fileName: id === "liveOpsCalendar" ? "live-ops-calendar.json" : "announcements.json",
+            updatedAt: "2026-04-17T00:00:00.000Z",
+            storage: mode,
+            version: 1,
+            content
+          }
+        : null;
+    },
+    async saveRuntimeStateDocument(id: "liveOpsCalendar" | "launchRuntimeState", content: string) {
+      runtimeDocuments.set(id, content);
+      return {
+        id,
+        fileName: id === "liveOpsCalendar" ? "live-ops-calendar.json" : "announcements.json",
+        updatedAt: "2026-04-17T00:00:00.000Z",
+        storage: mode,
+        version: 1,
+        content
       };
     },
     async initializeRuntimeConfigs() {

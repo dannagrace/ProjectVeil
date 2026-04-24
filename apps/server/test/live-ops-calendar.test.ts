@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -310,6 +310,106 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
   );
   assert.equal(deleteResponse.statusCode, 200);
   assert.ok(refreshCalls.length >= 3);
+});
+
+test("admin live ops calendar routes use injected shared storage without writing local config files", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "veil-live-ops-shared-storage-"));
+  const liveOpsCalendarPath = join(dir, "live-ops-calendar.json");
+  const announcementsPath = join(dir, "announcements.json");
+  const originalCalendarPath = process.env.VEIL_LIVE_OPS_CALENDAR_CONFIG;
+  const originalAnnouncementsPath = process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+  process.env.VEIL_LIVE_OPS_CALENDAR_CONFIG = liveOpsCalendarPath;
+  process.env.VEIL_ANNOUNCEMENTS_CONFIG = announcementsPath;
+  t.after(() => {
+    if (originalCalendarPath === undefined) {
+      delete process.env.VEIL_LIVE_OPS_CALENDAR_CONFIG;
+    } else {
+      process.env.VEIL_LIVE_OPS_CALENDAR_CONFIG = originalCalendarPath;
+    }
+    if (originalAnnouncementsPath === undefined) {
+      delete process.env.VEIL_ANNOUNCEMENTS_CONFIG;
+    } else {
+      process.env.VEIL_ANNOUNCEMENTS_CONFIG = originalAnnouncementsPath;
+    }
+  });
+
+  const secret = withAdminSecret(t);
+  let calendarState = {
+    entries: [],
+    updatedAt: "2026-04-17T09:00:00.000Z"
+  } satisfies Awaited<ReturnType<typeof loadLiveOpsCalendarState>>;
+  let launchRuntimeState = createDefaultLaunchRuntimeState(new Date("2026-04-17T09:00:00.000Z"));
+  const sharedStorage = {
+    calendarSaves: 0,
+    launchRuntimeSaves: 0,
+    async loadCalendarState() {
+      return structuredClone(calendarState);
+    },
+    async saveCalendarState(nextState: typeof calendarState) {
+      this.calendarSaves += 1;
+      calendarState = structuredClone(nextState);
+      return structuredClone(calendarState);
+    },
+    async loadLaunchRuntimeState() {
+      return structuredClone(launchRuntimeState);
+    },
+    async saveLaunchRuntimeState(nextState: typeof launchRuntimeState) {
+      this.launchRuntimeSaves += 1;
+      launchRuntimeState = structuredClone(nextState);
+      return structuredClone(launchRuntimeState);
+    }
+  };
+  const { app, posts } = createTestApp();
+  registerLiveOpsCalendarRoutes(app, {
+    storage: sharedStorage,
+    now: () => new Date("2026-04-17T10:00:00.000Z")
+  });
+
+  const createHandler = posts.get("/api/admin/live-ops-calendar");
+  const startHandler = posts.get("/api/admin/live-ops-calendar/:id/start");
+  assert.ok(createHandler && startHandler);
+
+  await createHandler(
+    createRequest({
+      method: "POST",
+      headers: { "x-veil-admin-secret": secret },
+      body: JSON.stringify({
+        entry: {
+          id: "shared-launch-banner",
+          title: "Shared Launch Banner",
+          startsAt: "2026-04-17T10:00:00.000Z",
+          status: "scheduled",
+          action: {
+            type: "announcement_upsert",
+            announcement: {
+              id: "shared-launch-banner",
+              title: "Shared Launch Banner",
+              message: "Shared storage announcement.",
+              tone: "info",
+              startsAt: "2026-04-17T10:00:00.000Z"
+            }
+          }
+        }
+      })
+    }),
+    createResponse()
+  );
+
+  await startHandler(
+    createRequest({
+      method: "POST",
+      headers: { "x-veil-admin-secret": secret },
+      params: { id: "shared-launch-banner" }
+    }),
+    createResponse()
+  );
+
+  assert.equal(sharedStorage.calendarSaves, 2);
+  assert.equal(sharedStorage.launchRuntimeSaves, 1);
+  assert.equal(calendarState.entries[0]?.status, "active");
+  assert.equal(launchRuntimeState.announcements[0]?.id, "shared-launch-banner");
+  await assert.rejects(access(liveOpsCalendarPath), { code: "ENOENT" });
+  await assert.rejects(access(announcementsPath), { code: "ENOENT" });
 });
 
 test("seasonal event calendar entry toggles runtime active state on manual start and end", async (t) => {

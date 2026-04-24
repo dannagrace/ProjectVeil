@@ -29,6 +29,8 @@ import type {
   ConfigSnapshotSummary,
   ConfigStageDocumentInput,
   ConfigStageState,
+  LiveOpsRuntimeDocument,
+  LiveOpsRuntimeDocumentId,
   MySqlConfigDocumentRow,
   ParsedConfigDocument,
   RuntimeConfigDocumentId,
@@ -91,6 +93,11 @@ import type { ConfigDefinition } from "@server/domain/config-center/types";
 import { buildSummary, isRuntimeConfigDocumentId } from "@server/domain/config-center/helpers";
 import { validateDocumentDetailed } from "@server/domain/config-center/validators";
 
+const LIVE_OPS_RUNTIME_DOCUMENTS: Record<LiveOpsRuntimeDocumentId, { fileName: string }> = {
+  liveOpsCalendar: { fileName: "live-ops-calendar.json" },
+  launchRuntimeState: { fileName: "announcements.json" }
+};
+
 export abstract class BaseConfigCenterStore implements ConfigCenterStore {
   abstract readonly mode: "filesystem" | "mysql";
 
@@ -107,6 +114,14 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
     }
 
     return resolve(this.rootDir, definition.fileName);
+  }
+
+  protected runtimeStateFilePathFor(id: LiveOpsRuntimeDocumentId): string {
+    return resolve(this.rootDir, LIVE_OPS_RUNTIME_DOCUMENTS[id].fileName);
+  }
+
+  protected normalizeRuntimeStateDocumentContent(content: string): string {
+    return `${JSON.stringify(JSON.parse(content), null, 2)}\n`;
   }
 
   protected async exportDocumentToFile(id: ConfigDocumentId, content: string): Promise<void> {
@@ -751,6 +766,11 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
   abstract loadDocument(id: ConfigDocumentId): Promise<ConfigDocument>;
   abstract saveDocument(id: ConfigDocumentId, content: string): Promise<ConfigDocument>;
+  abstract loadRuntimeStateDocument(id: LiveOpsRuntimeDocumentId): Promise<LiveOpsRuntimeDocument | null>;
+  abstract saveRuntimeStateDocument(
+    id: LiveOpsRuntimeDocumentId,
+    content: string
+  ): Promise<LiveOpsRuntimeDocument>;
   protected abstract markDocumentExported(id: ConfigDocumentId): Promise<string>;
   abstract close(): Promise<void>;
 }
@@ -796,6 +816,36 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     const saved = await this.loadDocument(id);
     await this.createAutomaticSnapshot(saved);
     return saved;
+  }
+
+  async loadRuntimeStateDocument(id: LiveOpsRuntimeDocumentId): Promise<LiveOpsRuntimeDocument | null> {
+    const filePath = this.runtimeStateFilePathFor(id);
+    try {
+      const [content, fileStats] = await Promise.all([readFile(filePath, "utf8"), stat(filePath)]);
+      return {
+        id,
+        fileName: LIVE_OPS_RUNTIME_DOCUMENTS[id].fileName,
+        updatedAt: fileStats.mtime.toISOString(),
+        storage: this.mode,
+        version: 1,
+        content: this.normalizeRuntimeStateDocumentContent(content)
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async saveRuntimeStateDocument(
+    id: LiveOpsRuntimeDocumentId,
+    content: string
+  ): Promise<LiveOpsRuntimeDocument> {
+    const serialized = this.normalizeRuntimeStateDocumentContent(content);
+    await this.ensureRootDir();
+    await writeFile(this.runtimeStateFilePathFor(id), serialized, "utf8");
+    return (await this.loadRuntimeStateDocument(id))!;
   }
 
   async close(): Promise<void> {
@@ -880,6 +930,43 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     return saved;
   }
 
+  async loadRuntimeStateDocument(id: LiveOpsRuntimeDocumentId): Promise<LiveOpsRuntimeDocument | null> {
+    const row = await this.loadRow(id);
+    if (!row) {
+      return null;
+    }
+    return {
+      id,
+      fileName: LIVE_OPS_RUNTIME_DOCUMENTS[id].fileName,
+      updatedAt: formatTimestamp(row.updated_at) ?? new Date().toISOString(),
+      storage: this.mode,
+      version: row.version,
+      content: this.normalizeRuntimeStateDocumentContent(row.content_json)
+    };
+  }
+
+  async saveRuntimeStateDocument(
+    id: LiveOpsRuntimeDocumentId,
+    content: string
+  ): Promise<LiveOpsRuntimeDocument> {
+    const serialized = this.normalizeRuntimeStateDocumentContent(content);
+    const current = await this.loadRuntimeStateDocument(id);
+    if (current?.content === serialized) {
+      return current;
+    }
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_CONFIG_DOCUMENT_TABLE}\` (document_id, content_json, exported_at)
+       VALUES (?, ?, NULL)
+       ON DUPLICATE KEY UPDATE
+         content_json = VALUES(content_json),
+         version = version + 1`,
+      [id, serialized]
+    );
+
+    return (await this.loadRuntimeStateDocument(id))!;
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -919,7 +1006,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     }
   }
 
-  private async loadRow(id: ConfigDocumentId): Promise<MySqlConfigDocumentRow | null> {
+  private async loadRow(id: ConfigDocumentId | LiveOpsRuntimeDocumentId): Promise<MySqlConfigDocumentRow | null> {
     const [rows] = await this.pool.query<MySqlConfigDocumentRow[]>(
       `SELECT document_id, content_json, version, exported_at, created_at, updated_at
        FROM \`${MYSQL_CONFIG_DOCUMENT_TABLE}\`
@@ -943,4 +1030,3 @@ export async function createConfiguredConfigCenterStore(
 
   return MySqlConfigCenterStore.create(mysqlConfig, rootDir);
 }
-
