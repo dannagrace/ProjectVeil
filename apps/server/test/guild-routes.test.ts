@@ -5,6 +5,7 @@ import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/ac
 import { registerGuildRoutes } from "@server/domain/social/guilds";
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import type { RoomSnapshotStore } from "@server/persistence";
+import { createFakeRedisRateLimitClient } from "./fake-redis-rate-limit.ts";
 
 interface GuildRouteTestServer {
   shutdown(): Promise<void>;
@@ -47,10 +48,10 @@ function createSharedRealtimeTransport(): TestGuildChatRealtimeTransport {
 async function startGuildRouteServer(
   store: RoomSnapshotStore | null,
   port: number,
-  options: { chatRealtimeTransport?: TestGuildChatRealtimeTransport | null } = {}
+  options: { chatRealtimeTransport?: TestGuildChatRealtimeTransport | null; rateLimitRedisClient?: unknown } = {}
 ): Promise<GuildRouteTestServer> {
   const transport = new WebSocketTransport();
-  registerGuildRoutes(transport.getExpressApp() as never, store, options);
+  registerGuildRoutes(transport.getExpressApp() as never, store, options as never);
   await new Promise<void>((resolve, reject) => {
     transport.listen(port, "127.0.0.1", undefined, (error?: Error | null) => {
       if (error) {
@@ -75,6 +76,22 @@ async function startGuildRouteServer(
       });
     }
   };
+}
+
+function withEnvOverride(key: string, value: string | undefined, cleanup: Array<() => void>): void {
+  const previousValue = process.env[key];
+  if (value == null) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+  cleanup.push(() => {
+    if (previousValue == null) {
+      delete process.env[key];
+      return;
+    }
+    process.env[key] = previousValue;
+  });
 }
 
 async function wait(ms: number): Promise<void> {
@@ -1072,6 +1089,66 @@ test("guild chat routes validate messages and rate limit bursts", async (t) => {
   assert.equal(rateLimited.status, 429);
   assert.equal(rateLimitedPayload.error.code, "guild_chat_rate_limited");
   assert.match(rateLimitedPayload.error.message, /retry after/i);
+});
+
+test("guild chat rate limits are shared through Redis across route instances", { concurrency: false }, async (t) => {
+  resetGuestAuthSessions();
+  const cleanup: Array<() => void> = [];
+  withEnvOverride("REDIS_URL", undefined, cleanup);
+  withEnvOverride("VEIL_GUILD_CHAT_RATE_LIMIT_WINDOW_MS", "60000", cleanup);
+  withEnvOverride("VEIL_GUILD_CHAT_RATE_LIMIT_MAX", "1", cleanup);
+
+  const redis = createFakeRedisRateLimitClient();
+  const store = createMemoryRoomSnapshotStore();
+  const firstPort = 44650 + Math.floor(Math.random() * 100);
+  const secondPort = firstPort + 1000;
+  let server = await startGuildRouteServer(store, firstPort, { rateLimitRedisClient: redis });
+  const founderSession = issueGuestAuthSession({ playerId: "shared-chat-founder", displayName: "Shared Chat" });
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
+    await store.close();
+    await server.shutdown().catch(() => undefined);
+  });
+
+  const created = await fetch(`http://127.0.0.1:${firstPort}/api/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ name: "Shared Chat", tag: "SHRD" })
+  });
+  const createdPayload = (await created.json()) as { guild: { guildId: string } };
+  assert.equal(created.status, 201);
+
+  const firstMessage = await fetch(`http://127.0.0.1:${firstPort}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Alpha" })
+  });
+  assert.equal(firstMessage.status, 201);
+
+  await server.shutdown();
+  server = await startGuildRouteServer(store, secondPort, { rateLimitRedisClient: redis });
+
+  const secondMessage = await fetch(`http://127.0.0.1:${secondPort}/api/guilds/${createdPayload.guild.guildId}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${founderSession.token}`
+    },
+    body: JSON.stringify({ content: "Bravo" })
+  });
+  const secondPayload = (await secondMessage.json()) as { error: { code: string; message: string } };
+
+  assert.equal(secondMessage.status, 429);
+  assert.equal(secondPayload.error.code, "guild_chat_rate_limited");
+  assert.match(secondPayload.error.message, /retry after/i);
 });
 
 test("guild chat stream pushes live message and delete events to online guild members", async (t) => {

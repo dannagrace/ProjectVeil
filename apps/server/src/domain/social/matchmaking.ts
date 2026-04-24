@@ -7,6 +7,11 @@ import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { sendMobilePushNotification } from "@server/adapters/mobile-push";
 import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
+import {
+  consumeRedisBackedOrLocalRateLimit,
+  createLocalRateLimitState,
+  type RateLimitResult
+} from "@server/infra/http-rate-limit";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import { sendWechatSubscribeMessage } from "@server/adapters/wechat-subscribe";
@@ -18,11 +23,6 @@ const DEFAULT_RATE_LIMIT_MATCHMAKING_MAX = 30;
 interface MatchmakingRuntimeConfig {
   rateLimitWindowMs: number;
   rateLimitMax: number;
-}
-
-interface RateLimitResult {
-  allowed: boolean;
-  retryAfterSeconds?: number;
 }
 
 interface MatchmakingRuntimeDependencies {
@@ -40,7 +40,8 @@ interface MatchmakingRuntimeDependencies {
   ): Promise<boolean>;
 }
 
-const matchmakingRateLimitCounters = new Map<string, number[]>();
+const MATCHMAKING_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:matchmaking-rate-limit:";
+const matchmakingRateLimitState = createLocalRateLimitState();
 const defaultMatchmakingRuntimeDependencies: MatchmakingRuntimeDependencies = {
   sendWechatSubscribeMessage: (playerId, templateKey, data, options) =>
     sendWechatSubscribeMessage(playerId, templateKey, data, options),
@@ -109,30 +110,29 @@ function resolveRequestIp(request: Pick<IncomingMessage, "headers" | "socket">):
   return resolveTrustedRequestIp(request);
 }
 
-function consumeSlidingWindowRateLimit(key: string, config = readMatchmakingRuntimeConfig()): RateLimitResult {
-  const currentTime = nowMs();
-  const windowStart = currentTime - config.rateLimitWindowMs;
-  const timestamps = (matchmakingRateLimitCounters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
-  if (timestamps.length >= config.rateLimitMax) {
-    matchmakingRateLimitCounters.set(key, timestamps);
-    const oldestTimestamp = timestamps[0] ?? currentTime;
-    return {
-      allowed: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.rateLimitWindowMs - currentTime) / 1000))
-    };
-  }
-
-  timestamps.push(currentTime);
-  matchmakingRateLimitCounters.set(key, timestamps);
-  return { allowed: true };
+async function consumeMatchmakingRateLimit(
+  key: string,
+  redisClient: RedisClientLike | null,
+  config = readMatchmakingRuntimeConfig()
+): Promise<RateLimitResult> {
+  return consumeRedisBackedOrLocalRateLimit({
+    redisClient,
+    localState: matchmakingRateLimitState,
+    key,
+    redisKey: `${MATCHMAKING_RATE_LIMIT_CLUSTER_KEY_PREFIX}${key}`,
+    config: { windowMs: config.rateLimitWindowMs },
+    max: config.rateLimitMax,
+    now: nowMs
+  });
 }
 
-function enforceMatchmakingRateLimit(
+async function enforceMatchmakingRateLimit(
   request: Pick<IncomingMessage, "headers" | "socket">,
   response: ServerResponse,
-  endpointKey: string
-): boolean {
-  const rateLimitResult = consumeSlidingWindowRateLimit(`${endpointKey}:${resolveRequestIp(request)}`);
+  endpointKey: string,
+  redisClient: RedisClientLike | null
+): Promise<boolean> {
+  const rateLimitResult = await consumeMatchmakingRateLimit(`${endpointKey}:${resolveRequestIp(request)}`, redisClient);
   if (rateLimitResult.allowed) {
     return true;
   }
@@ -238,6 +238,12 @@ interface RedisMatchmakingServiceOptions {
   lockTimeoutMs?: number;
   lockRetryDelayMs?: number;
   onMatchCreated?: (result: MatchResult, players: [MatchmakingRequest, MatchmakingRequest]) => void;
+}
+
+interface MatchmakingRateLimitOptions {
+  rateLimitRedisClient?: RedisClientLike | null;
+  rateLimitRedisUrl?: string | null;
+  rateLimitCreateRedisClient?: typeof createRedisClient;
 }
 
 export class MatchmakingService implements MatchmakingServiceController {
@@ -676,7 +682,8 @@ export function resetMatchmakingService(): void {
   void configuredMatchmakingService.close?.();
   configuredMatchmakingNotificationStore = null;
   configuredMatchmakingService = createConfiguredMatchmakingService();
-  matchmakingRateLimitCounters.clear();
+  matchmakingRateLimitState.counters.clear();
+  matchmakingRateLimitState.lastPrunedAtMs = 0;
   setMatchmakingQueueDepth(0);
 }
 
@@ -770,6 +777,15 @@ function createConfiguredMatchmakingService(env: NodeJS.ProcessEnv = process.env
     : new MatchmakingService({ onMatchCreated });
 }
 
+function resolveMatchmakingRateLimitRedisClient(options: MatchmakingRateLimitOptions): RedisClientLike | null {
+  if (options.rateLimitRedisClient !== undefined) {
+    return options.rateLimitRedisClient;
+  }
+
+  const redisUrl = options.rateLimitRedisUrl ?? readRedisUrl();
+  return redisUrl ? (options.rateLimitCreateRedisClient ?? createRedisClient)(redisUrl) : null;
+}
+
 export function registerMatchmakingRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -781,11 +797,12 @@ export function registerMatchmakingRoutes(
     store: RoomSnapshotStore | null;
     service?: MatchmakingServiceController;
     queueTtlSeconds?: number;
-  }
+  } & MatchmakingRateLimitOptions
 ): void {
   configuredMatchmakingNotificationStore = options.store;
   const service = options.service ?? configuredMatchmakingService;
   const queueTtlMs = resolveQueueTtlMs(options.queueTtlSeconds);
+  const rateLimitRedisClient = resolveMatchmakingRateLimitRedisClient(options);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -802,7 +819,7 @@ export function registerMatchmakingRoutes(
   });
 
   app.post("/api/matchmaking/enqueue", async (request, response) => {
-    if (!enforceMatchmakingRateLimit(request, response, "enqueue")) {
+    if (!(await enforceMatchmakingRateLimit(request, response, "enqueue", rateLimitRedisClient))) {
       return;
     }
 
@@ -859,7 +876,7 @@ export function registerMatchmakingRoutes(
   });
 
   const cancelHandler = async (request: IncomingMessage, response: ServerResponse) => {
-    if (!enforceMatchmakingRateLimit(request, response, "cancel")) {
+    if (!(await enforceMatchmakingRateLimit(request, response, "cancel", rateLimitRedisClient))) {
       return;
     }
 
@@ -883,7 +900,7 @@ export function registerMatchmakingRoutes(
   app.delete("/api/matchmaking/dequeue", cancelHandler);
 
   app.get("/api/matchmaking/status", async (request, response) => {
-    if (!enforceMatchmakingRateLimit(request, response, "status")) {
+    if (!(await enforceMatchmakingRateLimit(request, response, "status", rateLimitRedisClient))) {
       return;
     }
 
