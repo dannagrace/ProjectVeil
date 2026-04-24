@@ -35,6 +35,7 @@ test("runtime Dockerfile runs as a non-root veil user", async () => {
 
   assert.match(dockerfile, /groupadd -r --gid 10001 veil/);
   assert.match(dockerfile, /useradd -r --uid 10001 --gid veil veil/);
+  assert.match(dockerfile, /apt-get install -y --no-install-recommends awscli/);
   assert.match(dockerfile, /ENV HOME=\/tmp/);
   assert.match(dockerfile, /USER 10001:10001/);
 });

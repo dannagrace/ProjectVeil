@@ -31,6 +31,10 @@ COPY apps/cocos-client/package.json ./apps/cocos-client/package.json
 COPY packages/cc-runtime-stub/package.json ./packages/cc-runtime-stub/package.json
 COPY packages/cc-runtime-stub/index.js ./packages/cc-runtime-stub/index.js
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends awscli \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY --from=build /app/dist ./dist

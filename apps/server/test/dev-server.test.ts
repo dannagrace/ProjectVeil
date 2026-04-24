@@ -1427,6 +1427,60 @@ test("dev server warns loudly when backup storage is unreachable and exports the
   assert.match(buildPrometheusMetricsDocument(), /^veil_db_backup_last_success_timestamp 1744001234$/m);
 });
 
+test("dev server fails closed when backup storage validation warns in production", async () => {
+  resetRuntimeObservability();
+  const base = createBaseDependencies();
+  const configCenterStore = createConfigCenterStore("filesystem");
+  const memoryStore = createMemoryStore();
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
+  process.env.NODE_ENV = "production";
+  process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
+
+  try {
+    await assert.rejects(
+      startDevServer(3211, "127.0.0.1", {
+        readMySqlPersistenceConfig: () => null,
+        createFileSystemConfigCenterStore: () => configCenterStore,
+        createMemoryRoomSnapshotStore: () => memoryStore,
+        configureRoomSnapshotStore: () => undefined,
+        createTransport: () => {
+          throw new Error("transport should not be created after production backup validation failure");
+        },
+        validateBackupStorage: async () => ({
+          status: "warn",
+          message: "Backup storage validation failed for s3://veil-ops/backups/mysql/: aws executable not found",
+          lastSuccessTimestamp: null
+        }),
+        logger: base.logger,
+        process: base.process,
+        setInterval: () => {
+          throw new Error("setInterval should not be used when startup fails");
+        },
+        clearInterval: () => undefined
+      }),
+      /Backup storage validation failed during production startup/
+    );
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalAuthSecret === undefined) {
+      delete process.env.VEIL_AUTH_SECRET;
+    } else {
+      process.env.VEIL_AUTH_SECRET = originalAuthSecret;
+    }
+  }
+
+  assert.equal(configCenterStore.initializeCalls, 1);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assert.deepEqual(base.process.exitCodes, [1]);
+  assert.deepEqual(base.logger.warnings, []);
+  assert.match(base.logger.errors[0]?.message ?? "", /Backup storage validation failed during production startup/);
+});
+
 test("dev server emits a prominent production warning when SENTRY_DSN is absent", async () => {
   resetRuntimeObservability();
   const base = createBaseDependencies();
