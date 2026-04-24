@@ -1,6 +1,14 @@
 import { createConfigCenterController, MAX_STAGE_DOCUMENTS } from "./config-center-controller";
 
-type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+type ConfigDocumentId =
+  | "world"
+  | "mapObjects"
+  | "units"
+  | "battleSkills"
+  | "battleBalance"
+  | "featureFlags"
+  | "leaderboardTierThresholds"
+  | "ugcBannedKeywords";
 type TerrainType = "grass" | "dirt" | "sand" | "water";
 type ResourceKind = "gold" | "wood" | "ore";
 type BattleSkillKind = "active" | "passive";

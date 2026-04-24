@@ -17,6 +17,7 @@ import contestedBasinWorldConfig from "../../../../../configs/phase2-contested-b
 import frontierExpandedMapObjectsConfig from "../../../../../configs/phase2-map-objects-frontier-expanded.json";
 import frontierExpandedWorldConfig from "../../../../../configs/phase2-frontier-expanded.json";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import { normalizeFeatureFlagConfigDocument, type FeatureFlagConfigDocument } from "@veil/shared/platform";
 import { createWorldStateFromConfigs, getBattleBalanceConfig, getDefaultBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultMapObjectsConfig, getDefaultUnitCatalog, getDefaultWorldConfig, type RuntimeConfigBundle, validateBattleBalanceConfig, validateBattleSkillCatalog, validateMapObjectsConfig, validateUnitCatalog, validateWorldConfig } from "@veil/shared/world";
 import {
   parseLeaderboardTierThresholdsConfigDocument,
@@ -79,9 +80,17 @@ export function parseConfigDocument(
     return normalizeUgcModerationConfig(parsed as Partial<UgcModerationConfig>);
   }
 
-  const nextBattleBalance = parsed as BattleBalanceConfig;
-  validateBattleBalanceConfig(nextBattleBalance);
-  return nextBattleBalance;
+  if (id === "featureFlags") {
+    return normalizeFeatureFlagConfigDocument(parsed as Partial<FeatureFlagConfigDocument>);
+  }
+
+  if (id === "battleBalance") {
+    const nextBattleBalance = parsed as BattleBalanceConfig;
+    validateBattleBalanceConfig(nextBattleBalance);
+    return nextBattleBalance;
+  }
+
+  throw new Error(`Unsupported config id: ${id}`);
 }
 
 export function buildRuntimeBundleWithParsedDocument(id: RuntimeConfigDocumentId, parsed: ParsedConfigDocument): RuntimeConfigBundle {

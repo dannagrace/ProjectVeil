@@ -318,6 +318,41 @@ export const CONFIG_DOCUMENT_SCHEMAS: Record<ConfigDocumentId, JsonSchemaNode> =
       }
     }
   },
+  featureFlags: {
+    type: "object",
+    title: "Feature Flags",
+    description: "运行时功能开关、灰度策略、客户端最低版本与 kill-switch 配置。",
+    required: ["schemaVersion", "flags"],
+    properties: {
+      schemaVersion: { type: "integer", minimum: 1, description: "配置格式版本。" },
+      flags: {
+        type: "object",
+        description: "功能开关定义，按 flag key 索引。"
+      },
+      experiments: {
+        type: "object",
+        description: "实验分流定义，按 experiment key 索引。"
+      },
+      operations: {
+        type: "object",
+        description: "灰度发布策略和审计历史。"
+      },
+      runtimeGates: {
+        type: "object",
+        description: "客户端版本门禁和运行时 kill-switch。",
+        properties: {
+          clientMinVersion: {
+            type: "object",
+            description: "默认和分渠道最低客户端版本。"
+          },
+          killSwitches: {
+            type: "object",
+            description: "运行时紧急开关，按 kill-switch key 索引。"
+          }
+        }
+      }
+    }
+  },
   leaderboardTierThresholds: {
     type: "object",
     title: "Leaderboard Tier Thresholds",

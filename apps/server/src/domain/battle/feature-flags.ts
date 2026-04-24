@@ -6,11 +6,26 @@ import { DEFAULT_FEATURE_FLAG_CONFIG, DEFAULT_MIN_SUPPORTED_CLIENT_VERSION, eval
 const DEFAULT_FEATURE_FLAG_CONFIG_PATH = path.resolve(process.cwd(), "configs/feature-flags.json");
 const DEFAULT_FEATURE_FLAG_RELOAD_INTERVAL_MS = 30_000;
 const DEFAULT_FEATURE_FLAG_STALE_THRESHOLD_MS = 120_000;
+const CONFIG_CENTER_FEATURE_FLAGS_PATH = "config-center:featureFlags";
+
+export interface FeatureFlagConfigCenterDocumentSnapshot {
+  content: string;
+  updatedAt?: string;
+  version?: number;
+  storage?: "filesystem" | "mysql" | string;
+}
+
+export interface FeatureFlagConfigCenterDocumentStore {
+  loadDocument(id: "featureFlags"): Promise<FeatureFlagConfigCenterDocumentSnapshot>;
+  saveDocument(id: "featureFlags", content: string): Promise<FeatureFlagConfigCenterDocumentSnapshot>;
+}
 
 interface FeatureFlagRuntimeDependencies {
   readFileSync(filePath: string, encoding: BufferEncoding): string;
   statSync(filePath: string): fs.Stats;
   now(): number;
+  loadConfigCenterDocument?: () => Promise<FeatureFlagConfigCenterDocumentSnapshot | null>;
+  saveConfigCenterDocument?: (content: string) => Promise<FeatureFlagConfigCenterDocumentSnapshot>;
 }
 
 const defaultFeatureFlagRuntimeDependencies: FeatureFlagRuntimeDependencies = {
@@ -22,7 +37,7 @@ const defaultFeatureFlagRuntimeDependencies: FeatureFlagRuntimeDependencies = {
 let featureFlagRuntimeDependencies = defaultFeatureFlagRuntimeDependencies;
 
 export interface FeatureFlagRuntimeMetadata {
-  source: "env_override" | "file" | "default_fallback";
+  source: "env_override" | "config_center" | "file" | "default_fallback";
   configuredPath: string;
   checksum: string;
   loadedAt: string;
@@ -52,6 +67,7 @@ interface CachedFeatureFlagState {
 }
 
 let cachedFeatureFlagState: CachedFeatureFlagState | null = null;
+let pendingConfigCenterRefresh: Promise<FeatureFlagRuntimeSnapshot | null> | null = null;
 
 export function configureFeatureFlagRuntimeDependencies(
   overrides: Partial<FeatureFlagRuntimeDependencies>
@@ -64,10 +80,29 @@ export function configureFeatureFlagRuntimeDependencies(
 
 export function resetFeatureFlagRuntimeDependencies(): void {
   featureFlagRuntimeDependencies = defaultFeatureFlagRuntimeDependencies;
+  pendingConfigCenterRefresh = null;
 }
 
 export function clearCachedFeatureFlagConfig(): void {
   cachedFeatureFlagState = null;
+}
+
+export function configureFeatureFlagConfigCenterStore(store: FeatureFlagConfigCenterDocumentStore | null): void {
+  if (!store) {
+    const {
+      loadConfigCenterDocument: _loadConfigCenterDocument,
+      saveConfigCenterDocument: _saveConfigCenterDocument,
+      ...remainingDependencies
+    } = featureFlagRuntimeDependencies;
+    featureFlagRuntimeDependencies = remainingDependencies;
+    pendingConfigCenterRefresh = null;
+    return;
+  }
+
+  configureFeatureFlagRuntimeDependencies({
+    loadConfigCenterDocument: () => store.loadDocument("featureFlags"),
+    saveConfigCenterDocument: (content) => store.saveDocument("featureFlags", content)
+  });
 }
 
 function parseFeatureFlagOverride(rawValue: string | undefined): FeatureFlagConfigDocument | null {
@@ -85,6 +120,19 @@ function parseFeatureFlagOverride(rawValue: string | undefined): FeatureFlagConf
 
 function hashFeatureFlagConfig(config: FeatureFlagConfigDocument): string {
   return crypto.createHash("sha256").update(JSON.stringify(config)).digest("hex");
+}
+
+function configCenterDocumentPath(document?: FeatureFlagConfigCenterDocumentSnapshot | null): string {
+  return `config-center:${document?.storage ?? "store"}:featureFlags`;
+}
+
+function parseSourceUpdatedAtMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function parseReloadIntervalMs(value: string | undefined): number {
@@ -121,6 +169,85 @@ function buildRuntimeSnapshot(
   };
 }
 
+export function applyFeatureFlagRuntimeConfig(
+  input: Partial<FeatureFlagConfigDocument> | FeatureFlagConfigDocument,
+  metadata: {
+    configuredPath?: string;
+    loadedAtMs?: number;
+    lastCheckedAtMs?: number;
+    sourceUpdatedAt?: string;
+    sourceUpdatedAtMs?: number;
+  } = {}
+): FeatureFlagRuntimeSnapshot {
+  const nowMs = metadata.loadedAtMs ?? featureFlagRuntimeDependencies.now();
+  const config = normalizeFeatureFlagConfigDocument(input);
+  const sourceUpdatedAtMs = metadata.sourceUpdatedAtMs ?? parseSourceUpdatedAtMs(metadata.sourceUpdatedAt);
+  const state: CachedFeatureFlagState = {
+    config,
+    source: "config_center",
+    configuredPath: metadata.configuredPath ?? CONFIG_CENTER_FEATURE_FLAGS_PATH,
+    checksum: hashFeatureFlagConfig(config),
+    loadedAtMs: nowMs,
+    lastCheckedAtMs: metadata.lastCheckedAtMs ?? nowMs
+  };
+  if (sourceUpdatedAtMs !== undefined) {
+    state.sourceUpdatedAtMs = sourceUpdatedAtMs;
+  }
+  cachedFeatureFlagState = state;
+  return buildRuntimeSnapshot(
+    state,
+    parseReloadIntervalMs(process.env.VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS),
+    nowMs
+  );
+}
+
+export async function refreshFeatureFlagConfigFromConfigCenter(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<FeatureFlagRuntimeSnapshot | null> {
+  if (parseFeatureFlagOverride(env.VEIL_FEATURE_FLAGS_JSON)) {
+    return null;
+  }
+
+  const loadConfigCenterDocument = featureFlagRuntimeDependencies.loadConfigCenterDocument;
+  if (!loadConfigCenterDocument) {
+    return null;
+  }
+
+  try {
+    const document = await loadConfigCenterDocument();
+    if (!document) {
+      return null;
+    }
+
+    const parsed = JSON.parse(document.content) as Partial<FeatureFlagConfigDocument>;
+    return applyFeatureFlagRuntimeConfig(parsed, {
+      configuredPath: configCenterDocumentPath(document),
+      ...(document.updatedAt ? { sourceUpdatedAt: document.updatedAt } : {})
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[FeatureFlags] Failed to refresh feature flags from config center", error);
+    if (cachedFeatureFlagState?.source === "config_center") {
+      cachedFeatureFlagState = {
+        ...cachedFeatureFlagState,
+        lastCheckedAtMs: featureFlagRuntimeDependencies.now(),
+        lastError: message
+      };
+    }
+    return null;
+  }
+}
+
+function scheduleConfigCenterRefresh(env: NodeJS.ProcessEnv): void {
+  if (!featureFlagRuntimeDependencies.loadConfigCenterDocument || pendingConfigCenterRefresh) {
+    return;
+  }
+
+  pendingConfigCenterRefresh = refreshFeatureFlagConfigFromConfigCenter(env).finally(() => {
+    pendingConfigCenterRefresh = null;
+  });
+}
+
 function loadFeatureFlagSnapshot(env: NodeJS.ProcessEnv = process.env): FeatureFlagRuntimeSnapshot {
   const nowMs = featureFlagRuntimeDependencies.now();
   const reloadIntervalMs = parseReloadIntervalMs(env.VEIL_FEATURE_FLAGS_RELOAD_INTERVAL_MS);
@@ -138,6 +265,22 @@ function loadFeatureFlagSnapshot(env: NodeJS.ProcessEnv = process.env): FeatureF
     };
     cachedFeatureFlagState = state;
     return buildRuntimeSnapshot(state, reloadIntervalMs, nowMs);
+  }
+
+  if (cachedFeatureFlagState?.source === "config_center") {
+    if (nowMs - cachedFeatureFlagState.lastCheckedAtMs >= reloadIntervalMs) {
+      cachedFeatureFlagState = {
+        ...cachedFeatureFlagState,
+        lastCheckedAtMs: nowMs
+      };
+      scheduleConfigCenterRefresh(env);
+    }
+
+    return buildRuntimeSnapshot(cachedFeatureFlagState, reloadIntervalMs, nowMs);
+  }
+
+  if (featureFlagRuntimeDependencies.loadConfigCenterDocument) {
+    scheduleConfigCenterRefresh(env);
   }
 
   if (
@@ -206,6 +349,71 @@ function readLegacyBooleanEnv(value: string | undefined): boolean | null {
   }
 
   return null;
+}
+
+export interface FeatureFlagRuntimeUpdateAuditInput {
+  actor?: string;
+  summary?: string;
+  ticket?: string;
+  approvedBy?: string;
+  changeId?: string;
+  rollback?: boolean;
+  flagKeys?: FeatureFlagKey[];
+}
+
+function applyFeatureFlagAuditEntry(
+  config: FeatureFlagConfigDocument,
+  audit: FeatureFlagRuntimeUpdateAuditInput | undefined
+): FeatureFlagConfigDocument {
+  const actor = audit?.actor?.trim();
+  const summary = audit?.summary?.trim();
+  if (!actor || !summary) {
+    return config;
+  }
+
+  const flagKeys = (audit?.flagKeys ?? [])
+    .filter((flagKey): flagKey is FeatureFlagKey => typeof flagKey === "string" && flagKey in config.flags);
+  if (flagKeys.length === 0) {
+    return config;
+  }
+
+  return normalizeFeatureFlagConfigDocument({
+    ...config,
+    operations: {
+      ...config.operations,
+      auditHistory: [
+        {
+          at: new Date(featureFlagRuntimeDependencies.now()).toISOString(),
+          actor,
+          summary,
+          flagKeys,
+          ...(audit?.ticket?.trim() ? { ticket: audit.ticket.trim() } : {}),
+          ...(audit?.approvedBy?.trim() ? { approvedBy: audit.approvedBy.trim() } : {}),
+          ...(audit?.changeId?.trim() ? { changeId: audit.changeId.trim() } : {}),
+          ...(audit?.rollback === true ? { rollback: true } : {})
+        },
+        ...(config.operations?.auditHistory ?? [])
+      ]
+    }
+  });
+}
+
+export async function persistFeatureFlagRuntimeConfig(
+  input: Partial<FeatureFlagConfigDocument> | FeatureFlagConfigDocument,
+  audit?: FeatureFlagRuntimeUpdateAuditInput
+): Promise<FeatureFlagRuntimeSnapshot> {
+  const saveConfigCenterDocument = featureFlagRuntimeDependencies.saveConfigCenterDocument;
+  if (!saveConfigCenterDocument) {
+    throw new Error("Feature flag config-center store is not configured");
+  }
+
+  const normalized = applyFeatureFlagAuditEntry(normalizeFeatureFlagConfigDocument(input), audit);
+  const document = await saveConfigCenterDocument(`${JSON.stringify(normalized, null, 2)}\n`);
+  const parsed = JSON.parse(document.content) as Partial<FeatureFlagConfigDocument>;
+  return applyFeatureFlagRuntimeConfig(parsed, {
+    configuredPath: configCenterDocumentPath(document),
+    ...(document.updatedAt ? { sourceUpdatedAt: document.updatedAt } : {})
+  });
 }
 
 export function loadFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): FeatureFlagConfigDocument {

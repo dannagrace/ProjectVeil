@@ -253,7 +253,7 @@ export function applyBuiltinPresetToContent(
   content: string,
   presetId: typeof BUILTIN_DIFFICULTY_PRESET_IDS[number]
 ): string {
-  if (id === "leaderboardTierThresholds") {
+  if (id === "leaderboardTierThresholds" || id === "featureFlags" || id === "ugcBannedKeywords") {
     return content;
   }
 
@@ -324,7 +324,7 @@ export function buildLayoutPresetSummary(id: typeof BUILTIN_WORLD_LAYOUT_PRESETS
 }
 
 export function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSummary[] {
-  if (id === "leaderboardTierThresholds") {
+  if (id === "leaderboardTierThresholds" || id === "featureFlags" || id === "ugcBannedKeywords") {
     return [];
   }
 
@@ -339,7 +339,7 @@ export function getBuiltinPresetSummaries(id: ConfigDocumentId): ConfigPresetSum
 }
 
 export function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent: string, presetId: string): string | null {
-  if (id === "leaderboardTierThresholds") {
+  if (id === "leaderboardTierThresholds" || id === "featureFlags" || id === "ugcBannedKeywords") {
     return null;
   }
 
@@ -419,4 +419,3 @@ export function resolveBuiltinPresetContent(id: ConfigDocumentId, currentContent
 
   return null;
 }
-

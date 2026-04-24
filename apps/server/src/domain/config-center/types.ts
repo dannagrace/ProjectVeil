@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import type { FeatureFlagConfigDocument } from "@veil/shared/platform";
 import type { ContentPackValidationReport, RuntimeConfigBundle } from "@veil/shared/world";
 import type { LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import type { UgcModerationConfig } from "@server/domain/social/ugc-moderation";
@@ -10,6 +11,7 @@ export type ConfigDocumentId =
   | "units"
   | "battleSkills"
   | "battleBalance"
+  | "featureFlags"
   | "leaderboardTierThresholds"
   | "ugcBannedKeywords";
 
@@ -29,6 +31,7 @@ export type ParsedConfigDocument =
   | UnitCatalogConfig
   | BattleSkillCatalogConfig
   | BattleBalanceConfig
+  | FeatureFlagConfigDocument
   | LeaderboardTierThresholdsConfigDocument
   | UgcModerationConfig;
 

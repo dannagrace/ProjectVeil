@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, ResourceKind, TerrainType, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import type { FeatureFlagConfigDocument } from "@veil/shared/platform";
 import type { LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import type { UgcModerationConfig } from "@server/domain/social/ugc-moderation";
 import type {
@@ -261,6 +262,14 @@ export function buildSummary(id: ConfigDocumentId, parsed: unknown): string {
   if (id === "leaderboardTierThresholds") {
     const config = parsed as LeaderboardTierThresholdsConfigDocument;
     return `${config.tiers.length} tier(s) · ${config.key}`;
+  }
+
+  if (id === "featureFlags") {
+    const config = parsed as FeatureFlagConfigDocument;
+    const activeKillSwitches = Object.values(config.runtimeGates?.killSwitches ?? {}).filter(
+      (entry) => entry.enabled === true
+    ).length;
+    return `${Object.keys(config.flags).length} flag(s) · ${activeKillSwitches} active kill-switch(es)`;
   }
 
   if (id === "ugcBannedKeywords") {

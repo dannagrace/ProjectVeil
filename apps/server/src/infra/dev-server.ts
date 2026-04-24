@@ -179,8 +179,8 @@ interface CleanupTimerHandle {
 
 interface DevServerConfigCenterStore extends UgcModerationConfigDocumentStore {
   initializeRuntimeConfigs(): Promise<void>;
-  loadDocument(id: "leaderboardTierThresholds" | "ugcBannedKeywords"): Promise<{ content: string }>;
-  saveDocument(id: "ugcBannedKeywords", content: string): Promise<{ content: string }>;
+  loadDocument(id: "leaderboardTierThresholds" | "ugcBannedKeywords" | "featureFlags"): Promise<{ content: string }>;
+  saveDocument(id: "ugcBannedKeywords" | "featureFlags", content: string): Promise<{ content: string }>;
   loadRuntimeStateDocument: ConfigCenterStore["loadRuntimeStateDocument"];
   saveRuntimeStateDocument: ConfigCenterStore["saveRuntimeStateDocument"];
   close(): Promise<void>;
@@ -242,7 +242,12 @@ export interface DevServerBootstrapDependencies {
   registerSeasonRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerRuntimeObservabilityRoutes(
     app: unknown,
-    options?: { store?: DevServerRoomSnapshotStore; persistence?: RuntimePersistenceHealth; enableTestRoutes?: boolean }
+    options?: {
+      store?: DevServerRoomSnapshotStore;
+      configCenterStore?: DevServerConfigCenterStore;
+      persistence?: RuntimePersistenceHealth;
+      enableTestRoutes?: boolean;
+    }
   ): void;
   validateBackupStorage(): Promise<BackupStorageValidationResult>;
   registerRetentionSummaryRoute(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -548,6 +553,7 @@ export async function startDevServer(
   deps.registerSeasonRoutes(expressApp, effectiveSnapshotStore);
   deps.registerRuntimeObservabilityRoutes(expressApp, {
     store: effectiveSnapshotStore,
+    configCenterStore,
     persistence: persistenceHealth,
     enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1"
   });
