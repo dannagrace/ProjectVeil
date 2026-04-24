@@ -456,6 +456,12 @@ interface ShopPurchaseRow extends RowDataPacket {
   created_at: Date | string;
 }
 
+interface ShopPurchaseLimitRow extends RowDataPacket {
+  product_id: string;
+  quantity: number;
+  total_price: number;
+}
+
 interface CountRow extends RowDataPacket {
   total: number;
 }
@@ -712,6 +718,42 @@ export interface ShopPurchaseGrant {
   seasonPassPremium?: boolean;
 }
 
+export type ShopPurchaseLimitType = "daily_gem_spend_cap" | "daily_item_quantity_limit";
+
+export interface ShopPurchaseLimitEnforcementInput {
+  window: {
+    from: string;
+    resetAt: string;
+  };
+  dailyGemSpendCap?: number;
+  perItemDailyQuantityLimit?: number;
+}
+
+export class ShopPurchaseLimitExceededError extends Error {
+  readonly limitType: ShopPurchaseLimitType;
+  readonly resetAt: string;
+
+  constructor(limitType: ShopPurchaseLimitType, resetAt: string) {
+    super(`Purchase limit exceeded: ${limitType}`);
+    this.name = "purchase_limit_exceeded";
+    this.limitType = limitType;
+    this.resetAt = resetAt;
+  }
+}
+
+export function isShopPurchaseLimitExceededError(error: unknown): error is ShopPurchaseLimitExceededError {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const candidate = error as Error & { limitType?: unknown; resetAt?: unknown };
+  return (
+    candidate.name === "purchase_limit_exceeded" &&
+    (candidate.limitType === "daily_gem_spend_cap" || candidate.limitType === "daily_item_quantity_limit") &&
+    typeof candidate.resetAt === "string" &&
+    candidate.resetAt.length > 0
+  );
+}
+
 export interface ShopPurchaseMutationInput {
   purchaseId: string;
   productId: string;
@@ -719,6 +761,7 @@ export interface ShopPurchaseMutationInput {
   quantity: number;
   unitPrice: number;
   grant: ShopPurchaseGrant;
+  limitEnforcement?: ShopPurchaseLimitEnforcementInput;
 }
 
 export interface ShopPurchaseResult {
@@ -1682,6 +1725,86 @@ function multiplyShopPurchaseGrant(
     cosmeticIds: Array.from({ length: quantity }, () => grant.cosmeticIds).flat(),
     seasonPassPremium: grant.seasonPassPremium
   };
+}
+
+function normalizeShopPurchaseLimitValue(value?: number): number {
+  const normalized = Math.floor(value ?? 0);
+  return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
+}
+
+function normalizeShopPurchaseLimitEnforcement(
+  enforcement?: ShopPurchaseLimitEnforcementInput
+): {
+  from: Date;
+  resetAt: string;
+  dailyGemSpendCap: number;
+  perItemDailyQuantityLimit: number;
+} | null {
+  if (!enforcement) {
+    return null;
+  }
+
+  const dailyGemSpendCap = normalizeShopPurchaseLimitValue(enforcement.dailyGemSpendCap);
+  const perItemDailyQuantityLimit = normalizeShopPurchaseLimitValue(enforcement.perItemDailyQuantityLimit);
+  if (dailyGemSpendCap <= 0 && perItemDailyQuantityLimit <= 0) {
+    return null;
+  }
+
+  const from = new Date(enforcement.window.from);
+  if (Number.isNaN(from.getTime())) {
+    throw new Error("shop purchase limit window.from must be a valid ISO timestamp");
+  }
+  const resetAt = new Date(enforcement.window.resetAt);
+  if (Number.isNaN(resetAt.getTime())) {
+    throw new Error("shop purchase limit window.resetAt must be a valid ISO timestamp");
+  }
+
+  return {
+    from,
+    resetAt: resetAt.toISOString(),
+    dailyGemSpendCap,
+    perItemDailyQuantityLimit
+  };
+}
+
+async function enforceShopPurchaseLimitsInsideTransaction(
+  connection: PoolConnection,
+  input: {
+    playerId: string;
+    productId: string;
+    quantity: number;
+    totalPrice: number;
+    limitEnforcement?: ShopPurchaseLimitEnforcementInput;
+  }
+): Promise<void> {
+  const limits = normalizeShopPurchaseLimitEnforcement(input.limitEnforcement);
+  if (!limits) {
+    return;
+  }
+
+  const [rows] = await connection.query<ShopPurchaseLimitRow[]>(
+    `SELECT product_id, quantity, total_price
+     FROM \`${MYSQL_SHOP_PURCHASE_TABLE}\`
+     WHERE player_id = ? AND created_at >= ?
+     FOR UPDATE`,
+    [input.playerId, limits.from]
+  );
+
+  if (limits.dailyGemSpendCap > 0) {
+    const currentSpend = rows.reduce((sum, row) => sum + normalizeGemAmount(row.total_price), 0);
+    if (currentSpend + input.totalPrice > limits.dailyGemSpendCap) {
+      throw new ShopPurchaseLimitExceededError("daily_gem_spend_cap", limits.resetAt);
+    }
+  }
+
+  if (limits.perItemDailyQuantityLimit > 0) {
+    const currentQuantity = rows
+      .filter((row) => normalizeShopProductId(row.product_id) === input.productId)
+      .reduce((sum, row) => sum + Math.max(0, Math.floor(row.quantity ?? 0)), 0);
+    if (currentQuantity + input.quantity > limits.perItemDailyQuantityLimit) {
+      throw new ShopPurchaseLimitExceededError("daily_item_quantity_limit", limits.resetAt);
+    }
+  }
 }
 
 function createShopPurchaseEventLogEntry(playerId: string, input: {
@@ -8489,6 +8612,14 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
               globalResources: normalizeResourceLedger()
             });
       const currentGems = normalizeGemAmount(currentAccount.gems);
+
+      await enforceShopPurchaseLimitsInsideTransaction(connection, {
+        playerId: normalizedPlayerId,
+        productId: normalizedProductId,
+        quantity: normalizedQuantity,
+        totalPrice,
+        ...(input.limitEnforcement ? { limitEnforcement: input.limitEnforcement } : {})
+      });
 
       if (currentGems < totalPrice) {
         throw new Error("insufficient gems");

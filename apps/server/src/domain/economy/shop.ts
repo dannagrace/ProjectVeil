@@ -4,7 +4,13 @@ import { getEquipmentDefinition, normalizeCosmeticInventory, resolveCosmeticCata
 import type { CosmeticId, EquippedCosmetics, ResourceLedger, ShopRotation } from "@veil/shared/models";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
-import { equipOwnedCosmetic, type RoomSnapshotStore } from "@server/persistence";
+import {
+  equipOwnedCosmetic,
+  isShopPurchaseLimitExceededError,
+  ShopPurchaseLimitExceededError,
+  type RoomSnapshotStore,
+  type ShopPurchaseLimitEnforcementInput
+} from "@server/persistence";
 
 export type ShopProductType = "gem_pack" | "equipment" | "resource_bundle" | "season_pass_premium" | "cosmetic";
 
@@ -69,16 +75,6 @@ class PayloadTooLargeError extends Error {
   constructor(maxBytes: number) {
     super(`Request body exceeds ${maxBytes} bytes`);
     this.name = "payload_too_large";
-  }
-}
-
-class PurchaseLimitExceededError extends Error {
-  constructor(
-    readonly limitType: "daily_gem_spend_cap" | "daily_item_quantity_limit",
-    readonly resetAt: string
-  ) {
-    super(`Purchase limit exceeded: ${limitType}`);
-    this.name = "purchase_limit_exceeded";
   }
 }
 
@@ -435,13 +431,18 @@ async function enforcePurchaseLimits(input: {
   quantity: number;
   totalPrice: number;
   controls: ShopPurchaseControls;
-}): Promise<void> {
+}): Promise<ShopPurchaseLimitEnforcementInput | undefined> {
   const itemLimit = input.controls.perItemDailyQuantityLimits[input.productId] ?? 0;
   if (input.controls.dailyGemSpendCap <= 0 && itemLimit <= 0) {
-    return;
+    return undefined;
   }
 
   const window = getCurrentPurchaseLimitWindow(new Date(), input.controls.limitTimezone);
+  const limitEnforcement: ShopPurchaseLimitEnforcementInput = {
+    window,
+    ...(input.controls.dailyGemSpendCap > 0 ? { dailyGemSpendCap: input.controls.dailyGemSpendCap } : {}),
+    ...(itemLimit > 0 ? { perItemDailyQuantityLimit: itemLimit } : {})
+  };
   const history = await input.store.listPlayerPurchaseHistory(input.playerId, {
     from: window.from,
     limit: 10_000,
@@ -451,7 +452,7 @@ async function enforcePurchaseLimits(input: {
   if (input.controls.dailyGemSpendCap > 0) {
     const currentSpend = history.items.reduce((sum, item) => sum + item.amount, 0);
     if (currentSpend + input.totalPrice > input.controls.dailyGemSpendCap) {
-      throw new PurchaseLimitExceededError("daily_gem_spend_cap", window.resetAt);
+      throw new ShopPurchaseLimitExceededError("daily_gem_spend_cap", window.resetAt);
     }
   }
 
@@ -460,9 +461,11 @@ async function enforcePurchaseLimits(input: {
       .filter((item) => item.itemId === input.productId)
       .reduce((sum, item) => sum + item.quantity, 0);
     if (currentQuantity + input.quantity > itemLimit) {
-      throw new PurchaseLimitExceededError("daily_item_quantity_limit", window.resetAt);
+      throw new ShopPurchaseLimitExceededError("daily_item_quantity_limit", window.resetAt);
     }
   }
+
+  return limitEnforcement;
 }
 
 export function registerShopRoutes(
@@ -581,7 +584,7 @@ export function registerShopRoutes(
         productId: product.productId
       };
 
-      await enforcePurchaseLimits({
+      const limitEnforcement = await enforcePurchaseLimits({
         store,
         playerId: authSession.playerId,
         productId: product.productId,
@@ -596,7 +599,8 @@ export function registerShopRoutes(
         productName: product.name,
         quantity,
         unitPrice: product.price,
-        grant: product.grant
+        grant: product.grant,
+        ...(limitEnforcement ? { limitEnforcement } : {})
       });
       emitAnalyticsEvent("purchase", {
         playerId: authSession.playerId,
@@ -651,7 +655,7 @@ export function registerShopRoutes(
         return;
       }
 
-      if (error instanceof PurchaseLimitExceededError) {
+      if (isShopPurchaseLimitExceededError(error)) {
         sendJson(response, 429, {
           error: {
             code: error.name,
