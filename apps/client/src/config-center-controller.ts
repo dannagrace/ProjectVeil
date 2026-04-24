@@ -1,4 +1,12 @@
-type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+type ConfigDocumentId =
+  | "world"
+  | "mapObjects"
+  | "units"
+  | "battleSkills"
+  | "battleBalance"
+  | "featureFlags"
+  | "leaderboardTierThresholds"
+  | "ugcBannedKeywords";
 
 interface ConfigDocumentSummary {
   id: ConfigDocumentId;

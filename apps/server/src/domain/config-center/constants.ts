@@ -41,6 +41,12 @@ export const CONFIG_DEFINITIONS: ConfigDefinition[] = [
     description: "伤害公式、战场环境和 PVP ELO 参数。"
   },
   {
+    id: "featureFlags",
+    fileName: "feature-flags.json",
+    title: "Feature Flags",
+    description: "功能开关、灰度策略、客户端最低版本与运行时 kill-switch。"
+  },
+  {
     id: "leaderboardTierThresholds",
     fileName: "leaderboard-tier-thresholds.json",
     title: "排行榜段位阈值",
@@ -196,6 +202,7 @@ export const CONFIG_RUNTIME_IMPACT: Record<ConfigDocumentId, string[]> = {
   units: ["战斗模拟器", "招募面板"],
   battleSkills: ["技能编辑器", "战斗模拟器"],
   battleBalance: ["战斗平衡计算", "PVP 匹配"],
+  featureFlags: ["功能开关", "灰度发布", "运行时 kill-switch"],
   leaderboardTierThresholds: ["排行榜展示", "赛季运营调参"],
   ugcBannedKeywords: ["UGC 人工复核队列", "客服审核后台"]
 };
@@ -231,6 +238,11 @@ export const CONFIG_IMPACT_RULES: Record<
     defaultRisk: "high",
     impactedModules: ["战斗公式", "环境机关", "PVP ELO"],
     suggestedValidationActions: ["战斗公式回归", "PVP 结算检查"]
+  },
+  featureFlags: {
+    defaultRisk: "medium",
+    impactedModules: ["功能开关", "灰度发布", "客户端版本门禁", "运行时 kill-switch"],
+    suggestedValidationActions: ["runtime feature-flags GET", "runtime kill-switches GET", "目标渠道 smoke"]
   },
   leaderboardTierThresholds: {
     defaultRisk: "medium",

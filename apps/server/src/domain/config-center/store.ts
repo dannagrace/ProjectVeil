@@ -2,7 +2,9 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Pool } from "mysql2/promise";
 import type { BattleBalanceConfig, BattleSkillCatalogConfig, MapObjectsConfig, UnitCatalogConfig, WorldGenerationConfig } from "@veil/shared/models";
+import type { FeatureFlagConfigDocument } from "@veil/shared/platform";
 import { replaceRuntimeConfigs, type RuntimeConfigBundle } from "@veil/shared/world";
+import { applyFeatureFlagRuntimeConfig } from "@server/domain/battle/feature-flags";
 import { parseLeaderboardTierThresholdsConfigDocument, type LeaderboardTierThresholdsConfigDocument } from "@server/domain/social/leaderboard-tier-thresholds";
 import {
   MYSQL_CONFIG_DOCUMENT_TABLE,
@@ -208,8 +210,17 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
     };
   }
 
+  protected applyFeatureFlagDocument(document: ConfigDocument): void {
+    const parsed = parseConfigDocument("featureFlags", document.content) as FeatureFlagConfigDocument;
+    applyFeatureFlagRuntimeConfig(parsed, {
+      configuredPath: `config-center:${this.mode}:featureFlags`,
+      sourceUpdatedAt: document.updatedAt
+    });
+  }
+
   async initializeRuntimeConfigs(): Promise<void> {
     const documents = await Promise.all(RUNTIME_CONFIG_DOCUMENT_IDS.map((id) => this.loadDocument(id)));
+    const featureFlagDocument = await this.loadDocument("featureFlags");
     const bundle = buildRuntimeConfigBundle(
       Object.fromEntries(
         documents.map((document) => [document.id, parseConfigDocument(document.id, document.content)])
@@ -218,6 +229,7 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
 
     clearConfigRollbackMonitor();
     initializeAppliedRuntimeBundle(bundle);
+    this.applyFeatureFlagDocument(featureFlagDocument);
     await Promise.all([
       this.exportDocumentToFile("world", normalizeJsonContent(bundle.world)),
       this.exportDocumentToFile("mapObjects", normalizeJsonContent(bundle.mapObjects)),
@@ -802,6 +814,9 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
+      if (id === "featureFlags") {
+        this.applyFeatureFlagDocument(current);
+      }
       return current;
     }
 
@@ -814,6 +829,9 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
     }
 
     const saved = await this.loadDocument(id);
+    if (id === "featureFlags") {
+      this.applyFeatureFlagDocument(saved);
+    }
     await this.createAutomaticSnapshot(saved);
     return saved;
   }
@@ -908,6 +926,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     const current = await this.loadDocument(id);
 
     if (current.content === serialized) {
+      if (id === "featureFlags") {
+        this.applyFeatureFlagDocument(current);
+      }
       return current;
     }
 
@@ -928,6 +949,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     }
 
     const saved = await this.loadDocument(id);
+    if (id === "featureFlags") {
+      this.applyFeatureFlagDocument(saved);
+    }
     if (id !== "ugcBannedKeywords") {
       // UGC moderation updates run inside the support-review request path; keep MySQL writes free of root-fs sidecars.
       await this.createAutomaticSnapshot(saved);

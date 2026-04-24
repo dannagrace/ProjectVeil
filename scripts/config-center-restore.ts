@@ -1,7 +1,5 @@
 import path from "node:path";
-import { FileSystemConfigCenterStore } from "@server/config-center";
-
-type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+import { FileSystemConfigCenterStore, type ConfigDocumentId } from "@server/config-center";
 
 interface CliArgs {
   configRoot: string;
@@ -17,7 +15,9 @@ const VALID_DOCUMENT_IDS: ConfigDocumentId[] = [
   "units",
   "battleSkills",
   "battleBalance",
-  "leaderboardTierThresholds"
+  "featureFlags",
+  "leaderboardTierThresholds",
+  "ugcBannedKeywords"
 ];
 
 function printUsage(): void {

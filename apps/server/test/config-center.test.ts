@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import * as XLSX from "xlsx";
 import { getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs } from "@veil/shared/world";
+import { DEFAULT_FEATURE_FLAG_CONFIG } from "@veil/shared/platform";
 import {
   configureConfigCenterRuntimeDependencies,
   configureConfigRuntimeStatusProvider,
@@ -15,6 +16,7 @@ import {
   resetConfigHotReloadState
 } from "@server/config-center";
 import type { WorldConfigPreview } from "@server/config-center";
+import { clearCachedFeatureFlagConfig, loadFeatureFlagConfig, resetFeatureFlagRuntimeDependencies } from "@server/domain/battle/feature-flags";
 import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
 import { recordRuntimeErrorEvent, resetRuntimeObservability } from "@server/domain/ops/observability";
 
@@ -167,6 +169,7 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(BATTLE_SKILL_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(BATTLE_BALANCE_CONFIG, null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "feature-flags.json"), `${JSON.stringify(DEFAULT_FEATURE_FLAG_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(
     join(rootDir, "leaderboard-tier-thresholds.json"),
     `${JSON.stringify({ key: "leaderboard.tier_thresholds", tiers: DEFAULT_LEADERBOARD_TIER_THRESHOLDS }, null, 2)}\n`,
@@ -182,6 +185,8 @@ async function seedConfigRoot(rootDir: string): Promise<void> {
 test.afterEach(() => {
   delete process.env.CONFIG_ROLLBACK_WINDOW_MS;
   resetRuntimeConfigs();
+  clearCachedFeatureFlagConfig();
+  resetFeatureFlagRuntimeDependencies();
   resetConfigHotReloadState();
   resetConfigCenterRuntimeDependencies();
   configureConfigRuntimeStatusProvider(() => ({
@@ -200,9 +205,46 @@ test("config center lists seeded config documents", async () => {
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["world", "mapObjects", "units", "battleSkills", "battleBalance", "leaderboardTierThresholds", "ugcBannedKeywords"]
+    [
+      "world",
+      "mapObjects",
+      "units",
+      "battleSkills",
+      "battleBalance",
+      "featureFlags",
+      "leaderboardTierThresholds",
+      "ugcBannedKeywords"
+    ]
   );
   assert.match(items[0]?.summary ?? "", /8x8/);
+});
+
+test("config center save writes feature flags file and refreshes runtime feature flags", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const store = new FileSystemConfigCenterStore(rootDir);
+  await store.initializeRuntimeConfigs();
+
+  const nextFeatureFlags = {
+    ...DEFAULT_FEATURE_FLAG_CONFIG,
+    flags: {
+      ...DEFAULT_FEATURE_FLAG_CONFIG.flags,
+      battle_pass_enabled: {
+        ...DEFAULT_FEATURE_FLAG_CONFIG.flags.battle_pass_enabled,
+        value: false,
+        enabled: false,
+        rollout: 0
+      }
+    }
+  };
+
+  const document = await store.saveDocument("featureFlags", JSON.stringify(nextFeatureFlags));
+  const fileContent = await readFile(join(rootDir, "feature-flags.json"), "utf8");
+
+  assert.equal(document.id, "featureFlags");
+  assert.match(fileContent, /"battle_pass_enabled"/);
+  assert.equal(loadFeatureFlagConfig({}).flags.battle_pass_enabled.value, false);
+  assert.equal(loadFeatureFlagConfig({}).flags.battle_pass_enabled.enabled, false);
 });
 
 test("config center validates leaderboard tier thresholds as a contiguous config key", async () => {

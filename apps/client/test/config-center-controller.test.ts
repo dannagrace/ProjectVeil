@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createConfigCenterController } from "../src/config-center-controller";
 
-type ConfigDocumentId = "world" | "mapObjects" | "units" | "battleSkills" | "battleBalance";
+type ConfigDocumentId =
+  | "world"
+  | "mapObjects"
+  | "units"
+  | "battleSkills"
+  | "battleBalance"
+  | "featureFlags"
+  | "leaderboardTierThresholds"
+  | "ugcBannedKeywords";
 
 interface RequestRecord {
   url: string;

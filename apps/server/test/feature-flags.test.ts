@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import {
   clearCachedFeatureFlagConfig,
+  applyFeatureFlagRuntimeConfig,
   configureFeatureFlagRuntimeDependencies,
   getRuntimeKillSwitchSnapshot,
   getFeatureFlagRuntimeSnapshot,
   loadFeatureFlagConfig,
+  refreshFeatureFlagConfigFromConfigCenter,
   resetFeatureFlagRuntimeDependencies,
   resolveMinimumSupportedClientVersion,
   resolveFeatureEntitlementsForPlayer,
@@ -152,6 +154,50 @@ test("clearCachedFeatureFlagConfig forces a fresh file read on next call", (t) =
   loadFeatureFlagConfig({});
 
   assert.equal(callCount, 2, "file should be read again after cache is cleared");
+});
+
+test("refreshFeatureFlagConfigFromConfigCenter loads a shared config-center document into the runtime cache", async (t) => {
+  withCleanState(t);
+  const updatedAt = "2026-04-24T01:00:00.000Z";
+  configureFeatureFlagRuntimeDependencies({
+    loadConfigCenterDocument: async () => ({
+      content: JSON.stringify(
+        makeMinimalFlagConfig({
+          battle_pass_enabled: { type: "boolean", value: false, defaultValue: true, enabled: false, rollout: 0 }
+        })
+      ),
+      updatedAt,
+      storage: "mysql"
+    })
+  });
+
+  const refreshed = await refreshFeatureFlagConfigFromConfigCenter({});
+  const snapshot = getFeatureFlagRuntimeSnapshot({});
+
+  assert.equal(refreshed?.metadata.source, "config_center");
+  assert.equal(snapshot.metadata.source, "config_center");
+  assert.equal(snapshot.metadata.configuredPath, "config-center:mysql:featureFlags");
+  assert.equal(snapshot.metadata.sourceUpdatedAt, updatedAt);
+  assert.equal(loadFeatureFlagConfig({}).flags.battle_pass_enabled.enabled, false);
+});
+
+test("VEIL_FEATURE_FLAGS_JSON keeps precedence over config-center runtime cache", (t) => {
+  withCleanState(t);
+  applyFeatureFlagRuntimeConfig(
+    makeMinimalFlagConfig({
+      battle_pass_enabled: { type: "boolean", value: false, defaultValue: true, enabled: false, rollout: 0 }
+    })
+  );
+  const overrideConfig = makeMinimalFlagConfig({
+    battle_pass_enabled: { type: "boolean", value: true, defaultValue: true, enabled: true, rollout: 1 }
+  });
+
+  const snapshot = getFeatureFlagRuntimeSnapshot({
+    VEIL_FEATURE_FLAGS_JSON: JSON.stringify(overrideConfig)
+  });
+
+  assert.equal(snapshot.metadata.source, "env_override");
+  assert.equal(snapshot.config.flags.battle_pass_enabled.enabled, true);
 });
 
 test("loadFeatureFlagConfig uses VEIL_FEATURE_FLAGS_PATH env to locate a custom config file", (t) => {

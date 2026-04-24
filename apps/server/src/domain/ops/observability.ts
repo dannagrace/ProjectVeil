@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildRuntimeDiagnosticsErrorEvent, type FeatureFlagAuditEntry, type FeatureFlagKey, type FeatureFlagRolloutPolicy, type ReconnectFailureReason, renderRuntimeDiagnosticsSnapshotText, type RuntimeDiagnosticsErrorEvent, type RuntimeDiagnosticsSnapshot, summarizeRuntimeDiagnosticsErrors } from "@veil/shared/platform";
-import { getFeatureFlagRuntimeSnapshot, getRuntimeKillSwitchSnapshot, listFeatureFlagRuntimeSummaries } from "@server/domain/battle/feature-flags";
+import { buildRuntimeDiagnosticsErrorEvent, type FeatureFlagAuditEntry, type FeatureFlagConfigDocument, type FeatureFlagKey, type FeatureFlagRolloutPolicy, type FeatureFlagRuntimeGateConfig, type ReconnectFailureReason, renderRuntimeDiagnosticsSnapshotText, type RuntimeDiagnosticsErrorEvent, type RuntimeDiagnosticsSnapshot, summarizeRuntimeDiagnosticsErrors, normalizeFeatureFlagConfigDocument } from "@veil/shared/platform";
+import { configureFeatureFlagConfigCenterStore, getFeatureFlagRuntimeSnapshot, getRuntimeKillSwitchSnapshot, listFeatureFlagRuntimeSummaries, persistFeatureFlagRuntimeConfig, refreshFeatureFlagConfigFromConfigCenter, type FeatureFlagConfigCenterDocumentStore, type FeatureFlagRuntimeUpdateAuditInput } from "@server/domain/battle/feature-flags";
 import type { LeaderboardAlertEvent } from "@server/domain/social/leaderboard-anti-abuse";
 import {
   getAnalyticsPipelineSnapshot,
@@ -331,7 +331,7 @@ interface FeatureFlagObservabilityPayload {
   checkedAt: string;
   headline: string;
   config: {
-    source: "env_override" | "file" | "default_fallback";
+    source: "env_override" | "config_center" | "file" | "default_fallback";
     configuredPath: string;
     checksum: string;
     loadedAt: string;
@@ -536,6 +536,23 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (chunks.length === 0) {
+    return {};
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toErrorPayload(error: unknown): { code: string; message: string } {
@@ -962,6 +979,107 @@ function buildRuntimeKillSwitchPayload(service = "project-veil-server"): Runtime
     },
     killSwitches: snapshot.killSwitches
   };
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function buildFeatureFlagAuditInput(
+  body: Record<string, unknown>,
+  defaultFlagKeys: FeatureFlagKey[]
+): FeatureFlagRuntimeUpdateAuditInput | undefined {
+  const actor = stringField(body, "actor");
+  const summary = stringField(body, "summary");
+  if (!actor || !summary) {
+    return undefined;
+  }
+
+  const flagKeys = Array.isArray(body.flagKeys)
+    ? body.flagKeys.filter((flagKey): flagKey is FeatureFlagKey =>
+        typeof flagKey === "string" && defaultFlagKeys.includes(flagKey as FeatureFlagKey)
+      )
+    : defaultFlagKeys;
+  const ticket = stringField(body, "ticket");
+  const approvedBy = stringField(body, "approvedBy");
+  const changeId = stringField(body, "changeId");
+
+  return {
+    actor,
+    summary,
+    flagKeys,
+    ...(ticket ? { ticket } : {}),
+    ...(approvedBy ? { approvedBy } : {}),
+    ...(changeId ? { changeId } : {}),
+    ...(body.rollback === true ? { rollback: true } : {})
+  };
+}
+
+function parseFeatureFlagRuntimeUpdateBody(body: unknown): {
+  config: FeatureFlagConfigDocument;
+  audit?: FeatureFlagRuntimeUpdateAuditInput;
+} {
+  if (!isPlainRecord(body)) {
+    throw new Error("Expected JSON object body");
+  }
+
+  const configInput =
+    isPlainRecord(body.config)
+      ? body.config
+      : body.schemaVersion !== undefined || isPlainRecord(body.flags) || isPlainRecord(body.runtimeGates)
+        ? body
+        : null;
+  if (!configInput) {
+    throw new Error("Expected feature flag config document in field: config");
+  }
+
+  const config = normalizeFeatureFlagConfigDocument(configInput as Partial<FeatureFlagConfigDocument>);
+  const audit = buildFeatureFlagAuditInput(body, Object.keys(config.flags) as FeatureFlagKey[]);
+  return audit ? { config, audit } : { config };
+}
+
+function parseRuntimeGateUpdateBody(body: unknown): {
+  config: FeatureFlagConfigDocument;
+  audit?: FeatureFlagRuntimeUpdateAuditInput;
+} {
+  if (!isPlainRecord(body)) {
+    throw new Error("Expected JSON object body");
+  }
+
+  const currentConfig = getFeatureFlagRuntimeSnapshot().config;
+  const runtimeGateInput = isPlainRecord(body.runtimeGates) ? body.runtimeGates : body;
+  const currentRuntimeGates = currentConfig.runtimeGates ?? {};
+  const nextRuntimeGates: FeatureFlagRuntimeGateConfig = {
+    ...currentRuntimeGates
+  };
+  let updated = false;
+
+  if (isPlainRecord(runtimeGateInput.clientMinVersion)) {
+    nextRuntimeGates.clientMinVersion = runtimeGateInput.clientMinVersion as unknown as NonNullable<
+      FeatureFlagRuntimeGateConfig["clientMinVersion"]
+    >;
+    updated = true;
+  }
+
+  if (isPlainRecord(runtimeGateInput.killSwitches)) {
+    nextRuntimeGates.killSwitches = {
+      ...(currentRuntimeGates.killSwitches ?? {}),
+      ...(runtimeGateInput.killSwitches as unknown as NonNullable<FeatureFlagRuntimeGateConfig["killSwitches"]>)
+    };
+    updated = true;
+  }
+
+  if (!updated) {
+    throw new Error("Expected runtimeGates.clientMinVersion, runtimeGates.killSwitches, clientMinVersion, or killSwitches");
+  }
+
+  const config = normalizeFeatureFlagConfigDocument({
+    ...currentConfig,
+    runtimeGates: nextRuntimeGates
+  });
+  const audit = buildFeatureFlagAuditInput(body, []);
+  return audit ? { config, audit } : { config };
 }
 
 export function buildPrometheusMetricsDocument(): string {
@@ -2235,6 +2353,7 @@ export function registerRuntimeObservabilityRoutes(
   options?: {
     serviceName?: string;
     store?: { clearAll?: () => void };
+    configCenterStore?: FeatureFlagConfigCenterDocumentStore;
     persistence?: RuntimePersistenceHealth;
     enableTestRoutes?: boolean;
   }
@@ -2242,6 +2361,9 @@ export function registerRuntimeObservabilityRoutes(
   const serviceName = options?.serviceName ?? "project-veil-server";
   const store = options?.store;
   const persistence = options?.persistence;
+  if (options?.configCenterStore) {
+    configureFeatureFlagConfigCenterStore(options.configCenterStore);
+  }
 
   app.use((request, response, next) => {
     if (PUBLIC_RUNTIME_CORS_PATHS.has(readRequestPathname(request))) {
@@ -2374,9 +2496,28 @@ export function registerRuntimeObservabilityRoutes(
     "/api/runtime/feature-flags",
     protectRuntimeRoute(async (_request, response) => {
       try {
+        await refreshFeatureFlagConfigFromConfigCenter();
         sendJson(response, 200, buildFeatureFlagObservabilityPayload(serviceName));
       } catch (error) {
         sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.post(
+    "/api/runtime/feature-flags",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        const { config, audit } = parseFeatureFlagRuntimeUpdateBody(await readJsonBody(request));
+        await persistFeatureFlagRuntimeConfig(config, audit);
+        sendJson(response, 200, {
+          persisted: true,
+          featureFlags: buildFeatureFlagObservabilityPayload(serviceName)
+        });
+      } catch (error) {
+        sendJson(response, error instanceof Error && /not configured/i.test(error.message) ? 503 : 400, {
+          error: toErrorPayload(error)
+        });
       }
     })
   );
@@ -2385,9 +2526,29 @@ export function registerRuntimeObservabilityRoutes(
     "/api/runtime/kill-switches",
     protectRuntimeRoute(async (_request, response) => {
       try {
+        await refreshFeatureFlagConfigFromConfigCenter();
         sendJson(response, 200, buildRuntimeKillSwitchPayload(serviceName));
       } catch (error) {
         sendJson(response, 500, { error: toErrorPayload(error) });
+      }
+    })
+  );
+
+  app.post(
+    "/api/runtime/kill-switches",
+    protectRuntimeRoute(async (request, response) => {
+      try {
+        await refreshFeatureFlagConfigFromConfigCenter();
+        const { config, audit } = parseRuntimeGateUpdateBody(await readJsonBody(request));
+        await persistFeatureFlagRuntimeConfig(config, audit);
+        sendJson(response, 200, {
+          persisted: true,
+          killSwitches: buildRuntimeKillSwitchPayload(serviceName)
+        });
+      } catch (error) {
+        sendJson(response, error instanceof Error && /not configured/i.test(error.message) ? 503 : 400, {
+          error: toErrorPayload(error)
+        });
       }
     })
   );

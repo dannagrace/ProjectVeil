@@ -497,14 +497,16 @@ export async function validateDocumentDetailed(
                     parsed as BattleBalanceConfig,
                     dependencies.battleSkills
                   )
-                : validateLeaderboardTierThresholdsConfigDocument(
-                    parsed as LeaderboardTierThresholdsConfigDocument
-                  ).map((issue) => ({
-                    path: issue.path,
-                    severity: "error" as const,
-                    message: issue.message,
-                    suggestion: "调整排行榜段位阈值为连续且无重叠的区间。"
-                  }));
+                : id === "leaderboardTierThresholds"
+                  ? validateLeaderboardTierThresholdsConfigDocument(
+                      parsed as LeaderboardTierThresholdsConfigDocument
+                    ).map((issue) => ({
+                      path: issue.path,
+                      severity: "error" as const,
+                      message: issue.message,
+                      suggestion: "调整排行榜段位阈值为连续且无重叠的区间。"
+                    }))
+                  : [];
       issues.push(...semanticIssues);
       if (isRuntimeConfigDocumentId(id)) {
         contentPack = validateContentPackConsistency(buildCandidateRuntimeBundle(id, parsed, dependencies));
@@ -512,7 +514,7 @@ export async function validateDocumentDetailed(
         contentPack = {
           schemaVersion: 1,
           valid: true,
-          summary: "Content-pack consistency is not required for leaderboard threshold-only changes.",
+          summary: "Content-pack consistency is not required for non-runtime config changes.",
           issueCount: 0,
           checkedDocuments: [...RUNTIME_CONFIG_DOCUMENT_IDS],
           issues: []

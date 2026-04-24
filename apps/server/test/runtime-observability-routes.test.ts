@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
+import { DEFAULT_FEATURE_FLAG_CONFIG, type FeatureFlagConfigDocument } from "@veil/shared/platform";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { registerAnalyticsRoutes } from "@server/domain/ops/analytics";
 import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
@@ -15,10 +17,63 @@ import {
   type RuntimePersistenceHealth,
   resetRuntimeObservability
 } from "@server/domain/ops/observability";
+import { clearCachedFeatureFlagConfig, resetFeatureFlagRuntimeDependencies } from "@server/domain/battle/feature-flags";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 
 const RUNTIME_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "runtime-admin-token";
 process.env.VEIL_ADMIN_TOKEN = RUNTIME_ADMIN_TOKEN;
+
+type RuntimeRouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
+
+function createRuntimeRouteRegistry() {
+  const gets = new Map<string, RuntimeRouteHandler>();
+  const posts = new Map<string, RuntimeRouteHandler>();
+  return {
+    app: {
+      use: () => undefined,
+      get: (path: string, handler: RuntimeRouteHandler) => {
+        gets.set(path, handler);
+      },
+      post: (path: string, handler: RuntimeRouteHandler) => {
+        posts.set(path, handler);
+      }
+    },
+    gets,
+    posts
+  };
+}
+
+function createJsonRequest(payload: unknown, token = RUNTIME_ADMIN_TOKEN): IncomingMessage {
+  return {
+    headers: {
+      "x-veil-admin-token": token,
+      "content-type": "application/json"
+    },
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify(payload));
+    }
+  } as unknown as IncomingMessage;
+}
+
+function createJsonResponse() {
+  let body = "";
+  const headers = new Map<string, string>();
+  const response = {
+    statusCode: 0,
+    setHeader(name: string, value: string) {
+      headers.set(name.toLowerCase(), value);
+    },
+    end(chunk?: unknown) {
+      body += typeof chunk === "string" ? chunk : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : "";
+    }
+  } as unknown as ServerResponse;
+
+  return {
+    response,
+    headers,
+    json: () => JSON.parse(body) as Record<string, unknown>
+  };
+}
 
 async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,6 +97,140 @@ async function startObservabilityServer(port: number, persistence?: RuntimePersi
   await server.listen(port, "127.0.0.1");
   return server;
 }
+
+test("runtime observability registers authenticated POST routes for feature flags and kill switches", () => {
+  const routes = createRuntimeRouteRegistry();
+
+  registerRuntimeObservabilityRoutes(routes.app);
+
+  assert.ok(routes.posts.has("/api/runtime/feature-flags"));
+  assert.ok(routes.posts.has("/api/runtime/kill-switches"));
+});
+
+test("POST /api/runtime/feature-flags persists the config-center featureFlags document", async (t) => {
+  clearCachedFeatureFlagConfig();
+  resetFeatureFlagRuntimeDependencies();
+  t.after(() => {
+    clearCachedFeatureFlagConfig();
+    resetFeatureFlagRuntimeDependencies();
+  });
+
+  const routes = createRuntimeRouteRegistry();
+  let savedDocument: { id: string; content: string } | null = null;
+  registerRuntimeObservabilityRoutes(routes.app, {
+    configCenterStore: {
+      async loadDocument() {
+        return {
+          content: JSON.stringify(DEFAULT_FEATURE_FLAG_CONFIG),
+          updatedAt: "2026-04-24T00:00:00.000Z",
+          storage: "mysql"
+        };
+      },
+      async saveDocument(id, content) {
+        savedDocument = { id, content };
+        return {
+          content,
+          updatedAt: "2026-04-24T00:05:00.000Z",
+          storage: "mysql"
+        };
+      }
+    }
+  });
+
+  const handler = routes.posts.get("/api/runtime/feature-flags");
+  assert.ok(handler);
+  const nextConfig: FeatureFlagConfigDocument = {
+    ...DEFAULT_FEATURE_FLAG_CONFIG,
+    flags: {
+      ...DEFAULT_FEATURE_FLAG_CONFIG.flags,
+      battle_pass_enabled: {
+        ...DEFAULT_FEATURE_FLAG_CONFIG.flags.battle_pass_enabled,
+        enabled: false,
+        value: false,
+        rollout: 0
+      }
+    }
+  };
+  const output = createJsonResponse();
+
+  await handler(
+    createJsonRequest({
+      config: nextConfig,
+      actor: "ops-oncall",
+      summary: "Disable battle pass while investigating issue #1698",
+      flagKeys: ["battle_pass_enabled"],
+      ticket: "#1698"
+    }),
+    output.response
+  );
+
+  assert.equal(output.response.statusCode, 200);
+  assert.equal(savedDocument?.id, "featureFlags");
+  const savedConfig = JSON.parse(savedDocument?.content ?? "{}") as FeatureFlagConfigDocument;
+  assert.equal(savedConfig.flags.battle_pass_enabled.enabled, false);
+  assert.equal(savedConfig.flags.battle_pass_enabled.rollout, 0);
+  assert.equal(savedConfig.operations?.auditHistory?.[0]?.actor, "ops-oncall");
+  assert.equal(savedConfig.operations?.auditHistory?.[0]?.ticket, "#1698");
+  const payload = output.json();
+  assert.equal(payload.persisted, true);
+  assert.equal((payload.featureFlags as { config?: { source?: string } }).config?.source, "config_center");
+});
+
+test("POST /api/runtime/kill-switches persists runtime gates through featureFlags", async (t) => {
+  clearCachedFeatureFlagConfig();
+  resetFeatureFlagRuntimeDependencies();
+  t.after(() => {
+    clearCachedFeatureFlagConfig();
+    resetFeatureFlagRuntimeDependencies();
+  });
+
+  const routes = createRuntimeRouteRegistry();
+  let savedContent = "";
+  registerRuntimeObservabilityRoutes(routes.app, {
+    configCenterStore: {
+      async loadDocument() {
+        return {
+          content: JSON.stringify(DEFAULT_FEATURE_FLAG_CONFIG),
+          updatedAt: "2026-04-24T00:00:00.000Z",
+          storage: "mysql"
+        };
+      },
+      async saveDocument(_id, content) {
+        savedContent = content;
+        return {
+          content,
+          updatedAt: "2026-04-24T00:06:00.000Z",
+          storage: "mysql"
+        };
+      }
+    }
+  });
+
+  const handler = routes.posts.get("/api/runtime/kill-switches");
+  assert.ok(handler);
+  const output = createJsonResponse();
+
+  await handler(
+    createJsonRequest({
+      killSwitches: {
+        wechat_payments: {
+          enabled: true,
+          label: "微信支付入口",
+          summary: "Emergency payment disable",
+          channels: ["wechat"]
+        }
+      }
+    }),
+    output.response
+  );
+
+  assert.equal(output.response.statusCode, 200);
+  const savedConfig = JSON.parse(savedContent) as FeatureFlagConfigDocument;
+  assert.equal(savedConfig.runtimeGates?.killSwitches?.wechat_payments?.enabled, true);
+  const payload = output.json();
+  assert.equal(payload.persisted, true);
+  assert.equal((payload.killSwitches as { status?: string }).status, "warn");
+});
 
 test("runtime health returns 503 when persistence is degraded to memory mode", async (t) => {
   const port = 45000 + Math.floor(Math.random() * 1000);
