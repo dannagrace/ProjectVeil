@@ -4010,7 +4010,7 @@ test("wechat guest upgrade can keep the registered progression when explicitly c
   assert.equal((await store.loadPlayerAccount("guest-keep-registered"))?.guestMigratedToPlayerId, registeredPlayerId);
 });
 
-test("wechat mini game login stores verified minor status when age data is provided", { concurrency: false }, async (t) => {
+test("wechat mini game login ignores client adult claims for minor protection", { concurrency: false }, async (t) => {
   const port = 44980 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
@@ -4033,7 +4033,7 @@ test("wechat mini game login stores verified minor status when age data is provi
   globalThis.fetch = async () =>
     new Response(
       JSON.stringify({
-        openid: "wx-openid-minor",
+        openid: "wx-openid-adult-spoof",
         session_key: "session-key"
       }),
       {
@@ -4051,20 +4051,22 @@ test("wechat mini game login stores verified minor status when age data is provi
     },
     body: JSON.stringify({
       code: "wx-prod-code",
-      playerId: "wechat-minor",
+      playerId: "wechat-adult-spoof",
       displayName: "夜巡学员",
-      isAdult: false,
+      isAdult: true,
+      ageVerified: true,
+      ageRange: "18+",
       privacyConsentAccepted: true
     })
   });
 
   assert.equal(response.status, 200);
-  const storedAccount = await store.loadPlayerAccount("wechat-minor");
-  assert.equal(storedAccount?.ageVerified, true);
+  const storedAccount = await store.loadPlayerAccount("wechat-adult-spoof");
+  assert.notEqual(storedAccount?.ageVerified, true);
   assert.equal(storedAccount?.isMinor, true);
 });
 
-test("wechat mini game login derives minor status from self-declared birthdate", { concurrency: false }, async (t) => {
+test("wechat mini game login ignores self-declared adult birthdate for minor protection", { concurrency: false }, async (t) => {
   const port = 45010 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
@@ -4087,7 +4089,7 @@ test("wechat mini game login derives minor status from self-declared birthdate",
   globalThis.fetch = async () =>
     new Response(
       JSON.stringify({
-        openid: "wx-openid-birthdate-minor",
+        openid: "wx-openid-birthdate-adult-spoof",
         session_key: "session-key"
       }),
       {
@@ -4105,16 +4107,16 @@ test("wechat mini game login derives minor status from self-declared birthdate",
     },
     body: JSON.stringify({
       code: "wx-prod-code",
-      playerId: "wechat-birthdate-minor",
+      playerId: "wechat-birthdate-adult-spoof",
       displayName: "晨训学员",
-      birthdate: "2012-01-01",
+      birthdate: "1988-01-01",
       privacyConsentAccepted: true
     })
   });
 
   assert.equal(response.status, 200);
-  const storedAccount = await store.loadPlayerAccount("wechat-birthdate-minor");
-  assert.equal(storedAccount?.ageVerified, true);
+  const storedAccount = await store.loadPlayerAccount("wechat-birthdate-adult-spoof");
+  assert.notEqual(storedAccount?.ageVerified, true);
   assert.equal(storedAccount?.isMinor, true);
 });
 

@@ -173,49 +173,53 @@ test("normalizeMinorProtectionBirthdate rejects impossible or future dates", () 
   });
 });
 
-test("deriveWechatMinorProtection derives minor status from self-declared birthdate", () => {
+test("deriveWechatMinorProtection validates birthdate but returns conservative WeChat posture", () => {
   assert.deepEqual(
     deriveWechatMinorProtection(
       {
-        birthdate: "2009-04-04",
+        birthdate: "1988-04-04",
         isAdult: true
       },
       new Date("2026-04-03T16:00:00.000Z")
     ),
     {
-      ageVerified: true,
+      ageVerified: false,
       isMinor: true
     }
   );
 });
 
-test("deriveWechatMinorProtection prioritizes isAdult over legacy fields", () => {
+test("deriveWechatMinorProtection ignores client-supplied WeChat adult claims", () => {
   assert.deepEqual(
     deriveWechatMinorProtection({
-      ageVerified: false,
-      isAdult: false,
+      ageVerified: true,
+      isAdult: true,
       ageRange: "adult"
     }),
     {
-      ageVerified: true,
+      ageVerified: false,
       isMinor: true
     }
   );
 });
 
-test("deriveWechatMinorProtection derives minor status from supported age ranges", () => {
+test("deriveWechatMinorProtection defaults WeChat logins to unverified minor protection", () => {
   assert.deepEqual(deriveWechatMinorProtection({ ageRange: "13-17" }), {
-    ageVerified: true,
+    ageVerified: false,
     isMinor: true
   });
   assert.deepEqual(deriveWechatMinorProtection({ ageRange: "18+" }), {
-    ageVerified: true,
-    isMinor: false
+    ageVerified: false,
+    isMinor: true
   });
   assert.deepEqual(deriveWechatMinorProtection({ ageRange: "unknown", ageVerified: true }), {
-    ageVerified: true
+    ageVerified: false,
+    isMinor: true
   });
-  assert.deepEqual(deriveWechatMinorProtection({}), {});
+  assert.deepEqual(deriveWechatMinorProtection({}), {
+    ageVerified: false,
+    isMinor: true
+  });
 });
 
 test("findNextAllowedMinorProtectionTime resolves the next local 08:00 window during curfew", () => {
