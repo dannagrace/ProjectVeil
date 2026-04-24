@@ -6,12 +6,16 @@ import {
   type SeasonalEventRuntimeOverride
 } from "@server/domain/battle/event-engine";
 import {
+  createDefaultLaunchRuntimeState,
   loadLaunchRuntimeState,
+  normalizeLaunchRuntimeState,
   resolveActiveLaunchAnnouncements,
   resolveLaunchMaintenanceAccess,
   saveLaunchRuntimeState,
   type LaunchAnnouncementRecord,
+  type LaunchRuntimeState,
   type LaunchAnnouncementTone,
+  type LaunchRuntimeStateStorage,
   type LaunchMaintenanceModeRecord
 } from "@server/domain/ops/launch-runtime-state";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
@@ -80,6 +84,7 @@ interface LiveOpsCalendarRouteOptions {
   scheduler?: LiveOpsCalendarScheduler;
   now?: () => Date;
   filePath?: string;
+  storage?: LiveOpsCalendarStorage;
 }
 
 interface LiveOpsCalendarSchedulerOptions {
@@ -88,6 +93,23 @@ interface LiveOpsCalendarSchedulerOptions {
   clearInterval?: (timer: ReturnType<typeof globalThis.setInterval>) => void;
   intervalMs?: number;
   filePath?: string;
+  storage?: LiveOpsCalendarStorage;
+}
+
+export type LiveOpsRuntimeDocumentId = "liveOpsCalendar" | "launchRuntimeState";
+
+export interface LiveOpsRuntimeDocument {
+  content: string;
+}
+
+export interface LiveOpsRuntimeDocumentStore {
+  loadRuntimeStateDocument(id: LiveOpsRuntimeDocumentId): Promise<LiveOpsRuntimeDocument | null>;
+  saveRuntimeStateDocument(id: LiveOpsRuntimeDocumentId, content: string): Promise<LiveOpsRuntimeDocument>;
+}
+
+export interface LiveOpsCalendarStorage extends LaunchRuntimeStateStorage {
+  loadCalendarState(now?: Date): Promise<LiveOpsCalendarState>;
+  saveCalendarState(state: LiveOpsCalendarState): Promise<LiveOpsCalendarState>;
 }
 
 class InvalidLiveOpsCalendarPayloadError extends Error {
@@ -391,11 +413,70 @@ export async function saveLiveOpsCalendarState(
   return normalized;
 }
 
-async function applyAction(action: LiveOpsCalendarAction, now: Date): Promise<void> {
+export function createFileLiveOpsCalendarStorage(options: {
+  calendarFilePath?: string;
+  launchRuntimeFilePath?: string;
+} = {}): LiveOpsCalendarStorage {
+  return {
+    loadCalendarState(now = new Date()) {
+      return loadLiveOpsCalendarState(options.calendarFilePath, now);
+    },
+    saveCalendarState(state) {
+      return saveLiveOpsCalendarState(state, options.calendarFilePath);
+    },
+    loadLaunchRuntimeState(now = new Date()) {
+      return loadLaunchRuntimeState(options.launchRuntimeFilePath, now);
+    },
+    saveLaunchRuntimeState(state) {
+      return saveLaunchRuntimeState(state, options.launchRuntimeFilePath);
+    }
+  };
+}
+
+export function createSharedLiveOpsCalendarStorage(
+  store: LiveOpsRuntimeDocumentStore
+): LiveOpsCalendarStorage {
+  return {
+    async loadCalendarState(now = new Date()) {
+      const document = await store.loadRuntimeStateDocument("liveOpsCalendar");
+      if (!document) {
+        return createDefaultLiveOpsCalendarState(now);
+      }
+      return normalizeLiveOpsCalendarState(JSON.parse(document.content), now);
+    },
+    async saveCalendarState(state) {
+      const normalized = normalizeLiveOpsCalendarState(state, new Date());
+      await store.saveRuntimeStateDocument("liveOpsCalendar", `${JSON.stringify(normalized, null, 2)}\n`);
+      return normalized;
+    },
+    async loadLaunchRuntimeState(now = new Date()) {
+      const document = await store.loadRuntimeStateDocument("launchRuntimeState");
+      if (!document) {
+        return createDefaultLaunchRuntimeState(now);
+      }
+      return normalizeLaunchRuntimeState(JSON.parse(document.content), now);
+    },
+    async saveLaunchRuntimeState(state: LaunchRuntimeState) {
+      const normalized = normalizeLaunchRuntimeState(state, new Date());
+      await store.saveRuntimeStateDocument("launchRuntimeState", `${JSON.stringify(normalized, null, 2)}\n`);
+      return normalized;
+    }
+  };
+}
+
+function resolveLiveOpsCalendarStorage(
+  storageOrFilePath?: LiveOpsCalendarStorage | string
+): LiveOpsCalendarStorage {
+  return typeof storageOrFilePath === "string"
+    ? createFileLiveOpsCalendarStorage({ calendarFilePath: storageOrFilePath })
+    : storageOrFilePath ?? createFileLiveOpsCalendarStorage();
+}
+
+async function applyAction(action: LiveOpsCalendarAction, now: Date, storage: LiveOpsCalendarStorage): Promise<void> {
   switch (action.type) {
     case "announcement_upsert": {
-      const state = await loadLaunchRuntimeState();
-      await saveLaunchRuntimeState({
+      const state = await storage.loadLaunchRuntimeState(now);
+      await storage.saveLaunchRuntimeState({
         ...state,
         announcements: [
           ...state.announcements.filter((entry) => entry.id !== action.announcement.id),
@@ -406,8 +487,8 @@ async function applyAction(action: LiveOpsCalendarAction, now: Date): Promise<vo
       return;
     }
     case "announcement_remove": {
-      const state = await loadLaunchRuntimeState();
-      await saveLaunchRuntimeState({
+      const state = await storage.loadLaunchRuntimeState(now);
+      await storage.saveLaunchRuntimeState({
         ...state,
         announcements: state.announcements.filter((entry) => entry.id !== action.announcementId),
         updatedAt: now.toISOString()
@@ -415,8 +496,8 @@ async function applyAction(action: LiveOpsCalendarAction, now: Date): Promise<vo
       return;
     }
     case "maintenance_mode": {
-      const state = await loadLaunchRuntimeState();
-      await saveLaunchRuntimeState({
+      const state = await storage.loadLaunchRuntimeState(now);
+      await storage.saveLaunchRuntimeState({
         ...state,
         maintenanceMode: action.maintenanceMode,
         updatedAt: now.toISOString()
@@ -468,16 +549,17 @@ function toEpochMs(value: string | Date): number {
 
 export async function runLiveOpsCalendarTick(
   now = new Date(),
-  filePath = readLiveOpsCalendarPath()
+  storageOrFilePath?: LiveOpsCalendarStorage | string
 ): Promise<LiveOpsCalendarTickResult> {
-  const state = await loadLiveOpsCalendarState(filePath, now);
+  const storage = resolveLiveOpsCalendarStorage(storageOrFilePath);
+  const state = await storage.loadCalendarState(now);
   const nextEntries = state.entries.map((entry) => ({ ...entry }));
   const startedIds: string[] = [];
   const endedIds: string[] = [];
 
   for (const entry of nextEntries) {
     if (entry.status === "scheduled" && toEpochMs(entry.startsAt) <= now.getTime()) {
-      await applyAction(entry.action, now);
+      await applyAction(entry.action, now, storage);
       entry.status = "active";
       entry.startedAtActual = now.toISOString();
       entry.updatedAt = now.toISOString();
@@ -491,7 +573,7 @@ export async function runLiveOpsCalendarTick(
     }
     const endAction = entry.endAction ?? buildDefaultEndAction(entry, now);
     if (endAction) {
-      await applyAction(endAction, now);
+      await applyAction(endAction, now, storage);
     }
     entry.status = "ended";
     entry.endedAtActual = now.toISOString();
@@ -503,12 +585,11 @@ export async function runLiveOpsCalendarTick(
     return { startedIds, endedIds, state };
   }
 
-  const nextState = await saveLiveOpsCalendarState(
+  const nextState = await storage.saveCalendarState(
     {
       entries: nextEntries,
       updatedAt: now.toISOString()
-    },
-    filePath
+    }
   );
   return {
     startedIds,
@@ -521,9 +602,10 @@ async function runCalendarEntryTransition(
   entryId: string,
   transition: "start" | "end",
   now = new Date(),
-  filePath = readLiveOpsCalendarPath()
+  storageOrFilePath?: LiveOpsCalendarStorage | string
 ): Promise<LiveOpsCalendarEntry> {
-  const state = await loadLiveOpsCalendarState(filePath, now);
+  const storage = resolveLiveOpsCalendarStorage(storageOrFilePath);
+  const state = await storage.loadCalendarState(now);
   const nextEntries = state.entries.map((entry) => ({ ...entry }));
   const entry = nextEntries.find((item) => item.id === entryId);
   if (!entry) {
@@ -531,26 +613,25 @@ async function runCalendarEntryTransition(
   }
 
   if (transition === "start") {
-    await applyAction(entry.action, now);
+    await applyAction(entry.action, now, storage);
     entry.status = "active";
     entry.startedAtActual = now.toISOString();
     entry.updatedAt = now.toISOString();
   } else {
     const endAction = entry.endAction ?? buildDefaultEndAction(entry, now);
     if (endAction) {
-      await applyAction(endAction, now);
+      await applyAction(endAction, now, storage);
     }
     entry.status = "ended";
     entry.endedAtActual = now.toISOString();
     entry.updatedAt = now.toISOString();
   }
 
-  const nextState = await saveLiveOpsCalendarState(
+  const nextState = await storage.saveCalendarState(
     {
       entries: nextEntries,
       updatedAt: now.toISOString()
-    },
-    filePath
+    }
   );
   return nextState.entries.find((item) => item.id === entryId)!;
 }
@@ -630,7 +711,11 @@ export function registerLiveOpsCalendarRoutes(
   options: LiveOpsCalendarRouteOptions = {}
 ): void {
   const nowFactory = options.now ?? (() => new Date());
-  const filePath = options.filePath ?? readLiveOpsCalendarPath();
+  const storage =
+    options.storage ??
+    createFileLiveOpsCalendarStorage(
+      options.filePath ? { calendarFilePath: options.filePath } : {}
+    );
   const scheduler = options.scheduler;
 
   app.get("/admin/calendar", async (_request, response) => {
@@ -649,8 +734,8 @@ export function registerLiveOpsCalendarRoutes(
     if (!readAdminSecret()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
     try {
-      const state = await loadLiveOpsCalendarState(filePath, nowFactory());
-      const launchRuntime = await loadLaunchRuntimeState();
+      const state = await storage.loadCalendarState(nowFactory());
+      const launchRuntime = await storage.loadLaunchRuntimeState(nowFactory());
       sendJson(response, 200, {
         entries: state.entries,
         summary: summarizeCalendar(state, nowFactory()),
@@ -674,14 +759,13 @@ export function registerLiveOpsCalendarRoutes(
         body && typeof body === "object" && !Array.isArray(body) && "entry" in body
           ? (body as { entry: unknown }).entry
           : body;
-      const state = await loadLiveOpsCalendarState(filePath, nowFactory());
+      const state = await storage.loadCalendarState(nowFactory());
       const entry = normalizeEntry(rawEntry, nowFactory().toISOString());
-      const nextState = await saveLiveOpsCalendarState(
+      const nextState = await storage.saveCalendarState(
         {
           entries: [...state.entries.filter((item) => item.id !== entry.id), entry],
           updatedAt: nowFactory().toISOString()
-        },
-        filePath
+        }
       );
       await scheduler?.refresh();
       sendJson(response, 200, {
@@ -710,13 +794,12 @@ export function registerLiveOpsCalendarRoutes(
       if (!entryId) {
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
-      const state = await loadLiveOpsCalendarState(filePath, nowFactory());
-      const nextState = await saveLiveOpsCalendarState(
+      const state = await storage.loadCalendarState(nowFactory());
+      const nextState = await storage.saveCalendarState(
         {
           entries: state.entries.filter((entry) => entry.id !== entryId),
           updatedAt: nowFactory().toISOString()
-        },
-        filePath
+        }
       );
       await scheduler?.refresh();
       sendJson(response, 200, {
@@ -740,7 +823,7 @@ export function registerLiveOpsCalendarRoutes(
       if (!entryId) {
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
-      const entry = await runCalendarEntryTransition(entryId, "start", nowFactory(), filePath);
+      const entry = await runCalendarEntryTransition(entryId, "start", nowFactory(), storage);
       await scheduler?.refresh();
       sendJson(response, 200, { ok: true, entry });
     } catch (error) {
@@ -760,7 +843,7 @@ export function registerLiveOpsCalendarRoutes(
       if (!entryId) {
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
-      const entry = await runCalendarEntryTransition(entryId, "end", nowFactory(), filePath);
+      const entry = await runCalendarEntryTransition(entryId, "end", nowFactory(), storage);
       await scheduler?.refresh();
       sendJson(response, 200, { ok: true, entry });
     } catch (error) {
@@ -780,7 +863,11 @@ export function createLiveOpsCalendarScheduler(
   const setIntervalImpl = options.setInterval ?? globalThis.setInterval;
   const clearIntervalImpl = options.clearInterval ?? globalThis.clearInterval;
   const intervalMs = options.intervalMs ?? 30_000;
-  const filePath = options.filePath ?? readLiveOpsCalendarPath();
+  const storage =
+    options.storage ??
+    createFileLiveOpsCalendarStorage(
+      options.filePath ? { calendarFilePath: options.filePath } : {}
+    );
   let timer: ReturnType<typeof globalThis.setInterval> | null = null;
 
   const stop = (): void => {
@@ -791,7 +878,7 @@ export function createLiveOpsCalendarScheduler(
   };
 
   const ensureRunning = async (): Promise<void> => {
-    const state = await loadLiveOpsCalendarState(filePath);
+    const state = await storage.loadCalendarState();
     if (!hasPendingCalendarEntries(state)) {
       stop();
       return;
@@ -800,7 +887,7 @@ export function createLiveOpsCalendarScheduler(
       return;
     }
     timer = setIntervalImpl(() => {
-      void runLiveOpsCalendarTick(new Date(), filePath)
+      void runLiveOpsCalendarTick(new Date(), storage)
         .then(async ({ state: nextState, startedIds, endedIds }) => {
           if (startedIds.length > 0 || endedIds.length > 0) {
             logger.log(
@@ -826,7 +913,7 @@ export function createLiveOpsCalendarScheduler(
     },
     stop,
     async tick(now = new Date()) {
-      const result = await runLiveOpsCalendarTick(now, filePath);
+      const result = await runLiveOpsCalendarTick(now, storage);
       if (!hasPendingCalendarEntries(result.state)) {
         stop();
       } else if (!timer) {

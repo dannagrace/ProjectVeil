@@ -22,9 +22,12 @@ import { registerLeaderboardRoutes } from "@server/domain/social/leaderboard";
 import { registerLobbyRoutes } from "@server/domain/social/lobby";
 import { registerLaunchRuntimeRoutes } from "@server/transport/http/launch-runtime-routes";
 import {
+  createSharedLiveOpsCalendarStorage,
   createLiveOpsCalendarScheduler,
-  registerLiveOpsCalendarRoutes
+  registerLiveOpsCalendarRoutes,
+  type LiveOpsCalendarStorage
 } from "@server/domain/social/live-ops-calendar";
+import { configureLaunchRuntimeStateStorage } from "@server/domain/ops/launch-runtime-state";
 import { registerMatchmakingRoutes } from "@server/domain/social/matchmaking";
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import { registerMinorProtectionRoutes } from "@server/transport/http/minor-protection-routes";
@@ -172,6 +175,8 @@ interface CleanupTimerHandle {
 interface DevServerConfigCenterStore {
   initializeRuntimeConfigs(): Promise<void>;
   loadDocument(id: "leaderboardTierThresholds"): Promise<{ content: string }>;
+  loadRuntimeStateDocument: ConfigCenterStore["loadRuntimeStateDocument"];
+  saveRuntimeStateDocument: ConfigCenterStore["saveRuntimeStateDocument"];
   close(): Promise<void>;
   readonly mode: "filesystem" | "mysql";
 }
@@ -220,7 +225,7 @@ export interface DevServerBootstrapDependencies {
   registerGooglePlayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
-  registerLaunchRuntimeRoutes(app: unknown): void;
+  registerLaunchRuntimeRoutes(app: unknown, options?: { storage?: Pick<LiveOpsCalendarStorage, "loadLaunchRuntimeState"> }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
   registerLeaderboardRoutes(
@@ -354,7 +359,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerWechatPayRoutes: (app, store) =>
       paymentGatewayRegistry.get("wechat").registerRoutes(app as never, store as RoomSnapshotStore),
     registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
-    registerLaunchRuntimeRoutes: (app) => registerLaunchRuntimeRoutes(app as never),
+    registerLaunchRuntimeRoutes: (app, options) => registerLaunchRuntimeRoutes(app as never, options),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
     registerMinorProtectionRoutes: (app, store) =>
@@ -519,7 +524,13 @@ export async function startDevServer(
   deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
-  deps.registerLaunchRuntimeRoutes(expressApp);
+  const liveOpsCalendarStorage =
+    configCenterStore.mode === "mysql" ? createSharedLiveOpsCalendarStorage(configCenterStore) : undefined;
+  configureLaunchRuntimeStateStorage(liveOpsCalendarStorage ?? null);
+  deps.registerLaunchRuntimeRoutes(
+    expressApp,
+    liveOpsCalendarStorage ? { storage: liveOpsCalendarStorage } : {}
+  );
   deps.registerMatchmakingRoutes(expressApp, { store: effectiveSnapshotStore });
   deps.registerMinorProtectionRoutes(expressApp, effectiveSnapshotStore);
   deps.registerLeaderboardRoutes(expressApp, effectiveSnapshotStore, configCenterStore);
@@ -545,10 +556,12 @@ export async function startDevServer(
     logger: deps.logger,
     setInterval: (handler: () => void, delayMs: number) =>
       deps.setInterval(handler, delayMs) as ReturnType<typeof globalThis.setInterval>,
-    clearInterval: (timer) => deps.clearInterval(timer as CleanupTimerHandle)
+    clearInterval: (timer) => deps.clearInterval(timer as CleanupTimerHandle),
+    ...(liveOpsCalendarStorage ? { storage: liveOpsCalendarStorage } : {})
   });
   registerLiveOpsCalendarRoutes(expressApp as Parameters<typeof registerLiveOpsCalendarRoutes>[0], {
-    scheduler: liveOpsCalendarScheduler
+    scheduler: liveOpsCalendarScheduler,
+    ...(liveOpsCalendarStorage ? { storage: liveOpsCalendarStorage } : {})
   });
   await liveOpsCalendarScheduler.refresh();
   gameServer.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
@@ -683,6 +696,7 @@ export async function startDevServer(
       playerNameHistoryCleanupTimer = null;
     }
     liveOpsCalendarScheduler.stop();
+    configureLaunchRuntimeStateStorage(null);
 
     if (!snapshotStore) {
       await effectiveSnapshotStore.close();

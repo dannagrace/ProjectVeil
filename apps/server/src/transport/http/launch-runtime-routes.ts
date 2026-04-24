@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   loadLaunchRuntimeState,
   resolveActiveLaunchAnnouncements,
-  resolveLaunchMaintenanceAccess
+  resolveLaunchMaintenanceAccess,
+  type LaunchRuntimeStateStorage
 } from "@server/domain/ops/launch-runtime-state";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
@@ -22,8 +23,12 @@ export function registerLaunchRuntimeRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
-  }
+  },
+  options: { storage?: Pick<LaunchRuntimeStateStorage, "loadLaunchRuntimeState"> } = {}
 ): void {
+  const loadRuntimeState = (now?: Date) =>
+    options.storage ? options.storage.loadLaunchRuntimeState(now) : loadLaunchRuntimeState(undefined, now);
+
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -40,7 +45,7 @@ export function registerLaunchRuntimeRoutes(
 
   app.get("/api/announcements/current", async (_request, response) => {
     try {
-      const state = await loadLaunchRuntimeState();
+      const state = await loadRuntimeState();
       sendJson(response, 200, {
         items: resolveActiveLaunchAnnouncements(state),
         generatedAt: new Date().toISOString()
@@ -52,7 +57,7 @@ export function registerLaunchRuntimeRoutes(
 
   app.get("/api/runtime/maintenance-mode", async (_request, response) => {
     try {
-      const state = await loadLaunchRuntimeState();
+      const state = await loadRuntimeState();
       const maintenance = resolveLaunchMaintenanceAccess(state);
       sendJson(response, 200, {
         active: maintenance.active,
