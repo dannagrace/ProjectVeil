@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { access, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createDefaultLaunchRuntimeState,
   loadLaunchRuntimeState
@@ -310,6 +311,29 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
   );
   assert.equal(deleteResponse.statusCode, 200);
   assert.ok(refreshCalls.length >= 3);
+});
+
+test("admin live ops calendar routes reject invalid admin secret", async (t) => {
+  const secret = withAdminSecret(t);
+  const { app, gets } = createTestApp();
+  registerLiveOpsCalendarRoutes(app);
+
+  const listHandler = gets.get("/api/admin/live-ops-calendar");
+  assert.ok(listHandler);
+
+  const response = createResponse();
+  await listHandler(createRequest({ headers: { "x-veil-admin-secret": `${secret}-wrong` } }), response);
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(JSON.parse(response.body), { error: "Unauthorized: Invalid Admin Secret" });
+});
+
+test("admin live ops calendar auth uses timing-safe secret comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/social/live-ops-calendar.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
 });
 
 test("admin live ops calendar routes use injected shared storage without writing local config files", async (t) => {

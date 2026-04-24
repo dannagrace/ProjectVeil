@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { loadReengagementPolicies, previewReengagementCandidates, runReengagementSweep } from "@server/domain/ops/reengagement";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 type AdminRouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 type AdminApp = {
@@ -22,8 +23,7 @@ function readAdminSecret(): string | null {
 
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
-  const header = request.headers["x-veil-admin-secret"];
-  return typeof header === "string" && Boolean(adminSecret) && header === adminSecret;
+  return timingSafeCompareAdminToken(request.headers["x-veil-admin-secret"], adminSecret);
 }
 
 export function registerReengagementAdminRoutes(app: AdminApp, store: RoomSnapshotStore | null): void {
