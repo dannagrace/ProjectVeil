@@ -9,7 +9,7 @@ import {
 import { issueAccountAuthSession } from "@server/domain/account/auth";
 import type { RoomPersistenceSnapshot } from "@server/index";
 import { MemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
-import type { PlayerAccountSnapshot } from "@server/persistence";
+import type { PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { registerShopRoutes, type ShopProduct } from "@server/domain/economy/shop";
 import { resolveWeeklyShopRotation } from "@veil/shared/economy";
 import { createDefaultHeroLoadout, createDefaultHeroProgression } from "@veil/shared/models";
@@ -65,7 +65,7 @@ function createShopWorldSnapshot(): RoomPersistenceSnapshot {
 
 async function startShopRouteServer(
   port: number,
-  store: MemoryRoomSnapshotStore,
+  store: RoomSnapshotStore,
   products: Partial<ShopProduct>[],
   options: {
     purchaseControls?: {
@@ -468,6 +468,68 @@ test("shop purchase enforces the configured daily gem spend cap", async (t) => {
   assert.equal(secondResponse.status, 429);
   assert.equal(secondPayload.error.limitType, "daily_gem_spend_cap");
   assert.match(secondPayload.error.resetAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("shop purchase returns the existing limit error shape when transactional enforcement rejects", async (t) => {
+  const port = 42520 + Math.floor(Math.random() * 1000);
+  const transactionalLimitError = Object.assign(new Error("Purchase limit exceeded: daily_gem_spend_cap"), {
+    name: "purchase_limit_exceeded",
+    limitType: "daily_gem_spend_cap",
+    resetAt: "2026-04-25T00:00:00.000Z"
+  });
+  const store = {
+    loadPlayerAccountAuthByPlayerId: async () => null,
+    listPlayerPurchaseHistory: async () => ({
+      items: [],
+      total: 0,
+      limit: 10_000,
+      offset: 0
+    }),
+    purchaseShopProduct: async () => {
+      throw transactionalLimitError;
+    }
+  } as unknown as RoomSnapshotStore;
+  const server = await startShopRouteServer(port, store, TEST_PRODUCTS, {
+    purchaseControls: {
+      limitTimezone: "UTC",
+      dailyGemSpendCap: 50,
+      highValuePurchaseThreshold: 0
+    }
+  });
+  const session = issueAccountAuthSession({
+    playerId: "shop-player",
+    displayName: "暮潮守望",
+    loginId: "shop-player"
+  });
+
+  t.after(async () => {
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/shop/purchase`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify({
+      productId: "starter-bundle",
+      quantity: 1,
+      purchaseId: "purchase-cap-transactional"
+    })
+  });
+  const payload = (await response.json()) as {
+    error: {
+      code: string;
+      limitType: string;
+      resetAt: string;
+    };
+  };
+
+  assert.equal(response.status, 429);
+  assert.equal(payload.error.code, "purchase_limit_exceeded");
+  assert.equal(payload.error.limitType, "daily_gem_spend_cap");
+  assert.equal(payload.error.resetAt, "2026-04-25T00:00:00.000Z");
 });
 
 test("shop purchase enforces configured per-item daily quantity limits", async (t) => {
