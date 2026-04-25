@@ -249,7 +249,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         return;
       }
 
-      const playerId = authSession?.playerId ?? this.resolveConnectPlayerId(client, message.playerId);
+      const playerId = authSession?.playerId ?? this.getPlayerId(client);
       if (!playerId) {
         sendMessage(client, "error", { requestId: message.requestId, reason: "not_connected" });
         return;
@@ -2443,24 +2443,8 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     }
   }
 
-  private getPlayerId(client: ColyseusClient, fallback?: string): string | undefined {
-    const playerId = this.playerIdBySessionId.get(client.sessionId) ?? fallback;
-    if (playerId && !this.playerIdBySessionId.has(client.sessionId)) {
-      this.playerIdBySessionId.set(client.sessionId, playerId);
-    }
-
-    return playerId;
-  }
-
-  private resolveConnectPlayerId(client: ColyseusClient, requestedPlayerId?: string): string | undefined {
-    const normalizedRequestedPlayerId = requestedPlayerId?.trim();
-    const currentPlayerId = this.playerIdBySessionId.get(client.sessionId);
-    if (currentPlayerId === client.sessionId && normalizedRequestedPlayerId) {
-      this.playerIdBySessionId.set(client.sessionId, normalizedRequestedPlayerId);
-      return normalizedRequestedPlayerId;
-    }
-
-    return this.getPlayerId(client, normalizedRequestedPlayerId);
+  private getPlayerId(client: ColyseusClient): string | undefined {
+    return this.playerIdBySessionId.get(client.sessionId);
   }
 
   private readGroupChallengeSecret(): string {

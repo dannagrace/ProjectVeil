@@ -620,6 +620,39 @@ test("room creation and connect reflect one connected player in room state", asy
   assert.equal(lastSessionState(client, "reply").payload.world.ownHeroes[0]?.playerId, "player-1");
 });
 
+test("unauthenticated connect cannot remap a session to a requested playerId", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-connect-identity-${Date.now()}`);
+  const client = createFakeClient("session-connect-identity");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  room.clients.push(client);
+  room.onJoin(
+    client,
+    { playerId: "victim-player" },
+    { playerId: client.sessionId, authSession: null } as never
+  );
+
+  await emitRoomMessage(room, "connect", client, {
+    type: "connect",
+    requestId: "connect-identity",
+    roomId: room.roomId,
+    playerId: "victim-player"
+  });
+
+  assert.equal(internalRoom.playerIdBySessionId.get(client.sessionId), client.sessionId);
+  assert.equal(lastSessionState(client, "reply").payload.world.playerId, client.sessionId);
+});
+
 test("room creation registers the active instance and publishes an idle lobby summary before joins", async (t) => {
   resetLobbyRoomRegistry();
   resetRuntimeObservability();
