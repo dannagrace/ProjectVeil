@@ -104,6 +104,19 @@ function googleOrderIdForPurchaseToken(purchaseToken: string): string {
   return `google:${createHash("sha256").update(purchaseToken).digest("hex")}`;
 }
 
+test("default payment gateway registrations expose refund notification handlers", () => {
+  assert.deepEqual(
+    createDefaultPaymentGatewayRegistry()
+      .list()
+      .map((registration) => [registration.gateway.channel, typeof registration.notificationHandler]),
+    [
+      ["apple", "function"],
+      ["google", "function"],
+      ["wechat", "function"]
+    ]
+  );
+});
+
 test("default payment gateway registration claws back settled gems for Google voided purchase notifications", async () => {
   await withGoogleRuntimeEnv(async () => {
     const app = new TestApp();
@@ -131,7 +144,7 @@ test("default payment gateway registration claws back settled gems for Google vo
 
     createDefaultPaymentGatewayRegistry().registerAll(app as never, store);
 
-    const response = await app.invoke("/api/payments/google/rtdn?token=veil-rtdn-secret", {
+    const response = await app.invoke("/api/payment/google/notification?token=veil-rtdn-secret", {
       headers: {
         "content-type": "application/json"
       },

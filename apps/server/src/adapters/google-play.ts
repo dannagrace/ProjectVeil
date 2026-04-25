@@ -18,7 +18,7 @@ import {
 import { handlePaymentRefundNotification } from "@server/domain/payment/PaymentRefundNotifications";
 import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
 import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "@server/domain/payment/PaymentGateway";
-import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
+import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
@@ -1057,7 +1057,7 @@ export function registerGooglePlayRoutes(
     next();
   });
 
-  app.post("/api/payments/google/rtdn", async (request, response) => {
+  const handleGoogleNotificationRequest = async (request: IncomingMessage, response: ServerResponse) => {
     if (!runtimeConfig) {
       sendJson(response, 503, {
         error: {
@@ -1131,7 +1131,10 @@ export function registerGooglePlayRoutes(
         }
       });
     }
-  });
+  };
+
+  app.post("/api/payments/google/rtdn", handleGoogleNotificationRequest);
+  app.post("/api/payment/google/notification", handleGoogleNotificationRequest);
 
   app.post("/api/payments/google/verify", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
@@ -1442,20 +1445,23 @@ const googlePlayPaymentGateway: PaymentGateway = {
     unsupportedPaymentGatewayOperation("google", "issueRefund", "Google Play refunds are handled outside the current server runtime.")
 };
 
-export const googlePlayPaymentGatewayRegistration: PaymentGatewayRegistration = {
+const googlePlayPaymentNotificationHandler: PaymentNotificationHandler<GooglePlayNotificationEvent> = (store, event) =>
+  handlePaymentRefundNotification(store, {
+    channel: "google",
+    notificationType: event.notificationType,
+    ...(event.orderId ? { orderId: event.orderId } : {}),
+    eventId: event.eventId,
+    eventTime: event.eventTime,
+    ...(event.rawPayload.voidedPurchaseNotification?.orderId
+      ? { externalRefundId: event.rawPayload.voidedPurchaseNotification.orderId }
+      : {})
+  });
+
+export const googlePlayPaymentGatewayRegistration: PaymentGatewayRegistration<GooglePlayNotificationEvent> = {
   gateway: googlePlayPaymentGateway,
+  notificationHandler: googlePlayPaymentNotificationHandler,
   registerRoutes: (app, store) =>
     registerGooglePlayRoutes(app as HttpApp, store, {
-      notificationHandler: (event) =>
-        handlePaymentRefundNotification(store, {
-          channel: "google",
-          notificationType: event.notificationType,
-          ...(event.orderId ? { orderId: event.orderId } : {}),
-          eventId: event.eventId,
-          eventTime: event.eventTime,
-          ...(event.rawPayload.voidedPurchaseNotification?.orderId
-            ? { externalRefundId: event.rawPayload.voidedPurchaseNotification.orderId }
-            : {})
-        })
+      notificationHandler: (event) => googlePlayPaymentNotificationHandler(store, event)
     })
 };

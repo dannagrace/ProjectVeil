@@ -23,7 +23,7 @@ import {
   type PaymentGateway,
   unsupportedPaymentGatewayOperation
 } from "@server/domain/payment/PaymentGateway";
-import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
+import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
@@ -967,7 +967,7 @@ export function registerWechatPayRoutes(
     }
   });
 
-  app.post("/api/payments/wechat/callback", async (request, response) => {
+  const handleWechatCallbackRequest = async (request: IncomingMessage, response: ServerResponse) => {
     if (!runtimeConfig) {
       sendCallbackResponse(response, 503, {
         code: "FAIL",
@@ -1177,7 +1177,10 @@ export function registerWechatPayRoutes(
         message: error instanceof Error ? error.message : String(error)
       });
     }
-  });
+  };
+
+  app.post("/api/payments/wechat/callback", handleWechatCallbackRequest);
+  app.post("/api/payment/wechat/notification", handleWechatCallbackRequest);
 
   if (app.get) {
     app.get("/api/runtime/wechat-payment-grants", async (_request, response) => {
@@ -1483,19 +1486,22 @@ const wechatPaymentGateway: PaymentGateway = {
     unsupportedPaymentGatewayOperation("wechat", "issueRefund", "WeChat refunds are not implemented in the current server runtime.")
 };
 
-export const wechatPaymentGatewayRegistration: PaymentGatewayRegistration = {
+const wechatPaymentNotificationHandler: PaymentNotificationHandler<WechatPayNotificationEvent> = (store, event) =>
+  handlePaymentRefundNotification(store, {
+    channel: "wechat",
+    notificationType: event.notificationType,
+    ...(event.orderId ? { orderId: event.orderId } : {}),
+    eventId: event.eventId,
+    eventTime: event.eventTime,
+    ...(event.externalRefundId ? { externalRefundId: event.externalRefundId } : {})
+  });
+
+export const wechatPaymentGatewayRegistration: PaymentGatewayRegistration<WechatPayNotificationEvent> = {
   gateway: wechatPaymentGateway,
+  notificationHandler: wechatPaymentNotificationHandler,
   registerRoutes: (app, store) =>
     registerWechatPayRoutes(app as HttpApp, store, {
-      notificationHandler: (event) =>
-        handlePaymentRefundNotification(store, {
-          channel: "wechat",
-          notificationType: event.notificationType,
-          ...(event.orderId ? { orderId: event.orderId } : {}),
-          eventId: event.eventId,
-          eventTime: event.eventTime,
-          ...(event.externalRefundId ? { externalRefundId: event.externalRefundId } : {})
-        })
+      notificationHandler: (event) => wechatPaymentNotificationHandler(store, event)
     })
 };
 

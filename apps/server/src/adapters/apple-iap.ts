@@ -20,7 +20,7 @@ import {
 import { handlePaymentRefundNotification } from "@server/domain/payment/PaymentRefundNotifications";
 import { PurchaseAuditLog } from "@server/domain/payment/PurchaseAuditLog";
 import { type PaymentGateway, unsupportedPaymentGatewayOperation } from "@server/domain/payment/PaymentGateway";
-import type { PaymentGatewayRegistration } from "@server/domain/payment/PaymentGatewayRegistry";
+import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
@@ -1071,7 +1071,7 @@ export function registerApplePaymentRoutes(
     next();
   });
 
-  app.post("/api/payments/apple/notifications", async (request, response) => {
+  const handleAppleNotificationRequest = async (request: IncomingMessage, response: ServerResponse) => {
     if (!verifyNotificationPayload) {
       sendJson(response, 503, {
         error: {
@@ -1150,7 +1150,10 @@ export function registerApplePaymentRoutes(
         }
       });
     }
-  });
+  };
+
+  app.post("/api/payments/apple/notifications", handleAppleNotificationRequest);
+  app.post("/api/payment/apple/notification", handleAppleNotificationRequest);
 
   app.post("/api/payments/apple/verify", async (request, response) => {
     const authSession = await requireAuthSession(request, response, store);
@@ -1393,18 +1396,21 @@ const applePaymentGateway: PaymentGateway = {
     unsupportedPaymentGatewayOperation("apple", "issueRefund", "Apple refunds are handled outside the current server runtime.")
 };
 
-export const applePaymentGatewayRegistration: PaymentGatewayRegistration = {
+const applePaymentNotificationHandler: PaymentNotificationHandler<AppleNotificationEvent> = (store, event) =>
+  handlePaymentRefundNotification(store, {
+    channel: "apple",
+    notificationType: event.notificationType,
+    ...(event.orderId ? { orderId: event.orderId } : {}),
+    eventId: event.notificationId,
+    eventTime: event.signedDate,
+    ...(event.transaction?.originalTransactionId ? { externalRefundId: event.transaction.originalTransactionId } : {})
+  });
+
+export const applePaymentGatewayRegistration: PaymentGatewayRegistration<AppleNotificationEvent> = {
   gateway: applePaymentGateway,
+  notificationHandler: applePaymentNotificationHandler,
   registerRoutes: (app, store) =>
     registerApplePaymentRoutes(app as HttpApp, store, {
-      notificationHandler: (event) =>
-        handlePaymentRefundNotification(store, {
-          channel: "apple",
-          notificationType: event.notificationType,
-          ...(event.orderId ? { orderId: event.orderId } : {}),
-          eventId: event.notificationId,
-          eventTime: event.signedDate,
-          ...(event.transaction?.originalTransactionId ? { externalRefundId: event.transaction.originalTransactionId } : {})
-        })
+      notificationHandler: (event) => applePaymentNotificationHandler(store, event)
     })
 };

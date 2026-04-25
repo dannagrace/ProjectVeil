@@ -8,21 +8,33 @@ export interface PaymentGatewayHttpApp {
   post(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>): void;
 }
 
-export interface PaymentGatewayRegistration {
+export interface PaymentNotificationHandlerResult {
+  status?: "processed" | "ignored" | "duplicate";
+}
+
+export type PaymentNotificationHandler<TNotificationEvent = never> = (
+  store: RoomSnapshotStore | null,
+  event: TNotificationEvent
+) => PaymentNotificationHandlerResult | Promise<PaymentNotificationHandlerResult>;
+
+export interface PaymentGatewayRegistration<TNotificationEvent = never> {
   gateway: PaymentGateway;
+  notificationHandler?: PaymentNotificationHandler<TNotificationEvent>;
   registerRoutes(app: PaymentGatewayHttpApp, store: RoomSnapshotStore | null): void;
 }
 
-export class PaymentGatewayRegistry {
-  readonly #registrations = new Map<PaymentChannel, PaymentGatewayRegistration>();
+type AnyPaymentGatewayRegistration = PaymentGatewayRegistration<never>;
 
-  constructor(registrations: PaymentGatewayRegistration[] = []) {
+export class PaymentGatewayRegistry {
+  readonly #registrations = new Map<PaymentChannel, AnyPaymentGatewayRegistration>();
+
+  constructor(registrations: AnyPaymentGatewayRegistration[] = []) {
     for (const registration of registrations) {
       this.register(registration);
     }
   }
 
-  register(registration: PaymentGatewayRegistration): this {
+  register(registration: AnyPaymentGatewayRegistration): this {
     if (this.#registrations.has(registration.gateway.channel)) {
       throw new Error(`payment_gateway_already_registered:${registration.gateway.channel}`);
     }
@@ -30,7 +42,7 @@ export class PaymentGatewayRegistry {
     return this;
   }
 
-  get(channel: PaymentChannel): PaymentGatewayRegistration {
+  get(channel: PaymentChannel): AnyPaymentGatewayRegistration {
     const registration = this.#registrations.get(channel);
     if (!registration) {
       throw new Error(`payment_gateway_not_registered:${channel}`);
@@ -38,7 +50,7 @@ export class PaymentGatewayRegistry {
     return registration;
   }
 
-  list(): PaymentGatewayRegistration[] {
+  list(): AnyPaymentGatewayRegistration[] {
     return [...this.#registrations.values()].sort((left, right) => left.gateway.channel.localeCompare(right.gateway.channel));
   }
 
