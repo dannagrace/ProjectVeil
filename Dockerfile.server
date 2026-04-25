@@ -39,7 +39,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/configs ./configs
-COPY --from=build /app/apps/client/admin.html ./apps/client/admin.html
+COPY --from=build /app/apps/client/admin*.html ./apps/client/
 
 RUN groupadd -r --gid 10001 veil \
   && useradd -r --uid 10001 --gid veil veil \

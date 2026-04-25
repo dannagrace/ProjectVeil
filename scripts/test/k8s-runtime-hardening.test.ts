@@ -10,6 +10,24 @@ async function readRepoFile(relativePath: string): Promise<string> {
   return readFile(resolve(repoRoot, relativePath), "utf8");
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function dockerfileCopiesAdminHtmlPage(dockerfile: string, pagePath: string): boolean {
+  const fileName = pagePath.split("/").at(-1);
+  assert.ok(fileName, `Expected ${pagePath} to include a file name`);
+
+  const escapedFileName = escapeRegExp(fileName);
+  const explicitCopy = new RegExp(
+    `^COPY\\s+--from=build\\s+/app/apps/client/${escapedFileName}\\s+(?:\\./apps/client/${escapedFileName}|\\./apps/client/)\\s*$`,
+    "m"
+  );
+  const adminWildcardCopy = /^COPY\s+--from=build\s+\/app\/apps\/client\/admin\*\.html\s+\.\/apps\/client\/\s*$/m;
+
+  return explicitCopy.test(dockerfile) || adminWildcardCopy.test(dockerfile);
+}
+
 function assertDeploymentHardening(manifest: string): void {
   assert.match(manifest, /terminationGracePeriodSeconds:\s*60/);
   assert.match(manifest, /runAsNonRoot:\s*true/);
@@ -38,6 +56,22 @@ test("runtime Dockerfile runs as a non-root veil user", async () => {
   assert.match(dockerfile, /apt-get install -y --no-install-recommends awscli/);
   assert.match(dockerfile, /ENV HOME=\/tmp/);
   assert.match(dockerfile, /USER 10001:10001/);
+});
+
+test("runtime Dockerfile packages all admin HTML pages", async () => {
+  const dockerfile = await readRepoFile("Dockerfile.server");
+  const adminHtmlPages = [
+    "apps/client/admin.html",
+    "apps/client/admin-calendar.html",
+    "apps/client/admin-kill-switches.html"
+  ];
+
+  for (const pagePath of adminHtmlPages) {
+    assert.ok(
+      dockerfileCopiesAdminHtmlPage(dockerfile, pagePath),
+      `Dockerfile.server must copy ${pagePath} into the runtime image`
+    );
+  }
 });
 
 test("deployments apply runtime hardening controls", async () => {
