@@ -2698,20 +2698,9 @@ export function registerAuthRoutes(
 
     try {
       const body = (await readJsonBody(request)) as {
-        playerId?: string | null;
         displayName?: string | null;
         privacyConsentAccepted?: boolean | null;
       };
-
-      if (body.playerId !== undefined && body.playerId !== null && typeof body.playerId !== "string") {
-        sendJson(response, 400, {
-          error: {
-            code: "invalid_payload",
-            message: "Expected optional string field: playerId"
-          }
-        });
-        return;
-      }
 
       if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== "string") {
         sendJson(response, 400, {
@@ -2733,7 +2722,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      let playerId = normalizePlayerId(body.playerId);
+      let playerId = createGuestPlayerId();
       let displayName = normalizeDisplayName(playerId, body.displayName);
       if (await sendMaintenanceModeIfBlocked(response, { playerId })) {
         return;

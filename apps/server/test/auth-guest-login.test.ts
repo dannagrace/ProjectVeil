@@ -980,9 +980,10 @@ async function startTokenDeliverySmtpServer(): Promise<{
   };
 }
 
-test("guest auth route issues a signed session token", async (t) => {
+test("guest auth route issues a signed server-generated session token", async (t) => {
   const port = 43000 + Math.floor(Math.random() * 1000);
-  const server = await startAuthServer(port);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
 
   t.after(async () => {
     resetGuestAuthSessions();
@@ -1003,13 +1004,16 @@ test("guest auth route issues a signed session token", async (t) => {
   const payload = (await response.json()) as { session: GuestAuthSession };
 
   assert.equal(response.status, 200);
-  assert.equal(payload.session.playerId, "player-auth");
+  assert.match(payload.session.playerId, /^guest-/);
+  assert.notEqual(payload.session.playerId, "player-auth");
   assert.equal(payload.session.displayName, "访客骑士");
   assert.equal(payload.session.provider, "guest");
   assert.match(payload.session.token, /\./);
+  assert.equal(await store.loadPlayerAccount("player-auth"), null);
+  assert.equal((await store.loadPlayerAccount(payload.session.playerId))?.playerId, payload.session.playerId);
 });
 
-test("guest-login rejects a registered account playerId", async (t) => {
+test("guest-login ignores a registered account playerId", async (t) => {
   const port = 47100 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("registered-player", {
@@ -1033,13 +1037,17 @@ test("guest-login rejects a registered account playerId", async (t) => {
       privacyConsentAccepted: true
     })
   });
-  const payload = (await response.json()) as { error: { code: string } };
+  const payload = (await response.json()) as { session: GuestAuthSession };
 
-  assert.equal(response.status, 409);
-  assert.equal(payload.error.code, "guest_player_id_reserved");
+  assert.equal(response.status, 200);
+  assert.match(payload.session.playerId, /^guest-/);
+  assert.notEqual(payload.session.playerId, "registered-player");
+  assert.equal(payload.session.authMode, "guest");
+  assert.equal(payload.session.provider, "guest");
+  assert.equal((await store.loadPlayerAccount("registered-player"))?.loginId, "registered-ranger");
 });
 
-test("guest-login rejects WeChat-style playerIds", async (t) => {
+test("guest-login ignores WeChat-style playerIds", async (t) => {
   const port = 47200 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
@@ -1060,14 +1068,15 @@ test("guest-login rejects WeChat-style playerIds", async (t) => {
       privacyConsentAccepted: true
     })
   });
-  const payload = (await response.json()) as { error: { code: string } };
+  const payload = (await response.json()) as { session: GuestAuthSession };
 
-  assert.equal(response.status, 409);
-  assert.equal(payload.error.code, "guest_player_id_reserved");
+  assert.equal(response.status, 200);
+  assert.match(payload.session.playerId, /^guest-/);
+  assert.notEqual(payload.session.playerId, wechatPlayerId);
   assert.equal(await store.loadPlayerAccount(wechatPlayerId), null);
 });
 
-test("guest-login rejects a WeChat-bound account playerId", async (t) => {
+test("guest-login ignores a WeChat-bound account playerId", async (t) => {
   const port = 47300 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountWechatMiniGameIdentity("wechat-bound-player", {
@@ -1090,10 +1099,12 @@ test("guest-login rejects a WeChat-bound account playerId", async (t) => {
       privacyConsentAccepted: true
     })
   });
-  const payload = (await response.json()) as { error: { code: string } };
+  const payload = (await response.json()) as { session: GuestAuthSession };
 
-  assert.equal(response.status, 409);
-  assert.equal(payload.error.code, "guest_player_id_reserved");
+  assert.equal(response.status, 200);
+  assert.match(payload.session.playerId, /^guest-/);
+  assert.notEqual(payload.session.playerId, "wechat-bound-player");
+  assert.equal((await store.loadPlayerAccount("wechat-bound-player"))?.wechatMiniGameOpenId, "wx-openid-bound");
 });
 
 test("guest-login without a playerId still creates a guest session", async (t) => {
@@ -1139,14 +1150,13 @@ test("auth session rejects a stale guest token after the player becomes a regist
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      playerId: "stale-guest-account",
       privacyConsentAccepted: true
     })
   });
   const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
   assert.equal(loginResponse.status, 200);
 
-  await store.bindPlayerAccountCredentials("stale-guest-account", {
+  await store.bindPlayerAccountCredentials(loginPayload.session.playerId, {
     loginId: "stale-guest-ranger",
     passwordHash: hashAccountPassword("hunter22")
   });
@@ -1162,7 +1172,7 @@ test("auth session rejects a stale guest token after the player becomes a regist
   assert.equal(sessionPayload.error.code, "session_revoked");
 });
 
-test("guest auth route respects launch maintenance mode and whitelist bypass", async (t) => {
+test("guest auth route does not trust client playerId for maintenance whitelist bypass", async (t) => {
   const restoreAnnouncements = await withAnnouncementConfig({
     announcements: [],
     maintenanceMode: {
@@ -1217,11 +1227,10 @@ test("guest auth route respects launch maintenance mode and whitelist bypass", a
       privacyConsentAccepted: true
     })
   });
-  const whitelistedPayload = (await whitelistedResponse.json()) as { session: GuestAuthSession };
+  const whitelistedPayload = (await whitelistedResponse.json()) as { error: { code: string } };
 
-  assert.equal(whitelistedResponse.status, 200);
-  assert.equal(whitelistedPayload.session.playerId, "vip-player");
-  assert.equal(whitelistedPayload.session.provider, "guest");
+  assert.equal(whitelistedResponse.status, 503);
+  assert.equal(whitelistedPayload.error.code, "maintenance_mode_active");
 });
 
 test("auth session route resolves a bearer token into the current guest session", async (t) => {
@@ -1255,7 +1264,7 @@ test("auth session route resolves a bearer token into the current guest session"
   const sessionPayload = (await sessionResponse.json()) as { session: GuestAuthSession };
 
   assert.equal(sessionResponse.status, 200);
-  assert.equal(sessionPayload.session.playerId, "player-session");
+  assert.equal(sessionPayload.session.playerId, loginPayload.session.playerId);
   assert.equal(sessionPayload.session.displayName, "回声旅人");
   assert.equal(sessionPayload.session.provider, "guest");
   assert.match(sessionPayload.session.token, /\./);
@@ -1271,7 +1280,7 @@ test("auth session route resolves a bearer token into the current guest session"
     },
     "session.state"
   );
-  assert.equal(connectPayload.payload.world.playerId, "player-session");
+  assert.equal(connectPayload.payload.world.playerId, loginPayload.session.playerId);
 });
 
 test("connect message prefers auth token identity over a spoofed playerId", async (t) => {
@@ -1309,7 +1318,7 @@ test("connect message prefers auth token identity over a spoofed playerId", asyn
     "session.state"
   );
 
-  assert.equal(response.payload.world.playerId, "trusted-player");
+  assert.equal(response.payload.world.playerId, loginPayload.session.playerId);
 });
 
 test("remote room join ignores a spoofed playerId when an authenticated join token is provided", async (t) => {
@@ -1343,7 +1352,7 @@ test("remote room join ignores a spoofed playerId when an authenticated join tok
     | undefined;
 
   assert.ok(internalRoom);
-  assert.equal(internalRoom.playerIdBySessionId.get(room.sessionId), "trusted-join-player");
+  assert.equal(internalRoom.playerIdBySessionId.get(room.sessionId), loginPayload.session.playerId);
 });
 
 test("guest auth connect claims a default hero slot for non-template player ids", async (t) => {
@@ -1382,15 +1391,15 @@ test("guest auth connect claims a default hero slot for non-template player ids"
     "session.state"
   );
 
-  assert.equal(response.payload.world.playerId, "guest-rune");
+  assert.equal(response.payload.world.playerId, loginPayload.session.playerId);
   assert.equal(response.payload.world.meta.day, 1);
   assert.equal(response.payload.world.ownHeroes.length, 1);
-  assert.equal(response.payload.world.ownHeroes[0]?.playerId, "guest-rune");
+  assert.equal(response.payload.world.ownHeroes[0]?.playerId, loginPayload.session.playerId);
   assert.ok(response.payload.reachableTiles.length > 0);
-  assert.equal((await store.loadPlayerAccount("guest-rune"))?.lastRoomId, "guest-slot-room");
+  assert.equal((await store.loadPlayerAccount(loginPayload.session.playerId))?.lastRoomId, "guest-slot-room");
 });
 
-test("guest-login issues the daily first-login reward once and emits analytics", async (t) => {
+test("guest-login issues the daily first-login reward for server-generated guests and emits analytics", async (t) => {
   const port = 44490 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
   const analyticsLogs: string[] = [];
@@ -1430,7 +1439,7 @@ test("guest-login issues the daily first-login reward once and emits analytics",
   assert.equal(payload.dailyLoginReward?.streak, 1);
   assert.deepEqual(payload.dailyLoginReward?.reward, { gems: 5, gold: 50 });
 
-  const account = await store.loadPlayerAccount("retention-guest");
+  const account = await store.loadPlayerAccount(payload.session.playerId);
   assert.equal(account?.gems, 5);
   assert.equal(account?.globalResources.gold, 50);
   assert.equal(account?.loginStreak, 1);
@@ -1455,11 +1464,16 @@ test("guest-login issues the daily first-login reward once and emits analytics",
     })
   });
   const secondPayload = (await secondResponse.json()) as {
-    dailyLoginReward?: unknown;
+    session: GuestAuthSession;
+    dailyLoginReward?: {
+      streak: number;
+      reward: { gems: number; gold: number };
+    };
   };
 
   assert.equal(secondResponse.status, 200);
-  assert.equal(secondPayload.dailyLoginReward, undefined);
+  assert.notEqual(secondPayload.session.playerId, payload.session.playerId);
+  assert.equal(secondPayload.dailyLoginReward?.streak, 1);
 });
 
 test("account bind upgrades a guest session into password login and account-login restores it", async (t) => {
@@ -1524,7 +1538,7 @@ test("account bind upgrades a guest session into password login and account-logi
   };
 
   assert.equal(accountLoginResponse.status, 200);
-  assert.equal(accountLoginPayload.account.playerId, "account-player");
+  assert.equal(accountLoginPayload.account.playerId, guestLoginPayload.session.playerId);
   assert.equal(accountLoginPayload.session.authMode, "account");
   assert.equal(accountLoginPayload.session.provider, "account-password");
   assert.equal(accountLoginPayload.session.loginId, "veil-ranger");
@@ -1572,6 +1586,41 @@ test("account-login rejects debug-bypass without creating an account or session"
   assert.equal(payload.error?.code, "invalid_credentials");
   assert.equal(payload.session, undefined);
   assert.equal(await store.loadPlayerAccount("debug-ranger"), null);
+});
+
+test("account-login rejects debug-bypass for an existing account", async (t) => {
+  const port = 47050 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("debug-existing-player", {
+    loginId: "debug-existing",
+    passwordHash: hashAccountPassword("hunter22")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "debug-existing",
+      password: "debug-bypass",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    error?: { code: string };
+    session?: GuestAuthSession;
+  };
+
+  assert.equal(response.status, 401);
+  assert.equal(payload.error?.code, "invalid_credentials");
+  assert.equal(payload.session, undefined);
 });
 
 test("account password policy rejects common and overlong passwords before hashing", async (t) => {
@@ -1705,10 +1754,7 @@ test("account bind emits experiment conversion analytics for the assigned varian
         owner: "growth",
         enabled: true,
         fallbackVariant: "control",
-        whitelist: {
-          "account-exp-player": "upgrade"
-        },
-        variants: [{ key: "control", allocation: 100 }]
+        variants: [{ key: "upgrade", allocation: 100 }]
       }
     }
   });
@@ -2566,7 +2612,7 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
 
   assert.equal(evictedResponse.status, 401);
   assert.equal(activeResponse.status, 200);
-  assert.equal(activePayload.session.playerId, "guest-lru-3");
+  assert.equal(activePayload.session.playerId, sessions[2].playerId);
 });
 
 test("account registration request and confirm create a new formal account, session, and audit trail", {
@@ -3880,7 +3926,6 @@ test("wechat mini game login migrates guest progression to a new WeChat account 
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
-  const guestPlayerId = "guest-upgrade-player";
 
   t.after(async () => {
     globalThis.fetch = originalFetch;
@@ -3917,13 +3962,14 @@ test("wechat mini game login migrates guest progression to a new WeChat account 
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      playerId: guestPlayerId,
+      playerId: "guest-upgrade-player",
       displayName: "游客旅人",
       privacyConsentAccepted: true
     })
   });
   const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
   assert.equal(guestLoginResponse.status, 200);
+  const guestPlayerId = guestLoginPayload.session.playerId;
 
   await store.savePlayerAccountProgress(guestPlayerId, {
     gems: 88,
@@ -4002,9 +4048,9 @@ test("wechat mini game login migrates guest progression to a new WeChat account 
       privacyConsentAccepted: true
     })
   });
-  const reusedGuestPayload = (await reusedGuestResponse.json()) as { error: { code: string } };
-  assert.equal(reusedGuestResponse.status, 409);
-  assert.equal(reusedGuestPayload.error.code, "guest_account_migrated");
+  const reusedGuestPayload = (await reusedGuestResponse.json()) as { session: GuestAuthSession };
+  assert.equal(reusedGuestResponse.status, 200);
+  assert.notEqual(reusedGuestPayload.session.playerId, guestPlayerId);
 });
 
 test("wechat guest upgrade returns a conflict when the bound account already has progression", { concurrency: false }, async (t) => {
@@ -4066,7 +4112,7 @@ test("wechat guest upgrade returns a conflict when the bound account already has
     })
   });
   const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
-  await store.savePlayerAccountProgress("guest-conflict-upgrade", {
+  await store.savePlayerAccountProgress(guestLoginPayload.session.playerId, {
     gems: 10,
     globalResources: { gold: 10, wood: 0, ore: 0 }
   });
@@ -4095,7 +4141,7 @@ test("wechat guest upgrade returns a conflict when the bound account already has
   assert.equal(response.status, 409);
   assert.equal(payload.error.code, "wechat_guest_upgrade_conflict");
   assert.equal(payload.migrationConflict.notice, "您的游客进度将合并到新账号");
-  assert.equal(payload.migrationConflict.guest.playerId, "guest-conflict-upgrade");
+  assert.equal(payload.migrationConflict.guest.playerId, guestLoginPayload.session.playerId);
   assert.equal(payload.migrationConflict.registered.playerId, createWechatMiniGamePlayerId("wx-openid-conflict"));
   assert.deepEqual(payload.migrationConflict.choices, ["keep_registered", "keep_guest"]);
 });
@@ -4160,7 +4206,7 @@ test("wechat guest upgrade can keep the registered progression when explicitly c
     })
   });
   const guestLoginPayload = (await guestLoginResponse.json()) as { session: GuestAuthSession };
-  await store.savePlayerAccountProgress("guest-keep-registered", {
+  await store.savePlayerAccountProgress(guestLoginPayload.session.playerId, {
     gems: 5,
     globalResources: { gold: 5, wood: 1, ore: 0 }
   });
@@ -4192,7 +4238,7 @@ test("wechat guest upgrade can keep the registered progression when explicitly c
   const registeredAccount = await store.loadPlayerAccount(registeredPlayerId);
   assert.equal(registeredAccount?.gems, 125);
   assert.deepEqual(registeredAccount?.globalResources, { gold: 950, wood: 300, ore: 140 });
-  assert.equal((await store.loadPlayerAccount("guest-keep-registered"))?.guestMigratedToPlayerId, registeredPlayerId);
+  assert.equal((await store.loadPlayerAccount(guestLoginPayload.session.playerId))?.guestMigratedToPlayerId, registeredPlayerId);
 });
 
 test("wechat mini game login ignores client adult claims for minor protection", { concurrency: false }, async (t) => {
@@ -4637,7 +4683,8 @@ test("guest login requires privacy consent before issuing the first session", as
     })
   });
   assert.equal(acceptedResponse.status, 200);
-  assert.ok((await store.loadPlayerAccount("guest-consent"))?.privacyConsentAt);
+  const acceptedPayload = (await acceptedResponse.json()) as { session: GuestAuthSession };
+  assert.ok((await store.loadPlayerAccount(acceptedPayload.session.playerId))?.privacyConsentAt);
 });
 
 test("guest login rejects moderated display names with a clear 400 error", async (t) => {
