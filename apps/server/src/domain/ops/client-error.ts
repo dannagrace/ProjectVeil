@@ -4,6 +4,13 @@ import type { GuestAuthSession } from "@server/domain/account/auth";
 import { readGuestAuthTokenFromRequest, validateGuestAuthToken } from "@server/domain/account/auth";
 import { captureClientError } from "@server/domain/ops/error-monitoring";
 import { getRequestCorrelationId } from "@server/infra/http-request-context";
+import {
+  consumeRedisBackedOrLocalRateLimit,
+  createLocalRateLimitState,
+  type LocalRateLimitState,
+  type RateLimitResult
+} from "@server/infra/http-rate-limit";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { resolveTrustedRequestIp } from "@server/infra/request-ip";
 import { recordHttpRateLimited, recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
@@ -32,16 +39,14 @@ interface ClientErrorReportPayload {
   context?: Record<string, unknown> | undefined;
 }
 
-interface RateLimitResult {
-  allowed: boolean;
-  retryAfterSeconds?: number;
-}
-
 interface ClientErrorRouteRuntimeDependencies {
   now(): number;
   captureClientError: typeof captureClientError;
   recordRuntimeErrorEvent: typeof recordRuntimeErrorEvent;
   recordHttpRateLimited: typeof recordHttpRateLimited;
+  rateLimitRedisClient?: RedisClientLike | null;
+  rateLimitRedisUrl?: string | null;
+  rateLimitCreateRedisClient?: typeof createRedisClient;
 }
 
 const defaultClientErrorRouteRuntimeDependencies: ClientErrorRouteRuntimeDependencies = {
@@ -201,27 +206,36 @@ function normalizeClientErrorPayload(payload: unknown): ClientErrorReportPayload
   };
 }
 
-function consumeSlidingWindowRateLimit(
-  counters: Map<string, number[]>,
-  key: string,
-  now: number,
-  config: Pick<ClientErrorRuntimeConfig, "rateLimitWindowMs">,
-  max: number
-): RateLimitResult {
-  const windowStart = now - config.rateLimitWindowMs;
-  const timestamps = (counters.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
-  if (timestamps.length >= max) {
-    counters.set(key, timestamps);
-    const oldestTimestamp = timestamps[0] ?? now;
-    return {
-      allowed: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + config.rateLimitWindowMs - now) / 1000))
-    };
+const CLIENT_ERROR_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:client-error-rate-limit:";
+
+function resolveClientErrorRateLimitRedisClient(deps: ClientErrorRouteRuntimeDependencies): RedisClientLike | null {
+  if (deps.rateLimitRedisClient !== undefined) {
+    return deps.rateLimitRedisClient;
   }
 
-  timestamps.push(now);
-  counters.set(key, timestamps);
-  return { allowed: true };
+  const redisUrl = deps.rateLimitRedisUrl ?? readRedisUrl();
+  return redisUrl ? (deps.rateLimitCreateRedisClient ?? createRedisClient)(redisUrl) : null;
+}
+
+async function consumeClientErrorRateLimit(
+  redisClient: RedisClientLike | null,
+  localState: LocalRateLimitState,
+  scope: "ip" | "player",
+  key: string,
+  config: Pick<ClientErrorRuntimeConfig, "rateLimitWindowMs">,
+  max: number,
+  now: () => number
+): Promise<RateLimitResult> {
+  const rateLimitKey = `${scope}:${key}`;
+  return consumeRedisBackedOrLocalRateLimit({
+    redisClient,
+    localState,
+    key: rateLimitKey,
+    redisKey: `${CLIENT_ERROR_RATE_LIMIT_CLUSTER_KEY_PREFIX}${rateLimitKey}`,
+    config: { windowMs: config.rateLimitWindowMs },
+    max,
+    now
+  });
 }
 
 function sendRateLimited(response: ServerResponse, retryAfterSeconds: number): void {
@@ -266,8 +280,9 @@ export function registerClientErrorRoutes(
     ...defaultClientErrorRouteRuntimeDependencies,
     ...runtimeDependencies
   };
-  const ipCounters = new Map<string, number[]>();
-  const playerCounters = new Map<string, number[]>();
+  const rateLimitRedisClient = resolveClientErrorRateLimitRedisClient(deps);
+  const ipLocalRateLimitState = createLocalRateLimitState();
+  const playerLocalRateLimitState = createLocalRateLimitState();
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -288,9 +303,16 @@ export function registerClientErrorRoutes(
       const payload = normalizeClientErrorPayload(await readJsonBody(request));
       const session = await resolveOptionalSession(request, store);
       const config = readClientErrorRuntimeConfig();
-      const now = deps.now();
       const ipAddress = resolveRequestIp(request);
-      const ipLimit = consumeSlidingWindowRateLimit(ipCounters, ipAddress, now, config, config.rateLimitIpMax);
+      const ipLimit = await consumeClientErrorRateLimit(
+        rateLimitRedisClient,
+        ipLocalRateLimitState,
+        "ip",
+        ipAddress,
+        config,
+        config.rateLimitIpMax,
+        deps.now
+      );
       if (!ipLimit.allowed) {
         deps.recordHttpRateLimited();
         sendRateLimited(response, ipLimit.retryAfterSeconds ?? 1);
@@ -298,12 +320,14 @@ export function registerClientErrorRoutes(
       }
 
       if (session?.playerId) {
-        const playerLimit = consumeSlidingWindowRateLimit(
-          playerCounters,
+        const playerLimit = await consumeClientErrorRateLimit(
+          rateLimitRedisClient,
+          playerLocalRateLimitState,
+          "player",
           session.playerId,
-          now,
           config,
-          config.rateLimitPlayerMax
+          config.rateLimitPlayerMax,
+          deps.now
         );
         if (!playerLimit.allowed) {
           deps.recordHttpRateLimited();
@@ -315,6 +339,7 @@ export function registerClientErrorRoutes(
       const requestId = getRequestCorrelationId(request) ?? null;
       const authenticated = session != null;
       const candidateRevision = process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null;
+      const now = deps.now();
       deps.recordRuntimeErrorEvent({
         id: randomUUID(),
         recordedAt: new Date(now).toISOString(),
