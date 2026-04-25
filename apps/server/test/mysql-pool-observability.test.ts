@@ -97,7 +97,43 @@ test("prometheus db pool gauges track active and queued requests from pool callb
   assert.match(metrics, /^veil_mysql_pool_queue_depth\{pool="config_center"\} 0$/m);
 });
 
-test("buildMySqlPoolOptions enables encrypted MySQL transport in required mode", () => {
+test("buildMySqlPoolOptions verifies the server certificate in required mode", () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "project-veil-mysql-required-ca-"));
+  const caPath = join(tempDirectory, "rds-ca.pem");
+  const caBundle = "-----BEGIN CERTIFICATE-----\nrequired-ca\n-----END CERTIFICATE-----\n";
+  writeFileSync(caPath, caBundle, "utf8");
+
+  try {
+    const options = buildMySqlPoolOptions({
+      host: "127.0.0.1",
+      port: 3306,
+      user: "veil",
+      password: "veil",
+      database: "project_veil",
+      ssl: {
+        mode: "required",
+        caPath
+      },
+      pool: {
+        connectionLimit: 4,
+        maxIdle: 4,
+        idleTimeoutMs: 60_000,
+        queueLimit: 0,
+        waitForConnections: true
+      }
+    });
+
+    assert.deepEqual(options.ssl, {
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.2",
+      ca: caBundle
+    });
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("buildMySqlPoolOptions verifies the server certificate in required mode with system CAs", () => {
   const options = buildMySqlPoolOptions({
     host: "127.0.0.1",
     port: 3306,
@@ -118,7 +154,8 @@ test("buildMySqlPoolOptions enables encrypted MySQL transport in required mode",
   });
 
   assert.deepEqual(options.ssl, {
-    rejectUnauthorized: false
+    rejectUnauthorized: true,
+    minVersion: "TLSv1.2"
   });
 });
 

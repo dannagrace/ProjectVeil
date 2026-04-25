@@ -151,8 +151,13 @@ export function buildMySqlPoolOptions(config: MySqlPoolConnectionConfig): PoolOp
 
   if (sslMode === "required") {
     ssl = {
-      rejectUnauthorized: false
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.2"
     };
+    const caPath = config.ssl?.caPath?.trim();
+    if (caPath) {
+      ssl.ca = readFileSync(caPath, "utf8");
+    }
   } else if (sslMode === "verify-ca") {
     ssl = {
       rejectUnauthorized: true,

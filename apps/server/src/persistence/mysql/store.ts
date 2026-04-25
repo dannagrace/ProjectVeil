@@ -2942,14 +2942,18 @@ export function readMySqlPersistenceConfig(env: NodeJS.ProcessEnv = process.env)
 function readMySqlSslConfig(env: NodeJS.ProcessEnv): MySqlPoolSslConfig {
   const rawMode = env.VEIL_MYSQL_SSL_MODE?.trim().toLowerCase();
   const mode = rawMode ? parseMySqlSslMode(rawMode) : DEFAULT_MYSQL_SSL_MODE;
+  const caPath = env.VEIL_MYSQL_SSL_CA_PATH?.trim() || null;
   const isProductionEnvironment = env.NODE_ENV?.trim().toLowerCase() === "production";
   if (isProductionEnvironment && mode === "disabled") {
     throw new Error("VEIL_MYSQL_SSL_MODE must be set to required or verify-ca when NODE_ENV=production");
   }
+  if (isProductionEnvironment && mode === "required" && !caPath) {
+    throw new Error("VEIL_MYSQL_SSL_CA_PATH must be set when VEIL_MYSQL_SSL_MODE=required in production");
+  }
 
   return {
     mode,
-    caPath: env.VEIL_MYSQL_SSL_CA_PATH?.trim() || null
+    caPath
   };
 }
 
