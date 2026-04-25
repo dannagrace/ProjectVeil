@@ -63,7 +63,8 @@ test("runtime Dockerfile packages all admin HTML pages", async () => {
   const adminHtmlPages = [
     "apps/client/admin.html",
     "apps/client/admin-calendar.html",
-    "apps/client/admin-kill-switches.html"
+    "apps/client/admin-kill-switches.html",
+    "apps/client/config-center.html"
   ];
 
   for (const pagePath of adminHtmlPages) {
