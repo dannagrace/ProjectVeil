@@ -1009,6 +1009,159 @@ test("guest auth route issues a signed session token", async (t) => {
   assert.match(payload.session.token, /\./);
 });
 
+test("guest-login rejects a registered account playerId", async (t) => {
+  const port = 47100 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountCredentials("registered-player", {
+    loginId: "registered-ranger",
+    passwordHash: hashAccountPassword("hunter22")
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "registered-player",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "guest_player_id_reserved");
+});
+
+test("guest-login rejects WeChat-style playerIds", async (t) => {
+  const port = 47200 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const wechatPlayerId = createWechatMiniGamePlayerId("wx-openid-reserved");
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: wechatPlayerId,
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "guest_player_id_reserved");
+  assert.equal(await store.loadPlayerAccount(wechatPlayerId), null);
+});
+
+test("guest-login rejects a WeChat-bound account playerId", async (t) => {
+  const port = 47300 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  await store.bindPlayerAccountWechatMiniGameIdentity("wechat-bound-player", {
+    openId: "wx-openid-bound"
+  });
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "wechat-bound-player",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "guest_player_id_reserved");
+});
+
+test("guest-login without a playerId still creates a guest session", async (t) => {
+  const port = 47400 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { session: GuestAuthSession };
+
+  assert.equal(response.status, 200);
+  assert.match(payload.session.playerId, /^guest-/);
+  assert.equal(payload.session.authMode, "guest");
+  assert.equal(payload.session.provider, "guest");
+});
+
+test("auth session rejects a stale guest token after the player becomes a registered account", async (t) => {
+  const port = 47500 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      playerId: "stale-guest-account",
+      privacyConsentAccepted: true
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(loginResponse.status, 200);
+
+  await store.bindPlayerAccountCredentials("stale-guest-account", {
+    loginId: "stale-guest-ranger",
+    passwordHash: hashAccountPassword("hunter22")
+  });
+
+  const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const sessionPayload = (await sessionResponse.json()) as { error: { code: string } };
+
+  assert.equal(sessionResponse.status, 401);
+  assert.equal(sessionPayload.error.code, "session_revoked");
+});
+
 test("guest auth route respects launch maintenance mode and whitelist bypass", async (t) => {
   const restoreAnnouncements = await withAnnouncementConfig({
     announcements: [],
@@ -1387,6 +1540,38 @@ test("account bind upgrades a guest session into password login and account-logi
   assert.equal(sessionPayload.session.authMode, "account");
   assert.equal(sessionPayload.session.provider, "account-password");
   assert.equal(sessionPayload.session.loginId, "veil-ranger");
+});
+
+test("account-login rejects debug-bypass without creating an account or session", async (t) => {
+  const port = 47000 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/account-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "debug-ranger",
+      password: "debug-bypass",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as {
+    error?: { code: string };
+    session?: GuestAuthSession;
+  };
+
+  assert.equal(response.status, 401);
+  assert.equal(payload.error?.code, "invalid_credentials");
+  assert.equal(payload.session, undefined);
+  assert.equal(await store.loadPlayerAccount("debug-ranger"), null);
 });
 
 test("account password policy rejects common and overlong passwords before hashing", async (t) => {

@@ -734,6 +734,22 @@ function normalizeAccountPassword(password?: string | null): string {
   return normalized;
 }
 
+function normalizeAccountLoginPassword(password?: string | null): string {
+  if (typeof password !== "string") {
+    throw new Error("password must be a string");
+  }
+
+  const normalized = password.trim();
+  if (!normalized) {
+    throw new Error("password must not be empty");
+  }
+  if (normalized.length > MAX_ACCOUNT_PASSWORD_LENGTH) {
+    throw new Error(`password must be at most ${MAX_ACCOUNT_PASSWORD_LENGTH} characters`);
+  }
+
+  return normalized;
+}
+
 function normalizePasswordRecoveryToken(token?: string | null): string {
   const normalized = token?.trim();
   if (!normalized) {
@@ -973,6 +989,26 @@ export function createWechatMiniGamePlayerId(openId: string): string {
   }
 
   return `wechat-${createHmac("sha256", readAuthSecret()).update(`wechat:${normalizedOpenId}`).digest("hex").slice(0, 16)}`;
+}
+
+function isWechatMiniGamePlayerId(playerId: string): boolean {
+  return playerId.trim().toLowerCase().startsWith("wechat-");
+}
+
+function isAccountBackedPlayerAccount(account: PlayerAccountSnapshot | null | undefined): boolean {
+  return Boolean(account?.loginId || account?.wechatMiniGameOpenId);
+}
+
+function isGuestPlayerIdReserved(input: {
+  playerId: string;
+  account?: PlayerAccountSnapshot | null;
+  loginIdOwner?: PlayerAccountSnapshot | null;
+}): boolean {
+  return (
+    isWechatMiniGamePlayerId(input.playerId) ||
+    isAccountBackedPlayerAccount(input.account) ||
+    Boolean(input.loginIdOwner)
+  );
 }
 
 const WECHAT_GUEST_UPGRADE_NOTICE = "您的游客进度将合并到新账号";
@@ -1822,12 +1858,26 @@ async function validateAuthToken(
     }
 
     if (session.authMode === "guest") {
+      const account = store ? await store.loadPlayerAccount(session.playerId) : null;
+      if (
+        session.provider === "guest" &&
+        isGuestPlayerIdReserved({
+          playerId: session.playerId,
+          account
+        })
+      ) {
+        if (session.sessionId) {
+          await revokeGuestSessionClusterState(session.sessionId);
+        }
+        recordAuthSessionFailure("session_revoked");
+        return { session: null, errorCode: "session_revoked" };
+      }
+
       const activeBan = await resolveActiveBanForPlayer(store, session.playerId);
       if (activeBan) {
         recordAuthSessionFailure("account_banned");
         return { session: null, errorCode: "account_banned", ban: activeBan };
       }
-      const account = store ? await store.loadPlayerAccount(session.playerId) : null;
       if (account?.guestMigratedToPlayerId) {
         if (session.sessionId) {
           await revokeGuestSessionClusterState(session.sessionId);
@@ -2093,6 +2143,15 @@ function sendAuthFailure(
     error: {
       code,
       message
+    }
+  });
+}
+
+function sendGuestPlayerIdReserved(response: ServerResponse): void {
+  sendJson(response, 409, {
+    error: {
+      code: "guest_player_id_reserved",
+      message: "Player ID is reserved for account login"
     }
   });
 }
@@ -2679,10 +2738,21 @@ export function registerAuthRoutes(
       if (await sendMaintenanceModeIfBlocked(response, { playerId })) {
         return;
       }
+      const existingAccount = store ? await store.loadPlayerAccount(playerId) : null;
+      const loginIdOwner = store ? await store.loadPlayerAccountByLoginId(playerId) : null;
+      if (
+        isGuestPlayerIdReserved({
+          playerId,
+          account: existingAccount,
+          loginIdOwner
+        })
+      ) {
+        sendGuestPlayerIdReserved(response);
+        return;
+      }
       await assertDisplayNameAvailableOrThrow(store, displayName, playerId);
 
       if (store) {
-        const existingAccount = await store.loadPlayerAccount(playerId);
         if (existingAccount?.guestMigratedToPlayerId) {
           sendJson(response, 409, {
             error: {
@@ -2799,7 +2869,7 @@ export function registerAuthRoutes(
       }
 
       const loginId = normalizeAccountLoginId(body.loginId);
-      const password = normalizeAccountPassword(body.password);
+      const password = normalizeAccountLoginPassword(body.password);
       if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
         return;
       }
@@ -2808,39 +2878,6 @@ export function registerAuthRoutes(
       const sourceBlockedUntil = getCredentialStuffingBlockedUntil(requestIp);
       if (sourceBlockedUntil) {
         sendCredentialStuffingBlocked(response, sourceBlockedUntil);
-        return;
-      }
-
-      // 后端 Debug Bypass 逻辑
-      if (password === "debug-bypass") {
-        console.log(`[Auth] Backend bypass triggered for: ${loginId}`);
-        const account = await store?.ensurePlayerAccount({
-          playerId: loginId,
-          displayName: loginId
-        }) || { playerId: loginId, displayName: loginId };
-        const activeBan = await resolveActiveBanForPlayer(store, account.playerId);
-        if (activeBan) {
-          sendAuthFailure(response, "account_banned", activeBan);
-          return;
-        }
-        
-        const dailyLoginReward = store ? await issueDailyLoginReward(store, account) : null;
-        const session = issueGuestAuthSession({
-          playerId: account.playerId,
-          displayName: account.displayName
-        });
-        sendJson(response, 200, {
-          account: dailyLoginReward?.account ?? account,
-          session: await finalizeGuestSessionForResponse(session),
-          ...(dailyLoginReward?.claimed
-            ? {
-                dailyLoginReward: {
-                  streak: dailyLoginReward.streak,
-                  reward: dailyLoginReward.reward
-                }
-              }
-            : {})
-        });
         return;
       }
 
