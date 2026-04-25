@@ -1300,39 +1300,76 @@ function createReplaySummary(
   };
 }
 
-test("player account routes list and fetch stored accounts", async (t) => {
+test("player account list route requires auth, scopes players to self, and clamps admin limits", async (t) => {
   const port = 40000 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
-  store.seedAccount({
-    playerId: "player-1",
-    displayName: "灰烬领主",
-    gems: 42,
-    globalResources: { gold: 320, wood: 5, ore: 1 },
-    achievements: [],
-    recentEventLog: [],
-    lastRoomId: "room-alpha",
-    lastSeenAt: new Date("2026-03-25T09:00:00.000Z").toISOString()
-  });
+  const previousAdminToken = process.env.VEIL_ADMIN_TOKEN;
+  process.env.VEIL_ADMIN_TOKEN = "player-account-admin-token";
+  for (let index = 1; index <= 60; index += 1) {
+    const playerId = `player-${String(index).padStart(2, "0")}`;
+    store.seedAccount({
+      playerId,
+      displayName: `玩家 ${index}`,
+      gems: 100 + index,
+      globalResources: { gold: 300 + index, wood: index, ore: 1 },
+      achievements: [],
+      recentEventLog: [],
+      cosmeticInventory: { ownedIds: [`border-${index}`] },
+      lastRoomId: `room-${index}`,
+      lastSeenAt: new Date("2026-03-25T09:00:00.000Z").toISOString()
+    });
+  }
   const server = await startAccountRouteServer(port, store);
+  const session = issueGuestAuthSession({
+    playerId: "player-01",
+    displayName: "玩家 1"
+  });
 
   t.after(async () => {
+    if (previousAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = previousAdminToken;
+    }
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
   const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`);
-  const listPayload = (await listResponse.json()) as { items: PlayerAccountSnapshot[] };
-  assert.equal(listResponse.status, 200);
-  assert.equal(listPayload.items[0]?.displayName, "灰烬领主");
+  const listPayload = (await listResponse.json()) as { error: { code: string } };
+  assert.equal(listResponse.status, 401);
+  assert.equal(listPayload.error.code, "unauthorized");
 
-  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-1`);
-  const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
-  assert.equal(detailResponse.status, 200);
-  assert.equal(detailPayload.account.playerId, "player-1");
-  assert.equal(detailPayload.account.gems, 42);
-  assert.equal(detailPayload.account.lastRoomId, "room-alpha");
+  const selfListResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts?limit=50`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const selfListPayload = (await selfListResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(selfListResponse.status, 200);
+  assert.deepEqual(selfListPayload.items.map((account) => account.playerId), ["player-01"]);
+  assert.equal(selfListPayload.items[0]?.gems, 101);
+  assert.deepEqual(selfListPayload.items[0]?.cosmeticInventory?.ownedIds, ["border-1"]);
+
+  const adminDefaultResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`, {
+    headers: {
+      "x-veil-admin-token": "player-account-admin-token"
+    }
+  });
+  const adminDefaultPayload = (await adminDefaultResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(adminDefaultResponse.status, 200);
+  assert.equal(adminDefaultPayload.items.length, 20);
+
+  const adminClampedResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts?limit=500`, {
+    headers: {
+      "x-veil-admin-token": "player-account-admin-token"
+    }
+  });
+  const adminClampedPayload = (await adminClampedResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(adminClampedResponse.status, 200);
+  assert.equal(adminClampedPayload.items.length, 50);
 });
 
-test("player account public routes redact credential and WeChat identity bindings while owner access keeps them", async (t) => {
+test("player account detail requires auth, returns owners fully, and redacts stranger profiles", async (t) => {
   const port = 40012 + Math.floor(Math.random() * 1000);
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
@@ -1349,34 +1386,96 @@ test("player account public routes redact credential and WeChat identity binding
     displayName: "云岚信使",
     avatarUrl: "https://cdn.example.test/avatar.png"
   });
+  const boundAccount = await store.loadPlayerAccount("player-bound");
+  assert.ok(boundAccount);
+  const progressedAccount = await store.savePlayerAccountProgress("player-bound", {
+    gems: 42,
+    globalResources: { gold: 320, wood: 5, ore: 1 },
+    achievements: [
+      {
+        id: "first_battle",
+        title: "初战告捷",
+        description: "赢得第一场战斗。",
+        metric: "battle_wins",
+        current: 1,
+        target: 1,
+        unlocked: true,
+        unlockedAt: "2026-03-25T09:00:00.000Z"
+      }
+    ],
+    mailbox: [
+      normalizePlayerMailboxMessage({
+        id: "private-mailbox",
+        kind: "system",
+        title: "私密邮件",
+        body: "只有本人能读。",
+        sentAt: "2026-03-25T09:00:00.000Z",
+        grant: { gems: 100 }
+      })
+    ],
+    lastRoomId: "room-alpha"
+  });
+  store.seedAccount({
+    ...progressedAccount,
+    cosmeticInventory: { ownedIds: ["border-shadowcourt"] }
+  });
   const server = await startAccountRouteServer(port, store);
   const session = issueWechatMiniGameAuthSession({
     playerId: "player-bound",
     displayName: "云岚信使",
     loginId: "veil-ranger"
   });
+  const strangerSession = issueGuestAuthSession({
+    playerId: "player-stranger",
+    displayName: "陌生访客"
+  });
 
   t.after(async () => {
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`);
-  const listPayload = (await listResponse.json()) as { items: PlayerAccountSnapshot[] };
-  assert.equal(listResponse.status, 200);
-  assert.equal(listPayload.items[0]?.playerId, "player-bound");
-  assert.equal("loginId" in (listPayload.items[0] ?? {}), false);
-  assert.equal("credentialBoundAt" in (listPayload.items[0] ?? {}), false);
-  assert.equal("wechatMiniGameOpenId" in (listPayload.items[0] ?? {}), false);
-  assert.equal("wechatMiniGameUnionId" in (listPayload.items[0] ?? {}), false);
+  const unauthenticatedDetailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-bound`);
+  const unauthenticatedDetailPayload = (await unauthenticatedDetailResponse.json()) as { error: { code: string } };
+  assert.equal(unauthenticatedDetailResponse.status, 401);
+  assert.equal(unauthenticatedDetailPayload.error.code, "unauthorized");
 
-  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-bound`);
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-bound`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
   const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
   assert.equal(detailResponse.status, 200);
-  assert.equal("loginId" in detailPayload.account, false);
-  assert.equal("credentialBoundAt" in detailPayload.account, false);
-  assert.equal("wechatMiniGameOpenId" in detailPayload.account, false);
-  assert.equal("wechatMiniGameUnionId" in detailPayload.account, false);
+  assert.equal(detailPayload.account.gems, 42);
+  assert.deepEqual(detailPayload.account.globalResources, { gold: 320, wood: 5, ore: 1 });
+  assert.deepEqual(detailPayload.account.cosmeticInventory?.ownedIds, ["border-shadowcourt"]);
+  assert.equal(detailPayload.account.mailbox?.[0]?.id, "private-mailbox");
+  assert.equal(detailPayload.account.loginId, "veil-ranger");
+  assert.match(detailPayload.account.credentialBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(detailPayload.account.wechatMiniGameOpenId, "wx-openid-bound");
+  assert.equal(detailPayload.account.wechatMiniGameUnionId, "wx-union-bound");
   assert.match(detailPayload.account.wechatMiniGameBoundAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  const strangerDetailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-bound`, {
+    headers: {
+      Authorization: `Bearer ${strangerSession.token}`
+    }
+  });
+  const strangerDetailPayload = (await strangerDetailResponse.json()) as { account: PlayerAccountSnapshot };
+  assert.equal(strangerDetailResponse.status, 200);
+  assert.equal(strangerDetailPayload.account.playerId, "player-bound");
+  assert.equal(strangerDetailPayload.account.displayName, "云岚信使");
+  assert.equal(strangerDetailPayload.account.achievements?.[0]?.id, "first_battle");
+  assert.equal("gems" in strangerDetailPayload.account, false);
+  assert.equal("globalResources" in strangerDetailPayload.account, false);
+  assert.equal("cosmeticInventory" in strangerDetailPayload.account, false);
+  assert.equal("mailbox" in strangerDetailPayload.account, false);
+  assert.equal("loginId" in strangerDetailPayload.account, false);
+  assert.equal("credentialBoundAt" in strangerDetailPayload.account, false);
+  assert.equal("wechatMiniGameOpenId" in strangerDetailPayload.account, false);
+  assert.equal("wechatMiniGameUnionId" in strangerDetailPayload.account, false);
+  assert.equal("wechatMiniGameBoundAt" in strangerDetailPayload.account, false);
+  assert.equal("lastRoomId" in strangerDetailPayload.account, false);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
     headers: {
@@ -1417,16 +1516,14 @@ test("player account routes degrade to local-mode responses when persistence is 
   });
 
   const listResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`);
-  const listPayload = (await listResponse.json()) as { items: PlayerAccountSnapshot[] };
-  assert.equal(listResponse.status, 200);
-  assert.deepEqual(listPayload.items, []);
+  const listPayload = (await listResponse.json()) as { error: { code: string } };
+  assert.equal(listResponse.status, 401);
+  assert.equal(listPayload.error.code, "unauthorized");
 
   const detailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local`);
-  const detailPayload = (await detailResponse.json()) as { account: PlayerAccountSnapshot };
-  assert.equal(detailResponse.status, 200);
-  assert.equal(detailPayload.account.playerId, "player-local");
-  assert.equal(detailPayload.account.displayName, "player-local");
-  assert.deepEqual(detailPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
+  const detailPayload = (await detailResponse.json()) as { error: { code: string } };
+  assert.equal(detailResponse.status, 401);
+  assert.equal(detailPayload.error.code, "unauthorized");
 
   const publicReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/battle-replays`);
   assert.equal(publicReplayResponse.status, 401);
@@ -1456,6 +1553,26 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(mePayload.account.playerId, "player-local");
   assert.equal(mePayload.account.displayName, "本地侦骑");
   assert.equal(mePayload.session.playerId, "player-local");
+
+  const selfListResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const selfListPayload = (await selfListResponse.json()) as { items: PlayerAccountSnapshot[] };
+  assert.equal(selfListResponse.status, 200);
+  assert.deepEqual(selfListPayload.items.map((account) => account.playerId), ["player-local"]);
+
+  const selfDetailResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const selfDetailPayload = (await selfDetailResponse.json()) as { account: PlayerAccountSnapshot };
+  assert.equal(selfDetailResponse.status, 200);
+  assert.equal(selfDetailPayload.account.playerId, "player-local");
+  assert.equal(selfDetailPayload.account.displayName, "本地侦骑");
+  assert.deepEqual(selfDetailPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
 
   const meReplayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/battle-replays`, {
     headers: {
@@ -1568,11 +1685,9 @@ test("public guest player routes keep only intended public payloads exposed", as
   });
 
   const accountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview`);
-  const accountPayload = (await accountResponse.json()) as { account: PlayerAccountSnapshot };
-  assert.equal(accountResponse.status, 200);
-  assert.equal(accountPayload.account.playerId, "guest-preview");
-  assert.equal(accountPayload.account.displayName, "guest-preview");
-  assert.deepEqual(accountPayload.account.globalResources, { gold: 0, wood: 0, ore: 0 });
+  const accountPayload = (await accountResponse.json()) as { error: { code: string } };
+  assert.equal(accountResponse.status, 401);
+  assert.equal(accountPayload.error.code, "unauthorized");
 
   const replayResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/battle-replays`);
   assert.equal(replayResponse.status, 401);

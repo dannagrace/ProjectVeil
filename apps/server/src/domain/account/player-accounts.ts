@@ -188,6 +188,8 @@ function validateWechatSignatureEnvelope(
 }
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
+const PLAYER_ACCOUNT_LIST_DEFAULT_LIMIT = 20;
+const PLAYER_ACCOUNT_LIST_MAX_LIMIT = 50;
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const declaredLength = Number(request.headers["content-length"]);
@@ -234,6 +236,19 @@ function parseOffset(request: IncomingMessage): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseClampedPlayerAccountListLimit(request: IncomingMessage): number {
+  const parsed = parseLimit(request);
+  if (parsed == null) {
+    return PLAYER_ACCOUNT_LIST_DEFAULT_LIMIT;
+  }
+  return Math.min(PLAYER_ACCOUNT_LIST_MAX_LIMIT, Math.max(1, Math.floor(parsed)));
+}
+
+function parseNonNegativeOffset(request: IncomingMessage): number | undefined {
+  const parsed = parseOffset(request);
+  return parsed == null ? undefined : Math.max(0, Math.floor(parsed));
 }
 
 function isTestTimeOverrideEnabled(): boolean {
@@ -977,7 +992,7 @@ async function requireAuthorizedPlayerScope(
   return authSession;
 }
 
-function toPublicPlayerAccount(
+function toRedactedPlayerAccount(
   account: PlayerAccountSnapshot
 ): Omit<
   PlayerAccountSnapshot,
@@ -998,6 +1013,7 @@ function toPublicPlayerAccount(
   const {
     loginId: _loginId,
     credentialBoundAt: _credentialBoundAt,
+    privacyConsentAt: _privacyConsentAt,
     phoneNumber: _phoneNumber,
     phoneNumberBoundAt: _phoneNumberBoundAt,
     wechatMiniGameOpenId: _wechatMiniGameOpenId,
@@ -1011,6 +1027,38 @@ function toPublicPlayerAccount(
     ...publicAccount
   } = account;
   return publicAccount;
+}
+
+type PublicPlayerAccountProfile = Pick<PlayerAccountSnapshot, "playerId" | "displayName"> &
+  Partial<
+    Pick<
+      PlayerAccountSnapshot,
+      | "avatarUrl"
+      | "eloRating"
+      | "rankDivision"
+      | "peakRankDivision"
+      | "seasonHistory"
+      | "seasonBadges"
+      | "achievements"
+    >
+  > & {
+    level: number;
+  };
+
+function toPublicPlayerAccount(account: PlayerAccountSnapshot): PublicPlayerAccountProfile {
+  const unlockedAchievements = account.achievements.filter((achievement) => achievement.unlocked);
+  return {
+    playerId: account.playerId,
+    displayName: account.displayName,
+    level: Math.max(1, Math.floor(account.seasonPassTier ?? 1)),
+    ...(account.avatarUrl ? { avatarUrl: account.avatarUrl } : {}),
+    ...(account.eloRating != null ? { eloRating: account.eloRating } : {}),
+    ...(account.rankDivision ? { rankDivision: account.rankDivision } : {}),
+    ...(account.peakRankDivision ? { peakRankDivision: account.peakRankDivision } : {}),
+    ...(account.seasonHistory?.length ? { seasonHistory: account.seasonHistory } : {}),
+    ...(account.seasonBadges?.length ? { seasonBadges: account.seasonBadges } : {}),
+    ...(unlockedAchievements.length ? { achievements: unlockedAchievements } : {})
+  };
 }
 
 export function registerPlayerAccountRoutes(
@@ -1160,7 +1208,7 @@ export function registerPlayerAccountRoutes(
             campaignReplays: campaignReplays.length,
             dailyDungeonClaims: dailyDungeonClaims.length
           },
-          account: toPublicPlayerAccount(updatedAccount)
+          account: toRedactedPlayerAccount(updatedAccount)
         });
       } catch (error) {
         if (error instanceof PayloadTooLargeError) {
@@ -1185,21 +1233,53 @@ export function registerPlayerAccountRoutes(
   }
 
   app.get("/api/player-accounts", async (request, response) => {
+    const adminAuthorized = isAdminAuthorized(request);
+    const authSession = adminAuthorized ? null : await requireAuthSession(request, response, store);
+    if (!adminAuthorized && !authSession) {
+      return;
+    }
+
+    const requestedPlayerId = parsePlayerIdFilter(request);
     if (!store) {
-      sendJson(response, 200, {
-        items: []
+      if (adminAuthorized || (requestedPlayerId && requestedPlayerId !== authSession?.playerId)) {
+        sendJson(response, 200, { items: [] });
+        return;
+      }
+      const account = createLocalModeAccount({
+        playerId: authSession?.playerId,
+        displayName: authSession?.displayName,
+        ...(authSession?.loginId ? { loginId: authSession.loginId } : {})
       });
+      sendJson(response, 200, { items: [withBattleReportCenter(account)] });
       return;
     }
 
     try {
-      const limit = parseLimit(request);
-      const playerId = parsePlayerIdFilter(request);
+      if (adminAuthorized) {
+        const offset = parseNonNegativeOffset(request);
+        sendJson(response, 200, {
+          items: await store.listPlayerAccounts({
+            limit: parseClampedPlayerAccountListLimit(request),
+            ...(offset != null ? { offset } : {}),
+            ...(requestedPlayerId ? { playerId: requestedPlayerId } : {})
+          })
+        });
+        return;
+      }
+
+      if (requestedPlayerId && requestedPlayerId !== authSession?.playerId) {
+        sendJson(response, 200, { items: [] });
+        return;
+      }
+
+      const account =
+        (await store.loadPlayerAccount(authSession!.playerId)) ??
+        (await store.ensurePlayerAccount({
+          playerId: authSession!.playerId,
+          displayName: authSession!.displayName
+        }));
       sendJson(response, 200, {
-        items: (await store.listPlayerAccounts({
-          ...(limit != null ? { limit } : {}),
-          ...(playerId ? { playerId } : {})
-        })).map((account) => toPublicPlayerAccount(account))
+        items: [withBattleReportCenter(account)]
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -3457,15 +3537,23 @@ export function registerPlayerAccountRoutes(
       return;
     }
 
+    const adminAuthorized = isAdminAuthorized(request);
+    const authSession = adminAuthorized ? null : await requireAuthSession(request, response, store);
+    if (!adminAuthorized && !authSession) {
+      return;
+    }
+    const isOwner = authSession?.playerId === playerId;
+
     if (!store) {
+      const account = withBattleReportCenter(
+        createLocalModeAccount({
+          playerId,
+          displayName: isOwner ? authSession?.displayName : playerId,
+          ...(isOwner && authSession?.loginId ? { loginId: authSession.loginId } : {})
+        })
+      );
       sendJson(response, 200, {
-        account: toPublicPlayerAccount(
-          withBattleReportCenter(
-            createLocalModeAccount({
-              playerId
-            })
-          )
-        )
+        account: adminAuthorized || isOwner ? account : toPublicPlayerAccount(account)
       });
       return;
     }
@@ -3474,14 +3562,15 @@ export function registerPlayerAccountRoutes(
       const account = await store.loadPlayerAccount(playerId);
       if (!account) {
         if (isEphemeralGuestPlayerId(playerId)) {
+          const localAccount = withBattleReportCenter(
+            createLocalModeAccount({
+              playerId,
+              displayName: isOwner ? authSession?.displayName : playerId,
+              ...(isOwner && authSession?.loginId ? { loginId: authSession.loginId } : {})
+            })
+          );
           sendJson(response, 200, {
-            account: toPublicPlayerAccount(
-              withBattleReportCenter(
-                createLocalModeAccount({
-                  playerId
-                })
-              )
-            )
+            account: adminAuthorized || isOwner ? localAccount : toPublicPlayerAccount(localAccount)
           });
           return;
         }
@@ -3494,7 +3583,10 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      sendJson(response, 200, { account: toPublicPlayerAccount(withBattleReportCenter(account)) });
+      const accountWithReports = withBattleReportCenter(account);
+      sendJson(response, 200, {
+        account: adminAuthorized || isOwner ? accountWithReports : toPublicPlayerAccount(accountWithReports)
+      });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
