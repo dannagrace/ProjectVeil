@@ -218,7 +218,13 @@ test("ugc review admin auth uses timing-safe secret comparisons", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /\bheader\s*===\s*/);
+  assert.doesNotMatch(source, /\bsecret\s*===\s*/);
+  assert.doesNotMatch(source, /\badminSecret\s*===\s*/);
   assert.doesNotMatch(source, /header\s*===\s*readRuntimeSecret\(/);
+  assert.doesNotMatch(source, /readRuntimeSecret\([^)]*\)\s*===/);
+  assert.doesNotMatch(source, /===\s*readRuntimeSecret\b/);
   assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
+  assert.doesNotMatch(source, /===\s*adminSecret\b/);
   assert.doesNotMatch(source, /header\s*===\s*adminSecret/);
 });
