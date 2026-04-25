@@ -120,6 +120,8 @@ test("network policy restricts ingress to ingress-nginx and narrows egress", asy
     assert.match(policy, /port:\s*3306/);
     assert.doesNotMatch(policy, /cidr:\s*0\.0\.0\.0\/0\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*3306/);
     assert.match(policy, /port:\s*443/);
+    assert.match(policy, /port:\s*465/);
+    assert.match(policy, /port:\s*587/);
   }
 });
 
