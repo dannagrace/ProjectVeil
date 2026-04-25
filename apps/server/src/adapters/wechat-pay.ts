@@ -1183,7 +1183,16 @@ export function registerWechatPayRoutes(
   app.post("/api/payment/wechat/notification", handleWechatCallbackRequest);
 
   if (app.get) {
-    app.get("/api/runtime/wechat-payment-grants", async (_request, response) => {
+    app.get("/api/runtime/wechat-payment-grants", async (request, response) => {
+      const adminToken = readAdminToken();
+      if (!adminToken) {
+        sendJson(response, 503, { error: { code: "admin_token_not_configured", message: "VEIL_ADMIN_TOKEN is not configured" } });
+        return;
+      }
+      if (!isAdminRequest(request)) {
+        sendJson(response, 403, { error: { code: "forbidden", message: "Invalid admin token" } });
+        return;
+      }
       if (!isPaymentOpsStoreReady(store)) {
         sendJson(response, 503, {
           error: {

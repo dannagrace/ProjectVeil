@@ -51,6 +51,7 @@ class TestResponse extends EventEmitter {
   statusCode = 200;
   readonly headers = new Map<string, string>();
   body = "";
+  ended = false;
 
   setHeader(name: string, value: string): void {
     this.headers.set(name.toLowerCase(), value);
@@ -60,6 +61,7 @@ class TestResponse extends EventEmitter {
     if (chunk != null) {
       this.body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
     }
+    this.ended = true;
     this.emit("finish");
   }
 }
@@ -117,7 +119,9 @@ class TestApp {
     };
 
     next();
-    await EventEmitter.once(response, "finish");
+    if (!response.ended) {
+      await EventEmitter.once(response, "finish");
+    }
 
     return {
       statusCode: response.statusCode,
@@ -1243,7 +1247,23 @@ test("wechat pay verify persists grant_pending failures and admin retry can sett
     assert.equal(receipt?.transactionId, "wechat-transaction-123");
     assert.equal(accountBeforeRetry?.gems ?? 0, 0);
 
-    const runtimeBeforeRetry = await app.invoke("/api/runtime/wechat-payment-grants", { method: "GET" });
+    const unauthenticatedRuntime = await app.invoke("/api/runtime/wechat-payment-grants", { method: "GET" });
+    assert.equal(unauthenticatedRuntime.statusCode, 403);
+
+    const invalidRuntimeToken = await app.invoke("/api/runtime/wechat-payment-grants", {
+      method: "GET",
+      headers: {
+        "x-veil-admin-token": "not-the-admin-token"
+      }
+    });
+    assert.equal(invalidRuntimeToken.statusCode, 403);
+
+    const runtimeBeforeRetry = await app.invoke("/api/runtime/wechat-payment-grants", {
+      method: "GET",
+      headers: {
+        "x-veil-admin-token": "wechat-admin-token"
+      }
+    });
     const runtimeBeforeRetryPayload = runtimeBeforeRetry.json as { queueCount: number; deadLetterCount: number; pendingOrders: Array<{ orderId: string }> };
     assert.equal(runtimeBeforeRetry.statusCode, 200);
     assert.equal(runtimeBeforeRetryPayload.queueCount, 1);
@@ -1284,7 +1304,12 @@ test("wechat pay verify persists grant_pending failures and admin retry can sett
     assert.equal(settledOrder?.status, "settled");
     assert.equal(accountAfterRetry?.gems, 120);
 
-    const runtimeAfterRetry = await app.invoke("/api/runtime/wechat-payment-grants", { method: "GET" });
+    const runtimeAfterRetry = await app.invoke("/api/runtime/wechat-payment-grants", {
+      method: "GET",
+      headers: {
+        "x-veil-admin-token": "wechat-admin-token"
+      }
+    });
     const runtimeAfterRetryPayload = runtimeAfterRetry.json as { queueCount: number; deadLetterCount: number };
     assert.equal(runtimeAfterRetryPayload.queueCount, 0);
     assert.equal(runtimeAfterRetryPayload.deadLetterCount, 0);
@@ -1349,7 +1374,10 @@ test("wechat pay admin retry exhausts grant failures into dead_letter and expose
     const deadLetterOrder = await store.loadPaymentOrder(order.orderId);
     const runtimePayload = (
       await app.invoke("/api/runtime/wechat-payment-grants", {
-        method: "GET"
+        method: "GET",
+        headers: {
+          "x-veil-admin-token": "wechat-admin-token"
+        }
       })
     ).json as { queueCount: number; deadLetterCount: number; deadLetterOrders: Array<{ orderId: string }> };
     const metrics = buildPrometheusMetricsDocument();
