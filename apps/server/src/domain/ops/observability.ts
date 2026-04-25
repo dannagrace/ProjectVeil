@@ -300,6 +300,25 @@ interface RuntimeHealthPayload {
   };
 }
 
+interface RuntimeLivenessPayload {
+  status: "ok";
+  service: string;
+  checkedAt: string;
+  startedAt: string;
+  uptimeSeconds: number;
+}
+
+interface RuntimeReadinessPayload {
+  status: "ok" | "warn";
+  service: string;
+  checkedAt: string;
+  startedAt: string;
+  uptimeSeconds: number;
+  runtime: {
+    persistence: RuntimePersistenceHealth;
+  };
+}
+
 interface AuthReadinessPayload {
   status: "ok" | "warn";
   service: string;
@@ -605,6 +624,39 @@ function renderHistogramMetric(name: string, help: string, state: HistogramMetri
   lines.push(`${name}_sum ${state.sum}`);
   lines.push(`${name}_count ${state.count}`);
   return lines;
+}
+
+function buildRuntimeProbeBase(service: string) {
+  return {
+    service,
+    checkedAt: new Date().toISOString(),
+    startedAt: new Date(runtimeObservability.startedAt).toISOString(),
+    uptimeSeconds: Number(((Date.now() - runtimeObservability.startedAt) / 1_000).toFixed(3))
+  };
+}
+
+function buildLivenessPayload(service = "project-veil-server"): RuntimeLivenessPayload {
+  return {
+    status: "ok",
+    ...buildRuntimeProbeBase(service)
+  };
+}
+
+function buildReadinessPayload(
+  service = "project-veil-server",
+  persistence: RuntimePersistenceHealth = {
+    status: "ok",
+    storage: "mysql",
+    message: "Persistent room storage available."
+  }
+): RuntimeReadinessPayload {
+  return {
+    status: persistence.status === "degraded" ? "warn" : "ok",
+    ...buildRuntimeProbeBase(service),
+    runtime: {
+      persistence: { ...persistence }
+    }
+  };
 }
 
 function buildHealthPayload(
@@ -2289,7 +2341,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.paymentGrant.counters.deadLetterTotal = 0;
 }
 
-const PUBLIC_RUNTIME_CORS_PATHS = new Set(["/api/runtime/health"]);
+const PUBLIC_RUNTIME_CORS_PATHS = new Set(["/api/runtime/health", "/api/runtime/livez", "/api/runtime/readyz"]);
 
 function sendAdminTokenNotConfigured(response: ServerResponse): void {
   sendJson(response, 503, {
@@ -2383,6 +2435,23 @@ export function registerRuntimeObservabilityRoutes(
     }
 
     next();
+  });
+
+  app.get("/api/runtime/livez", async (_request, response) => {
+    try {
+      sendJson(response, 200, buildLivenessPayload(serviceName));
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
+  });
+
+  app.get("/api/runtime/readyz", async (_request, response) => {
+    try {
+      const payload = buildReadinessPayload(serviceName, persistence);
+      sendJson(response, payload.status === "ok" ? 200 : 503, payload);
+    } catch (error) {
+      sendJson(response, 500, { error: toErrorPayload(error) });
+    }
   });
 
   app.get("/api/runtime/health", async (_request, response) => {

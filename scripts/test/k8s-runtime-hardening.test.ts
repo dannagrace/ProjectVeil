@@ -45,7 +45,9 @@ function assertDeploymentHardening(manifest: string): void {
 function assertProbeAndResources(manifest: string): void {
   assert.match(manifest, /resources:\s*\n\s*requests:\s*\n\s*cpu:\s*500m\s*\n\s*memory:\s*512Mi/);
   assert.match(manifest, /limits:\s*\n\s*cpu:\s*"1"\s*\n\s*memory:\s*1Gi/);
-  assert.match(manifest, /livenessProbe:\s*\n\s*httpGet:\s*\n\s*path:\s*\/api\/runtime\/health\s*\n\s*port:\s*http/);
+  assert.match(manifest, /readinessProbe:\s*\n\s*httpGet:\s*\n\s*path:\s*\/api\/runtime\/readyz\s*\n\s*port:\s*http/);
+  assert.match(manifest, /livenessProbe:\s*\n\s*httpGet:\s*\n\s*path:\s*\/api\/runtime\/livez\s*\n\s*port:\s*http/);
+  assert.doesNotMatch(manifest, /path:\s*\/api\/runtime\/health/);
 }
 
 test("runtime Dockerfile runs as a non-root veil user", async () => {
@@ -55,6 +57,8 @@ test("runtime Dockerfile runs as a non-root veil user", async () => {
   assert.match(dockerfile, /useradd -r --uid 10001 --gid veil veil/);
   assert.match(dockerfile, /apt-get install -y --no-install-recommends awscli/);
   assert.match(dockerfile, /ENV HOME=\/tmp/);
+  assert.match(dockerfile, /HEALTHCHECK[\s\S]*\/api\/runtime\/livez/);
+  assert.doesNotMatch(dockerfile, /HEALTHCHECK[\s\S]*\/api\/runtime\/health/);
   assert.match(dockerfile, /USER 10001:10001/);
 });
 

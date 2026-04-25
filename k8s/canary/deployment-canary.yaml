@@ -65,7 +65,7 @@ spec:
               memory: 1Gi
           readinessProbe:
             httpGet:
-              path: /api/runtime/health
+              path: /api/runtime/readyz
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -73,7 +73,7 @@ spec:
             failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /api/runtime/health
+              path: /api/runtime/livez
               port: http
             initialDelaySeconds: 30
             periodSeconds: 15

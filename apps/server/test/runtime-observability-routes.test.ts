@@ -11,6 +11,8 @@ import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } 
 import { registerPrometheusMetricsMiddleware, registerPrometheusMetricsRoute } from "@server/infra/dev-server";
 import {
   recordRuntimeErrorEvent,
+  recordAntiCheatAlert,
+  recordLeaderboardAbuseAlert,
   recordMatchmakingRateLimited,
   registerRuntimeObservabilityRoutes,
   setMatchmakingQueueDepth,
@@ -262,6 +264,75 @@ test("runtime health returns 503 when persistence is degraded to memory mode", a
   assert.equal(healthPayload.status, "warn");
   assert.equal(healthPayload.runtime.persistence.status, "degraded");
   assert.equal(healthPayload.runtime.persistence.storage, "memory");
+});
+
+test("runtime livez stays healthy when leaderboard and anti-cheat alerts are active", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => resetRuntimeObservability());
+
+  const routes = createRuntimeRouteRegistry();
+  registerRuntimeObservabilityRoutes(routes.app);
+  const handler = routes.gets.get("/api/runtime/livez");
+  assert.ok(handler);
+
+  recordLeaderboardAbuseAlert({
+    type: "leaderboard_daily_gain_cap",
+    playerId: "player-ranked-1",
+    opponentPlayerId: "player-ranked-2",
+    at: "2026-04-25T08:00:00.000Z",
+    detail: "Daily ELO gain cap triggered."
+  });
+  recordAntiCheatAlert({
+    roomId: "room-ranked-alpha",
+    playerId: "player-ranked-1",
+    sessionId: "session-ranked-1",
+    scope: "battle",
+    actionType: "battle.attack",
+    reason: "invalid_turn",
+    rejectionCount: 5,
+    windowMs: 30_000,
+    recordedAt: "2026-04-25T08:00:05.000Z"
+  });
+
+  const output = createJsonResponse();
+  await handler({} as IncomingMessage, output.response);
+  const payload = output.json();
+
+  assert.equal(output.response.statusCode, 200);
+  assert.equal(payload.status, "ok");
+});
+
+test("runtime readyz returns 503 when persistence is degraded", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => resetRuntimeObservability());
+
+  const routes = createRuntimeRouteRegistry();
+  registerRuntimeObservabilityRoutes(routes.app, {
+    persistence: {
+      status: "degraded",
+      storage: "memory",
+      message: "In-memory room persistence active; room data will not survive process restarts."
+    }
+  });
+  const handler = routes.gets.get("/api/runtime/readyz");
+  assert.ok(handler);
+
+  const output = createJsonResponse();
+  await handler({} as IncomingMessage, output.response);
+  const payload = output.json() as {
+    status?: string;
+    runtime?: {
+      persistence?: {
+        status?: string;
+        storage?: string;
+      };
+    };
+  };
+
+  assert.equal(output.response.statusCode, 503);
+  assert.equal(payload.status, "warn");
+  assert.equal(payload.runtime?.persistence?.status, "degraded");
+  assert.equal(payload.runtime?.persistence?.storage, "memory");
 });
 
 async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
