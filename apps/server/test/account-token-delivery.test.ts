@@ -4,12 +4,150 @@ import { createServer as createNetServer } from "node:net";
 import test from "node:test";
 import {
   AccountTokenDeliveryConfigurationError,
+  configureAccountTokenDeliveryQueuePersistence,
+  createRedisAccountTokenDeliveryQueuePersistence,
   deliverAccountToken,
   readAccountRegistrationDeliveryMode,
-  readPasswordRecoveryDeliveryMode
+  readPasswordRecoveryDeliveryMode,
+  resetAccountTokenDeliveryState
 } from "@server/adapters/account-token-delivery";
+import type { RedisClientLike } from "@server/infra/redis";
 
-async function startWebhookServer(): Promise<{
+class MemoryRedisClient implements RedisClientLike {
+  private readonly values = new Map<string, string>();
+  private readonly hashes = new Map<string, Map<string, string>>();
+  private readonly lists = new Map<string, string[]>();
+
+  async del(...keys: string[]): Promise<number> {
+    let deleted = 0;
+    for (const key of keys) {
+      if (this.values.delete(key)) {
+        deleted += 1;
+      }
+      if (this.hashes.delete(key)) {
+        deleted += 1;
+      }
+      if (this.lists.delete(key)) {
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
+  async eval(_script: string, _numKeys: number, ...args: string[]): Promise<unknown> {
+    const [key, expectedValue] = args;
+    if (key && this.values.get(key) === expectedValue) {
+      this.values.delete(key);
+      return 1;
+    }
+    return 0;
+  }
+
+  async get(key: string): Promise<string | null> {
+    return this.values.get(key) ?? null;
+  }
+
+  async hdel(key: string, ...fields: string[]): Promise<number> {
+    const hash = this.hashes.get(key);
+    if (!hash) {
+      return 0;
+    }
+    let deleted = 0;
+    for (const field of fields) {
+      if (hash.delete(field)) {
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
+  async hget(key: string, field: string): Promise<string | null> {
+    return this.hashes.get(key)?.get(field) ?? null;
+  }
+
+  async hset(key: string, field: string, value: string): Promise<number> {
+    let hash = this.hashes.get(key);
+    if (!hash) {
+      hash = new Map<string, string>();
+      this.hashes.set(key, hash);
+    }
+    const isNew = !hash.has(field);
+    hash.set(field, value);
+    return isNew ? 1 : 0;
+  }
+
+  async incr(key: string): Promise<number> {
+    const value = Number(this.values.get(key) ?? "0") + 1;
+    this.values.set(key, String(value));
+    return value;
+  }
+
+  async lindex(key: string, index: number): Promise<string | null> {
+    return this.lists.get(key)?.[index] ?? null;
+  }
+
+  async linsert(key: string, direction: "BEFORE" | "AFTER", pivot: string, value: string): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    const index = list.indexOf(pivot);
+    if (index < 0) {
+      return -1;
+    }
+    list.splice(direction === "BEFORE" ? index : index + 1, 0, value);
+    this.lists.set(key, list);
+    return list.length;
+  }
+
+  async llen(key: string): Promise<number> {
+    return this.lists.get(key)?.length ?? 0;
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    const list = this.lists.get(key) ?? [];
+    const normalizedStop = stop < 0 ? list.length + stop : stop;
+    return list.slice(start, normalizedStop + 1);
+  }
+
+  async lrem(key: string, count: number, value: string): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    let removed = 0;
+    const next = list.filter((entry) => {
+      if ((count === 0 || removed < count) && entry === value) {
+        removed += 1;
+        return false;
+      }
+      return true;
+    });
+    this.lists.set(key, next);
+    return removed;
+  }
+
+  async quit(): Promise<unknown> {
+    return undefined;
+  }
+
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    list.push(...values);
+    this.lists.set(key, list);
+    return list.length;
+  }
+
+  async set(
+    key: string,
+    value: string,
+    _mode?: "PX",
+    _durationMs?: number,
+    condition?: "NX"
+  ): Promise<"OK" | null> {
+    if (condition === "NX" && this.values.has(key)) {
+      return null;
+    }
+    this.values.set(key, value);
+    return "OK";
+  }
+}
+
+async function startWebhookServer(options: { statusCode?: number } = {}): Promise<{
   close: () => Promise<void>;
   requests: Array<{ headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }>;
   url: string;
@@ -26,7 +164,7 @@ async function startWebhookServer(): Promise<{
       body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as Record<string, unknown>
     });
 
-    response.statusCode = 204;
+    response.statusCode = options.statusCode ?? 204;
     response.end();
   });
 
@@ -308,6 +446,48 @@ test("webhook delivery posts the token payload without returning it in-band", as
     token: "secret-token",
     expiresAt: "2026-03-29T00:00:00.000Z"
   });
+});
+
+test("webhook retry queue restores queued token deliveries from Redis persistence across restarts", async (t) => {
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace: `account-token-delivery:test:${Date.now()}`
+  });
+  const webhook = await startWebhookServer({ statusCode: 500 });
+  const payload = {
+    kind: "password-recovery" as const,
+    loginId: "restart-ranger",
+    playerId: "player-restore",
+    token: "restore-token",
+    expiresAt: "2099-03-29T00:00:00.000Z"
+  };
+  const env = {
+    VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url,
+    VEIL_AUTH_TOKEN_DELIVERY_MAX_ATTEMPTS: "3",
+    VEIL_AUTH_TOKEN_DELIVERY_RETRY_BASE_DELAY_MS: "600000",
+    VEIL_AUTH_TOKEN_DELIVERY_RETRY_MAX_DELAY_MS: "600000"
+  };
+
+  t.after(async () => {
+    resetAccountTokenDeliveryState();
+    await configureAccountTokenDeliveryQueuePersistence(null);
+    await webhook.close().catch(() => undefined);
+  });
+
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+
+  const initialResult = await deliverAccountToken("webhook", payload, env);
+  assert.equal(initialResult.deliveryStatus, "retry_scheduled");
+  assert.equal(initialResult.attemptCount, 1);
+  assert.equal(webhook.requests.length, 1);
+
+  resetAccountTokenDeliveryState();
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+
+  const restoredResult = await deliverAccountToken("webhook", payload, env);
+  assert.equal(restoredResult.deliveryStatus, "retry_scheduled");
+  assert.equal(restoredResult.attemptCount, 1);
+  assert.equal(webhook.requests.length, 1);
 });
 
 test("smtp delivery requires a configured host", async () => {

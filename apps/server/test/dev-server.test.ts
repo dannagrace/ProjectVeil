@@ -1123,6 +1123,13 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
       this.shutdownCalls += 1;
     }
   };
+  const accountTokenDeliveryRedisClient = {
+    shutdownCalls: 0,
+    quit() {
+      this.shutdownCalls += 1;
+      return Promise.resolve();
+    }
+  };
 
   await startDevServer(3123, "127.0.0.1", {
     readMySqlPersistenceConfig: () => null,
@@ -1133,6 +1140,17 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     readRedisUrl: () => "redis://127.0.0.1:6379/0",
     createRedisPresence: () => redisPresence,
     createRedisDriver: () => redisDriver,
+    createRedisClient: () => accountTokenDeliveryRedisClient as never,
+    createAccountTokenDeliveryQueuePersistence: () => ({
+      loadQueuedDeliveries: async () => [],
+      loadDeadLetterDeliveries: async () => [],
+      saveQueuedDelivery: async () => undefined,
+      deleteQueuedDelivery: async () => undefined,
+      saveDeadLetterDelivery: async () => undefined,
+      deleteDeadLetterDelivery: async () => undefined
+    }),
+    configureAccountTokenDeliveryQueuePersistence: async () => undefined,
+    shutdownAccountTokenDeliveryQueuePersistence: async () => undefined,
     registerAuthRoutes: () => undefined,
     registerConfigCenterRoutes: () => undefined,
     registerConfigViewerRoutes: () => undefined,
@@ -1175,6 +1193,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
 
   assert.equal(redisPresence.shutdownCalls, 1);
   assert.equal(redisDriver.shutdownCalls, 1);
+  assert.equal(accountTokenDeliveryRedisClient.shutdownCalls, 1);
   assert.equal(memoryStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
 });

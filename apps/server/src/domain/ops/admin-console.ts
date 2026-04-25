@@ -6,6 +6,10 @@ import { appendEventLogEntries, type EventLogEntry } from "@veil/shared/event-lo
 import type { ResourceLedger, WorldState } from "@veil/shared/models";
 import type { ServerMessage } from "@veil/shared/protocol";
 import { getCapturedAnalyticsEventsSnapshot } from "@server/domain/ops/analytics";
+import {
+  listAccountTokenDeliveryDeadLetters,
+  requeueAccountTokenDeliveryDeadLetter
+} from "@server/adapters/account-token-delivery";
 import { GuildService } from "@server/domain/social/guilds";
 import { loadFeatureFlagConfig, getRuntimeKillSwitchSnapshot } from "@server/domain/battle/feature-flags";
 import { buildAdminExperimentSummaries } from "@server/domain/battle/experiment-assignment";
@@ -1204,6 +1208,34 @@ export function registerAdminRoutes(
     sendJson(response, 200, {
       serverTime: new Date().toISOString(),
       experiments
+    });
+  });
+
+  app.get("/api/admin/auth-token-delivery/dead-letters", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-supervisor"])) return;
+    sendJson(response, 200, {
+      serverTime: new Date().toISOString(),
+      deadLetters: listAccountTokenDeliveryDeadLetters()
+    });
+  });
+
+  app.post("/api/admin/auth-token-delivery/dead-letters/:key/requeue", async (request, response) => {
+    if (!requireSupportRole(response, request, ["admin", "support-supervisor"])) return;
+    const key = decodeURIComponent(request.params.key ?? "").trim();
+    if (!key) {
+      sendJson(response, 400, { error: "Missing account-token delivery dead-letter key" });
+      return;
+    }
+
+    const queuedEntry = await requeueAccountTokenDeliveryDeadLetter(key);
+    if (!queuedEntry) {
+      sendJson(response, 404, { error: "Account-token delivery dead-letter not found" });
+      return;
+    }
+
+    sendJson(response, 202, {
+      serverTime: new Date().toISOString(),
+      queuedEntry
     });
   });
 

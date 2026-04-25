@@ -8,6 +8,10 @@ import path from "node:path";
 import type { GuildState } from "@veil/shared/models";
 import { normalizeGuildState } from "@veil/shared/social";
 import { captureAnalyticsEventsForTest, resetAnalyticsRuntimeDependencies } from "@server/domain/ops/analytics";
+import {
+  deliverAccountToken,
+  resetAccountTokenDeliveryState
+} from "@server/adapters/account-token-delivery";
 import { registerAdminRoutes } from "@server/domain/ops/admin-console";
 import { getActiveRoomInstances } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "@server/persistence";
@@ -904,6 +908,77 @@ test("GET /api/admin/experiments returns live experiment summaries with metrics"
   assert.ok(summary);
   assert.equal(summary.metrics?.variants.find((entry) => entry.variant === "value")?.conversions, 1);
   assert.equal(summary.metrics?.variants.find((entry) => entry.variant === "value")?.revenue, 30);
+});
+
+test("admin auth-token delivery DLQ routes list global dead letters and requeue without exposing tokens", async (t) => {
+  withAdminSecret(t);
+  const { supervisor } = withSupportSecrets(t);
+  t.after(() => resetAccountTokenDeliveryState());
+
+  await assert.rejects(() =>
+    deliverAccountToken(
+      "webhook",
+      {
+        kind: "password-recovery",
+        loginId: "admin-dlq-ranger",
+        playerId: "player-admin-dlq",
+        token: "do-not-expose-token",
+        expiresAt: "2099-04-25T00:00:00.000Z"
+      },
+      {
+        VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: "http://127.0.0.1:1/token-delivery",
+        VEIL_AUTH_TOKEN_DELIVERY_MAX_ATTEMPTS: "1",
+        VEIL_AUTH_TOKEN_DELIVERY_TIMEOUT_MS: "50"
+      }
+    )
+  );
+
+  const { gets, posts } = registerRoutes();
+  const listHandler = gets.get("/api/admin/auth-token-delivery/dead-letters");
+  assert.ok(listHandler);
+
+  const listResponse = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-secret": supervisor
+      }
+    }),
+    listResponse
+  );
+
+  assert.equal(listResponse.statusCode, 200);
+  const listPayload = JSON.parse(listResponse.body) as {
+    deadLetters: Array<Record<string, unknown>>;
+  };
+  assert.equal(listPayload.deadLetters.length, 1);
+  assert.equal(listPayload.deadLetters[0]?.key, "password-recovery:admin-dlq-ranger");
+  assert.equal(listPayload.deadLetters[0]?.loginId, "admin-dlq-ranger");
+  assert.equal("token" in (listPayload.deadLetters[0] ?? {}), false);
+
+  const requeueHandler = posts.get("/api/admin/auth-token-delivery/dead-letters/:key/requeue");
+  assert.ok(requeueHandler);
+
+  const requeueResponse = createResponse();
+  await requeueHandler(
+    createRequest({
+      method: "POST",
+      headers: {
+        "x-veil-admin-secret": supervisor
+      },
+      params: {
+        key: "password-recovery:admin-dlq-ranger"
+      }
+    }),
+    requeueResponse
+  );
+
+  assert.equal(requeueResponse.statusCode, 202);
+  const requeuePayload = JSON.parse(requeueResponse.body) as {
+    queuedEntry: Record<string, unknown>;
+  };
+  assert.equal(requeuePayload.queuedEntry.key, "password-recovery:admin-dlq-ranger");
+  assert.equal("token" in requeuePayload.queuedEntry, false);
 });
 
 test("GET /api/admin/runtime/kill-switches returns minimum versions and kill-switch matrix", async (t) => {

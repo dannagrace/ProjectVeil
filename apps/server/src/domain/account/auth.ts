@@ -860,8 +860,8 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
   return existing;
 }
 
-function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): AccountRegistrationState {
-  clearAccountTokenDeliveryState("account-registration", loginId);
+async function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): Promise<AccountRegistrationState> {
+  await clearAccountTokenDeliveryState("account-registration", loginId);
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readAccountRegistrationTtlMs()).toISOString();
   const state: AccountRegistrationState = {
@@ -877,7 +877,7 @@ function storeAccountRegistrationState(loginId: string, requestedDisplayName: st
   return state;
 }
 
-function consumeAccountRegistrationState(loginId: string, token: string): AccountRegistrationState | null {
+async function consumeAccountRegistrationState(loginId: string, token: string): Promise<AccountRegistrationState | null> {
   const state = getAccountRegistrationState(loginId);
   if (!state) {
     return null;
@@ -888,7 +888,7 @@ function consumeAccountRegistrationState(loginId: string, token: string): Accoun
   }
 
   accountRegistrationStateByLoginId.delete(loginId);
-  clearAccountTokenDeliveryState("account-registration", loginId);
+  await clearAccountTokenDeliveryState("account-registration", loginId);
   syncAuthStateTelemetry();
   return state;
 }
@@ -909,8 +909,8 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
   return existing;
 }
 
-function storePasswordRecoveryState(playerId: string, loginId: string, token: string): PasswordRecoveryState {
-  clearAccountTokenDeliveryState("password-recovery", loginId);
+async function storePasswordRecoveryState(playerId: string, loginId: string, token: string): Promise<PasswordRecoveryState> {
+  await clearAccountTokenDeliveryState("password-recovery", loginId);
   const issuedAt = new Date().toISOString();
   const expiresAt = new Date(nowMs() + readPasswordRecoveryTtlMs()).toISOString();
   const state: PasswordRecoveryState = {
@@ -926,7 +926,7 @@ function storePasswordRecoveryState(playerId: string, loginId: string, token: st
   return state;
 }
 
-function consumePasswordRecoveryState(loginId: string, token: string): PasswordRecoveryState | null {
+async function consumePasswordRecoveryState(loginId: string, token: string): Promise<PasswordRecoveryState | null> {
   const state = getPasswordRecoveryState(loginId);
   if (!state) {
     return null;
@@ -937,7 +937,7 @@ function consumePasswordRecoveryState(loginId: string, token: string): PasswordR
   }
 
   passwordRecoveryStateByLoginId.delete(loginId);
-  clearAccountTokenDeliveryState("password-recovery", loginId);
+  await clearAccountTokenDeliveryState("password-recovery", loginId);
   syncAuthStateTelemetry();
   return state;
 }
@@ -3003,7 +3003,7 @@ export function registerAuthRoutes(
       const registrationState =
         existingRegistrationState?.requestedDisplayName === requestedDisplayName
           ? existingRegistrationState
-          : storeAccountRegistrationState(loginId, requestedDisplayName, createAccountRegistrationToken());
+          : await storeAccountRegistrationState(loginId, requestedDisplayName, createAccountRegistrationToken());
 
       try {
         const delivery = await deliverAccountToken(accountRegistrationDeliveryMode, {
@@ -3110,7 +3110,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      const registrationState = consumeAccountRegistrationState(loginId, registrationToken);
+      const registrationState = await consumeAccountRegistrationState(loginId, registrationToken);
       if (!registrationState) {
         sendJson(response, 401, {
           error: {
@@ -3198,7 +3198,7 @@ export function registerAuthRoutes(
 
       let recoveryState = getPasswordRecoveryState(loginId);
       if (!recoveryState || recoveryState.playerId !== authAccount.playerId) {
-        recoveryState = storePasswordRecoveryState(authAccount.playerId, loginId, createPasswordRecoveryToken());
+        recoveryState = await storePasswordRecoveryState(authAccount.playerId, loginId, createPasswordRecoveryToken());
         await appendAccountAuditLog(
           store,
           authAccount.playerId,
@@ -3296,7 +3296,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      const recoveryState = consumePasswordRecoveryState(loginId, recoveryToken);
+      const recoveryState = await consumePasswordRecoveryState(loginId, recoveryToken);
       if (!recoveryState) {
         sendJson(response, 401, {
           error: {

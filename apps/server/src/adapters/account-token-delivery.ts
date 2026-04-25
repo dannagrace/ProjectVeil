@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Socket } from "node:net";
 import { connect as connectTls, TLSSocket } from "node:tls";
 import {
@@ -11,6 +12,11 @@ import {
   setAuthTokenDeliveryQueueCount,
   setAuthTokenDeliveryQueueLatency
 } from "@server/domain/ops/observability";
+import {
+  createRedisClient,
+  readRedisUrl,
+  type RedisClientLike
+} from "@server/infra/redis";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 export type AccountTokenDeliveryKind = "account-registration" | "password-recovery";
@@ -80,6 +86,37 @@ interface QueuedDeliveryEntry {
   };
 }
 
+export interface AccountTokenDeliveryQueueEntrySnapshot {
+  key: string;
+  kind: AccountTokenDeliveryKind;
+  loginId: string;
+  playerId?: string;
+  requestedDisplayName?: string;
+  deliveryMode: Extract<AccountTokenDeliveryMode, "smtp" | "webhook">;
+  attemptCount: number;
+  maxAttempts: number;
+  queuedAt: string;
+  nextAttemptAt: string;
+  expiresAt: string;
+  lastError?: {
+    message: string;
+    failureReason: AccountTokenDeliveryFailureReason;
+    statusCode?: number;
+  };
+}
+
+export interface AccountTokenDeliveryQueuePersistence {
+  loadQueuedDeliveries(): Promise<QueuedDeliveryEntry[]>;
+  loadDeadLetterDeliveries(): Promise<QueuedDeliveryEntry[]>;
+  saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void>;
+  deleteQueuedDelivery(key: string): Promise<void>;
+  saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<void>;
+  deleteDeadLetterDelivery(key: string): Promise<void>;
+  clear?(): Promise<void>;
+  acquireProcessingLock?(ttlMs: number): Promise<boolean>;
+  releaseProcessingLock?(): Promise<void>;
+}
+
 export interface AccountTokenDeliveryResult {
   deliveryMode: AccountTokenDeliveryMode;
   deliveryStatus: AccountTokenDeliveryStatus;
@@ -125,11 +162,16 @@ const DEFAULT_DELIVERY_RETRY_BASE_DELAY_MS = 5_000;
 const DEFAULT_DELIVERY_RETRY_MAX_DELAY_MS = 60_000;
 const DEFAULT_SMTP_PORT = 587;
 const DEFAULT_SMTPS_PORT = 465;
+const DEFAULT_QUEUE_PERSISTENCE_NAMESPACE = "veil:account-token-delivery";
+const QUEUE_PROCESSING_LOCK_TTL_MS = 30_000;
 
 const queuedDeliveries = new Map<string, QueuedDeliveryEntry>();
 const deadLetterDeliveries = new Map<string, QueuedDeliveryEntry>();
 let queueTimer: NodeJS.Timeout | null = null;
 let queueProcessing = false;
+let queuePersistence: AccountTokenDeliveryQueuePersistence | null = null;
+let queuePersistenceInitialization: Promise<void> | null = null;
+let ownedRedisClient: RedisClientLike | null = null;
 
 function parseEnvNumber(
   value: string | undefined,
@@ -305,6 +347,198 @@ function toIsoTimestamp(timestamp: number): string {
   return new Date(timestamp).toISOString();
 }
 
+function normalizeQueueNamespace(namespace: string | undefined): string {
+  const trimmed = namespace?.trim().replace(/:+$/g, "");
+  return trimmed || DEFAULT_QUEUE_PERSISTENCE_NAMESPACE;
+}
+
+function parseQueuedDeliveryEntry(serialized: string): QueuedDeliveryEntry | null {
+  try {
+    const parsed = JSON.parse(serialized) as Partial<QueuedDeliveryEntry>;
+    if (
+      typeof parsed.key !== "string" ||
+      typeof parsed.attemptCount !== "number" ||
+      typeof parsed.maxAttempts !== "number" ||
+      typeof parsed.queuedAt !== "number" ||
+      typeof parsed.nextAttemptAt !== "number" ||
+      !parsed.payload ||
+      !parsed.config ||
+      (parsed.config.kind !== "smtp" && parsed.config.kind !== "webhook")
+    ) {
+      return null;
+    }
+    return parsed as QueuedDeliveryEntry;
+  } catch {
+    return null;
+  }
+}
+
+function snapshotQueueEntry(entry: QueuedDeliveryEntry): AccountTokenDeliveryQueueEntrySnapshot {
+  return {
+    key: entry.key,
+    kind: entry.payload.kind,
+    loginId: entry.payload.loginId,
+    ...(entry.payload.playerId ? { playerId: entry.payload.playerId } : {}),
+    ...(entry.payload.requestedDisplayName ? { requestedDisplayName: entry.payload.requestedDisplayName } : {}),
+    deliveryMode: entry.config.kind,
+    attemptCount: entry.attemptCount,
+    maxAttempts: entry.maxAttempts,
+    queuedAt: toIsoTimestamp(entry.queuedAt),
+    nextAttemptAt: toIsoTimestamp(entry.nextAttemptAt),
+    expiresAt: entry.payload.expiresAt,
+    ...(entry.lastError ? { lastError: entry.lastError } : {})
+  };
+}
+
+export function createRedisAccountTokenDeliveryQueuePersistence(
+  redis: RedisClientLike,
+  options: { namespace?: string } = {}
+): AccountTokenDeliveryQueuePersistence {
+  const namespace = normalizeQueueNamespace(options.namespace);
+  const queuedHashKey = `${namespace}:queued`;
+  const queuedListKey = `${namespace}:queued-keys`;
+  const deadLetterHashKey = `${namespace}:dead-letter`;
+  const deadLetterListKey = `${namespace}:dead-letter-keys`;
+  const processingLockKey = `${namespace}:processor-lock`;
+  const lockOwner = `${process.pid}:${randomUUID()}`;
+
+  const loadEntries = async (hashKey: string, listKey: string): Promise<QueuedDeliveryEntry[]> => {
+    const keys = Array.from(new Set(await redis.lrange(listKey, 0, -1)));
+    const entries: QueuedDeliveryEntry[] = [];
+    for (const key of keys) {
+      const serialized = await redis.hget(hashKey, key);
+      if (!serialized) {
+        await redis.lrem(listKey, 0, key);
+        continue;
+      }
+
+      const entry = parseQueuedDeliveryEntry(serialized);
+      if (!entry) {
+        await redis.hdel(hashKey, key);
+        await redis.lrem(listKey, 0, key);
+        continue;
+      }
+      entries.push(entry);
+    }
+    return entries;
+  };
+
+  const saveEntry = async (hashKey: string, listKey: string, entry: QueuedDeliveryEntry): Promise<void> => {
+    await redis.hset(hashKey, entry.key, JSON.stringify(entry));
+    await redis.lrem(listKey, 0, entry.key);
+    await redis.rpush(listKey, entry.key);
+  };
+
+  const deleteEntry = async (hashKey: string, listKey: string, key: string): Promise<void> => {
+    await redis.hdel(hashKey, key);
+    await redis.lrem(listKey, 0, key);
+  };
+
+  return {
+    loadQueuedDeliveries: () => loadEntries(queuedHashKey, queuedListKey),
+    loadDeadLetterDeliveries: () => loadEntries(deadLetterHashKey, deadLetterListKey),
+    saveQueuedDelivery: (entry) => saveEntry(queuedHashKey, queuedListKey, entry),
+    deleteQueuedDelivery: (key) => deleteEntry(queuedHashKey, queuedListKey, key),
+    saveDeadLetterDelivery: (entry) => saveEntry(deadLetterHashKey, deadLetterListKey, entry),
+    deleteDeadLetterDelivery: (key) => deleteEntry(deadLetterHashKey, deadLetterListKey, key),
+    clear: () => redis.del(queuedHashKey, queuedListKey, deadLetterHashKey, deadLetterListKey, processingLockKey).then(() => undefined),
+    acquireProcessingLock: async (ttlMs) =>
+      (await redis.set(processingLockKey, lockOwner, "PX", ttlMs, "NX")) === "OK",
+    releaseProcessingLock: async () => {
+      await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        processingLockKey,
+        lockOwner
+      );
+    }
+  };
+}
+
+export async function configureAccountTokenDeliveryQueuePersistence(
+  persistence: AccountTokenDeliveryQueuePersistence | null
+): Promise<void> {
+  clearQueueTimer();
+  queuePersistence = persistence;
+  queuedDeliveries.clear();
+  deadLetterDeliveries.clear();
+
+  if (queuePersistence) {
+    const [queued, deadLetters] = await Promise.all([
+      queuePersistence.loadQueuedDeliveries(),
+      queuePersistence.loadDeadLetterDeliveries()
+    ]);
+    for (const entry of queued) {
+      queuedDeliveries.set(entry.key, entry);
+    }
+    for (const entry of deadLetters) {
+      deadLetterDeliveries.set(entry.key, entry);
+    }
+  }
+
+  syncQueueTelemetry();
+  scheduleQueuePump();
+}
+
+async function ensureAccountTokenDeliveryQueuePersistence(env: NodeJS.ProcessEnv): Promise<void> {
+  if (queuePersistence) {
+    return;
+  }
+
+  if (queuePersistenceInitialization) {
+    await queuePersistenceInitialization;
+    return;
+  }
+
+  const redisUrl = readRedisUrl(env);
+  if (!redisUrl) {
+    if (isProductionEnvironment(env)) {
+      throw new AccountTokenDeliveryConfigurationError(
+        "REDIS_URL must be configured for production account-token delivery retry persistence"
+      );
+    }
+    return;
+  }
+
+  queuePersistenceInitialization = (async () => {
+    ownedRedisClient = createRedisClient(redisUrl);
+    await configureAccountTokenDeliveryQueuePersistence(
+      createRedisAccountTokenDeliveryQueuePersistence(ownedRedisClient)
+    );
+  })().finally(() => {
+    queuePersistenceInitialization = null;
+  });
+  await queuePersistenceInitialization;
+}
+
+async function saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> {
+  if (queuePersistence) {
+    await queuePersistence.saveQueuedDelivery(entry);
+  }
+}
+
+async function deleteQueuedDelivery(key: string): Promise<void> {
+  if (queuePersistence) {
+    await queuePersistence.deleteQueuedDelivery(key);
+  }
+}
+
+async function saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<void> {
+  if (queuePersistence) {
+    await queuePersistence.saveDeadLetterDelivery(entry);
+  }
+}
+
+async function deleteDeadLetterDelivery(key: string): Promise<void> {
+  if (queuePersistence) {
+    await queuePersistence.deleteDeadLetterDelivery(key);
+  }
+}
+
+async function closeRedisClient(redis: RedisClientLike | null): Promise<void> {
+  await redis?.quit?.();
+}
+
 function syncQueueTelemetry(): void {
   setAuthTokenDeliveryQueueCount(queuedDeliveries.size);
   setAuthTokenDeliveryDeadLetterCount(deadLetterDeliveries.size);
@@ -352,9 +586,8 @@ function scheduleQueuePump(): void {
   }, delayMs);
 }
 
-function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDeliveryError, attemptNumber: number): void {
-  queuedDeliveries.delete(entry.key);
-  deadLetterDeliveries.set(entry.key, {
+async function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDeliveryError, attemptNumber: number): Promise<void> {
+  const deadLetterEntry = {
     ...entry,
     attemptCount: attemptNumber,
     lastError: {
@@ -362,7 +595,11 @@ function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDeliveryE
       failureReason: error.failureReason,
       ...(error.statusCode != null ? { statusCode: error.statusCode } : {})
     }
-  });
+  };
+  queuedDeliveries.delete(entry.key);
+  deadLetterDeliveries.set(entry.key, deadLetterEntry);
+  await deleteQueuedDelivery(entry.key);
+  await saveDeadLetterDelivery(deadLetterEntry);
   recordAuthTokenDeliveryDeadLetter();
   recordAuthTokenDeliveryAttempt({
     kind: entry.payload.kind,
@@ -744,7 +981,7 @@ function successMessageForDeliveryMode(mode: Extract<AccountTokenDeliveryMode, "
 
 async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> {
   if (isExpired(entry.payload.expiresAt)) {
-    markDeadLetter(
+    await markDeadLetter(
       entry,
       new AccountTokenDeliveryError("Token delivery retry exhausted because the token expired before delivery succeeded", {
         retryable: false,
@@ -760,6 +997,8 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
     await deliverViaTransport(entry.payload, entry.config);
     queuedDeliveries.delete(entry.key);
     deadLetterDeliveries.delete(entry.key);
+    await deleteQueuedDelivery(entry.key);
+    await deleteDeadLetterDelivery(entry.key);
     recordAuthTokenDeliverySuccess();
     recordAuthTokenDeliveryAttempt({
       kind: entry.payload.kind,
@@ -780,12 +1019,12 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
     recordAuthTokenDeliveryFailure(error.failureReason);
 
     if (!error.retryable || attemptNumber >= entry.maxAttempts) {
-      markDeadLetter(entry, error, attemptNumber);
+      await markDeadLetter(entry, error, attemptNumber);
       return;
     }
 
     const nextAttemptAt = Date.now() + computeRetryDelayMs(attemptNumber, entry.config);
-    queuedDeliveries.set(entry.key, {
+    const queuedEntry = {
       ...entry,
       attemptCount: attemptNumber,
       queuedAt: entry.queuedAt,
@@ -795,7 +1034,9 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
         failureReason: error.failureReason,
         ...(error.statusCode != null ? { statusCode: error.statusCode } : {})
       }
-    });
+    };
+    queuedDeliveries.set(entry.key, queuedEntry);
+    await saveQueuedDelivery(queuedEntry);
     recordAuthTokenDeliveryRetry();
     recordAuthTokenDeliveryAttempt({
       kind: entry.payload.kind,
@@ -820,6 +1061,15 @@ async function processQueuedDeliveries(): Promise<void> {
     return;
   }
 
+  let lockAcquired = false;
+  if (queuePersistence?.acquireProcessingLock) {
+    lockAcquired = await queuePersistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
+    if (!lockAcquired) {
+      scheduleQueuePump();
+      return;
+    }
+  }
+
   queueProcessing = true;
   try {
     while (true) {
@@ -833,15 +1083,21 @@ async function processQueuedDeliveries(): Promise<void> {
     }
   } finally {
     queueProcessing = false;
-    scheduleQueuePump();
+    try {
+      if (lockAcquired) {
+        await queuePersistence?.releaseProcessingLock?.();
+      }
+    } finally {
+      scheduleQueuePump();
+    }
   }
 }
 
-function queueRetry(
+async function queueRetry(
   payload: AccountTokenDeliveryPayload,
   config: TransportDeliveryConfig,
   error: AccountTokenDeliveryError
-): AccountTokenDeliveryResult {
+): Promise<AccountTokenDeliveryResult> {
   const key = buildDeliveryKey(payload);
   const existing = queuedDeliveries.get(key);
   if (existing && existing.payload.token === payload.token) {
@@ -855,7 +1111,7 @@ function queueRetry(
   }
 
   const nextAttemptAt = Date.now() + computeRetryDelayMs(1, config);
-  queuedDeliveries.set(key, {
+  const queuedEntry = {
     key,
     payload,
     config,
@@ -868,8 +1124,11 @@ function queueRetry(
       failureReason: error.failureReason,
       ...(error.statusCode != null ? { statusCode: error.statusCode } : {})
     }
-  });
+  };
+  queuedDeliveries.set(key, queuedEntry);
   deadLetterDeliveries.delete(key);
+  await saveQueuedDelivery(queuedEntry);
+  await deleteDeadLetterDelivery(key);
   recordAuthTokenDeliveryRetry();
   recordAuthTokenDeliveryAttempt({
     kind: payload.kind,
@@ -908,10 +1167,12 @@ export function readPasswordRecoveryDeliveryMode(env: NodeJS.ProcessEnv = proces
   return readDeliveryMode(env.VEIL_PASSWORD_RECOVERY_DELIVERY_MODE, env, "VEIL_PASSWORD_RECOVERY_DELIVERY_MODE");
 }
 
-export function clearAccountTokenDeliveryState(kind: AccountTokenDeliveryKind, loginId: string): void {
+export async function clearAccountTokenDeliveryState(kind: AccountTokenDeliveryKind, loginId: string): Promise<void> {
   const key = buildDeliveryKey({ kind, loginId });
   queuedDeliveries.delete(key);
   deadLetterDeliveries.delete(key);
+  await deleteQueuedDelivery(key);
+  await deleteDeadLetterDelivery(key);
   syncQueueTelemetry();
   scheduleQueuePump();
 }
@@ -922,6 +1183,45 @@ export function resetAccountTokenDeliveryState(): void {
   deadLetterDeliveries.clear();
   queueProcessing = false;
   syncQueueTelemetry();
+}
+
+export async function shutdownAccountTokenDeliveryQueuePersistence(): Promise<void> {
+  resetAccountTokenDeliveryState();
+  queuePersistence = null;
+  queuePersistenceInitialization = null;
+  if (ownedRedisClient) {
+    await closeRedisClient(ownedRedisClient);
+    ownedRedisClient = null;
+  }
+}
+
+export function listAccountTokenDeliveryDeadLetters(): AccountTokenDeliveryQueueEntrySnapshot[] {
+  return Array.from(deadLetterDeliveries.values())
+    .sort((left, right) => right.nextAttemptAt - left.nextAttemptAt)
+    .map(snapshotQueueEntry);
+}
+
+export async function requeueAccountTokenDeliveryDeadLetter(
+  key: string
+): Promise<AccountTokenDeliveryQueueEntrySnapshot | null> {
+  const entry = deadLetterDeliveries.get(key);
+  if (!entry) {
+    return null;
+  }
+
+  const queuedEntry: QueuedDeliveryEntry = {
+    ...entry,
+    attemptCount: 0,
+    queuedAt: Date.now(),
+    nextAttemptAt: Date.now()
+  };
+  deadLetterDeliveries.delete(key);
+  queuedDeliveries.set(key, queuedEntry);
+  await deleteDeadLetterDelivery(key);
+  await saveQueuedDelivery(queuedEntry);
+  syncQueueTelemetry();
+  scheduleQueuePump();
+  return snapshotQueueEntry(queuedEntry);
 }
 
 export async function deliverAccountToken(
@@ -969,6 +1269,7 @@ export async function deliverAccountToken(
     };
   }
 
+  await ensureAccountTokenDeliveryQueuePersistence(env);
   const config = readTransportDeliveryConfig(mode, env);
   const key = buildDeliveryKey(payload);
   const existing = queuedDeliveries.get(key);
@@ -986,6 +1287,8 @@ export async function deliverAccountToken(
     await deliverViaTransport(payload, config);
     queuedDeliveries.delete(key);
     deadLetterDeliveries.delete(key);
+    await deleteQueuedDelivery(key);
+    await deleteDeadLetterDelivery(key);
     recordAuthTokenDeliverySuccess();
     recordAuthTokenDeliveryAttempt({
       kind: payload.kind,
@@ -1012,10 +1315,10 @@ export async function deliverAccountToken(
     recordAuthTokenDeliveryFailure(error.failureReason);
 
     if (error.retryable && config.maxAttempts > 1 && !isExpired(payload.expiresAt)) {
-      return queueRetry(payload, config, error);
+      return await queueRetry(payload, config, error);
     }
 
-    deadLetterDeliveries.set(key, {
+    const deadLetterEntry = {
       key,
       payload,
       config,
@@ -1028,7 +1331,9 @@ export async function deliverAccountToken(
         failureReason: error.failureReason,
         ...(error.statusCode != null ? { statusCode: error.statusCode } : {})
       }
-    });
+    };
+    deadLetterDeliveries.set(key, deadLetterEntry);
+    await saveDeadLetterDelivery(deadLetterEntry);
     recordAuthTokenDeliveryDeadLetter();
     recordAuthTokenDeliveryAttempt({
       kind: payload.kind,

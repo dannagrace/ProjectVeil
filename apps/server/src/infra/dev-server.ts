@@ -2,6 +2,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { Server, WebSocketTransport } from "colyseus";
 import { config as loadEnv } from "dotenv";
+import {
+  configureAccountTokenDeliveryQueuePersistence,
+  createRedisAccountTokenDeliveryQueuePersistence,
+  shutdownAccountTokenDeliveryQueuePersistence,
+  type AccountTokenDeliveryQueuePersistence
+} from "@server/adapters/account-token-delivery";
 import { registerAuthRoutes } from "@server/domain/account/auth";
 import { getAnalyticsPipelineSnapshot, registerAnalyticsRoutes } from "@server/domain/ops/analytics";
 import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "@server/infra/backup-storage";
@@ -56,7 +62,14 @@ import {
   type SnapshotRetentionPolicy
 } from "@server/persistence";
 import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
-import { closeRedisResource, createRedisDriver, createRedisPresence, readRedisUrl } from "@server/infra/redis";
+import {
+  closeRedisResource,
+  createRedisClient,
+  createRedisDriver,
+  createRedisPresence,
+  readRedisUrl,
+  type RedisClientLike
+} from "@server/infra/redis";
 import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
 import { loadRuntimeSecrets } from "@server/domain/ops/runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "@server/infra/schema-migrations";
@@ -218,6 +231,10 @@ export interface DevServerBootstrapDependencies {
   readRedisUrl(): string | null;
   createRedisPresence(redisUrl: string): { shutdown(): Promise<void> | void };
   createRedisDriver(redisUrl: string): { shutdown(): Promise<void> | void };
+  createRedisClient(redisUrl: string): RedisClientLike;
+  createAccountTokenDeliveryQueuePersistence(redisClient: RedisClientLike): AccountTokenDeliveryQueuePersistence;
+  configureAccountTokenDeliveryQueuePersistence(persistence: AccountTokenDeliveryQueuePersistence | null): Promise<void>;
+  shutdownAccountTokenDeliveryQueuePersistence(): Promise<void>;
   registerAuthRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerAnalyticsRoutes(app: unknown, options?: { enableTestRoutes?: boolean; store?: DevServerRoomSnapshotStore | null }): void;
   registerClientErrorRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -337,6 +354,10 @@ export function registerPrometheusMetricsRoute(app: DevServerHttpApp): void {
   });
 }
 
+async function closeRedisClientResource(redisClient: RedisClientLike | null): Promise<void> {
+  await redisClient?.quit?.();
+}
+
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
   const paymentGatewayRegistry = createDefaultPaymentGatewayRegistry();
   return {
@@ -353,6 +374,11 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     readRedisUrl,
     createRedisPresence,
     createRedisDriver,
+    createRedisClient,
+    createAccountTokenDeliveryQueuePersistence: (redisClient) =>
+      createRedisAccountTokenDeliveryQueuePersistence(redisClient),
+    configureAccountTokenDeliveryQueuePersistence,
+    shutdownAccountTokenDeliveryQueuePersistence,
     registerAuthRoutes: (app, store) => registerAuthRoutes(app as never, store as RoomSnapshotStore),
     registerAnalyticsRoutes: (app, options) => {
       const routeOptions =
@@ -526,6 +552,12 @@ export async function startDevServer(
   const redisUrl = deps.readRedisUrl();
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
+  const accountTokenDeliveryRedisClient = redisUrl ? deps.createRedisClient(redisUrl) : null;
+  await deps.configureAccountTokenDeliveryQueuePersistence(
+    accountTokenDeliveryRedisClient
+      ? deps.createAccountTokenDeliveryQueuePersistence(accountTokenDeliveryRedisClient)
+      : null
+  );
 
   const transport = deps.createTransport();
   const expressApp = transport.getExpressApp();
@@ -735,12 +767,14 @@ export async function startDevServer(
     }
     liveOpsCalendarScheduler.stop();
     configureLaunchRuntimeStateStorage(null);
+    await deps.shutdownAccountTokenDeliveryQueuePersistence();
 
     if (!snapshotStore) {
       await effectiveSnapshotStore.close();
       await configCenterStore.close();
       await closeRedisResource(redisPresence);
       await closeRedisResource(redisDriver);
+      await closeRedisClientResource(accountTokenDeliveryRedisClient);
       return;
     }
 
@@ -748,7 +782,8 @@ export async function startDevServer(
       effectiveSnapshotStore.close(),
       configCenterStore.close(),
       closeRedisResource(redisPresence),
-      closeRedisResource(redisDriver)
+      closeRedisResource(redisDriver),
+      closeRedisClientResource(accountTokenDeliveryRedisClient)
     ]);
   };
 
