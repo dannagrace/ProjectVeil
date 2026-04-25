@@ -333,7 +333,9 @@ test("admin live ops calendar auth uses timing-safe secret comparisons", async (
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /header\s*===\s*readRuntimeSecret\(/);
   assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
+  assert.doesNotMatch(source, /header\s*===\s*adminSecret/);
 });
 
 test("admin live ops calendar routes use injected shared storage without writing local config files", async (t) => {

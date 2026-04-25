@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { normalizeGuildState } from "@veil/shared/social";
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
@@ -210,4 +211,14 @@ test("ugc review admin rejection uses injected config storage instead of local k
   assert.equal(payload.ok, true);
   assert.equal(sharedConfig.candidateTerms.includes("telegramdrop"), true);
   assert.equal(payload.config.candidateTerms.includes("telegramdrop"), true);
+});
+
+test("ugc review admin auth uses timing-safe secret comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/transport/http/ugc-review-admin.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /header\s*===\s*readRuntimeSecret\(/);
+  assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
+  assert.doesNotMatch(source, /header\s*===\s*adminSecret/);
 });

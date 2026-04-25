@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { buildUgcReviewQueue, resolveUgcReviewEntry, type UgcModerationConfigStorage } from "@server/domain/social/ugc-moderation";
+import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 type AdminRouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
 type AdminApp = {
@@ -20,13 +21,13 @@ function readRole(request: IncomingMessage): "admin" | "support-moderator" | "su
   if (!header) {
     return null;
   }
-  if (header === readRuntimeSecret("ADMIN_SECRET")) {
+  if (timingSafeCompareAdminToken(header, readRuntimeSecret("ADMIN_SECRET"))) {
     return "admin";
   }
-  if (header === readRuntimeSecret("SUPPORT_SUPERVISOR_SECRET")) {
+  if (timingSafeCompareAdminToken(header, readRuntimeSecret("SUPPORT_SUPERVISOR_SECRET"))) {
     return "support-supervisor";
   }
-  if (header === readRuntimeSecret("SUPPORT_MODERATOR_SECRET")) {
+  if (timingSafeCompareAdminToken(header, readRuntimeSecret("SUPPORT_MODERATOR_SECRET"))) {
     return "support-moderator";
   }
   return null;

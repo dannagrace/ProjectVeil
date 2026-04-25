@@ -7,6 +7,7 @@ test("timingSafeCompareAdminToken rejects missing and mismatched tokens", () => 
   assert.equal(timingSafeCompareAdminToken(undefined, "admin-token"), false);
   assert.equal(timingSafeCompareAdminToken("wrong-token", "admin-token"), false);
   assert.equal(timingSafeCompareAdminToken("short", "admin-token"), false);
+  assert.equal(timingSafeCompareAdminToken("admin-token-extra", "admin-token"), false);
 });
 
 test("timingSafeCompareAdminToken accepts the matching token", () => {

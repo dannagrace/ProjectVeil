@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import { registerRiskReviewAdminRoutes } from "@server/transport/http/risk-review-admin";
@@ -123,4 +125,14 @@ test("risk review admin routes list queue entries and resolve warnings", async (
   const payload = JSON.parse(reviewResponse.body) as { ok: boolean; account: { leaderboardAbuseState?: { status?: string } } };
   assert.equal(payload.ok, true);
   assert.equal(payload.account.leaderboardAbuseState?.status, "watch");
+});
+
+test("risk review admin auth uses timing-safe secret comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/transport/http/risk-review-admin.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareAdminToken\b/);
+  assert.doesNotMatch(source, /header\s*===\s*readRuntimeSecret\(/);
+  assert.doesNotMatch(source, /readHeaderSecret\(request\)\s*===\s*adminSecret/);
+  assert.doesNotMatch(source, /header\s*===\s*adminSecret/);
 });
