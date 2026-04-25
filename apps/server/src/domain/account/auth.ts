@@ -1595,6 +1595,14 @@ async function handleWechatLogin(
       const existingRequestedAccount = await store.loadPlayerAccount(requestedPlayerId);
       if (!existingRequestedAccount) {
         playerId = normalizePlayerId(requestedPlayerId);
+      } else if (!boundAccount || existingRequestedAccount.playerId !== boundAccount.playerId) {
+        sendJson(response, 409, {
+          error: {
+            code: "wechat_player_id_conflict",
+            message: "Cannot bind WeChat identity to an existing unauthenticated playerId"
+          }
+        });
+        return;
       }
     }
 

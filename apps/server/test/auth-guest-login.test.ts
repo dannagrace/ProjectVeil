@@ -3827,6 +3827,133 @@ test("legacy wechat mini game route remains available as an alias", { concurrenc
   assert.equal("session_key" in payload.session, false);
 });
 
+test("unauthenticated wechat login cannot bind a registered account from body playerId", { concurrency: false }, async (t) => {
+  const port = 44860 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  await store.ensurePlayerAccount({
+    playerId: "victim-registered-player",
+    displayName: "Victim Ranger"
+  });
+  await store.bindPlayerAccountCredentials("victim-registered-player", {
+    loginId: "victim-ranger",
+    passwordHash: hashAccountPassword("hunter22")
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-attacker-registered",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "victim-registered-player",
+      displayName: "Attacker",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "wechat_player_id_conflict");
+
+  const victimAccount = await store.loadPlayerAccount("victim-registered-player");
+  assert.equal(victimAccount?.loginId, "victim-ranger");
+  assert.equal(victimAccount?.wechatMiniGameOpenId, undefined);
+  assert.equal(victimAccount?.displayName, "Victim Ranger");
+});
+
+test("unauthenticated wechat login cannot bind an existing guest account from body playerId", { concurrency: false }, async (t) => {
+  const port = 44865 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  const originalFetch = globalThis.fetch;
+
+  await store.ensurePlayerAccount({
+    playerId: "victim-guest-player",
+    displayName: "Guest Victim"
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    delete process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE;
+    delete process.env.WECHAT_APP_ID;
+    delete process.env.WECHAT_APP_SECRET;
+    delete process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL;
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  process.env.VEIL_WECHAT_MINIGAME_LOGIN_MODE = "production";
+  process.env.WECHAT_APP_ID = "wx-prod-app";
+  process.env.WECHAT_APP_SECRET = "wx-prod-secret";
+  process.env.VEIL_WECHAT_MINIGAME_CODE2SESSION_URL = "https://wechat.example.test/code2session";
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        openid: "wx-openid-attacker-guest",
+        session_key: "session-key"
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  const response = await originalFetch(`http://127.0.0.1:${port}/api/auth/wechat-mini-game-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      code: "wx-prod-code",
+      playerId: "victim-guest-player",
+      displayName: "Attacker",
+      privacyConsentAccepted: true
+    })
+  });
+  const payload = (await response.json()) as { error: { code: string } };
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error.code, "wechat_player_id_conflict");
+
+  const victimAccount = await store.loadPlayerAccount("victim-guest-player");
+  assert.equal(victimAccount?.wechatMiniGameOpenId, undefined);
+  assert.equal(victimAccount?.displayName, "Guest Victim");
+});
+
 test("wechat mini game production exchange binds code2Session identity onto an authenticated account", { concurrency: false }, async (t) => {
   const port = 44950 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
