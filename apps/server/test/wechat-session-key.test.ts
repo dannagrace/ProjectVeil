@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test, { type TestContext } from "node:test";
 import {
   cacheWechatSessionKey,
@@ -6,11 +8,16 @@ import {
   getCachedWechatSessionKey,
   readWechatSessionKeyTtlSeconds,
   resetWechatSessionKeyCache,
+  validateWechatSignature,
 } from "@server/adapters/wechat-session-key";
 
 function withCleanCache(t: TestContext): void {
   resetWechatSessionKeyCache();
   t.after(() => resetWechatSessionKeyCache());
+}
+
+function signWechatRawData(rawData: string, sessionKey: string): string {
+  return createHash("sha1").update(`${rawData}${sessionKey}`, "utf8").digest("hex");
 }
 
 // ---------------------------------------------------------------------------
@@ -154,4 +161,31 @@ test("resetWechatSessionKeyCache: after caching 2 players, reset clears all entr
   resetWechatSessionKeyCache();
   assert.equal(getCachedWechatSessionKey("player-9"), null);
   assert.equal(getCachedWechatSessionKey("player-10"), null);
+});
+
+// ---------------------------------------------------------------------------
+// validateWechatSignature
+// ---------------------------------------------------------------------------
+
+test("validateWechatSignature: accepts valid SHA1 signature and rejects malformed or mismatched signatures", (t) => {
+  withCleanCache(t);
+  const sessionKey = "wechat-session-key";
+  const rawData = JSON.stringify({ nickname: "veil-player", avatarUrl: "https://example.test/avatar.png" });
+  const signature = signWechatRawData(rawData, sessionKey);
+  cacheWechatSessionKey("player-signature", sessionKey, 3600);
+
+  assert.equal(
+    validateWechatSignature({ playerId: "player-signature", rawData, signature })?.playerId,
+    "player-signature"
+  );
+  assert.equal(validateWechatSignature({ playerId: "player-signature", rawData, signature: signature.slice(0, -2) }), null);
+  assert.equal(validateWechatSignature({ playerId: "player-signature", rawData, signature: `00${signature.slice(2)}` }), null);
+});
+
+test("validateWechatSignature: compares SHA1 signatures with timingSafeEqual", () => {
+  const source = readFileSync(new URL("../src/adapters/wechat-session-key.ts", import.meta.url), "utf8");
+
+  assert.match(source, /timingSafeEqual/);
+  assert.doesNotMatch(source, /digest\s*===\s*input\.signature/);
+  assert.doesNotMatch(source, /signature.*===.*digest/);
 });

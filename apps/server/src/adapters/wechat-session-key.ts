@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash } from "node:crypto";
+import { createDecipheriv, createHash, timingSafeEqual } from "node:crypto";
 
 interface CachedWechatSessionKeyEntry {
   sessionKey: string;
@@ -100,8 +100,18 @@ export function validateWechatSignature(input: {
   if (!cached) {
     return null;
   }
-  const digest = createHash("sha1").update(`${input.rawData}${cached.sessionKey}`, "utf8").digest("hex");
-  return digest === input.signature.trim().toLowerCase() ? cached : null;
+  const expectedDigest = createHash("sha1").update(`${input.rawData}${cached.sessionKey}`, "utf8").digest();
+  const normalizedSignature = input.signature.trim().toLowerCase();
+  if (normalizedSignature.length !== expectedDigest.length * 2) {
+    return null;
+  }
+
+  const providedDigest = Buffer.from(normalizedSignature, "hex");
+  if (providedDigest.length !== expectedDigest.length) {
+    return null;
+  }
+
+  return timingSafeEqual(expectedDigest, providedDigest) ? cached : null;
 }
 
 export function decryptWechatPhoneNumber(input: {
