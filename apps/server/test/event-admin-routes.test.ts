@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerEventRoutes, resetSeasonalEventRuntimeState } from "@server/domain/battle/event-engine";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -150,6 +151,20 @@ function createStore() {
         globalResources: { gold: 0, wood: 0, ore: 0 },
         achievements: [],
         recentEventLog: [],
+        dailyDungeonState: {
+          dateKey: "2026-04-04",
+          attemptsUsed: 1,
+          claimedRunIds: ["daily-claimed-run-1"],
+          runs: [
+            {
+              runId: "daily-claimed-run-1",
+              dungeonId: "shadow-archives",
+              floor: 1,
+              startedAt: "2026-04-04T11:55:00.000Z",
+              rewardClaimedAt: "2026-04-04T12:00:00.000Z"
+            }
+          ]
+        },
         createdAt: "2026-04-04T00:00:00.000Z",
         updatedAt: "2026-04-04T09:20:00.000Z"
       }
@@ -214,9 +229,13 @@ function createStore() {
   };
 }
 
-function registerRoutes(store: ReturnType<typeof createStore>, nowIso = "2026-04-04T12:00:00.000Z") {
+function registerRoutes(
+  store: ReturnType<typeof createStore>,
+  nowIso = "2026-04-04T12:00:00.000Z",
+  eventOptions: Parameters<typeof registerEventRoutes>[2] = {}
+) {
   const { app, gets, posts, patches, deletes } = createTestApp();
-  registerEventRoutes(app, store as never, { now: () => new Date(nowIso) });
+  registerEventRoutes(app, store as never, { ...eventOptions, now: () => new Date(nowIso) });
   return { gets, posts, patches, deletes };
 }
 
@@ -355,6 +374,119 @@ test("POST /api/admin/seasonal-events/:id/end force-ends an active event and dis
       "seasonal-event:defend-the-bridge:reward:bridge-relief-fund"
     ].sort()
   );
+});
+
+test("POST /api/events/:eventId/progress rejects unsupported configured action types before awarding points", async () => {
+  const store = createStore();
+  const session = issueGuestAuthSession({
+    playerId: "player-3",
+    displayName: "Hale"
+  });
+  const { posts } = registerRoutes(store, "2026-04-04T12:00:00.000Z", {
+    eventIndexDocument: {
+      events: [
+        {
+          id: "forgeable-event",
+          name: "Forgeable Event",
+          description: "Regression event",
+          startsAt: "2026-04-04T00:00:00.000Z",
+          endsAt: "2026-04-05T00:00:00.000Z",
+          durationDays: 1,
+          bannerText: "Regression",
+          leaderboard: { size: 10 }
+        }
+      ]
+    },
+    eventDocuments: {
+      "forgeable-event": {
+        id: "forgeable-event",
+        name: "Forgeable Event",
+        description: "Regression event",
+        startsAt: "2026-04-04T00:00:00.000Z",
+        endsAt: "2026-04-05T00:00:00.000Z",
+        durationDays: 1,
+        bannerText: "Regression",
+        objectives: [
+          {
+            id: "forged-objective",
+            description: "Unsupported forged action",
+            actionType: "manual_bonus",
+            points: 500
+          }
+        ],
+        rewards: [],
+        leaderboard: {
+          size: 10,
+          rewardTiers: []
+        }
+      }
+    }
+  });
+  const handler = posts.get("/api/events/:eventId/progress");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.token}`
+      },
+      params: {
+        eventId: "forgeable-event"
+      },
+      body: JSON.stringify({
+        actionId: "forged-action-1",
+        actionType: "manual_bonus"
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error.code, "seasonal_event_action_unsupported");
+  assert.equal((await store.loadPlayerAccount("player-3"))?.seasonalEventStates, undefined);
+});
+
+test("POST /api/events/:eventId/progress accepts verified daily dungeon reward claims", async () => {
+  const store = createStore();
+  const session = issueGuestAuthSession({
+    playerId: "player-3",
+    displayName: "Hale"
+  });
+  const { posts } = registerRoutes(store);
+  const handler = posts.get("/api/events/:eventId/progress");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.token}`
+      },
+      params: {
+        eventId: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        actionId: "daily-claimed-run-1",
+        actionType: "daily_dungeon_reward_claimed",
+        dungeonId: "shadow-archives"
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.applied, true);
+  assert.equal(payload.eventProgress.delta, 40);
+  assert.equal(payload.eventProgress.objectiveId, "bridge-dungeon-clear");
+  const progress = (await store.loadPlayerAccount("player-3"))?.seasonalEventStates?.find(
+    (state: { eventId: string }) => state.eventId === "defend-the-bridge"
+  );
+  assert.equal(progress?.points, 40);
+  assert.deepEqual(progress?.appliedActionIds, ["daily-claimed-run-1"]);
 });
 
 test("DELETE /api/admin/seasonal-events/:eventId/players/:playerId resets a single player progress record", async (t) => {

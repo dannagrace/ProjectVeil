@@ -105,9 +105,14 @@ const DAILY_QUEST_TIER_WEIGHTS: Record<DailyQuestConfigDefinition["tier"], numbe
 };
 const ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS = 5_000;
 const ACTION_SUBMISSION_RATE_LIMIT_MAX = 1;
+const SERVER_VERIFIABLE_SEASONAL_EVENT_ACTION_TYPES = new Set<string>(["daily_dungeon_reward_claimed"]);
 const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverride>();
 const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
 const actionSubmissionRateLimitHits = new Map<string, number[]>();
+
+function isServerVerifiableSeasonalEventActionType(actionType: string): boolean {
+  return SERVER_VERIFIABLE_SEASONAL_EVENT_ACTION_TYPES.has(actionType);
+}
 
 export function isActionSubmissionRateLimitEnabled(): boolean {
   return (
@@ -1279,6 +1284,15 @@ export function registerEventRoutes(
           error: {
             code: "seasonal_event_not_found",
             message: "Seasonal event was not found or is not active"
+          }
+        });
+        return;
+      }
+      if (!isServerVerifiableSeasonalEventActionType(actionType)) {
+        sendJson(response, 400, {
+          error: {
+            code: "seasonal_event_action_unsupported",
+            message: "Seasonal event progress action is not server-verifiable"
           }
         });
         return;
