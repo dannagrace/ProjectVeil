@@ -150,7 +150,7 @@ test("room connect re-checks persisted ban state and rejects banned players", as
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "player-banned" });
+  room.onJoin(client, {}, { playerId: "player-banned", authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId: "connect-ban",
@@ -182,7 +182,7 @@ test("room connect allows non-minors to pass through without minor protection er
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "adult-player" });
+  room.onJoin(client, {}, { playerId: "adult-player", authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId: "connect-adult-player",
@@ -225,7 +225,7 @@ test("room connect rejects minors during restricted hours", async (t) => {
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "minor-player" });
+  room.onJoin(client, {}, { playerId: "minor-player", authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId: "connect-minor-hours",
@@ -285,7 +285,7 @@ test("room connect allows minors during permitted hours while under the daily li
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "minor-allowed" });
+  room.onJoin(client, {}, { playerId: "minor-allowed", authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId: "connect-minor-allowed",
@@ -328,7 +328,7 @@ test("room timer kicks minors after reaching the daily playtime limit and blocks
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "minor-limit" });
+  room.onJoin(client, {}, { playerId: "minor-limit", authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId: "connect-minor-limit",
@@ -347,7 +347,7 @@ test("room timer kicks minors after reaching the daily playtime limit and blocks
 
   const secondClient = createFakeClient("minor-limit-session-2");
   room.clients.push(secondClient);
-  room.onJoin(secondClient, { playerId: "minor-limit" });
+  room.onJoin(secondClient, {}, { playerId: "minor-limit", authSession: null } as never);
   await emitRoomMessage(room, "connect", secondClient, {
     type: "connect",
     requestId: "connect-minor-limit-retry",

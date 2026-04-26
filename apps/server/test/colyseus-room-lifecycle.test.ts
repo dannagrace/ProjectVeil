@@ -105,6 +105,10 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+function joinPlayer(room: VeilColyseusRoom, client: FakeClient, playerId: string): void {
+  room.onJoin(client, {}, { playerId, authSession: null } as never);
+}
+
 function createDeferred<T>(): {
   promise: Promise<T>;
   resolve(value: T | PromiseLike<T>): void;
@@ -317,7 +321,7 @@ async function connectPlayer(
   authToken?: string
 ): Promise<void> {
   room.clients.push(client);
-  room.onJoin(client, { playerId });
+  joinPlayer(room, client, playerId);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId,
@@ -607,7 +611,7 @@ test("room creation and connect reflect one connected player in room state", asy
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "player-1" });
+  joinPlayer(room, client, "player-1");
 
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
@@ -638,7 +642,7 @@ test("unauthenticated connect cannot remap a session to a requested playerId", a
   room.clients.push(client);
   room.onJoin(
     client,
-    { playerId: "victim-player" },
+    {},
     { playerId: client.sessionId, authSession: null } as never
   );
 
@@ -651,6 +655,26 @@ test("unauthenticated connect cannot remap a session to a requested playerId", a
 
   assert.equal(internalRoom.playerIdBySessionId.get(client.sessionId), client.sessionId);
   assert.equal(lastSessionState(client, "reply").payload.world.playerId, client.sessionId);
+});
+
+test("unauthenticated room join ignores client-controlled playerId options", async (t) => {
+  resetLobbyRoomRegistry();
+  configureRoomSnapshotStore(null);
+  const room = await createTestRoom(`lifecycle-join-identity-${Date.now()}`);
+  const client = createFakeClient("session-join-identity");
+  const internalRoom = room as VeilColyseusRoom & {
+    playerIdBySessionId: Map<string, string>;
+  };
+
+  t.after(() => {
+    cleanupRoom(room);
+    resetLobbyRoomRegistry();
+    configureRoomSnapshotStore(null);
+  });
+
+  room.onJoin(client, { playerId: "victim-player" } as never, undefined);
+
+  assert.equal(internalRoom.playerIdBySessionId.get(client.sessionId), client.sessionId);
 });
 
 test("room creation registers the active instance and publishes an idle lobby summary before joins", async (t) => {
@@ -784,7 +808,7 @@ test("connect logs player account initialization failures instead of silently sw
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "player-1" });
+  joinPlayer(room, client, "player-1");
 
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
@@ -827,7 +851,7 @@ test("client reconnect within the window restores room state and records reconne
   });
 
   room.clients.push(originalClient);
-  room.onJoin(originalClient, { playerId: "player-1" });
+  joinPlayer(room, originalClient, "player-1");
 
   await emitRoomMessage(room, "connect", originalClient, {
     type: "connect",
@@ -1145,7 +1169,7 @@ test("client that misses the reconnect window is cleaned up from the player slot
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "player-1" });
+  joinPlayer(room, client, "player-1");
 
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
@@ -1342,7 +1366,7 @@ test("room disposal after the last client leaves removes it from the active room
   });
 
   room.clients.push(client);
-  room.onJoin(client, { playerId: "player-1" });
+  joinPlayer(room, client, "player-1");
   room.onLeave(client);
   room.onDispose();
 
@@ -1433,9 +1457,9 @@ test("simultaneous rooms keep seeded world state isolated", async (t) => {
   });
 
   roomA.clients.push(clientA);
-  roomA.onJoin(clientA, { playerId: "player-1" });
+  joinPlayer(roomA, clientA, "player-1");
   roomB.clients.push(clientB);
-  roomB.onJoin(clientB, { playerId: "player-1" });
+  joinPlayer(roomB, clientB, "player-1");
 
   internalRoomA.worldRoom.dispatch("player-1", {
     type: "hero.move",

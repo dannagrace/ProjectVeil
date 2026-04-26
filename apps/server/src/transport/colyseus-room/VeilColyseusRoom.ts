@@ -924,7 +924,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
   }
 
   onJoin(client: ColyseusClient, options?: JoinOptions, auth?: RemoteJoinIdentity): void {
-    const playerId = auth?.playerId ?? options?.playerId ?? client.sessionId;
+    const playerId = auth?.playerId ?? client.sessionId;
     this.playerIdBySessionId.set(client.sessionId, playerId);
     this.updatePlayerAuthSession(playerId, auth?.authSession ?? null);
     this.refreshEmptyRoomTracking();

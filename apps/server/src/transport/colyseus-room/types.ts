@@ -15,7 +15,6 @@ export interface VeilRoomOptions {
 
 export interface JoinOptions {
   logicalRoomId?: string;
-  playerId?: string;
   seed?: number;
 }
 

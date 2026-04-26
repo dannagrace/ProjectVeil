@@ -124,7 +124,7 @@ async function connectPlayer(
   requestId: string
 ): Promise<void> {
   room.clients.push(client as never);
-  room.onJoin(client as never, { playerId });
+  room.onJoin(client as never, {}, { playerId, authSession: null } as never);
   await emitRoomMessage(room, "connect", client, {
     type: "connect",
     requestId,
