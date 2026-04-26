@@ -1,8 +1,16 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { FriendLeaderboardEntry, GroupChallenge, GroupChallengeType, NotificationPreferences } from "@veil/shared/models";
-import type { PlayerAccountSnapshot } from "@server/persistence";
+import type { PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
 
 export const GROUP_CHALLENGE_TTL_MS = 24 * 60 * 60 * 1000;
+export const MAX_FRIEND_LEADERBOARD_IDS = 100;
+
+export class FriendLeaderboardTooManyIdsError extends Error {
+  constructor(maxIds = MAX_FRIEND_LEADERBOARD_IDS) {
+    super(`friendIds must include at most ${maxIds} entries`);
+    this.name = "friend_leaderboard_too_many_ids";
+  }
+}
 
 export type GroupChallengeTokenValidation =
   | { ok: true; challenge: GroupChallenge }
@@ -39,6 +47,51 @@ export function getNotificationPreferenceValue(
   }
 
   return preferences?.[key] !== false;
+}
+
+export function normalizeFriendLeaderboardIds(friendIds: Iterable<string | null | undefined>): string[] {
+  const normalized = Array.from(friendIds)
+    .map((entry) => entry?.trim() ?? "")
+    .filter(Boolean);
+  if (normalized.length > MAX_FRIEND_LEADERBOARD_IDS) {
+    throw new FriendLeaderboardTooManyIdsError();
+  }
+  return Array.from(new Set(normalized));
+}
+
+export async function loadAuthorizedFriendLeaderboardAccounts(
+  store: Pick<RoomSnapshotStore, "loadPlayerAccount" | "loadPlayerAccountByWechatMiniGameOpenId">,
+  currentPlayerId: string,
+  rawFriendIds: Iterable<string | null | undefined>
+): Promise<{ accounts: PlayerAccountSnapshot[]; friendCount: number }> {
+  const friendIds = normalizeFriendLeaderboardIds(rawFriendIds);
+  const currentAccount = await store.loadPlayerAccount(currentPlayerId);
+  if (!currentAccount) {
+    return {
+      accounts: [],
+      friendCount: 0
+    };
+  }
+
+  const accountsByPlayerId = new Map<string, PlayerAccountSnapshot>([[currentAccount.playerId, currentAccount]]);
+  const currentWechatOpenId = currentAccount.wechatMiniGameOpenId?.trim() ?? "";
+  const candidateFriendIds = friendIds.filter((friendId) => friendId !== currentAccount.playerId && friendId !== currentWechatOpenId);
+  const friendAccounts = await Promise.all(
+    candidateFriendIds.map((friendId) => store.loadPlayerAccountByWechatMiniGameOpenId(friendId))
+  );
+  let friendCount = 0;
+  for (const account of friendAccounts) {
+    if (!account || account.playerId === currentAccount.playerId || accountsByPlayerId.has(account.playerId)) {
+      continue;
+    }
+    accountsByPlayerId.set(account.playerId, account);
+    friendCount += 1;
+  }
+
+  return {
+    accounts: Array.from(accountsByPlayerId.values()),
+    friendCount
+  };
 }
 
 export function buildFriendLeaderboard(

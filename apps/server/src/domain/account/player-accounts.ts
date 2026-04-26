@@ -58,6 +58,8 @@ import {
   buildFriendLeaderboard,
   createGroupChallenge,
   encodeGroupChallengeToken,
+  FriendLeaderboardTooManyIdsError,
+  loadAuthorizedFriendLeaderboardAccounts,
   normalizeNotificationPreferences,
   validateGroupChallengeToken
 } from "@server/adapters/wechat-social";
@@ -1364,12 +1366,16 @@ export function registerPlayerAccountRoutes(
         .split(",")
         .map((entry) => entry.trim())
         .filter(Boolean);
-      const accounts = await store.loadPlayerAccounts(Array.from(new Set([authSession.playerId, ...friendIds])));
+      const { accounts, friendCount } = await loadAuthorizedFriendLeaderboardAccounts(store, authSession.playerId, friendIds);
       sendJson(response, 200, {
         items: buildFriendLeaderboard(authSession.playerId, accounts),
-        friendCount: friendIds.length
+        friendCount
       });
     } catch (error) {
+      if (error instanceof FriendLeaderboardTooManyIdsError) {
+        sendJson(response, 400, { error: toErrorPayload(error) });
+        return;
+      }
       sendJson(response, 500, { error: toErrorPayload(error) });
     }
   });

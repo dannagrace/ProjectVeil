@@ -65,7 +65,13 @@ import { resolveFeatureFlagsForPlayer } from "@server/domain/battle/feature-flag
 import { captureServerError } from "@server/domain/ops/error-monitoring";
 import { settleLeaderboardMatch } from "@server/domain/social/leaderboard-anti-abuse";
 import { normalizeTutorialProgressAction, toTutorialAnalyticsPayload } from "@server/domain/account/tutorial-progress";
-import { buildFriendLeaderboard, createGroupChallenge, encodeGroupChallengeToken } from "@server/adapters/wechat-social";
+import {
+  buildFriendLeaderboard,
+  createGroupChallenge,
+  encodeGroupChallengeToken,
+  FriendLeaderboardTooManyIdsError,
+  loadAuthorizedFriendLeaderboardAccounts
+} from "@server/adapters/wechat-social";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
 import {
@@ -705,21 +711,28 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
             displayName: authSession?.displayName ?? playerId,
             lastRoomId: logicalRoomId
           });
-          const friendIds = Array.from(new Set((message.friendIds ?? []).map((entry) => entry.trim()).filter(Boolean)));
-          const accounts = await configuredRoomSnapshotStore.loadPlayerAccounts([playerId, ...friendIds]);
+          const { accounts, friendCount } = await loadAuthorizedFriendLeaderboardAccounts(
+            configuredRoomSnapshotStore,
+            playerId,
+            message.friendIds ?? []
+          );
           const items = buildFriendLeaderboard(playerId, accounts);
           this.logSocialMessage("friend_leaderboard_ready", {
             playerId,
             requestId: message.requestId,
-            friendCount: friendIds.length,
+            friendCount,
             itemCount: items.length
           });
           sendMessage(client, "FRIEND_LEADERBOARD_REQUEST", {
             requestId: message.requestId,
             items,
-            friendCount: friendIds.length
+            friendCount
           });
         } catch (error) {
+          if (error instanceof FriendLeaderboardTooManyIdsError) {
+            sendMessage(client, "error", { requestId: message.requestId, reason: "friend_leaderboard_too_many_ids" });
+            return;
+          }
           this.reportSocialHandlerFailure("friend_leaderboard_failed", playerId, message.requestId, error, {
             action: "FRIEND_LEADERBOARD_REQUEST"
           });

@@ -135,9 +135,13 @@ test("issue 1361: websocket social handlers return leaderboard snapshots and sha
   await store.ensurePlayerAccount({ playerId: "player-social", displayName: "雾林司灯" });
   await store.savePlayerAccountProgress("player-social", { eloRating: 1450 });
   await store.ensurePlayerAccount({ playerId: "friend-1", displayName: "山岚旅人" });
+  await store.bindPlayerAccountWechatMiniGameIdentity("friend-1", { openId: "wx-openid-friend-1" });
   await store.savePlayerAccountProgress("friend-1", { eloRating: 1320 });
   await store.ensurePlayerAccount({ playerId: "friend-2", displayName: "霜港守望" });
+  await store.bindPlayerAccountWechatMiniGameIdentity("friend-2", { openId: "wx-openid-friend-2" });
   await store.savePlayerAccountProgress("friend-2", { eloRating: 1510 });
+  await store.ensurePlayerAccount({ playerId: "victim-social", displayName: "Hidden Rival" });
+  await store.savePlayerAccountProgress("victim-social", { eloRating: 1800 });
 
   const room = await createTestRoom("room-social");
   const client = createFakeClient("session-social");
@@ -155,7 +159,7 @@ test("issue 1361: websocket social handlers return leaderboard snapshots and sha
   await emitRoomMessage(room, "FRIEND_LEADERBOARD_REQUEST", client, {
     type: "FRIEND_LEADERBOARD_REQUEST",
     requestId: "friends-1",
-    friendIds: ["friend-1", "friend-2", "friend-2"]
+    friendIds: ["wx-openid-friend-1", "wx-openid-friend-2", "wx-openid-friend-2"]
   });
 
   const leaderboardReply = client.sent.find(
@@ -173,6 +177,33 @@ test("issue 1361: websocket social handlers return leaderboard snapshots and sha
       [3, "friend-1", false]
     ]
   );
+
+  await emitRoomMessage(room, "FRIEND_LEADERBOARD_REQUEST", client, {
+    type: "FRIEND_LEADERBOARD_REQUEST",
+    requestId: "friends-enumeration",
+    friendIds: ["victim-social"]
+  });
+  await emitRoomMessage(room, "FRIEND_LEADERBOARD_REQUEST", client, {
+    type: "FRIEND_LEADERBOARD_REQUEST",
+    requestId: "friends-too-many",
+    friendIds: Array.from({ length: 101 }, (_, index) => `wx-openid-${index}`)
+  });
+
+  const enumerationReply = client.sent.find(
+    (message): message is Extract<ServerMessage, { type: "FRIEND_LEADERBOARD_REQUEST" }> =>
+      message.type === "FRIEND_LEADERBOARD_REQUEST" && message.requestId === "friends-enumeration"
+  );
+  const cappedError = client.sent.find(
+    (message): message is Extract<ServerMessage, { type: "error" }> =>
+      message.type === "error" && message.requestId === "friends-too-many"
+  );
+  assert.ok(enumerationReply);
+  assert.equal(enumerationReply.friendCount, 0);
+  assert.deepEqual(
+    enumerationReply.items.map((item) => [item.rank, item.playerId, item.isSelf ?? false]),
+    [[1, "player-social", true]]
+  );
+  assert.equal(cappedError?.reason, "friend_leaderboard_too_many_ids");
 
   await emitRoomMessage(room, "SHARE_ACTIVITY", client, {
     type: "SHARE_ACTIVITY",
@@ -195,7 +226,7 @@ test("issue 1361: websocket social handlers return leaderboard snapshots and sha
   assert.equal(shareReply.challenge?.creatorPlayerId, "player-social");
 
   const metrics = buildPrometheusMetricsDocument();
-  assert.match(metrics, /veil_social_friend_leaderboard_requests_total 1/);
+  assert.match(metrics, /veil_social_friend_leaderboard_requests_total 3/);
   assert.match(metrics, /veil_social_share_activity_requests_total 1/);
 });
 

@@ -17,8 +17,11 @@ test("social routes persist notification prefs and validate group challenge expi
   const store = new MemoryRoomSnapshotStore();
   await store.ensurePlayerAccount({ playerId: "player-7", displayName: "雾林司灯" });
   await store.ensurePlayerAccount({ playerId: "friend-1", displayName: "山岚旅人" });
+  await store.bindPlayerAccountWechatMiniGameIdentity("friend-1", { openId: "wx-openid-friend-1" });
+  await store.ensurePlayerAccount({ playerId: "victim-1", displayName: "Hidden Rival" });
   await store.savePlayerAccountProgress("friend-1", { eloRating: 1320 });
   await store.savePlayerAccountProgress("player-7", { eloRating: 1450 });
+  await store.savePlayerAccountProgress("victim-1", { eloRating: 1800 });
   const session = issueGuestAuthSession({
     playerId: "player-7",
     displayName: "雾林司灯"
@@ -88,7 +91,7 @@ test("social routes persist notification prefs and validate group challenge expi
   assert.equal((await store.loadPlayerAccount("player-7"))?.pushTokens, undefined);
 
   const leaderboardResponse = await fetch(
-    `http://127.0.0.1:${port}/api/social/friend-leaderboard?friendIds=${encodeURIComponent("friend-1")}`,
+    `http://127.0.0.1:${port}/api/social/friend-leaderboard?friendIds=${encodeURIComponent("wx-openid-friend-1")}`,
     {
       headers: {
         Authorization: `Bearer ${session.token}`
@@ -106,6 +109,38 @@ test("social routes persist notification prefs and validate group challenge expi
       [2, "friend-1"]
     ]
   );
+
+  const enumerationResponse = await fetch(
+    `http://127.0.0.1:${port}/api/social/friend-leaderboard?friendIds=${encodeURIComponent("victim-1")}`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const enumerationPayload = (await enumerationResponse.json()) as {
+    items: Array<{ playerId: string; rank: number }>;
+    friendCount: number;
+  };
+  assert.equal(enumerationResponse.status, 200);
+  assert.equal(enumerationPayload.friendCount, 0);
+  assert.deepEqual(
+    enumerationPayload.items.map((item) => [item.rank, item.playerId]),
+    [[1, "player-7"]]
+  );
+
+  const tooManyFriendIds = Array.from({ length: 101 }, (_, index) => `wx-openid-${index}`).join(",");
+  const cappedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/social/friend-leaderboard?friendIds=${encodeURIComponent(tooManyFriendIds)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const cappedPayload = (await cappedResponse.json()) as { error: { code: string } };
+  assert.equal(cappedResponse.status, 400);
+  assert.equal(cappedPayload.error.code, "friend_leaderboard_too_many_ids");
 
   const createResponse = await fetch(`http://127.0.0.1:${port}/api/social/group-challenge`, {
     method: "POST",
