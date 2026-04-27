@@ -46,3 +46,22 @@ test("auth token signature validation uses timing-safe comparisons", async () =>
   assert.match(source, /\btimingSafeCompareTokenSignature\b/);
   assert.doesNotMatch(source, /signature\s*!==\s*expectedSignature/);
 });
+
+test("account token hashes and refresh token hashes use timing-safe comparisons", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/account/auth.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\btimingSafeCompareHexDigest\b/);
+  assert.doesNotMatch(source, /state\.tokenHash\s*!==\s*hashAccountRegistrationToken\(token\)/);
+  assert.doesNotMatch(source, /state\.tokenHash\s*!==\s*hashPasswordRecoveryToken\(token\)/);
+  assert.doesNotMatch(source, /authDeviceSession\.refreshTokenHash\s*!==\s*hashRefreshToken\(normalizedToken\)/);
+});
+
+test("guest session storage hashes bearer tokens at rest", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/account/auth.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /\bhashGuestSessionToken\b/);
+  assert.doesNotMatch(source, /guestSessionsById\.set\([^,]+,\s*session\)/);
+  assert.doesNotMatch(source, /existingSession\.token\s*!==\s*token/);
+});

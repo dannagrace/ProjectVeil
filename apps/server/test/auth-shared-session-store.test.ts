@@ -40,6 +40,74 @@ test("guest auth validation accepts sessions from shared Redis after local state
   }
 });
 
+test("shared Redis guest sessions store new bearer tokens hashed at rest", async () => {
+  const redis = new Redis();
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+
+  try {
+    const session = issueGuestAuthSession({
+      playerId: "hashed-guest-player",
+      displayName: "Hashed Guest"
+    });
+
+    await waitForClusterSync();
+
+    const serialized = await redis.get(`veil:guest-session:${session.sessionId}`);
+    assert.equal(typeof serialized, "string");
+    const stored = JSON.parse(serialized as string) as { token?: string; tokenHash?: string };
+    assert.equal(stored.token, undefined);
+    assert.equal(typeof stored.tokenHash, "string");
+    assert.notEqual(stored.tokenHash, session.token);
+    assert.equal((serialized as string).includes(session.token), false);
+  } finally {
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+  }
+});
+
+test("shared Redis guest validation accepts legacy plaintext sessions and rewrites them hashed", async () => {
+  const redis = new Redis();
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+
+  try {
+    const session = issueGuestAuthSession({
+      playerId: "legacy-plaintext-guest-player",
+      displayName: "Legacy Plaintext Guest"
+    });
+
+    await waitForClusterSync();
+    await redis.set(
+      `veil:guest-session:${session.sessionId}`,
+      JSON.stringify({
+        ...session,
+        lastUsedAt: session.issuedAt
+      })
+    );
+
+    resetGuestAuthSessions();
+    setGuestSessionClusterClientForTest(redis as never);
+
+    const result = await validateGuestAuthToken(session.token, null);
+    assert.equal(result.errorCode, undefined);
+    assert.equal(result.session?.playerId, "legacy-plaintext-guest-player");
+
+    const rewritten = await redis.get(`veil:guest-session:${session.sessionId}`);
+    assert.equal(typeof rewritten, "string");
+    const stored = JSON.parse(rewritten as string) as { token?: string; tokenHash?: string };
+    assert.equal(stored.token, undefined);
+    assert.equal(typeof stored.tokenHash, "string");
+    assert.notEqual(stored.tokenHash, session.token);
+    assert.equal((rewritten as string).includes(session.token), false);
+  } finally {
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+  }
+});
+
 test("revoking a guest auth session removes it from the shared Redis session store", async () => {
   const redis = new Redis();
   resetGuestAuthSessions();

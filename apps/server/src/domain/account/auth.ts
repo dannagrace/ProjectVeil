@@ -167,6 +167,11 @@ interface AccountRegistrationState {
   expiresAt: string;
 }
 
+interface StoredGuestAuthSession extends Omit<GuestAuthSession, "token" | "refreshToken"> {
+  tokenHash: string;
+  token?: string;
+}
+
 const MIN_ACCOUNT_PASSWORD_LENGTH = 8;
 const MAX_ACCOUNT_PASSWORD_LENGTH = 128;
 const COMMON_WEAK_ACCOUNT_PASSWORDS = new Set([
@@ -232,7 +237,7 @@ return {1, ttl}
 const authRateLimitCounters = new Map<string, number[]>();
 const accountLockoutStateByLoginId = new Map<string, AccountLockoutState>();
 const credentialStuffingStateByIp = new Map<string, CredentialStuffingState>();
-const guestSessionsById = new Map<string, GuestAuthSession>();
+const guestSessionsById = new Map<string, StoredGuestAuthSession>();
 const accountAuthStateByPlayerId = new Map<string, AccountAuthSessionState>();
 const accountRegistrationStateByLoginId = new Map<string, AccountRegistrationState>();
 const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
@@ -284,6 +289,107 @@ function getGuestSessionTtlMs(session: Pick<GuestAuthSession, "expiresAt">): num
   return Math.max(1, new Date(session.expiresAt).getTime() - nowMs());
 }
 
+function timingSafeCompareBuffer(actualBuffer: Buffer, expectedBuffer: Buffer): boolean {
+  if (actualBuffer.length !== expectedBuffer.length) {
+    timingSafeEqual(Buffer.alloc(expectedBuffer.length), expectedBuffer);
+    return false;
+  }
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function timingSafeCompareHexDigest(actual: string, expected: string): boolean {
+  return timingSafeCompareBuffer(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"));
+}
+
+function hashGuestSessionToken(token: string): string {
+  return createHmac("sha256", readAuthSecret()).update(`guest-session:${token}`).digest("hex");
+}
+
+function storeGuestSessionTokenHash(session: GuestAuthSession): StoredGuestAuthSession {
+  return {
+    playerId: session.playerId,
+    displayName: session.displayName,
+    authMode: session.authMode,
+    provider: session.provider,
+    ...(session.loginId ? { loginId: session.loginId } : {}),
+    ...(session.sessionId ? { sessionId: session.sessionId } : {}),
+    ...(session.sessionVersion != null ? { sessionVersion: session.sessionVersion } : {}),
+    issuedAt: session.issuedAt,
+    expiresAt: session.expiresAt,
+    lastUsedAt: session.lastUsedAt,
+    ...(session.refreshExpiresAt ? { refreshExpiresAt: session.refreshExpiresAt } : {}),
+    tokenHash: hashGuestSessionToken(session.token)
+  };
+}
+
+function normalizeStoredGuestSession(input: unknown): StoredGuestAuthSession | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const candidate = input as Partial<Record<keyof StoredGuestAuthSession, unknown>>;
+  if (
+    typeof candidate.playerId !== "string" ||
+    typeof candidate.displayName !== "string" ||
+    typeof candidate.authMode !== "string" ||
+    typeof candidate.provider !== "string" ||
+    typeof candidate.sessionId !== "string" ||
+    typeof candidate.issuedAt !== "string" ||
+    typeof candidate.expiresAt !== "string" ||
+    typeof candidate.lastUsedAt !== "string"
+  ) {
+    return null;
+  }
+  if (candidate.tokenHash !== undefined && typeof candidate.tokenHash !== "string") {
+    return null;
+  }
+  if (candidate.token !== undefined && typeof candidate.token !== "string") {
+    return null;
+  }
+  if (!candidate.tokenHash && !candidate.token) {
+    return null;
+  }
+  const loginId = normalizeLoginId(candidate.loginId as string | undefined);
+  const tokenHash = candidate.tokenHash ?? hashGuestSessionToken(candidate.token as string);
+  return {
+    playerId: candidate.playerId,
+    displayName: candidate.displayName,
+    authMode: normalizeAuthMode(candidate.authMode as AuthMode, loginId),
+    provider: normalizeAuthProvider({
+      provider: candidate.provider as AuthProvider,
+      authMode: candidate.authMode as AuthMode,
+      loginId
+    }),
+    ...(loginId ? { loginId } : {}),
+    sessionId: candidate.sessionId,
+    ...(typeof candidate.sessionVersion === "number" ? { sessionVersion: candidate.sessionVersion } : {}),
+    issuedAt: candidate.issuedAt,
+    expiresAt: candidate.expiresAt,
+    lastUsedAt: candidate.lastUsedAt,
+    tokenHash
+  };
+}
+
+function validateStoredGuestSessionToken(session: StoredGuestAuthSession, token: string): boolean {
+  return timingSafeCompareHexDigest(hashGuestSessionToken(token), session.tokenHash);
+}
+
+function hydrateGuestSession(session: StoredGuestAuthSession, token: string): GuestAuthSession {
+  return {
+    token,
+    playerId: session.playerId,
+    displayName: session.displayName,
+    authMode: session.authMode,
+    provider: session.provider,
+    ...(session.loginId ? { loginId: session.loginId } : {}),
+    ...(session.sessionId ? { sessionId: session.sessionId } : {}),
+    ...(session.sessionVersion != null ? { sessionVersion: session.sessionVersion } : {}),
+    issuedAt: session.issuedAt,
+    expiresAt: session.expiresAt,
+    lastUsedAt: session.lastUsedAt,
+    ...(session.refreshExpiresAt ? { refreshExpiresAt: session.refreshExpiresAt } : {})
+  };
+}
+
 async function persistGuestSessionClusterState(
   session: GuestAuthSession,
   config = readAuthRuntimeConfig(),
@@ -300,7 +406,7 @@ async function persistGuestSessionClusterState(
 
   await redisClient.set(
     buildGuestSessionClusterKey(session.sessionId),
-    JSON.stringify(session),
+    JSON.stringify(storeGuestSessionTokenHash(session)),
     "PX",
     getGuestSessionTtlMs(session)
   );
@@ -337,12 +443,12 @@ async function touchGuestSessionClusterState(
   }
 
   try {
-    const existingSession = JSON.parse(serializedSession) as GuestAuthSession;
-    if (existingSession.token !== token) {
+    const existingSession = normalizeStoredGuestSession(JSON.parse(serializedSession));
+    if (!existingSession || !validateStoredGuestSessionToken(existingSession, token)) {
       return null;
     }
 
-    const nextSession: GuestAuthSession = {
+    const nextSession: StoredGuestAuthSession = {
       ...existingSession,
       lastUsedAt: new Date().toISOString()
     };
@@ -355,7 +461,7 @@ async function touchGuestSessionClusterState(
     );
     await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, sessionId);
     await redisClient.rpush(GUEST_SESSION_CLUSTER_ORDER_KEY, sessionId);
-    return nextSession;
+    return hydrateGuestSession(nextSession, token);
   } catch {
     return null;
   }
@@ -389,11 +495,7 @@ async function finalizeGuestSessionForResponse(session: GuestAuthSession): Promi
 function timingSafeCompareTokenSignature(actual: string, expected: string): boolean {
   const actualBuffer = Buffer.from(actual, "base64url");
   const expectedBuffer = Buffer.from(expected, "base64url");
-  if (actualBuffer.length !== expectedBuffer.length) {
-    timingSafeEqual(Buffer.alloc(expectedBuffer.length), expectedBuffer);
-    return false;
-  }
-  return timingSafeEqual(actualBuffer, expectedBuffer);
+  return timingSafeCompareBuffer(actualBuffer, expectedBuffer);
 }
 
 function countActiveAccountLockouts(): number {
@@ -961,7 +1063,7 @@ async function consumeAccountRegistrationState(loginId: string, token: string): 
     return null;
   }
 
-  if (state.tokenHash !== hashAccountRegistrationToken(token)) {
+  if (!timingSafeCompareHexDigest(hashAccountRegistrationToken(token), state.tokenHash)) {
     return null;
   }
 
@@ -1093,7 +1195,7 @@ async function consumePasswordRecoveryState(loginId: string, token: string): Pro
     return null;
   }
 
-  if (state.tokenHash !== hashPasswordRecoveryToken(token)) {
+  if (!timingSafeCompareHexDigest(hashPasswordRecoveryToken(token), state.tokenHash)) {
     return null;
   }
 
@@ -2113,9 +2215,7 @@ async function validateAuthToken(
         recordAuthSessionFailure("token_expired");
         return { session: null, errorCode: "token_expired" };
       }
-      if (
-        authDeviceSession.refreshTokenHash !== hashRefreshToken(normalizedToken)
-      ) {
+      if (!timingSafeCompareHexDigest(hashRefreshToken(normalizedToken), authDeviceSession.refreshTokenHash)) {
         recordAuthSessionFailure("session_revoked");
         return { session: null, errorCode: "session_revoked" };
       }
@@ -2720,24 +2820,24 @@ function registerGuestSession(session: GuestAuthSession, config = readAuthRuntim
     guestSessionsById.delete(oldestSessionId);
   }
 
-  guestSessionsById.set(session.sessionId, session);
+  guestSessionsById.set(session.sessionId, storeGuestSessionTokenHash(session));
   syncAuthStateTelemetry();
   void persistGuestSessionClusterState(session, config).catch(() => undefined);
 }
 
 function touchGuestSession(sessionId: string, token: string): GuestAuthSession | null {
   const existingSession = guestSessionsById.get(sessionId);
-  if (!existingSession || existingSession.token !== token) {
+  if (!existingSession || !validateStoredGuestSessionToken(existingSession, token)) {
     return null;
   }
 
-  const nextSession: GuestAuthSession = {
+  const nextSession: StoredGuestAuthSession = {
     ...existingSession,
     lastUsedAt: new Date().toISOString()
   };
   guestSessionsById.delete(sessionId);
   guestSessionsById.set(sessionId, nextSession);
-  return nextSession;
+  return hydrateGuestSession(nextSession, token);
 }
 
 export function revokeGuestAuthSession(sessionId: string): boolean {
