@@ -10,6 +10,7 @@ import type { RoomSnapshotStore } from "@server/persistence";
 const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
 const ANALYTICS_BUFFER_FLUSH_DELAY_MS = 250;
 const DEFAULT_ANALYTICS_RETENTION_DAYS = 400;
+const ANALYTICS_PIPELINE_COUNTER_REDIS_PREFIX = "veil:analytics-pipeline:";
 
 export type AnalyticsSink = "stdout" | "http";
 
@@ -24,7 +25,7 @@ interface AnalyticsPipelineConfig {
   alerts: string[];
 }
 
-interface AnalyticsPipelineCounters {
+export interface AnalyticsPipelineCounters {
   ingestedEventsTotal: number;
   flushedEventsTotal: number;
   flushBatchesTotal: number;
@@ -34,6 +35,27 @@ interface AnalyticsPipelineCounters {
   lastErrorMessage: string | null;
   ingestedByKey: Map<string, number>;
   flushedByKey: Map<string, number>;
+}
+
+interface AnalyticsPipelineCounterDelta {
+  ingestedEventsTotal?: number;
+  flushedEventsTotal?: number;
+  flushBatchesTotal?: number;
+  flushFailuresTotal?: number;
+  lastFlushAt?: string | null;
+  lastErrorAt?: string | null;
+  lastErrorMessage?: string | null;
+  ingestedByKey?: Map<string, number>;
+  flushedByKey?: Map<string, number>;
+}
+
+export interface AnalyticsPipelineCounterStore {
+  record(delta: AnalyticsPipelineCounterDelta): Promise<void>;
+  getSnapshot(): Promise<AnalyticsPipelineCounters>;
+}
+
+interface RedisAnalyticsPipelineCounterStoreOptions {
+  keyPrefix?: string;
 }
 
 export interface AnalyticsPipelineSnapshot {
@@ -111,6 +133,8 @@ const analyticsPipelineCounters: AnalyticsPipelineCounters = {
   ingestedByKey: new Map<string, number>(),
   flushedByKey: new Map<string, number>()
 };
+let analyticsPipelineCounterStore: AnalyticsPipelineCounterStore | null = null;
+let pendingAnalyticsCounterStoreUpdates: Promise<void>[] = [];
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
@@ -164,11 +188,40 @@ function incrementCounter(map: Map<string, number>, key: string, amount = 1): vo
   map.set(key, (map.get(key) ?? 0) + amount);
 }
 
+function recordAnalyticsPipelineCounterDelta(delta: AnalyticsPipelineCounterDelta): void {
+  if (!analyticsPipelineCounterStore) {
+    return;
+  }
+
+  const update = analyticsPipelineCounterStore.record(delta).catch((error) => {
+    analyticsRuntimeDependencies.error("[Analytics] Failed to write analytics pipeline counters to shared store", error);
+  });
+  pendingAnalyticsCounterStoreUpdates.push(update);
+  void update.finally(() => {
+    pendingAnalyticsCounterStoreUpdates = pendingAnalyticsCounterStoreUpdates.filter((entry) => entry !== update);
+  });
+}
+
+async function flushPendingAnalyticsCounterStoreUpdates(): Promise<void> {
+  while (pendingAnalyticsCounterStoreUpdates.length > 0) {
+    const updates = pendingAnalyticsCounterStoreUpdates;
+    pendingAnalyticsCounterStoreUpdates = [];
+    await Promise.allSettled(updates);
+  }
+}
+
 function recordIngestedEvents(events: Array<{ name?: unknown; source?: unknown }>): void {
   analyticsPipelineCounters.ingestedEventsTotal += events.length;
+  const ingestedByKey = new Map<string, number>();
   for (const event of events) {
-    incrementCounter(analyticsPipelineCounters.ingestedByKey, buildAnalyticsCounterKey(event));
+    const key = buildAnalyticsCounterKey(event);
+    incrementCounter(analyticsPipelineCounters.ingestedByKey, key);
+    incrementCounter(ingestedByKey, key);
   }
+  recordAnalyticsPipelineCounterDelta({
+    ingestedEventsTotal: events.length,
+    ingestedByKey
+  });
 }
 
 function readHeaderValue(value: string | string[] | undefined): string | null {
@@ -329,18 +382,36 @@ function normalizeClientAnalyticsEvents(payload: unknown, playerId: string): Ana
 function recordFlushedEvents(events: Array<{ name?: unknown; source?: unknown }>): void {
   analyticsPipelineCounters.flushedEventsTotal += events.length;
   analyticsPipelineCounters.flushBatchesTotal += 1;
-  analyticsPipelineCounters.lastFlushAt = new Date().toISOString();
+  const lastFlushAt = new Date().toISOString();
+  analyticsPipelineCounters.lastFlushAt = lastFlushAt;
   analyticsPipelineCounters.lastErrorAt = null;
   analyticsPipelineCounters.lastErrorMessage = null;
+  const flushedByKey = new Map<string, number>();
   for (const event of events) {
-    incrementCounter(analyticsPipelineCounters.flushedByKey, buildAnalyticsCounterKey(event));
+    const key = buildAnalyticsCounterKey(event);
+    incrementCounter(analyticsPipelineCounters.flushedByKey, key);
+    incrementCounter(flushedByKey, key);
   }
+  recordAnalyticsPipelineCounterDelta({
+    flushedEventsTotal: events.length,
+    flushBatchesTotal: 1,
+    lastFlushAt,
+    lastErrorAt: null,
+    lastErrorMessage: null,
+    flushedByKey
+  });
 }
 
 function recordFlushFailure(message: string): void {
   analyticsPipelineCounters.flushFailuresTotal += 1;
-  analyticsPipelineCounters.lastErrorAt = new Date().toISOString();
+  const lastErrorAt = new Date().toISOString();
+  analyticsPipelineCounters.lastErrorAt = lastErrorAt;
   analyticsPipelineCounters.lastErrorMessage = message;
+  recordAnalyticsPipelineCounterDelta({
+    flushFailuresTotal: 1,
+    lastErrorAt,
+    lastErrorMessage: message
+  });
 }
 
 function usesExampleHostname(value: string): boolean {
@@ -384,10 +455,12 @@ function resolveAnalyticsPipelineConfig(env: NodeJS.ProcessEnv = process.env): A
   };
 }
 
-function buildAnalyticsPipelineEventsSummary(): AnalyticsPipelineSnapshot["delivery"]["events"] {
+function buildAnalyticsPipelineEventsSummary(
+  counters: AnalyticsPipelineCounters
+): AnalyticsPipelineSnapshot["delivery"]["events"] {
   const keys = new Set([
-    ...analyticsPipelineCounters.ingestedByKey.keys(),
-    ...analyticsPipelineCounters.flushedByKey.keys()
+    ...counters.ingestedByKey.keys(),
+    ...counters.flushedByKey.keys()
   ]);
 
   return Array.from(keys)
@@ -397,8 +470,8 @@ function buildAnalyticsPipelineEventsSummary(): AnalyticsPipelineSnapshot["deliv
       return {
         name: name ?? "unknown",
         source: source ?? "unknown",
-        ingestedTotal: analyticsPipelineCounters.ingestedByKey.get(key) ?? 0,
-        flushedTotal: analyticsPipelineCounters.flushedByKey.get(key) ?? 0
+        ingestedTotal: counters.ingestedByKey.get(key) ?? 0,
+        flushedTotal: counters.flushedByKey.get(key) ?? 0
       };
     });
 }
@@ -413,11 +486,15 @@ function emitAnalyticsAlerts(config: AnalyticsPipelineConfig): void {
   }
 }
 
-export function getAnalyticsPipelineSnapshot(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineSnapshot {
+function buildAnalyticsPipelineSnapshot(
+  counters: AnalyticsPipelineCounters,
+  env: NodeJS.ProcessEnv = process.env,
+  extraAlerts: string[] = []
+): AnalyticsPipelineSnapshot {
   const config = resolveAnalyticsPipelineConfig(env);
-  const alerts = [...config.alerts];
-  if (analyticsPipelineCounters.flushFailuresTotal > 0) {
-    alerts.push(`analytics flush failures recorded=${analyticsPipelineCounters.flushFailuresTotal}`);
+  const alerts = [...config.alerts, ...extraAlerts];
+  if (counters.flushFailuresTotal > 0) {
+    alerts.push(`analytics flush failures recorded=${counters.flushFailuresTotal}`);
   }
 
   return {
@@ -437,17 +514,220 @@ export function getAnalyticsPipelineSnapshot(env: NodeJS.ProcessEnv = process.en
       deletionWorkflow: config.deletionWorkflow
     },
     delivery: {
-      ingestedEventsTotal: analyticsPipelineCounters.ingestedEventsTotal,
-      flushedEventsTotal: analyticsPipelineCounters.flushedEventsTotal,
-      flushBatchesTotal: analyticsPipelineCounters.flushBatchesTotal,
-      flushFailuresTotal: analyticsPipelineCounters.flushFailuresTotal,
-      lastFlushAt: analyticsPipelineCounters.lastFlushAt,
-      lastErrorAt: analyticsPipelineCounters.lastErrorAt,
-      lastErrorMessage: analyticsPipelineCounters.lastErrorMessage,
-      events: buildAnalyticsPipelineEventsSummary()
+      ingestedEventsTotal: counters.ingestedEventsTotal,
+      flushedEventsTotal: counters.flushedEventsTotal,
+      flushBatchesTotal: counters.flushBatchesTotal,
+      flushFailuresTotal: counters.flushFailuresTotal,
+      lastFlushAt: counters.lastFlushAt,
+      lastErrorAt: counters.lastErrorAt,
+      lastErrorMessage: counters.lastErrorMessage,
+      events: buildAnalyticsPipelineEventsSummary(counters)
     },
     alerts
   };
+}
+
+function numberFromRedis(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function nullableStringFromRedis(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function cloneAnalyticsPipelineCounters(counters: AnalyticsPipelineCounters): AnalyticsPipelineCounters {
+  return {
+    ingestedEventsTotal: counters.ingestedEventsTotal,
+    flushedEventsTotal: counters.flushedEventsTotal,
+    flushBatchesTotal: counters.flushBatchesTotal,
+    flushFailuresTotal: counters.flushFailuresTotal,
+    lastFlushAt: counters.lastFlushAt,
+    lastErrorAt: counters.lastErrorAt,
+    lastErrorMessage: counters.lastErrorMessage,
+    ingestedByKey: new Map(counters.ingestedByKey),
+    flushedByKey: new Map(counters.flushedByKey)
+  };
+}
+
+function buildRedisAnalyticsCounterKeys(keyPrefix: string): [string, string, string, string] {
+  return [`${keyPrefix}totals`, `${keyPrefix}ingested-by-key`, `${keyPrefix}flushed-by-key`, `${keyPrefix}event-keys`];
+}
+
+function buildRedisAnalyticsCounterEvents(delta: AnalyticsPipelineCounterDelta): Array<{
+  key: string;
+  ingested: number;
+  flushed: number;
+}> {
+  const keys = new Set([...(delta.ingestedByKey?.keys() ?? []), ...(delta.flushedByKey?.keys() ?? [])]);
+  return Array.from(keys)
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => ({
+      key,
+      ingested: delta.ingestedByKey?.get(key) ?? 0,
+      flushed: delta.flushedByKey?.get(key) ?? 0
+    }));
+}
+
+function parseRedisAnalyticsCounterEvents(value: unknown): Pick<AnalyticsPipelineCounters, "ingestedByKey" | "flushedByKey"> {
+  const ingestedByKey = new Map<string, number>();
+  const flushedByKey = new Map<string, number>();
+  const rawEvents = typeof value === "string" ? JSON.parse(value) : [];
+  if (!Array.isArray(rawEvents)) {
+    return { ingestedByKey, flushedByKey };
+  }
+
+  for (const row of rawEvents) {
+    if (!Array.isArray(row) || typeof row[0] !== "string") {
+      continue;
+    }
+    const ingested = numberFromRedis(row[1]);
+    const flushed = numberFromRedis(row[2]);
+    if (ingested > 0) {
+      ingestedByKey.set(row[0], ingested);
+    }
+    if (flushed > 0) {
+      flushedByKey.set(row[0], flushed);
+    }
+  }
+
+  return { ingestedByKey, flushedByKey };
+}
+
+const RECORD_ANALYTICS_PIPELINE_COUNTERS_SCRIPT = `
+local ingestedTotal = tonumber(ARGV[2]) or 0
+local flushedTotal = tonumber(ARGV[3]) or 0
+local flushBatchesTotal = tonumber(ARGV[4]) or 0
+local flushFailuresTotal = tonumber(ARGV[5]) or 0
+if ingestedTotal > 0 then
+  redis.call("HINCRBY", KEYS[1], "ingestedEventsTotal", ingestedTotal)
+end
+if flushedTotal > 0 then
+  redis.call("HINCRBY", KEYS[1], "flushedEventsTotal", flushedTotal)
+end
+if flushBatchesTotal > 0 then
+  redis.call("HINCRBY", KEYS[1], "flushBatchesTotal", flushBatchesTotal)
+end
+if flushFailuresTotal > 0 then
+  redis.call("HINCRBY", KEYS[1], "flushFailuresTotal", flushFailuresTotal)
+end
+if ARGV[6] ~= "" then
+  redis.call("HSET", KEYS[1], "lastFlushAt", ARGV[6])
+  redis.call("HDEL", KEYS[1], "lastErrorAt", "lastErrorMessage")
+end
+if ARGV[7] ~= "" then
+  redis.call("HSET", KEYS[1], "lastErrorAt", ARGV[7])
+end
+if ARGV[8] ~= "" then
+  redis.call("HSET", KEYS[1], "lastErrorMessage", ARGV[8])
+end
+local events = cjson.decode(ARGV[9])
+for _, event in ipairs(events) do
+  local key = event["key"]
+  local ingested = tonumber(event["ingested"]) or 0
+  local flushed = tonumber(event["flushed"]) or 0
+  redis.call("SADD", KEYS[4], key)
+  if ingested > 0 then
+    redis.call("HINCRBY", KEYS[2], key, ingested)
+  end
+  if flushed > 0 then
+    redis.call("HINCRBY", KEYS[3], key, flushed)
+  end
+end
+return "OK"
+`;
+
+const READ_ANALYTICS_PIPELINE_COUNTERS_SCRIPT = `
+local totals = redis.call("HMGET", KEYS[1], "ingestedEventsTotal", "flushedEventsTotal", "flushBatchesTotal", "flushFailuresTotal", "lastFlushAt", "lastErrorAt", "lastErrorMessage")
+local eventKeys = redis.call("SMEMBERS", KEYS[4])
+table.sort(eventKeys)
+local events = {}
+for _, key in ipairs(eventKeys) do
+  table.insert(events, { key, redis.call("HGET", KEYS[2], key) or "0", redis.call("HGET", KEYS[3], key) or "0" })
+end
+return {
+  totals[1] or "0",
+  totals[2] or "0",
+  totals[3] or "0",
+  totals[4] or "0",
+  totals[5] or "",
+  totals[6] or "",
+  totals[7] or "",
+  cjson.encode(events)
+}
+`;
+
+export function createRedisAnalyticsPipelineCounterStore(
+  redisClient: RedisClientLike,
+  options: RedisAnalyticsPipelineCounterStoreOptions = {}
+): AnalyticsPipelineCounterStore {
+  const keyPrefix = options.keyPrefix ?? ANALYTICS_PIPELINE_COUNTER_REDIS_PREFIX;
+  const keys = buildRedisAnalyticsCounterKeys(keyPrefix);
+
+  return {
+    async record(delta) {
+      await redisClient.eval(
+        RECORD_ANALYTICS_PIPELINE_COUNTERS_SCRIPT,
+        keys.length,
+        ...keys,
+        "record",
+        String(delta.ingestedEventsTotal ?? 0),
+        String(delta.flushedEventsTotal ?? 0),
+        String(delta.flushBatchesTotal ?? 0),
+        String(delta.flushFailuresTotal ?? 0),
+        delta.lastFlushAt ?? "",
+        delta.lastErrorAt ?? "",
+        delta.lastErrorMessage ?? "",
+        JSON.stringify(buildRedisAnalyticsCounterEvents(delta))
+      );
+    },
+    async getSnapshot() {
+      const result = (await redisClient.eval(
+        READ_ANALYTICS_PIPELINE_COUNTERS_SCRIPT,
+        keys.length,
+        ...keys,
+        "snapshot"
+      )) as unknown[];
+      const eventCounters = parseRedisAnalyticsCounterEvents(result[7]);
+      return {
+        ingestedEventsTotal: numberFromRedis(result[0]),
+        flushedEventsTotal: numberFromRedis(result[1]),
+        flushBatchesTotal: numberFromRedis(result[2]),
+        flushFailuresTotal: numberFromRedis(result[3]),
+        lastFlushAt: nullableStringFromRedis(result[4]),
+        lastErrorAt: nullableStringFromRedis(result[5]),
+        lastErrorMessage: nullableStringFromRedis(result[6]),
+        ...eventCounters
+      };
+    }
+  };
+}
+
+export function configureAnalyticsPipelineCounterStore(store: AnalyticsPipelineCounterStore | null): void {
+  analyticsPipelineCounterStore = store;
+  pendingAnalyticsCounterStoreUpdates = [];
+}
+
+export function getLocalAnalyticsPipelineSnapshot(env: NodeJS.ProcessEnv = process.env): AnalyticsPipelineSnapshot {
+  return buildAnalyticsPipelineSnapshot(cloneAnalyticsPipelineCounters(analyticsPipelineCounters), env);
+}
+
+export async function getAnalyticsPipelineSnapshot(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<AnalyticsPipelineSnapshot> {
+  await flushPendingAnalyticsCounterStoreUpdates();
+  if (!analyticsPipelineCounterStore) {
+    return getLocalAnalyticsPipelineSnapshot(env);
+  }
+
+  try {
+    return buildAnalyticsPipelineSnapshot(await analyticsPipelineCounterStore.getSnapshot(), env);
+  } catch (error) {
+    analyticsRuntimeDependencies.error("[Analytics] Failed to read analytics pipeline counters from shared store", error);
+    return buildAnalyticsPipelineSnapshot(cloneAnalyticsPipelineCounters(analyticsPipelineCounters), env, [
+      "analytics shared counter store unavailable; reporting local pod counters"
+    ]);
+  }
 }
 
 export function renderAnalyticsPipelineSnapshotText(snapshot: AnalyticsPipelineSnapshot): string {
@@ -515,6 +795,7 @@ export function resetAnalyticsRuntimeDependencies(): void {
   analyticsPipelineCounters.lastErrorMessage = null;
   analyticsPipelineCounters.ingestedByKey.clear();
   analyticsPipelineCounters.flushedByKey.clear();
+  configureAnalyticsPipelineCounterStore(null);
   analyticsIngestRateLimitState.counters.clear();
   analyticsIngestRateLimitState.lastPrunedAtMs = 0;
 }
@@ -615,8 +896,9 @@ export function emitAnalyticsEvent<Name extends AnalyticsEventName>(
   return event;
 }
 
-export function flushAnalyticsEventsForTest(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  return flushEvents(env);
+export async function flushAnalyticsEventsForTest(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  await flushEvents(env);
+  await flushPendingAnalyticsCounterStoreUpdates();
 }
 
 function resolveAnalyticsIngestRateLimitRedisClient(options: AnalyticsRouteRegistrationOptions): RedisClientLike | null {

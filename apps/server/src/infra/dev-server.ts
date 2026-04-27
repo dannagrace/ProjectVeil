@@ -9,7 +9,12 @@ import {
   type AccountTokenDeliveryQueuePersistence
 } from "@server/adapters/account-token-delivery";
 import { registerAuthRoutes } from "@server/domain/account/auth";
-import { getAnalyticsPipelineSnapshot, registerAnalyticsRoutes } from "@server/domain/ops/analytics";
+import {
+  configureAnalyticsPipelineCounterStore,
+  createRedisAnalyticsPipelineCounterStore,
+  getLocalAnalyticsPipelineSnapshot,
+  registerAnalyticsRoutes
+} from "@server/domain/ops/analytics";
 import { validateBackupStorageOnStartup, type BackupStorageValidationResult } from "@server/infra/backup-storage";
 import { registerClientErrorRoutes } from "@server/domain/ops/client-error";
 import {
@@ -582,6 +587,9 @@ export async function startDevServer(
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
   const accountTokenDeliveryRedisClient = redisUrl ? deps.createRedisClient(redisUrl) : null;
+  configureAnalyticsPipelineCounterStore(
+    accountTokenDeliveryRedisClient ? createRedisAnalyticsPipelineCounterStore(accountTokenDeliveryRedisClient) : null
+  );
   configureLobbyRoomSummaryStore(
     accountTokenDeliveryRedisClient ? createRedisLobbyRoomSummaryStore(accountTokenDeliveryRedisClient) : null
   );
@@ -717,7 +725,7 @@ export async function startDevServer(
     deps.logger.log("Error monitoring: SENTRY_DSN not configured; external delivery skipped");
   }
 
-  for (const alert of getAnalyticsPipelineSnapshot().alerts) {
+  for (const alert of getLocalAnalyticsPipelineSnapshot().alerts) {
     deps.logger.warn(`ANALYTICS WARNING: ${alert}`);
   }
 
@@ -813,6 +821,7 @@ export async function startDevServer(
       await closeRedisResource(redisPresence);
       await closeRedisResource(redisDriver);
       await closeRedisClientResource(accountTokenDeliveryRedisClient);
+      configureAnalyticsPipelineCounterStore(null);
       return;
     }
 
@@ -823,6 +832,7 @@ export async function startDevServer(
       closeRedisResource(redisDriver),
       closeRedisClientResource(accountTokenDeliveryRedisClient)
     ]);
+    configureAnalyticsPipelineCounterStore(null);
   };
 
   let shutdownPromise: Promise<void> | null = null;

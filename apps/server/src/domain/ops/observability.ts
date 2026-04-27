@@ -4,6 +4,7 @@ import { configureFeatureFlagConfigCenterStore, getFeatureFlagRuntimeSnapshot, g
 import type { LeaderboardAlertEvent } from "@server/domain/social/leaderboard-anti-abuse";
 import {
   getAnalyticsPipelineSnapshot,
+  getLocalAnalyticsPipelineSnapshot,
   renderAnalyticsPipelineSnapshotText,
   resetCapturedAnalyticsEventsForTest
 } from "@server/domain/ops/analytics";
@@ -1137,7 +1138,7 @@ function parseRuntimeGateUpdateBody(body: unknown): {
 export function buildPrometheusMetricsDocument(): string {
   const health = buildHealthPayload();
   const featureFlags = buildFeatureFlagObservabilityPayload();
-  const analyticsPipeline = getAnalyticsPipelineSnapshot();
+  const analyticsPipeline = getLocalAnalyticsPipelineSnapshot();
   const mysqlPools = getMySqlPoolMetricsSnapshot();
   const lines = [
     "# HELP veil_up Process health status.",
@@ -2544,7 +2545,7 @@ export function registerRuntimeObservabilityRoutes(
     "/api/runtime/analytics-pipeline",
     protectRuntimeRoute(async (request, response) => {
       try {
-        const snapshot = getAnalyticsPipelineSnapshot();
+        const snapshot = await getAnalyticsPipelineSnapshot();
         const url = new URL(request.url ?? "/api/runtime/analytics-pipeline", "http://runtime.local");
 
         if (url.searchParams.get("format") === "text") {

@@ -20,7 +20,7 @@ test("analytics pipeline flushes HTTP batches to the configured endpoint with th
   }> = [];
   configureAnalyticsRuntimeDependencies({
     fetch: async (input, init) => {
-      deliveries.push({ input, init });
+      deliveries.push(init === undefined ? { input } : { input, init });
       return {
         ok: true,
         status: 202
@@ -115,7 +115,7 @@ test("analytics pipeline flushes HTTP batches to the configured endpoint with th
     }
   });
 
-  const snapshot = getAnalyticsPipelineSnapshot(env);
+  const snapshot = await getAnalyticsPipelineSnapshot(env);
   assert.equal(snapshot.sink, "http");
   assert.equal(snapshot.delivery.ingestedEventsTotal, 2);
   assert.equal(snapshot.delivery.flushedEventsTotal, 2);
@@ -154,7 +154,7 @@ test("analytics pipeline warns and falls back to stdout when ANALYTICS_ENDPOINT 
 
   await flushAnalyticsEventsForTest(env);
 
-  const snapshot = getAnalyticsPipelineSnapshot(env);
+  const snapshot = await getAnalyticsPipelineSnapshot(env);
   assert.equal(snapshot.sink, "stdout");
   assert.match(snapshot.alerts[0] ?? "", /ANALYTICS_ENDPOINT/);
   assert.match(errors[0] ?? "", /\[Analytics\] ANALYTICS_SINK=http but ANALYTICS_ENDPOINT is not configured; falling back to stdout\./);

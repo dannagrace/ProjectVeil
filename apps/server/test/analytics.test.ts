@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test, { afterEach } from "node:test";
 import {
+  configureAnalyticsPipelineCounterStore,
+  createRedisAnalyticsPipelineCounterStore,
   configureAnalyticsRuntimeDependencies,
+  emitAnalyticsEvent,
   flushAnalyticsEventsForTest,
   getAnalyticsPipelineSnapshot,
   registerAnalyticsRoutes,
@@ -10,6 +13,90 @@ import {
 } from "@server/domain/ops/analytics";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 import { createFakeRedisRateLimitClient } from "./fake-redis-rate-limit.ts";
+
+function createFakeAnalyticsRedisClient(): {
+  eval(script: string, numKeys: number, ...args: string[]): Promise<unknown>;
+} {
+  const hashes = new Map<string, Map<string, string>>();
+  const sets = new Map<string, Set<string>>();
+
+  const readHash = (key: string): Map<string, string> => {
+    let hash = hashes.get(key);
+    if (!hash) {
+      hash = new Map();
+      hashes.set(key, hash);
+    }
+    return hash;
+  };
+
+  return {
+    async eval(_script, numKeys, ...args) {
+      const keys = args.slice(0, numKeys);
+      const argv = args.slice(numKeys);
+      const command = argv[0];
+      if (command === "record") {
+        const [totalsKey, ingestedKey, flushedKey, eventKeysKey] = keys;
+        const [_command, ingestedTotal, flushedTotal, flushBatchesTotal, flushFailuresTotal, lastFlushAt, lastErrorAt, lastErrorMessage, eventsJson] = argv;
+        const totals = readHash(totalsKey ?? "");
+        const addNumber = (field: string, value: string | undefined) => {
+          const amount = Number(value ?? "0");
+          if (amount > 0) {
+            totals.set(field, String(Number(totals.get(field) ?? "0") + amount));
+          }
+        };
+        addNumber("ingestedEventsTotal", ingestedTotal);
+        addNumber("flushedEventsTotal", flushedTotal);
+        addNumber("flushBatchesTotal", flushBatchesTotal);
+        addNumber("flushFailuresTotal", flushFailuresTotal);
+        if (lastFlushAt) {
+          totals.set("lastFlushAt", lastFlushAt);
+        }
+        if (lastErrorAt) {
+          totals.set("lastErrorAt", lastErrorAt);
+        }
+        if (lastErrorMessage) {
+          totals.set("lastErrorMessage", lastErrorMessage);
+        } else if (lastFlushAt) {
+          totals.delete("lastErrorAt");
+          totals.delete("lastErrorMessage");
+        }
+        const ingested = readHash(ingestedKey ?? "");
+        const flushed = readHash(flushedKey ?? "");
+        const eventKeys = sets.get(eventKeysKey ?? "") ?? new Set<string>();
+        sets.set(eventKeysKey ?? "", eventKeys);
+        const events = JSON.parse(eventsJson ?? "[]") as Array<{ key: string; ingested: number; flushed: number }>;
+        for (const event of events) {
+          eventKeys.add(event.key);
+          if (event.ingested > 0) {
+            ingested.set(event.key, String(Number(ingested.get(event.key) ?? "0") + event.ingested));
+          }
+          if (event.flushed > 0) {
+            flushed.set(event.key, String(Number(flushed.get(event.key) ?? "0") + event.flushed));
+          }
+        }
+        return "OK";
+      }
+      if (command === "snapshot") {
+        const [totalsKey, ingestedKey, flushedKey, eventKeysKey] = keys;
+        const totals = readHash(totalsKey ?? "");
+        const eventKeys = Array.from(sets.get(eventKeysKey ?? "") ?? new Set<string>()).sort();
+        const ingested = readHash(ingestedKey ?? "");
+        const flushed = readHash(flushedKey ?? "");
+        return [
+          totals.get("ingestedEventsTotal") ?? "0",
+          totals.get("flushedEventsTotal") ?? "0",
+          totals.get("flushBatchesTotal") ?? "0",
+          totals.get("flushFailuresTotal") ?? "0",
+          totals.get("lastFlushAt") ?? "",
+          totals.get("lastErrorAt") ?? "",
+          totals.get("lastErrorMessage") ?? "",
+          JSON.stringify(eventKeys.map((key) => [key, ingested.get(key) ?? "0", flushed.get(key) ?? "0"]))
+        ];
+      }
+      throw new Error(`unexpected eval command: ${command}`);
+    }
+  };
+}
 
 afterEach(() => {
   resetAnalyticsRuntimeDependencies();
@@ -44,20 +131,15 @@ function createResponse(): TestResponse {
 function createRequest(method: string, body?: string, headers: Record<string, string> = {}): Readable & {
   method: string;
   headers: Record<string, string>;
-  resume(): void;
 } {
   const request = Readable.from(body == null ? [] : [body]) as Readable & {
     method: string;
     headers: Record<string, string>;
-    resume(): void;
   };
   request.method = method;
   request.headers = {
     ...headers,
     ...(body == null ? {} : { "content-length": Buffer.byteLength(body).toString() })
-  };
-  request.resume = () => {
-    request.read();
   };
   return request;
 }
@@ -302,7 +384,7 @@ test("registerAnalyticsRoutes queues accepted events for the configured analytic
 
   configureAnalyticsRuntimeDependencies({
     fetch: async (input, init) => {
-      fetchCalls.push({ input, init });
+      fetchCalls.push(init === undefined ? { input } : { input, init });
       return {
         ok: true,
         status: 202
@@ -367,7 +449,7 @@ test("registerAnalyticsRoutes queues accepted events for the configured analytic
   assert.equal(fetchCalls[0]?.input, "https://analytics.projectveil.example/ingest");
   assert.match(String(fetchCalls[0]?.init?.body), /"tutorial_step"/);
 
-  const snapshot = getAnalyticsPipelineSnapshot({
+  const snapshot = await getAnalyticsPipelineSnapshot({
     ANALYTICS_SINK: "http",
     ANALYTICS_ENDPOINT: "https://analytics.projectveil.example/ingest"
   });
@@ -377,8 +459,64 @@ test("registerAnalyticsRoutes queues accepted events for the configured analytic
   assert.equal(snapshot.delivery.events.find((event) => event.name === "session_start" && event.source === "cocos-client")?.flushedTotal, 1);
 });
 
-test("getAnalyticsPipelineSnapshot warns when http sink is requested without an endpoint", () => {
-  const snapshot = getAnalyticsPipelineSnapshot({
+test("getAnalyticsPipelineSnapshot aggregates Redis-backed counters across simulated pods", async () => {
+  const redis = createFakeAnalyticsRedisClient();
+  const store = createRedisAnalyticsPipelineCounterStore(redis as never, {
+    keyPrefix: "test:analytics-pipeline:"
+  });
+
+  configureAnalyticsRuntimeDependencies({
+    log: () => {}
+  });
+  configureAnalyticsPipelineCounterStore(store);
+  emitAnalyticsEvent("session_start", {
+    playerId: "player-a",
+    source: "server",
+    payload: {
+      roomId: "room-a",
+      authMode: "guest",
+      platform: "web"
+    }
+  });
+  await flushAnalyticsEventsForTest();
+
+  resetAnalyticsRuntimeDependencies();
+  configureAnalyticsRuntimeDependencies({
+    log: () => {}
+  });
+  configureAnalyticsPipelineCounterStore(store);
+  emitAnalyticsEvent("tutorial_step", {
+    playerId: "player-b",
+    source: "cocos-client",
+    payload: {
+      stepId: "intro",
+      status: "completed",
+      reason: "test"
+    }
+  });
+  await flushAnalyticsEventsForTest();
+
+  const snapshot = await getAnalyticsPipelineSnapshot();
+
+  assert.equal(snapshot.delivery.ingestedEventsTotal, 2);
+  assert.equal(snapshot.delivery.flushedEventsTotal, 2);
+  assert.equal(snapshot.delivery.flushBatchesTotal, 2);
+  assert.equal(snapshot.delivery.flushFailuresTotal, 0);
+  assert.ok(snapshot.delivery.lastFlushAt);
+  assert.equal(snapshot.delivery.lastErrorAt, null);
+  assert.equal(snapshot.delivery.lastErrorMessage, null);
+  assert.equal(
+    snapshot.delivery.events.find((event) => event.name === "session_start" && event.source === "server")?.ingestedTotal,
+    1
+  );
+  assert.equal(
+    snapshot.delivery.events.find((event) => event.name === "tutorial_step" && event.source === "cocos-client")?.flushedTotal,
+    1
+  );
+});
+
+test("getAnalyticsPipelineSnapshot warns when http sink is requested without an endpoint", async () => {
+  const snapshot = await getAnalyticsPipelineSnapshot({
     ANALYTICS_SINK: "http"
   });
 
@@ -387,8 +525,8 @@ test("getAnalyticsPipelineSnapshot warns when http sink is requested without an 
   assert.match(snapshot.alerts[0] ?? "", /ANALYTICS_ENDPOINT/);
 });
 
-test("getAnalyticsPipelineSnapshot warns when ANALYTICS_ENDPOINT still uses a .example hostname", () => {
-  const snapshot = getAnalyticsPipelineSnapshot({
+test("getAnalyticsPipelineSnapshot warns when ANALYTICS_ENDPOINT still uses a .example hostname", async () => {
+  const snapshot = await getAnalyticsPipelineSnapshot({
     ANALYTICS_SINK: "http",
     ANALYTICS_ENDPOINT: "https://analytics.projectveil.example/ingest"
   });
