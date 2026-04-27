@@ -1529,16 +1529,10 @@ test("player account routes degrade to local-mode responses when persistence is 
   assert.equal(publicReplayResponse.status, 401);
 
   const publicAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/achievements`);
-  const publicAchievementPayload = (await publicAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
-  assert.equal(publicAchievementResponse.status, 200);
-  assert.equal(publicAchievementPayload.items.length, 5);
-  assert.equal(publicAchievementPayload.items[0]?.id, "first_battle");
+  assert.equal(publicAchievementResponse.status, 401);
 
   const publicProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`);
-  const publicProgressPayload = (await publicProgressResponse.json()) as PlayerProgressionSnapshot;
-  assert.equal(publicProgressResponse.status, 200);
-  assert.equal(publicProgressPayload.summary.totalAchievements, 5);
-  assert.equal(publicProgressPayload.summary.unlockedAchievements, 0);
+  assert.equal(publicProgressResponse.status, 401);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
     headers: {
@@ -1582,6 +1576,25 @@ test("player account routes degrade to local-mode responses when persistence is 
   const meReplayPayload = (await meReplayResponse.json()) as { items: PlayerBattleReplaySummary[] };
   assert.equal(meReplayResponse.status, 200);
   assert.deepEqual(meReplayPayload.items, []);
+
+  const selfAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/achievements?unlocked=false&limit=2`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const selfAchievementPayload = (await selfAchievementResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(selfAchievementResponse.status, 200);
+  assert.deepEqual(selfAchievementPayload.items.map((entry) => entry.id), ["first_battle", "enemy_slayer"]);
+
+  const selfProgressResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-local/progression`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const selfProgressPayload = (await selfProgressResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(selfProgressResponse.status, 200);
+  assert.equal(selfProgressPayload.summary.totalAchievements, 5);
+  assert.equal(selfProgressPayload.summary.unlockedAchievements, 0);
 
   const meAchievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/achievements?unlocked=false&limit=2`, {
     headers: {
@@ -1696,15 +1709,10 @@ test("public guest player routes keep only intended public payloads exposed", as
   assert.equal(eventLogResponse.status, 401);
 
   const achievementResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/achievements?limit=2`);
-  const achievementPayload = (await achievementResponse.json()) as { items: PlayerAchievementProgress[] };
-  assert.equal(achievementResponse.status, 200);
-  assert.deepEqual(achievementPayload.items.map((entry) => entry.id), ["first_battle", "enemy_slayer"]);
+  assert.equal(achievementResponse.status, 401);
 
   const progressionResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/guest-preview/progression?limit=1`);
-  const progressionPayload = (await progressionResponse.json()) as PlayerProgressionSnapshot;
-  assert.equal(progressionResponse.status, 200);
-  assert.equal(progressionPayload.summary.totalAchievements, 5);
-  assert.equal(progressionPayload.summary.unlockedAchievements, 0);
+  assert.equal(progressionResponse.status, 401);
 });
 
 test("player account battle replay routes return normalized replay summaries with optional limit and offset", async (t) => {
@@ -2315,9 +2323,19 @@ test("player account achievement routes filter normalized progress without loadi
   const publicResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/player-achievements/achievements?unlocked=true&metric=skills_learned`
   );
-  const publicPayload = (await publicResponse.json()) as { items: PlayerAchievementProgress[] };
-  assert.equal(publicResponse.status, 200);
-  assert.deepEqual(publicPayload.items.map((entry) => entry.id), ["skill_scholar"]);
+  assert.equal(publicResponse.status, 401);
+
+  const scopedResponse = await fetch(
+    `http://127.0.0.1:${port}/api/player-accounts/player-achievements/achievements?unlocked=true&metric=skills_learned`,
+    {
+      headers: {
+        Authorization: `Bearer ${session.token}`
+      }
+    }
+  );
+  const scopedPayload = (await scopedResponse.json()) as { items: PlayerAchievementProgress[] };
+  assert.equal(scopedResponse.status, 200);
+  assert.deepEqual(scopedPayload.items.map((entry) => entry.id), ["skill_scholar"]);
 
   const meResponse = await fetch(
     `http://127.0.0.1:${port}/api/player-accounts/me/achievements?achievementId=enemy_slayer`,
@@ -2398,9 +2416,16 @@ test("player account progression routes return a compact achievement and event r
   });
 
   const publicResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-progress/progression?limit=1`);
-  const publicPayload = (await publicResponse.json()) as PlayerProgressionSnapshot;
-  assert.equal(publicResponse.status, 200);
-  assert.deepEqual(publicPayload.summary, {
+  assert.equal(publicResponse.status, 401);
+
+  const scopedResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/player-progress/progression?limit=1`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
+  const scopedPayload = (await scopedResponse.json()) as PlayerProgressionSnapshot;
+  assert.equal(scopedResponse.status, 200);
+  assert.deepEqual(scopedPayload.summary, {
     totalAchievements: 5,
     unlockedAchievements: 1,
     inProgressAchievements: 1,
@@ -2419,7 +2444,7 @@ test("player account progression routes return a compact achievement and event r
     recentEventCount: 1,
     latestEventAt: "2026-03-27T12:03:00.000Z"
   });
-  assert.deepEqual(publicPayload.recentEventLog.map((entry) => entry.id), ["event-newer"]);
+  assert.deepEqual(scopedPayload.recentEventLog.map((entry) => entry.id), ["event-newer"]);
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
     headers: {
