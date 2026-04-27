@@ -208,6 +208,7 @@ const DEFAULT_ACCOUNT_REGISTRATION_TTL_MINUTES = 15;
 const DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES = 15;
 const AUTH_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:auth-rate-limit:";
 const ACCOUNT_LOCKOUT_CLUSTER_KEY_PREFIX = "veil:auth-account-lockout:";
+const CREDENTIAL_STUFFING_CLUSTER_KEY_PREFIX = "veil:auth-credential-stuffing:";
 const AUTH_RATE_LIMIT_REDIS_SCRIPT = `
 local key = KEYS[1]
 local max = tonumber(ARGV[1])
@@ -2370,35 +2371,133 @@ async function clearAccountLoginFailures(loginId: string): Promise<void> {
   syncAuthStateTelemetry();
 }
 
-function pruneCredentialStuffingState(ip: string, config = readAuthRuntimeConfig()): CredentialStuffingState {
-  const currentTime = nowMs();
+function pruneCredentialStuffingSnapshot(
+  state: CredentialStuffingState,
+  config = readAuthRuntimeConfig(),
+  currentTime = nowMs()
+): CredentialStuffingState {
   const windowStart = currentTime - config.credentialStuffingWindowMs;
-  const existingState = credentialStuffingStateByIp.get(ip) ?? { failedAttempts: [] };
-  const nextState: CredentialStuffingState = {
-    failedAttempts: existingState.failedAttempts.filter((attempt) => attempt.at > windowStart),
-    ...(existingState.blockedUntil && existingState.blockedUntil > currentTime
-      ? { blockedUntil: existingState.blockedUntil }
+  return {
+    failedAttempts: state.failedAttempts.filter((attempt) => attempt.at > windowStart),
+    ...(state.blockedUntil && state.blockedUntil > currentTime
+      ? { blockedUntil: state.blockedUntil }
       : {})
   };
+}
 
+function saveLocalCredentialStuffingState(ip: string, nextState: CredentialStuffingState): void {
   if (nextState.failedAttempts.length === 0 && !nextState.blockedUntil) {
     credentialStuffingStateByIp.delete(ip);
-    syncAuthStateTelemetry();
-    return nextState;
+  } else {
+    credentialStuffingStateByIp.set(ip, nextState);
   }
-
-  credentialStuffingStateByIp.set(ip, nextState);
   syncAuthStateTelemetry();
+}
+
+function pruneCredentialStuffingState(ip: string, config = readAuthRuntimeConfig()): CredentialStuffingState {
+  const existingState = credentialStuffingStateByIp.get(ip) ?? { failedAttempts: [] };
+  const nextState = pruneCredentialStuffingSnapshot(existingState, config);
+  saveLocalCredentialStuffingState(ip, nextState);
   return nextState;
 }
 
-function getCredentialStuffingBlockedUntil(ip: string): number | null {
-  return pruneCredentialStuffingState(ip).blockedUntil ?? null;
+function buildCredentialStuffingClusterKey(ip: string): string {
+  return `${CREDENTIAL_STUFFING_CLUSTER_KEY_PREFIX}${ip}`;
 }
 
-function recordCredentialStuffingFailure(ip: string, loginId: string, config = readAuthRuntimeConfig()): number | null {
+function getCredentialStuffingTtlMs(state: CredentialStuffingState, config = readAuthRuntimeConfig()): number {
+  const blockedTtlMs = state.blockedUntil ? state.blockedUntil - nowMs() : 0;
+  return Math.max(1, config.credentialStuffingWindowMs, blockedTtlMs);
+}
+
+function normalizeCredentialStuffingState(input: unknown): CredentialStuffingState {
+  if (!input || typeof input !== "object") {
+    return { failedAttempts: [] };
+  }
+  const candidate = input as {
+    failedAttempts?: Array<{ at?: unknown; loginId?: unknown }>;
+    blockedUntil?: unknown;
+  };
+  return {
+    failedAttempts: Array.isArray(candidate.failedAttempts)
+      ? candidate.failedAttempts
+          .filter(
+            (attempt): attempt is { at: number; loginId: string } =>
+              typeof attempt.at === "number" &&
+              Number.isFinite(attempt.at) &&
+              typeof attempt.loginId === "string" &&
+              attempt.loginId.length > 0
+          )
+          .map((attempt) => ({ at: attempt.at, loginId: attempt.loginId }))
+      : [],
+    ...(typeof candidate.blockedUntil === "number" && Number.isFinite(candidate.blockedUntil)
+      ? { blockedUntil: candidate.blockedUntil }
+      : {})
+  };
+}
+
+async function loadCredentialStuffingState(
+  ip: string,
+  config = readAuthRuntimeConfig()
+): Promise<CredentialStuffingState> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    return pruneCredentialStuffingState(ip, config);
+  }
+
+  try {
+    const serialized = await redisClient.get(buildCredentialStuffingClusterKey(ip));
+    if (!serialized) {
+      return { failedAttempts: [] };
+    }
+    const nextState = pruneCredentialStuffingSnapshot(normalizeCredentialStuffingState(JSON.parse(serialized)), config);
+    if (nextState.failedAttempts.length === 0 && !nextState.blockedUntil) {
+      await redisClient.del(buildCredentialStuffingClusterKey(ip));
+    }
+    return nextState;
+  } catch {
+    return pruneCredentialStuffingState(ip, config);
+  }
+}
+
+async function saveCredentialStuffingState(
+  ip: string,
+  state: CredentialStuffingState,
+  config = readAuthRuntimeConfig()
+): Promise<void> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    saveLocalCredentialStuffingState(ip, state);
+    return;
+  }
+
+  try {
+    if (state.failedAttempts.length === 0 && !state.blockedUntil) {
+      await redisClient.del(buildCredentialStuffingClusterKey(ip));
+      return;
+    }
+    await redisClient.set(
+      buildCredentialStuffingClusterKey(ip),
+      JSON.stringify(state),
+      "PX",
+      getCredentialStuffingTtlMs(state, config)
+    );
+  } catch {
+    saveLocalCredentialStuffingState(ip, state);
+  }
+}
+
+async function getCredentialStuffingBlockedUntil(ip: string): Promise<number | null> {
+  return (await loadCredentialStuffingState(ip)).blockedUntil ?? null;
+}
+
+async function recordCredentialStuffingFailure(
+  ip: string,
+  loginId: string,
+  config = readAuthRuntimeConfig()
+): Promise<number | null> {
   const currentTime = nowMs();
-  const nextState = pruneCredentialStuffingState(ip, config);
+  const nextState = await loadCredentialStuffingState(ip, config);
   nextState.failedAttempts.push({
     at: currentTime,
     loginId
@@ -2410,8 +2509,7 @@ function recordCredentialStuffingFailure(ip: string, loginId: string, config = r
       currentTime + config.credentialStuffingBlockDurationMs
     );
   }
-  credentialStuffingStateByIp.set(ip, nextState);
-  syncAuthStateTelemetry();
+  await saveCredentialStuffingState(ip, nextState, config);
   return nextState.blockedUntil ?? null;
 }
 
@@ -2872,7 +2970,7 @@ export function registerAuthRoutes(
       }
       const requestIp = resolveRequestIp(request);
 
-      const sourceBlockedUntil = getCredentialStuffingBlockedUntil(requestIp);
+      const sourceBlockedUntil = await getCredentialStuffingBlockedUntil(requestIp);
       if (sourceBlockedUntil) {
         sendCredentialStuffingBlocked(response, sourceBlockedUntil);
         return;
@@ -2887,7 +2985,7 @@ export function registerAuthRoutes(
       const authAccount = await store.loadPlayerAccountAuthByLoginId(loginId);
       if (!authAccount || !verifyAccountPassword(password, authAccount.passwordHash)) {
         recordAuthInvalidCredentials();
-        const credentialStuffingBlockedUntil = recordCredentialStuffingFailure(requestIp, loginId);
+        const credentialStuffingBlockedUntil = await recordCredentialStuffingFailure(requestIp, loginId);
         const nextLockedUntil = await recordAccountLoginFailure(loginId);
         if (credentialStuffingBlockedUntil) {
           sendCredentialStuffingBlocked(response, credentialStuffingBlockedUntil);

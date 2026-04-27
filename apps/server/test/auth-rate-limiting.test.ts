@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hashAccountPassword, resetGuestAuthSessions, type GuestAuthSession } from "@server/domain/account/auth";
+import Redis from "ioredis-mock";
+import {
+  hashAccountPassword,
+  resetGuestAuthSessions,
+  setGuestSessionClusterClientForTest,
+  type GuestAuthSession
+} from "@server/domain/account/auth";
 import { DEFAULT_LEADERBOARD_TIER_THRESHOLDS } from "@server/domain/social/leaderboard-tier-thresholds";
 import { startDevServer, type DevServerRuntimeHandle } from "@server/infra/dev-server";
 import type {
@@ -602,6 +608,65 @@ test("real dev-server blocks credential stuffing from one IP after five distinct
     },
     body: {
       loginId: "credential-burst-6",
+      password: "wrong-password1",
+      privacyConsentAccepted: true
+    }
+  });
+  const blockedPayload = blockedResponse.body as { error: { code: string; blockedUntil?: string } };
+
+  assert.equal(blockedResponse.status, 429);
+  assert.equal(blockedPayload.error.code, "credential_stuffing_blocked");
+  assert.ok(blockedPayload.error.blockedUntil);
+  assert.ok(blockedResponse.headers.get("Retry-After"));
+});
+
+test("credential stuffing detection is shared through Redis across local auth state resets", { concurrency: false }, async (t) => {
+  const redis = new Redis();
+  const cleanup: Array<() => void> = [];
+  withEnvOverrides(
+    {
+      VEIL_AUTH_SECRET: "rate-limit-test-auth-secret",
+      VEIL_RATE_LIMIT_AUTH_MAX: "100",
+      VEIL_AUTH_CREDENTIAL_STUFFING_DISTINCT_LOGIN_IDS: "2",
+      VEIL_AUTH_CREDENTIAL_STUFFING_BLOCK_DURATION_MINUTES: "1"
+    },
+    cleanup
+  );
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+
+  const store = new MemoryAuthRateLimitStore();
+  const { app, runtime } = await startRateLimitDevServer(store);
+
+  t.after(async () => {
+    cleanup.reverse().forEach((fn) => fn());
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+    await runtime.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const sourceIp = "198.51.100.74";
+  for (let index = 1; index <= 2; index += 1) {
+    const response = await dispatchJson(app, {
+      path: "/api/auth/account-login",
+      remoteAddress: sourceIp,
+      body: {
+        loginId: `cluster-stuffing-target-${index}`,
+        password: "wrong-password1",
+        privacyConsentAccepted: true
+      }
+    });
+    assert.equal(response.status, 401);
+    resetGuestAuthSessions();
+    setGuestSessionClusterClientForTest(redis as never);
+  }
+
+  const blockedResponse = await dispatchJson(app, {
+    path: "/api/auth/account-login",
+    remoteAddress: sourceIp,
+    body: {
+      loginId: "cluster-stuffing-target-3",
       password: "wrong-password1",
       privacyConsentAccepted: true
     }
