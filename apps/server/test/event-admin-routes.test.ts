@@ -6,6 +6,23 @@ import { issueGuestAuthSession } from "@server/domain/account/auth";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
+function createFakeEventClusterRedisClient() {
+  const hashes = new Map<string, Map<string, string>>();
+
+  return {
+    async hget(key: string, field: string): Promise<string | null> {
+      return hashes.get(key)?.get(field) ?? null;
+    },
+    async hset(key: string, field: string, value: string): Promise<number> {
+      const hash = hashes.get(key) ?? new Map<string, string>();
+      const inserted = hash.has(field) ? 0 : 1;
+      hash.set(field, value);
+      hashes.set(key, hash);
+      return inserted;
+    }
+  };
+}
+
 function createTestApp() {
   const gets = new Map<string, RouteHandler>();
   const posts = new Map<string, RouteHandler>();
@@ -337,6 +354,57 @@ test("PATCH /api/admin/seasonal-events/:id updates runtime dates, activation sta
   );
   const listPayload = JSON.parse(listResponse.body);
   assert.equal(listPayload.audit[0]?.action, "patched");
+});
+
+test("PATCH /api/admin/seasonal-events/:id persists runtime overrides across route instances", async (t) => {
+  const token = withAdminToken(t);
+  const redis = createFakeEventClusterRedisClient();
+  const eventOptions = {
+    seasonalEventRuntimeRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2];
+  const firstRoutes = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", eventOptions);
+  const secondRoutes = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", eventOptions);
+  const patchHandler = firstRoutes.patches.get("/api/admin/seasonal-events/:id");
+  assert.ok(patchHandler);
+
+  const patchResponse = createResponse();
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    patchResponse
+  );
+
+  assert.equal(patchResponse.statusCode, 200);
+  resetSeasonalEventRuntimeState();
+
+  const activeHandler = secondRoutes.gets.get("/api/events/active");
+  assert.ok(activeHandler);
+  const session = issueGuestAuthSession({
+    playerId: "player-3",
+    displayName: "Hale"
+  });
+  const activeResponse = createResponse();
+  await activeHandler(
+    createRequest({
+      headers: {
+        authorization: `Bearer ${session.token}`
+      }
+    }),
+    activeResponse
+  );
+
+  assert.equal(activeResponse.statusCode, 200);
+  assert.deepEqual(JSON.parse(activeResponse.body).events, []);
 });
 
 test("POST /api/admin/seasonal-events/:id/end force-ends an active event and distributes mailbox rewards", async (t) => {

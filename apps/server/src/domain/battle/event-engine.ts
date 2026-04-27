@@ -9,6 +9,12 @@ import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQues
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import {
+  consumeRedisBackedOrLocalRateLimit,
+  createLocalRateLimitState,
+  type RateLimitResult
+} from "@server/infra/http-rate-limit";
+import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 
 interface SeasonalEventSummaryDocument {
   id?: string | null;
@@ -74,6 +80,12 @@ export interface RegisterEventRoutesOptions {
   now?: () => Date;
   eventIndexDocument?: SeasonalEventsDocument;
   eventDocuments?: Record<string, SeasonalEventDefinitionDocument>;
+  rateLimitRedisClient?: RedisClientLike | null;
+  rateLimitRedisUrl?: string | null;
+  rateLimitCreateRedisClient?: typeof createRedisClient;
+  seasonalEventRuntimeRedisClient?: RedisClientLike | null;
+  seasonalEventRuntimeRedisUrl?: string | null;
+  seasonalEventRuntimeCreateRedisClient?: typeof createRedisClient;
 }
 
 export interface SeasonalEventActionInput {
@@ -105,10 +117,18 @@ const DAILY_QUEST_TIER_WEIGHTS: Record<DailyQuestConfigDefinition["tier"], numbe
 };
 const ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS = 5_000;
 const ACTION_SUBMISSION_RATE_LIMIT_MAX = 1;
+const ACTION_SUBMISSION_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:action-submission-rate:";
+const SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY = "veil:seasonal-event-runtime-overrides";
 const SERVER_VERIFIABLE_SEASONAL_EVENT_ACTION_TYPES = new Set<string>(["daily_dungeon_reward_claimed"]);
 const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverride>();
 const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
-const actionSubmissionRateLimitHits = new Map<string, number[]>();
+const actionSubmissionRateLimitState = createLocalRateLimitState();
+let defaultActionSubmissionRateLimitRedisClient: RedisClientLike | null | undefined;
+
+export interface ActionSubmissionRateLimitOptions {
+  redisClient?: RedisClientLike | null;
+  nowMs?: number;
+}
 
 function isServerVerifiableSeasonalEventActionType(actionType: string): boolean {
   return SERVER_VERIFIABLE_SEASONAL_EVENT_ACTION_TYPES.has(actionType);
@@ -122,26 +142,53 @@ export function isActionSubmissionRateLimitEnabled(): boolean {
 }
 
 export function resetActionSubmissionRateLimitState(): void {
-  actionSubmissionRateLimitHits.clear();
+  actionSubmissionRateLimitState.counters.clear();
+  actionSubmissionRateLimitState.lastPrunedAtMs = 0;
 }
 
-export function consumeActionSubmissionRateLimit(
-  key: string,
-  nowMs = Date.now()
-): { allowed: boolean; retryAfterSeconds?: number } {
-  const windowStart = nowMs - ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS;
-  const timestamps = (actionSubmissionRateLimitHits.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
-  if (timestamps.length >= ACTION_SUBMISSION_RATE_LIMIT_MAX) {
-    const oldestTimestamp = timestamps[0] ?? nowMs;
+function resolveDefaultActionSubmissionRateLimitRedisClient(): RedisClientLike | null {
+  if (defaultActionSubmissionRateLimitRedisClient !== undefined) {
+    return defaultActionSubmissionRateLimitRedisClient;
+  }
+
+  const redisUrl = readRedisUrl();
+  defaultActionSubmissionRateLimitRedisClient = redisUrl ? createRedisClient(redisUrl) : null;
+  return defaultActionSubmissionRateLimitRedisClient;
+}
+
+function normalizeActionSubmissionRateLimitOptions(
+  options: number | ActionSubmissionRateLimitOptions
+): Required<Pick<ActionSubmissionRateLimitOptions, "nowMs">> & { redisClient: RedisClientLike | null } {
+  if (typeof options === "number") {
     return {
-      allowed: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((oldestTimestamp + ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS - nowMs) / 1000))
+      redisClient: resolveDefaultActionSubmissionRateLimitRedisClient(),
+      nowMs: options
     };
   }
 
-  timestamps.push(nowMs);
-  actionSubmissionRateLimitHits.set(key, timestamps);
-  return { allowed: true };
+  return {
+    redisClient:
+      options.redisClient === undefined
+        ? resolveDefaultActionSubmissionRateLimitRedisClient()
+        : options.redisClient,
+    nowMs: options.nowMs ?? Date.now()
+  };
+}
+
+export async function consumeActionSubmissionRateLimit(
+  key: string,
+  options: number | ActionSubmissionRateLimitOptions = {}
+): Promise<RateLimitResult> {
+  const { redisClient, nowMs } = normalizeActionSubmissionRateLimitOptions(options);
+  return consumeRedisBackedOrLocalRateLimit({
+    redisClient,
+    localState: actionSubmissionRateLimitState,
+    key,
+    redisKey: `${ACTION_SUBMISSION_RATE_LIMIT_CLUSTER_KEY_PREFIX}${key}`,
+    config: { windowMs: ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS },
+    max: ACTION_SUBMISSION_RATE_LIMIT_MAX,
+    now: () => nowMs
+  });
 }
 
 export function hasVerifiedDailyDungeonClaim(
@@ -262,8 +309,40 @@ export function resetSeasonalEventRuntimeState(): void {
   seasonalEventOpsAuditTrail.length = 0;
 }
 
-function applySeasonalEventRuntimeOverride(event: SeasonalEventDefinition): RuntimeSeasonalEventDefinition {
-  const override = seasonalEventRuntimeOverrides.get(event.id);
+function cloneSeasonalEventRuntimeOverride(override: SeasonalEventRuntimeOverride): SeasonalEventRuntimeOverride {
+  return structuredClone(override);
+}
+
+function mergeSeasonalEventRuntimeOverride(
+  current: SeasonalEventRuntimeOverride,
+  patch: SeasonalEventRuntimeOverride
+): SeasonalEventRuntimeOverride {
+  return cloneSeasonalEventRuntimeOverride({
+    ...current,
+    ...patch
+  });
+}
+
+function parseSeasonalEventRuntimeOverride(value: string | null): SeasonalEventRuntimeOverride | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    return cloneSeasonalEventRuntimeOverride(parsed as SeasonalEventRuntimeOverride);
+  } catch {
+    return null;
+  }
+}
+
+function applySeasonalEventRuntimeOverride(
+  event: SeasonalEventDefinition,
+  override = seasonalEventRuntimeOverrides.get(event.id)
+): RuntimeSeasonalEventDefinition {
   if (!override) {
     return event;
   }
@@ -284,6 +363,28 @@ function applySeasonalEventRuntimeOverride(event: SeasonalEventDefinition): Runt
       : {}),
     ...(override.rewardDistributionAt ? { rewardDistributionAt: override.rewardDistributionAt } : {})
   };
+}
+
+async function loadSeasonalEventRuntimeOverride(
+  redisClient: RedisClientLike | null,
+  eventId: string
+): Promise<SeasonalEventRuntimeOverride | null> {
+  if (!redisClient) {
+    return seasonalEventRuntimeOverrides.get(eventId) ?? null;
+  }
+
+  try {
+    const encoded = await redisClient.hget(SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY, eventId);
+    const override = parseSeasonalEventRuntimeOverride(encoded);
+    if (override) {
+      seasonalEventRuntimeOverrides.set(eventId, cloneSeasonalEventRuntimeOverride(override));
+      return override;
+    }
+  } catch {
+    return seasonalEventRuntimeOverrides.get(eventId) ?? null;
+  }
+
+  return seasonalEventRuntimeOverrides.get(eventId) ?? null;
 }
 
 export function resolveSeasonalEventStatus(
@@ -433,10 +534,28 @@ function normalizeAdminEventPatch(
 
 export function applySeasonalEventAdminPatch(eventId: string, patch: SeasonalEventRuntimeOverride): void {
   const current = seasonalEventRuntimeOverrides.get(eventId) ?? {};
-  seasonalEventRuntimeOverrides.set(eventId, {
-    ...current,
-    ...patch
-  });
+  seasonalEventRuntimeOverrides.set(eventId, mergeSeasonalEventRuntimeOverride(current, patch));
+}
+
+async function applySeasonalEventAdminPatchWithClusterState(
+  eventId: string,
+  patch: SeasonalEventRuntimeOverride,
+  redisClient: RedisClientLike | null
+): Promise<void> {
+  if (!redisClient) {
+    applySeasonalEventAdminPatch(eventId, patch);
+    return;
+  }
+
+  try {
+    const encoded = await redisClient.hget(SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY, eventId);
+    const current = parseSeasonalEventRuntimeOverride(encoded) ?? seasonalEventRuntimeOverrides.get(eventId) ?? {};
+    const next = mergeSeasonalEventRuntimeOverride(current, patch);
+    await redisClient.hset(SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY, eventId, JSON.stringify(next));
+    seasonalEventRuntimeOverrides.set(eventId, cloneSeasonalEventRuntimeOverride(next));
+  } catch {
+    applySeasonalEventAdminPatch(eventId, patch);
+  }
 }
 
 function resetSeasonalEventProgressState(
@@ -867,6 +986,24 @@ export function getActiveSeasonalEvents(events: SeasonalEventDefinition[], now =
   return events.filter((event) => resolveSeasonalEventStatus(event, now) === "active");
 }
 
+async function resolveSeasonalEventsWithClusterState(
+  redisClient: RedisClientLike | null,
+  eventIndexDocument: SeasonalEventsDocument | undefined,
+  eventDocuments: Record<string, SeasonalEventDefinitionDocument> | undefined
+): Promise<SeasonalEventDefinition[]> {
+  const events = resolveSeasonalEvents(eventIndexDocument, eventDocuments);
+  if (!redisClient) {
+    return events;
+  }
+
+  return Promise.all(
+    events.map(async (event) => {
+      const override = await loadSeasonalEventRuntimeOverride(redisClient, event.id);
+      return override ? applySeasonalEventRuntimeOverride(event, override) : event;
+    })
+  );
+}
+
 export function findSeasonalEventState(
   seasonalEventStates: SeasonalEventState[] | null | undefined,
   eventId: string
@@ -1027,6 +1164,27 @@ function toEventResponse(event: SeasonalEventDefinition, account: PlayerAccountS
   };
 }
 
+function resolveRateLimitRedisClient(options: RegisterEventRoutesOptions): RedisClientLike | null | undefined {
+  if (options.rateLimitRedisClient !== undefined) {
+    return options.rateLimitRedisClient;
+  }
+  if (options.rateLimitRedisUrl !== undefined) {
+    return options.rateLimitRedisUrl
+      ? (options.rateLimitCreateRedisClient ?? createRedisClient)(options.rateLimitRedisUrl)
+      : null;
+  }
+  return undefined;
+}
+
+function resolveSeasonalEventRuntimeRedisClient(options: RegisterEventRoutesOptions): RedisClientLike | null {
+  if (options.seasonalEventRuntimeRedisClient !== undefined) {
+    return options.seasonalEventRuntimeRedisClient;
+  }
+
+  const redisUrl = options.seasonalEventRuntimeRedisUrl ?? readRedisUrl();
+  return redisUrl ? (options.seasonalEventRuntimeCreateRedisClient ?? createRedisClient)(redisUrl) : null;
+}
+
 export function registerEventRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -1039,6 +1197,8 @@ export function registerEventRoutes(
   options: RegisterEventRoutesOptions = {}
 ): void {
   const nowFactory = options.now ?? (() => new Date());
+  const rateLimitRedisClient = resolveRateLimitRedisClient(options);
+  const seasonalEventRuntimeRedisClient = resolveSeasonalEventRuntimeRedisClient(options);
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -1062,7 +1222,11 @@ export function registerEventRoutes(
 
     try {
       const now = nowFactory();
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const activeEvents = getActiveSeasonalEvents(events, now);
       const account = store
         ? ((await store.loadPlayerAccount(authSession.playerId)) ??
@@ -1106,7 +1270,11 @@ export function registerEventRoutes(
     }
 
     try {
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const body = (await readJsonBody(request)) as { eventId?: string | null; rewardId?: string | null };
       const eventId = body.eventId?.trim();
       const rewardId = body.rewardId?.trim();
@@ -1220,7 +1388,9 @@ export function registerEventRoutes(
     }
 
     if (isActionSubmissionRateLimitEnabled()) {
-      const rateLimitResult = consumeActionSubmissionRateLimit(`seasonal-event-progress:${authSession.playerId}`);
+      const rateLimitResult = await consumeActionSubmissionRateLimit(`seasonal-event-progress:${authSession.playerId}`, {
+        ...(rateLimitRedisClient === undefined ? {} : { redisClient: rateLimitRedisClient })
+      });
       if (!rateLimitResult.allowed) {
         if (rateLimitResult.retryAfterSeconds != null) {
           response.setHeader("Retry-After", String(rateLimitResult.retryAfterSeconds));
@@ -1246,7 +1416,11 @@ export function registerEventRoutes(
     }
 
     try {
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const routeRequest = request as IncomingMessage & { params?: Record<string, string | undefined> };
       const eventId = routeRequest.params?.eventId?.trim();
       if (!eventId) {
@@ -1375,7 +1549,11 @@ export function registerEventRoutes(
 
     try {
       const now = nowFactory();
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const accounts = store?.listPlayerAccounts ? await store.listPlayerAccounts({ limit: 10_000, offset: 0 }) : [];
       sendJson(response, 200, {
         checkedAt: now.toISOString(),
@@ -1414,7 +1592,11 @@ export function registerEventRoutes(
         sendJson(response, 400, { error: { code: "seasonal_event_invalid", message: "event id is required" } });
         return;
       }
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const event = events.find((entry) => entry.id === eventId);
       if (!event) {
         sendJson(response, 404, { error: { code: "seasonal_event_not_found", message: "Seasonal event was not found" } });
@@ -1427,8 +1609,14 @@ export function registerEventRoutes(
       }
       const occurredAt = nowFactory().toISOString();
       const patch = normalizeAdminEventPatch(eventId, body as Record<string, unknown>, event);
-      applySeasonalEventAdminPatch(eventId, patch);
-      const nextEvent = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments).find((entry) => entry.id === eventId)!;
+      await applySeasonalEventAdminPatchWithClusterState(eventId, patch, seasonalEventRuntimeRedisClient);
+      const nextEvent = (
+        await resolveSeasonalEventsWithClusterState(
+          seasonalEventRuntimeRedisClient,
+          options.eventIndexDocument,
+          options.eventDocuments
+        )
+      ).find((entry) => entry.id === eventId)!;
       const audit = appendSeasonalEventOpsAuditEntry({
         action: "patched",
         actor: "admin-runtime",
@@ -1474,7 +1662,11 @@ export function registerEventRoutes(
       }
 
       const now = nowFactory();
-      const events = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments);
+      const events = await resolveSeasonalEventsWithClusterState(
+        seasonalEventRuntimeRedisClient,
+        options.eventIndexDocument,
+        options.eventDocuments
+      );
       const event = events.find((entry) => entry.id === eventId);
       if (!event) {
         sendJson(response, 404, { error: { code: "seasonal_event_not_found", message: "Seasonal event was not found" } });
@@ -1490,12 +1682,22 @@ export function registerEventRoutes(
         return;
       }
 
-      applySeasonalEventAdminPatch(eventId, {
-        endsAt: now.toISOString(),
-        isActive: false,
-        rewardDistributionAt: now.toISOString()
-      });
-      const endedEvent = resolveSeasonalEvents(options.eventIndexDocument, options.eventDocuments).find((entry) => entry.id === eventId)!;
+      await applySeasonalEventAdminPatchWithClusterState(
+        eventId,
+        {
+          endsAt: now.toISOString(),
+          isActive: false,
+          rewardDistributionAt: now.toISOString()
+        },
+        seasonalEventRuntimeRedisClient
+      );
+      const endedEvent = (
+        await resolveSeasonalEventsWithClusterState(
+          seasonalEventRuntimeRedisClient,
+          options.eventIndexDocument,
+          options.eventDocuments
+        )
+      ).find((entry) => entry.id === eventId)!;
       const distribution = await distributeSeasonalEventRewards(
         store as RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listPlayerAccounts" | "deliverPlayerMailbox">>,
         endedEvent,

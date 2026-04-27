@@ -2572,7 +2572,7 @@ export function registerPlayerAccountRoutes(
     }
 
     if (isActionSubmissionRateLimitEnabled()) {
-      const rateLimitResult = consumeActionSubmissionRateLimit(`campaign-mission-complete:${authSession.playerId}`);
+      const rateLimitResult = await consumeActionSubmissionRateLimit(`campaign-mission-complete:${authSession.playerId}`);
       if (!rateLimitResult.allowed) {
         sendActionSubmissionRateLimited(response, rateLimitResult.retryAfterSeconds);
         return;
@@ -2734,7 +2734,7 @@ export function registerPlayerAccountRoutes(
     }
 
     if (isActionSubmissionRateLimitEnabled()) {
-      const rateLimitResult = consumeActionSubmissionRateLimit(`daily-dungeon-attempt:${authSession.playerId}`);
+      const rateLimitResult = await consumeActionSubmissionRateLimit(`daily-dungeon-attempt:${authSession.playerId}`);
       if (!rateLimitResult.allowed) {
         sendActionSubmissionRateLimited(response, rateLimitResult.retryAfterSeconds);
         return;
