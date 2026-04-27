@@ -8,6 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
+import Redis from "ioredis-mock";
 import { getDailyRewardDateKey, getPreviousDailyRewardDateKey } from "@server/domain/economy/daily-rewards";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { resetAccountTokenDeliveryState } from "@server/adapters/account-token-delivery";
@@ -22,6 +23,7 @@ import {
   issueAccountAuthSession,
   registerAuthRoutes,
   resetGuestAuthSessions,
+  setGuestSessionClusterClientForTest,
   type GuestAuthSession
 } from "@server/domain/account/auth";
 import {
@@ -2693,6 +2695,59 @@ test("account registration request and confirm create a new formal account, sess
   assert.equal(loginResponse.status, 200);
 });
 
+test("account registration confirm accepts a token restored from shared Redis state", { concurrency: false }, async (t) => {
+  const redis = new Redis();
+  const port = 44711 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  setGuestSessionClusterClientForTest(redis as never);
+
+  t.after(async () => {
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "redis-registration-ranger",
+      displayName: "Shared Registration"
+    })
+  });
+  const requestPayload = (await requestResponse.json()) as {
+    status: string;
+    registrationToken?: string;
+  };
+
+  assert.equal(requestResponse.status, 202);
+  assert.equal(typeof requestPayload.registrationToken, "string");
+
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/account-registration/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "redis-registration-ranger",
+      registrationToken: requestPayload.registrationToken,
+      password: "hunter22",
+      privacyConsentAccepted: true
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { account?: PlayerAccountSnapshot; error?: { code: string } };
+
+  assert.equal(confirmResponse.status, 200, JSON.stringify(confirmPayload));
+  assert.equal(confirmPayload.account?.loginId, "redis-registration-ranger");
+});
+
 test("account registration request rejects already-bound login IDs", { concurrency: false }, async (t) => {
   const port = 44715 + Math.floor(Math.random() * 1000);
   const store = new MemoryAuthStore();
@@ -3114,6 +3169,66 @@ test("password recovery request reuses the active token and avoids duplicate aud
   });
 
   assert.equal(confirmResponse.status, 200);
+});
+
+test("password recovery confirm accepts a token restored from shared Redis state", { concurrency: false }, async (t) => {
+  const redis = new Redis();
+  const port = 44741 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+  setGuestSessionClusterClientForTest(redis as never);
+
+  await store.ensurePlayerAccount({
+    playerId: "redis-recovery-player",
+    displayName: "Shared Recovery"
+  });
+  await store.bindPlayerAccountCredentials("redis-recovery-player", {
+    loginId: "redis-recovery-ranger",
+    passwordHash: hashAccountPassword("hunter22")
+  });
+
+  t.after(async () => {
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const requestResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "redis-recovery-ranger"
+    })
+  });
+  const requestPayload = (await requestResponse.json()) as {
+    status: string;
+    recoveryToken?: string;
+  };
+
+  assert.equal(requestResponse.status, 202);
+  assert.equal(typeof requestPayload.recoveryToken, "string");
+
+  resetGuestAuthSessions();
+  setGuestSessionClusterClientForTest(redis as never);
+
+  const confirmResponse = await fetch(`http://127.0.0.1:${port}/api/auth/password-recovery/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      loginId: "redis-recovery-ranger",
+      recoveryToken: requestPayload.recoveryToken,
+      newPassword: "hunter33"
+    })
+  });
+  const confirmPayload = (await confirmResponse.json()) as { account?: PlayerAccountSnapshot; error?: { code: string } };
+
+  assert.equal(confirmResponse.status, 200, JSON.stringify(confirmPayload));
+  assert.equal(confirmPayload.account?.playerId, "redis-recovery-player");
 });
 
 test("password recovery request returns 429 after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {

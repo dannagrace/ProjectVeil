@@ -209,6 +209,8 @@ const DEFAULT_PASSWORD_RECOVERY_TTL_MINUTES = 15;
 const AUTH_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:auth-rate-limit:";
 const ACCOUNT_LOCKOUT_CLUSTER_KEY_PREFIX = "veil:auth-account-lockout:";
 const CREDENTIAL_STUFFING_CLUSTER_KEY_PREFIX = "veil:auth-credential-stuffing:";
+const ACCOUNT_REGISTRATION_CLUSTER_KEY_PREFIX = "veil:auth-account-registration:";
+const PASSWORD_RECOVERY_CLUSTER_KEY_PREFIX = "veil:auth-password-recovery:";
 const AUTH_RATE_LIMIT_REDIS_SCRIPT = `
 local key = KEYS[1]
 local max = tonumber(ARGV[1])
@@ -845,7 +847,7 @@ function createAccountRegistrationToken(): string {
   return randomBytes(24).toString("base64url");
 }
 
-function getAccountRegistrationState(loginId: string): AccountRegistrationState | null {
+function getLocalAccountRegistrationState(loginId: string): AccountRegistrationState | null {
   const existing = accountRegistrationStateByLoginId.get(loginId);
   if (!existing) {
     return null;
@@ -859,6 +861,68 @@ function getAccountRegistrationState(loginId: string): AccountRegistrationState 
   }
 
   return existing;
+}
+
+function buildAccountRegistrationClusterKey(loginId: string): string {
+  return `${ACCOUNT_REGISTRATION_CLUSTER_KEY_PREFIX}${loginId}`;
+}
+
+function getAccountRegistrationStateTtlMs(state: AccountRegistrationState): number {
+  return Math.max(1, new Date(state.expiresAt).getTime() - nowMs());
+}
+
+function normalizeAccountRegistrationState(input: unknown): AccountRegistrationState | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const candidate = input as Partial<Record<keyof AccountRegistrationState, unknown>>;
+  if (
+    typeof candidate.loginId !== "string" ||
+    typeof candidate.requestedDisplayName !== "string" ||
+    typeof candidate.tokenHash !== "string" ||
+    typeof candidate.deliveryToken !== "string" ||
+    typeof candidate.issuedAt !== "string" ||
+    typeof candidate.expiresAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    loginId: candidate.loginId,
+    requestedDisplayName: candidate.requestedDisplayName,
+    tokenHash: candidate.tokenHash,
+    deliveryToken: candidate.deliveryToken,
+    issuedAt: candidate.issuedAt,
+    expiresAt: candidate.expiresAt
+  };
+}
+
+async function getAccountRegistrationState(loginId: string): Promise<AccountRegistrationState | null> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    return getLocalAccountRegistrationState(loginId);
+  }
+
+  try {
+    const serialized = await redisClient.get(buildAccountRegistrationClusterKey(loginId));
+    if (!serialized) {
+      return null;
+    }
+    const state = normalizeAccountRegistrationState(JSON.parse(serialized));
+    if (!state) {
+      await redisClient.del(buildAccountRegistrationClusterKey(loginId));
+      return null;
+    }
+    if (isExpiredTimestamp(state.expiresAt)) {
+      await redisClient.del(buildAccountRegistrationClusterKey(loginId));
+      await clearAccountTokenDeliveryState("account-registration", loginId);
+      return null;
+    }
+    accountRegistrationStateByLoginId.set(loginId, state);
+    syncAuthStateTelemetry();
+    return state;
+  } catch {
+    return getLocalAccountRegistrationState(loginId);
+  }
 }
 
 async function storeAccountRegistrationState(loginId: string, requestedDisplayName: string, token: string): Promise<AccountRegistrationState> {
@@ -875,11 +939,24 @@ async function storeAccountRegistrationState(loginId: string, requestedDisplayNa
   };
   accountRegistrationStateByLoginId.set(loginId, state);
   syncAuthStateTelemetry();
+  const redisClient = resolveGuestSessionClusterClient();
+  if (redisClient) {
+    try {
+      await redisClient.set(
+        buildAccountRegistrationClusterKey(loginId),
+        JSON.stringify(state),
+        "PX",
+        getAccountRegistrationStateTtlMs(state)
+      );
+    } catch {
+      // Keep local fallback state when Redis is unavailable.
+    }
+  }
   return state;
 }
 
 async function consumeAccountRegistrationState(loginId: string, token: string): Promise<AccountRegistrationState | null> {
-  const state = getAccountRegistrationState(loginId);
+  const state = await getAccountRegistrationState(loginId);
   if (!state) {
     return null;
   }
@@ -889,12 +966,20 @@ async function consumeAccountRegistrationState(loginId: string, token: string): 
   }
 
   accountRegistrationStateByLoginId.delete(loginId);
+  const redisClient = resolveGuestSessionClusterClient();
+  if (redisClient) {
+    try {
+      await redisClient.del(buildAccountRegistrationClusterKey(loginId));
+    } catch {
+      // Local deletion below still prevents reuse on this pod.
+    }
+  }
   await clearAccountTokenDeliveryState("account-registration", loginId);
   syncAuthStateTelemetry();
   return state;
 }
 
-function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null {
+function getLocalPasswordRecoveryState(loginId: string): PasswordRecoveryState | null {
   const existing = passwordRecoveryStateByLoginId.get(loginId);
   if (!existing) {
     return null;
@@ -908,6 +993,68 @@ function getPasswordRecoveryState(loginId: string): PasswordRecoveryState | null
   }
 
   return existing;
+}
+
+function buildPasswordRecoveryClusterKey(loginId: string): string {
+  return `${PASSWORD_RECOVERY_CLUSTER_KEY_PREFIX}${loginId}`;
+}
+
+function getPasswordRecoveryStateTtlMs(state: PasswordRecoveryState): number {
+  return Math.max(1, new Date(state.expiresAt).getTime() - nowMs());
+}
+
+function normalizePasswordRecoveryState(input: unknown): PasswordRecoveryState | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const candidate = input as Partial<Record<keyof PasswordRecoveryState, unknown>>;
+  if (
+    typeof candidate.playerId !== "string" ||
+    typeof candidate.loginId !== "string" ||
+    typeof candidate.tokenHash !== "string" ||
+    typeof candidate.deliveryToken !== "string" ||
+    typeof candidate.issuedAt !== "string" ||
+    typeof candidate.expiresAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    playerId: candidate.playerId,
+    loginId: candidate.loginId,
+    tokenHash: candidate.tokenHash,
+    deliveryToken: candidate.deliveryToken,
+    issuedAt: candidate.issuedAt,
+    expiresAt: candidate.expiresAt
+  };
+}
+
+async function getPasswordRecoveryState(loginId: string): Promise<PasswordRecoveryState | null> {
+  const redisClient = resolveGuestSessionClusterClient();
+  if (!redisClient) {
+    return getLocalPasswordRecoveryState(loginId);
+  }
+
+  try {
+    const serialized = await redisClient.get(buildPasswordRecoveryClusterKey(loginId));
+    if (!serialized) {
+      return null;
+    }
+    const state = normalizePasswordRecoveryState(JSON.parse(serialized));
+    if (!state) {
+      await redisClient.del(buildPasswordRecoveryClusterKey(loginId));
+      return null;
+    }
+    if (isExpiredTimestamp(state.expiresAt)) {
+      await redisClient.del(buildPasswordRecoveryClusterKey(loginId));
+      await clearAccountTokenDeliveryState("password-recovery", loginId);
+      return null;
+    }
+    passwordRecoveryStateByLoginId.set(loginId, state);
+    syncAuthStateTelemetry();
+    return state;
+  } catch {
+    return getLocalPasswordRecoveryState(loginId);
+  }
 }
 
 async function storePasswordRecoveryState(playerId: string, loginId: string, token: string): Promise<PasswordRecoveryState> {
@@ -924,11 +1071,24 @@ async function storePasswordRecoveryState(playerId: string, loginId: string, tok
   };
   passwordRecoveryStateByLoginId.set(loginId, state);
   syncAuthStateTelemetry();
+  const redisClient = resolveGuestSessionClusterClient();
+  if (redisClient) {
+    try {
+      await redisClient.set(
+        buildPasswordRecoveryClusterKey(loginId),
+        JSON.stringify(state),
+        "PX",
+        getPasswordRecoveryStateTtlMs(state)
+      );
+    } catch {
+      // Keep local fallback state when Redis is unavailable.
+    }
+  }
   return state;
 }
 
 async function consumePasswordRecoveryState(loginId: string, token: string): Promise<PasswordRecoveryState | null> {
-  const state = getPasswordRecoveryState(loginId);
+  const state = await getPasswordRecoveryState(loginId);
   if (!state) {
     return null;
   }
@@ -938,6 +1098,14 @@ async function consumePasswordRecoveryState(loginId: string, token: string): Pro
   }
 
   passwordRecoveryStateByLoginId.delete(loginId);
+  const redisClient = resolveGuestSessionClusterClient();
+  if (redisClient) {
+    try {
+      await redisClient.del(buildPasswordRecoveryClusterKey(loginId));
+    } catch {
+      // Local deletion below still prevents reuse on this pod.
+    }
+  }
   await clearAccountTokenDeliveryState("password-recovery", loginId);
   syncAuthStateTelemetry();
   return state;
@@ -3094,7 +3262,7 @@ export function registerAuthRoutes(
 
       const requestedDisplayName = normalizeRequestedRegistrationDisplayName(loginId, body.displayName);
       await assertDisplayNameAvailableOrThrow(store, requestedDisplayName);
-      const existingRegistrationState = getAccountRegistrationState(loginId);
+      const existingRegistrationState = await getAccountRegistrationState(loginId);
       const registrationState =
         existingRegistrationState?.requestedDisplayName === requestedDisplayName
           ? existingRegistrationState
@@ -3194,7 +3362,7 @@ export function registerAuthRoutes(
         sendPrivacyConsentRequired(response);
         return;
       }
-      const pendingRegistrationState = getAccountRegistrationState(loginId);
+      const pendingRegistrationState = await getAccountRegistrationState(loginId);
       if (!pendingRegistrationState) {
         sendJson(response, 401, {
           error: {
@@ -3291,7 +3459,7 @@ export function registerAuthRoutes(
         return;
       }
 
-      let recoveryState = getPasswordRecoveryState(loginId);
+      let recoveryState = await getPasswordRecoveryState(loginId);
       if (!recoveryState || recoveryState.playerId !== authAccount.playerId) {
         recoveryState = await storePasswordRecoveryState(authAccount.playerId, loginId, createPasswordRecoveryToken());
         await appendAccountAuditLog(
@@ -3380,7 +3548,7 @@ export function registerAuthRoutes(
       if (await sendMaintenanceModeIfBlocked(response, { loginId })) {
         return;
       }
-      const pendingRecoveryState = getPasswordRecoveryState(loginId);
+      const pendingRecoveryState = await getPasswordRecoveryState(loginId);
       if (!pendingRecoveryState) {
         sendJson(response, 401, {
           error: {
