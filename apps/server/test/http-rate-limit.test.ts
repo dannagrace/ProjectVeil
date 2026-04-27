@@ -3,6 +3,7 @@ import test from "node:test";
 import { __httpRateLimitInternals } from "@server/infra/http-rate-limit";
 import { startDevServer } from "@server/infra/dev-server";
 import { resetRuntimeObservability } from "@server/domain/ops/observability";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 
 const OBSERVABILITY_ADMIN_TOKEN = "http-rate-limit-admin-token";
 
@@ -49,9 +50,11 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
 
   const port = 46000 + Math.floor(Math.random() * 1000);
   const runtime = await startDevServer(port, "127.0.0.1");
+  const lobbySession = issueGuestAuthSession({ playerId: "rate-limit-lobby", displayName: "Lobby Rate Limit" });
 
   t.after(async () => {
     cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
     resetRuntimeObservability();
     await runtime.gracefullyShutdown(false).catch(() => undefined);
   });
@@ -98,13 +101,13 @@ test("HTTP rate limiting returns 429 with Retry-After and increments Prometheus 
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
-      headers: withHeaders(globalIp)
+      headers: withHeaders(globalIp, { Authorization: `Bearer ${lobbySession.token}` })
     });
     assert.equal(response.status, 200);
   }
 
   const limitedGlobalResponse = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
-    headers: withHeaders(globalIp)
+    headers: withHeaders(globalIp, { Authorization: `Bearer ${lobbySession.token}` })
   });
   assert.equal(limitedGlobalResponse.status, 429);
   assert.equal(limitedGlobalResponse.headers.get("Retry-After"), "60");
@@ -134,20 +137,22 @@ test("HTTP rate limiting ignores spoofed forwarded headers from untrusted socket
 
   const port = 47000 + Math.floor(Math.random() * 1000);
   const runtime = await startDevServer(port, "127.0.0.1");
+  const lobbySession = issueGuestAuthSession({ playerId: "rate-limit-lobby", displayName: "Lobby Rate Limit" });
 
   t.after(async () => {
     cleanup.reverse().forEach((fn) => fn());
+    resetGuestAuthSessions();
     resetRuntimeObservability();
     await runtime.gracefullyShutdown(false).catch(() => undefined);
   });
 
   const firstResponse = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
-    headers: withHeaders("198.51.100.20")
+    headers: withHeaders("198.51.100.20", { Authorization: `Bearer ${lobbySession.token}` })
   });
   assert.equal(firstResponse.status, 200);
 
   const spoofedFollowup = await fetch(`http://127.0.0.1:${port}/api/lobby/rooms`, {
-    headers: withHeaders("203.0.113.200")
+    headers: withHeaders("203.0.113.200", { Authorization: `Bearer ${lobbySession.token}` })
   });
   assert.equal(spoofedFollowup.status, 429);
   assert.equal(spoofedFollowup.headers.get("Retry-After"), "60");

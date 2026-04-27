@@ -3682,7 +3682,7 @@ async function refreshLobbyRoomList(): Promise<void> {
   render();
 
   try {
-    const rooms = await loadLobbyRooms();
+    const rooms = await loadLobbyRooms(12, state.lobby.authSession?.token ?? readStoredAuthSession()?.token ?? null);
     state.lobby.rooms = rooms;
     state.lobby.loading = false;
     state.lobby.status =
@@ -4463,7 +4463,7 @@ function renderLobby(): string {
                   <span class="battle-intel-chip">玩家 ${room.connectedPlayers}</span>
                   <span class="battle-intel-chip">英雄 ${room.heroCount}</span>
                   <span class="battle-intel-chip">战斗 ${room.activeBattles}</span>
-                  <span class="battle-intel-chip">Seed ${room.seed}</span>
+                  <span class="battle-intel-chip">Day ${room.day}</span>
                 </div>
                 <span class="lobby-room-meta">最近刷新：${escapeHtml(formatLobbyRoomUpdatedAt(room.updatedAt))}</span>
               </button>

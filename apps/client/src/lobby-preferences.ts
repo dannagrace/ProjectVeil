@@ -1,4 +1,5 @@
 import { resolveRuntimeServerHttpUrl } from "./runtime-targets";
+import { buildAuthHeaders } from "./auth-session";
 
 const LOBBY_PREFERENCES_STORAGE_KEY = "project-veil:lobby-preferences";
 const DEFAULT_LOBBY_ROOM_ID = "room-alpha";
@@ -11,7 +12,6 @@ export interface LobbyPreferences {
 
 export interface LobbyRoomSummary {
   roomId: string;
-  seed: number;
   day: number;
   connectedPlayers: number;
   disconnectedPlayers: number;
@@ -93,7 +93,7 @@ export function saveLobbyPreferences(playerId: string, roomId: string, randomVal
   return nextPreferences;
 }
 
-export async function loadLobbyRooms(limit = 12): Promise<LobbyRoomSummary[]> {
+export async function loadLobbyRooms(limit = 12, authToken?: string | null): Promise<LobbyRoomSummary[]> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), LOBBY_REQUEST_TIMEOUT_MS);
 
@@ -101,6 +101,7 @@ export async function loadLobbyRooms(limit = 12): Promise<LobbyRoomSummary[]> {
     const response = await fetch(
       `${resolveLobbyApiBaseUrl()}/api/lobby/rooms?limit=${encodeURIComponent(String(limit))}`,
       {
+        headers: buildAuthHeaders(authToken),
         signal: controller.signal
       }
     );

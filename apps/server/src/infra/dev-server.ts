@@ -252,7 +252,10 @@ export interface DevServerBootstrapDependencies {
   registerApplePaymentRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerGooglePlayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
-  registerLobbyRoutes(app: unknown, dependencies: { listRooms: typeof listLobbyRooms }): void;
+  registerLobbyRoutes(
+    app: unknown,
+    dependencies: { listRooms: typeof listLobbyRooms; store?: DevServerRoomSnapshotStore | null }
+  ): void;
   registerLaunchRuntimeRoutes(app: unknown, options?: { storage?: Pick<LiveOpsCalendarStorage, "loadLaunchRuntimeState"> }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
   registerMinorProtectionRoutes(app: unknown, store: DevServerRoomSnapshotStore | null): void;
@@ -415,7 +418,16 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
       paymentGatewayRegistry.get("google").registerRoutes(app as never, store as RoomSnapshotStore),
     registerWechatPayRoutes: (app, store) =>
       paymentGatewayRegistry.get("wechat").registerRoutes(app as never, store as RoomSnapshotStore),
-    registerLobbyRoutes: (app, dependencies) => registerLobbyRoutes(app as never, dependencies),
+    registerLobbyRoutes: (app, dependencies) => {
+      const routeOptions =
+        dependencies.store === undefined
+          ? { listRooms: dependencies.listRooms }
+          : {
+              listRooms: dependencies.listRooms,
+              store: dependencies.store as RoomSnapshotStore | null
+            };
+      return registerLobbyRoutes(app as never, routeOptions);
+    },
     registerLaunchRuntimeRoutes: (app, options) => registerLaunchRuntimeRoutes(app as never, options),
     registerMatchmakingRoutes: (app, dependencies) =>
       registerMatchmakingRoutes(app as never, { store: dependencies.store as RoomSnapshotStore }),
@@ -606,7 +618,7 @@ export async function startDevServer(
   deps.registerApplePaymentRoutes(expressApp, effectiveSnapshotStore);
   deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms });
+  deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms, store: effectiveSnapshotStore });
   const liveOpsCalendarStorage =
     configCenterStore.mode === "mysql" ? createSharedLiveOpsCalendarStorage(configCenterStore) : undefined;
   configureLaunchRuntimeStateStorage(liveOpsCalendarStorage ?? null);

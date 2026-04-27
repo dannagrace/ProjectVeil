@@ -275,6 +275,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   let playerAccountStore: unknown;
   let matchmakingStore: unknown;
   let lobbyListRooms: unknown;
+  let lobbyStore: unknown;
   let persistenceHealth: RuntimePersistenceHealth | undefined;
   let ugcReviewOptions: unknown;
 
@@ -331,6 +332,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
     registerLobbyRoutes: (app, dependencies) => {
       assert.equal(app, base.expressApp);
       lobbyListRooms = dependencies.listRooms;
+      lobbyStore = dependencies.store;
       base.routeCalls.push("lobby");
     },
     registerMatchmakingRoutes: (app, dependencies) => {
@@ -402,6 +404,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(playerAccountStore, memoryStore);
   assert.equal(matchmakingStore, memoryStore);
   assert.equal(lobbyListRooms, listLobbyRooms);
+  assert.equal(lobbyStore, memoryStore);
   assert.deepEqual(base.routeCalls, [
     "prometheus-middleware",
     "http-rate-limit",
