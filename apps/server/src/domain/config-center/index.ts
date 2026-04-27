@@ -20,6 +20,7 @@ export {
   clearConfigRollbackMonitor,
   configureConfigCenterRuntimeDependencies,
   configureConfigRuntimeStatusProvider,
+  type ConfigRuntimeBundleUpdateTransport,
   flushPendingConfigUpdate,
   registerConfigUpdateListener,
   resetConfigCenterRuntimeDependencies,

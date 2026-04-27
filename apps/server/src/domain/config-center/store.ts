@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Pool } from "mysql2/promise";
@@ -44,6 +45,7 @@ import {
   MAX_PUBLISH_HISTORY_ENTRIES,
   MAX_STAGE_DOCUMENTS,
   RUNTIME_CONFIG_DOCUMENT_IDS,
+  type ConfigRuntimeApplyResult,
   type ConfigCenterLibraryState,
   type ConfigPresetRecord,
   type ConfigSnapshotRecord,
@@ -85,10 +87,14 @@ import {
   assertRuntimeBundleHotReloadCompatible,
   buildRuntimeConfigBundle,
   clearConfigRollbackMonitor,
+  CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE,
+  type ConfigRuntimeBundleUpdateTransport,
   currentConfigRuntimeApplyResult,
   initializeAppliedRuntimeBundle,
   notifyConfigUpdateListeners,
+  publishConfigRuntimeBundleUpdated,
   serializeBundleDocument,
+  subscribeToConfigRuntimeBundleUpdates,
   synchronizePendingRuntimeBundle
 } from "@server/domain/config-center/runtime";
 import type { ConfigDefinition } from "@server/domain/config-center/types";
@@ -102,6 +108,10 @@ const LIVE_OPS_RUNTIME_DOCUMENTS: Record<LiveOpsRuntimeDocumentId, { fileName: s
 
 export abstract class BaseConfigCenterStore implements ConfigCenterStore {
   abstract readonly mode: "filesystem" | "mysql";
+  private readonly runtimeBundleUpdateInstanceId = randomUUID();
+  private runtimeBundleUpdateTransport: ConfigRuntimeBundleUpdateTransport | null = null;
+  private runtimeBundleUpdateUnsubscribe: (() => Promise<void>) | null = null;
+  private runtimeBundleBroadcastSuppressionDepth = 0;
 
   constructor(protected readonly rootDir = resolve(process.cwd(), "configs")) {}
 
@@ -129,6 +139,60 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
   protected async exportDocumentToFile(id: ConfigDocumentId, content: string): Promise<void> {
     await this.ensureRootDir();
     await writeFile(this.filePathFor(id), content, "utf8");
+  }
+
+  async startRuntimeBundleUpdateSubscription(transport: ConfigRuntimeBundleUpdateTransport): Promise<void> {
+    await this.stopRuntimeBundleUpdateSubscription();
+    this.runtimeBundleUpdateTransport = transport;
+    this.runtimeBundleUpdateUnsubscribe = await subscribeToConfigRuntimeBundleUpdates({
+      transport,
+      sourceInstanceId: this.runtimeBundleUpdateInstanceId,
+      reloadRuntimeBundle: () => this.reloadRuntimeBundleFromStore(),
+      logger: console
+    });
+  }
+
+  async stopRuntimeBundleUpdateSubscription(): Promise<void> {
+    const unsubscribe = this.runtimeBundleUpdateUnsubscribe;
+    this.runtimeBundleUpdateUnsubscribe = null;
+    this.runtimeBundleUpdateTransport = null;
+    if (unsubscribe) {
+      await unsubscribe();
+    }
+  }
+
+  protected async reloadRuntimeBundleFromStore(): Promise<ConfigRuntimeApplyResult> {
+    return applyRuntimeBundle(await this.loadRuntimeBundleFromStore());
+  }
+
+  protected async runWithoutRuntimeBundleUpdateBroadcasts<T>(operation: () => Promise<T>): Promise<T> {
+    this.runtimeBundleBroadcastSuppressionDepth += 1;
+    try {
+      return await operation();
+    } finally {
+      this.runtimeBundleBroadcastSuppressionDepth -= 1;
+    }
+  }
+
+  protected async publishRuntimeBundleUpdate(documentIds: RuntimeConfigDocumentId[]): Promise<void> {
+    if (
+      !this.runtimeBundleUpdateTransport ||
+      this.runtimeBundleBroadcastSuppressionDepth > 0 ||
+      documentIds.length === 0
+    ) {
+      return;
+    }
+
+    try {
+      await publishConfigRuntimeBundleUpdated(this.runtimeBundleUpdateTransport, {
+        type: CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE,
+        sourceInstanceId: this.runtimeBundleUpdateInstanceId,
+        documentIds: [...new Set(documentIds)],
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("[config-center] Failed to broadcast runtime bundle update", error);
+    }
   }
 
   protected libraryFilePath(): string {
@@ -445,7 +509,9 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
           throw new Error(`Missing staged document content: ${auditChange.documentId}`);
         }
 
-        const saved = await this.saveDocument(auditChange.documentId, nextContent);
+        const saved = await this.runWithoutRuntimeBundleUpdateBroadcasts(() =>
+          this.saveDocument(auditChange.documentId, nextContent)
+        );
         const toVersion = saved.version ?? auditChange.fromVersion;
 
         auditChange.toVersion = toVersion;
@@ -507,6 +573,11 @@ export abstract class BaseConfigCenterStore implements ConfigCenterStore {
         MAX_PUBLISH_HISTORY_ENTRIES
       );
       await this.writeLibraryState(state);
+      await this.publishRuntimeBundleUpdate(
+        auditChanges
+          .map((change) => change.documentId)
+          .filter((documentId): documentId is RuntimeConfigDocumentId => isRuntimeConfigDocumentId(documentId))
+      );
 
       return {
         stage: null,
@@ -824,8 +895,10 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
 
     await this.exportDocumentToFile(id, serialized);
     await this.setFilesystemVersion(id, nextVersion);
-    if (bundle) {
+    let runtimeBundleUpdateDocumentId: RuntimeConfigDocumentId | null = null;
+    if (bundle && isRuntimeConfigDocumentId(id)) {
       applyRuntimeBundle(bundle);
+      runtimeBundleUpdateDocumentId = id;
     }
 
     const saved = await this.loadDocument(id);
@@ -833,6 +906,9 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
       this.applyFeatureFlagDocument(saved);
     }
     await this.createAutomaticSnapshot(saved);
+    if (runtimeBundleUpdateDocumentId) {
+      await this.publishRuntimeBundleUpdate([runtimeBundleUpdateDocumentId]);
+    }
     return saved;
   }
 
@@ -867,6 +943,7 @@ export class FileSystemConfigCenterStore extends BaseConfigCenterStore {
   }
 
   async close(): Promise<void> {
+    await this.stopRuntimeBundleUpdateSubscription();
     return;
   }
 
@@ -944,8 +1021,10 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     if (id !== "ugcBannedKeywords") {
       await this.exportDocumentToFile(id, serialized);
     }
-    if (bundle) {
+    let runtimeBundleUpdateDocumentId: RuntimeConfigDocumentId | null = null;
+    if (bundle && isRuntimeConfigDocumentId(id)) {
       applyRuntimeBundle(bundle);
+      runtimeBundleUpdateDocumentId = id;
     }
 
     const saved = await this.loadDocument(id);
@@ -955,6 +1034,9 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
     if (id !== "ugcBannedKeywords") {
       // UGC moderation updates run inside the support-review request path; keep MySQL writes free of root-fs sidecars.
       await this.createAutomaticSnapshot(saved);
+    }
+    if (runtimeBundleUpdateDocumentId) {
+      await this.publishRuntimeBundleUpdate([runtimeBundleUpdateDocumentId]);
     }
     return saved;
   }
@@ -997,6 +1079,7 @@ export class MySqlConfigCenterStore extends BaseConfigCenterStore {
   }
 
   async close(): Promise<void> {
+    await this.stopRuntimeBundleUpdateSubscription();
     await this.pool.end();
   }
 

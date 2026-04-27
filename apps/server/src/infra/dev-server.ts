@@ -16,7 +16,8 @@ import {
   FileSystemConfigCenterStore,
   MySqlConfigCenterStore,
   registerConfigCenterRoutes,
-  type ConfigCenterStore
+  type ConfigCenterStore,
+  type ConfigRuntimeBundleUpdateTransport
 } from "@server/config-center";
 import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { registerConfigViewerRoutes } from "@server/transport/http/config-viewer";
@@ -358,6 +359,16 @@ async function closeRedisClientResource(redisClient: RedisClientLike | null): Pr
   await redisClient?.quit?.();
 }
 
+interface ConfigRuntimeBundleUpdateSubscriber {
+  startRuntimeBundleUpdateSubscription(transport: ConfigRuntimeBundleUpdateTransport): Promise<void>;
+}
+
+function supportsConfigRuntimeBundleUpdateSubscription(
+  store: DevServerConfigCenterStore
+): store is DevServerConfigCenterStore & ConfigRuntimeBundleUpdateSubscriber {
+  return typeof (store as Partial<ConfigRuntimeBundleUpdateSubscriber>).startRuntimeBundleUpdateSubscription === "function";
+}
+
 function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDependencies {
   const paymentGatewayRegistry = createDefaultPaymentGatewayRegistry();
   return {
@@ -553,6 +564,11 @@ export async function startDevServer(
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
   const accountTokenDeliveryRedisClient = redisUrl ? deps.createRedisClient(redisUrl) : null;
+  if (redisPresence && supportsConfigRuntimeBundleUpdateSubscription(configCenterStore)) {
+    await configCenterStore.startRuntimeBundleUpdateSubscription(
+      redisPresence as unknown as ConfigRuntimeBundleUpdateTransport
+    );
+  }
   await deps.configureAccountTokenDeliveryQueuePersistence(
     accountTokenDeliveryRedisClient
       ? deps.createAccountTokenDeliveryQueuePersistence(accountTokenDeliveryRedisClient)

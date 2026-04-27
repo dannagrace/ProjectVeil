@@ -51,6 +51,31 @@ export function buildRuntimeConfigBundle(
 }
 
 const configUpdateListeners = new Set<(bundle: RuntimeConfigBundle) => void>();
+export const CONFIG_RUNTIME_BUNDLE_UPDATE_TOPIC = "veil:config-center:runtime-bundle-updated";
+export const CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE = "config_runtime_bundle_updated";
+
+export type ConfigRuntimeBundleUpdateListener = (message: unknown) => void | Promise<void>;
+
+export interface ConfigRuntimeBundleUpdateTransport {
+  subscribe(topic: string, callback: ConfigRuntimeBundleUpdateListener): Promise<unknown> | unknown;
+  unsubscribe(topic: string, callback?: ConfigRuntimeBundleUpdateListener): Promise<unknown> | unknown;
+  publish(topic: string, data: ConfigRuntimeBundleUpdateMessage): Promise<unknown> | unknown;
+}
+
+export interface ConfigRuntimeBundleUpdateMessage {
+  type: typeof CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE;
+  sourceInstanceId: string;
+  documentIds: RuntimeConfigDocumentId[];
+  updatedAt: string;
+}
+
+interface ConfigRuntimeBundleUpdateSubscriptionOptions {
+  transport: ConfigRuntimeBundleUpdateTransport;
+  sourceInstanceId: string;
+  reloadRuntimeBundle(): Promise<ConfigRuntimeApplyResult>;
+  logger?: Pick<Console, "error">;
+}
+
 const defaultConfigCenterRuntimeDependencies: ConfigCenterRuntimeDependencies = {
   now: () => Date.now(),
   setTimeout: (handler, delayMs) => globalThis.setTimeout(handler, delayMs),
@@ -66,6 +91,67 @@ let appliedRuntimeBundle: RuntimeConfigBundle | null = null;
 let pendingRuntimeBundleState: PendingRuntimeBundleState | null = null;
 let configRollbackMonitorState: ConfigRollbackMonitorState | null = null;
 let lastConfigRuntimeApplyResult: ConfigRuntimeApplyResult | null = null;
+
+function decodeConfigRuntimeBundleUpdateMessage(message: unknown): ConfigRuntimeBundleUpdateMessage | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  const candidate = message as Partial<ConfigRuntimeBundleUpdateMessage>;
+  if (
+    candidate.type !== CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE ||
+    typeof candidate.sourceInstanceId !== "string" ||
+    !Array.isArray(candidate.documentIds) ||
+    typeof candidate.updatedAt !== "string"
+  ) {
+    return null;
+  }
+
+  const documentIds = candidate.documentIds.filter((documentId): documentId is RuntimeConfigDocumentId =>
+    RUNTIME_CONFIG_DOCUMENT_IDS.includes(documentId as RuntimeConfigDocumentId)
+  );
+  if (documentIds.length === 0) {
+    return null;
+  }
+
+  return {
+    type: CONFIG_RUNTIME_BUNDLE_UPDATE_TYPE,
+    sourceInstanceId: candidate.sourceInstanceId,
+    documentIds,
+    updatedAt: candidate.updatedAt
+  };
+}
+
+export async function publishConfigRuntimeBundleUpdated(
+  transport: ConfigRuntimeBundleUpdateTransport,
+  message: ConfigRuntimeBundleUpdateMessage
+): Promise<void> {
+  await Promise.resolve(transport.publish(CONFIG_RUNTIME_BUNDLE_UPDATE_TOPIC, message));
+}
+
+export async function subscribeToConfigRuntimeBundleUpdates(
+  options: ConfigRuntimeBundleUpdateSubscriptionOptions
+): Promise<() => Promise<void>> {
+  const logger = options.logger ?? console;
+  const handler: ConfigRuntimeBundleUpdateListener = async (payload) => {
+    const message = decodeConfigRuntimeBundleUpdateMessage(payload);
+    if (!message || message.sourceInstanceId === options.sourceInstanceId) {
+      return;
+    }
+
+    try {
+      await options.reloadRuntimeBundle();
+    } catch (error) {
+      logger.error("[config-center] Failed to reload runtime bundle after broadcast", error);
+    }
+  };
+
+  await Promise.resolve(options.transport.subscribe(CONFIG_RUNTIME_BUNDLE_UPDATE_TOPIC, handler));
+
+  return async () => {
+    await Promise.resolve(options.transport.unsubscribe(CONFIG_RUNTIME_BUNDLE_UPDATE_TOPIC, handler));
+  };
+}
 
 export function initializeAppliedRuntimeBundle(bundle: RuntimeConfigBundle): void {
   pendingRuntimeBundleState = null;

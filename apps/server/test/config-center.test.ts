@@ -9,6 +9,7 @@ import { DEFAULT_FEATURE_FLAG_CONFIG } from "@veil/shared/platform";
 import {
   configureConfigCenterRuntimeDependencies,
   configureConfigRuntimeStatusProvider,
+  type ConfigRuntimeBundleUpdateTransport,
   createWorldConfigPreview,
   FileSystemConfigCenterStore,
   flushPendingConfigUpdate,
@@ -162,6 +163,42 @@ const BATTLE_BALANCE_CONFIG = {
   turnTimerSeconds: 30,
   afkStrikesBeforeForfeit: 2
 };
+
+class DeferredConfigRuntimeBundleUpdateTransport implements ConfigRuntimeBundleUpdateTransport {
+  readonly messages: Array<{ topic: string; data: unknown }> = [];
+  private readonly listeners = new Map<string, Set<(message: unknown) => void | Promise<void>>>();
+
+  subscribe(topic: string, callback: (message: unknown) => void | Promise<void>): void {
+    const listeners = this.listeners.get(topic) ?? new Set<(message: unknown) => void | Promise<void>>();
+    listeners.add(callback);
+    this.listeners.set(topic, listeners);
+  }
+
+  unsubscribe(topic: string, callback?: (message: unknown) => void | Promise<void>): void {
+    if (!callback) {
+      this.listeners.delete(topic);
+      return;
+    }
+
+    const listeners = this.listeners.get(topic);
+    listeners?.delete(callback);
+    if (listeners?.size === 0) {
+      this.listeners.delete(topic);
+    }
+  }
+
+  publish(topic: string, data: unknown): void {
+    this.messages.push({ topic, data });
+  }
+
+  async deliverNext(): Promise<void> {
+    const message = this.messages.shift();
+    assert.ok(message);
+    await Promise.all(
+      [...(this.listeners.get(message.topic) ?? [])].map((listener) => Promise.resolve(listener(message.data)))
+    );
+  }
+}
 
 async function seedConfigRoot(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "phase1-world.json"), `${JSON.stringify(WORLD_CONFIG, null, 2)}\n`, "utf8");
@@ -978,6 +1015,42 @@ test("config center delays hot reload while battles are active and applies it on
 
   assert.equal(result?.status, "applied");
   assert.equal(getDefaultWorldConfig().width, 10);
+});
+
+test("config center runtime bundle broadcasts let another instance reload from the store and flush pending safely", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "veil-config-center-"));
+  await seedConfigRoot(rootDir);
+  const transport = new DeferredConfigRuntimeBundleUpdateTransport();
+  const writerStore = new FileSystemConfigCenterStore(rootDir);
+  const remoteStore = new FileSystemConfigCenterStore(rootDir);
+  await writerStore.startRuntimeBundleUpdateSubscription(transport);
+  await remoteStore.startRuntimeBundleUpdateSubscription(transport);
+  await remoteStore.initializeRuntimeConfigs();
+
+  await writerStore.saveDocument(
+    "world",
+    JSON.stringify({
+      ...WORLD_CONFIG,
+      width: 13
+    })
+  );
+  assert.equal(transport.messages.length, 1);
+
+  resetRuntimeConfigs();
+  resetConfigHotReloadState();
+  let remoteActiveBattles = 1;
+  configureConfigRuntimeStatusProvider(() => ({
+    rooms: remoteActiveBattles > 0 ? [{ roomId: "remote-battle", activeBattles: remoteActiveBattles }] : [],
+    activeBattleCount: remoteActiveBattles
+  }));
+
+  await transport.deliverNext();
+  assert.notEqual(getDefaultWorldConfig().width, 13);
+
+  remoteActiveBattles = 0;
+  const result = flushPendingConfigUpdate();
+  assert.equal(result?.status, "applied");
+  assert.equal(getDefaultWorldConfig().width, 13);
 });
 
 test("config center rejects schema-incompatible staged publishes with an explicit error", async () => {
