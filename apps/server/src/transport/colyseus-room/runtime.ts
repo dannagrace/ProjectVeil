@@ -41,7 +41,18 @@ export interface RedisLobbyRoomSummaryStoreOptions {
 
 const LOBBY_ROOM_SUMMARY_REDIS_PREFIX = "veil:lobby-room-summary:";
 const LOBBY_ROOM_SUMMARY_TTL_SECONDS = 60;
+const LOBBY_ROOM_SUMMARY_HASH_SUFFIX = "entries";
 let lobbyRoomSummaryStore: LobbyRoomSummaryStore | null = null;
+
+interface RedisLobbyRoomSummaryHashClient extends RedisClientLike {
+  expire?(key: string, seconds: number): Promise<number>;
+  hgetall(key: string): Promise<Record<string, string>>;
+}
+
+interface RedisLobbyRoomSummaryHashEntry {
+  expiresAtMs: number;
+  summary: LobbyRoomSummary;
+}
 
 configureConfigRuntimeStatusProvider(() => {
   const rooms = Array.from(activeRoomInstances.values())
@@ -137,23 +148,23 @@ function mergeLobbyRoomSummaries(...groups: LobbyRoomSummary[][]): LobbyRoomSumm
   return sortLobbyRoomSummaries(Array.from(summariesByRoomId.values()));
 }
 
-function buildLobbyRoomSummaryRedisKey(prefix: string, roomId: string): string {
-  return `${prefix}${roomId}`;
+function buildLobbyRoomSummaryRedisIndexKey(prefix: string, suffix: string): string {
+  return `${prefix}${suffix}`;
 }
 
-async function listRedisKeysByPrefix(redisClient: RedisClientLike, keyPrefix: string): Promise<string[]> {
-  if (typeof redisClient.scan !== "function") {
-    return [];
+function normalizeRedisLobbyRoomSummaryHashEntry(input: unknown): RedisLobbyRoomSummaryHashEntry | null {
+  if (!input || typeof input !== "object") {
+    return null;
   }
-
-  const keys: string[] = [];
-  let cursor = "0";
-  do {
-    const [nextCursor, batch] = await redisClient.scan(cursor, "MATCH", `${keyPrefix}*`, "COUNT", "100");
-    keys.push(...batch);
-    cursor = nextCursor;
-  } while (cursor !== "0");
-  return keys;
+  const candidate = input as Partial<Record<keyof RedisLobbyRoomSummaryHashEntry, unknown>>;
+  const summary = normalizeLobbyRoomSummary(candidate.summary);
+  if (typeof candidate.expiresAtMs !== "number" || !summary) {
+    return null;
+  }
+  return {
+    expiresAtMs: candidate.expiresAtMs,
+    summary
+  };
 }
 
 export function createRedisLobbyRoomSummaryStore(
@@ -162,43 +173,40 @@ export function createRedisLobbyRoomSummaryStore(
 ): LobbyRoomSummaryStore {
   const keyPrefix = options.keyPrefix ?? LOBBY_ROOM_SUMMARY_REDIS_PREFIX;
   const ttlSeconds = Math.max(1, Math.floor(options.ttlSeconds ?? LOBBY_ROOM_SUMMARY_TTL_SECONDS));
+  const summaryHashKey = buildLobbyRoomSummaryRedisIndexKey(keyPrefix, LOBBY_ROOM_SUMMARY_HASH_SUFFIX);
+  const hashRedisClient = redisClient as RedisLobbyRoomSummaryHashClient;
   return {
     async upsert(summary) {
-      await redisClient.set(
-        buildLobbyRoomSummaryRedisKey(keyPrefix, summary.roomId),
-        JSON.stringify(summary),
-        "EX",
-        ttlSeconds
-      );
+      const expiresAtMs = Date.now() + ttlSeconds * 1000;
+      await hashRedisClient.hset(summaryHashKey, summary.roomId, JSON.stringify({ expiresAtMs, summary }));
+      await hashRedisClient.expire?.(summaryHashKey, ttlSeconds);
     },
     async delete(roomId) {
-      await redisClient.del(buildLobbyRoomSummaryRedisKey(keyPrefix, roomId));
+      await hashRedisClient.hdel(summaryHashKey, roomId);
     },
     async list() {
-      const keys = await listRedisKeysByPrefix(redisClient, keyPrefix);
-      if (keys.length === 0) {
+      const serializedEntries = await hashRedisClient.hgetall(summaryHashKey);
+      const roomEntries = Object.entries(serializedEntries);
+      if (roomEntries.length === 0) {
         return [];
       }
-      const serializedEntries = await Promise.all(keys.map((key) => redisClient.get(key)));
       const summaries: LobbyRoomSummary[] = [];
-      for (let index = 0; index < serializedEntries.length; index += 1) {
-        const serialized = serializedEntries[index];
-        if (!serialized) {
-          continue;
-        }
+      const staleRoomIds: string[] = [];
+      const nowMs = Date.now();
+      for (const [roomId, serialized] of roomEntries) {
         try {
-          const summary = normalizeLobbyRoomSummary(JSON.parse(serialized));
-          if (summary) {
-            summaries.push(summary);
+          const entry = normalizeRedisLobbyRoomSummaryHashEntry(JSON.parse(serialized));
+          if (entry && entry.summary.roomId === roomId && entry.expiresAtMs > nowMs) {
+            summaries.push(entry.summary);
             continue;
           }
         } catch {
           // Delete malformed entries below.
         }
-        const key = keys[index];
-        if (key) {
-          await redisClient.del(key);
-        }
+        staleRoomIds.push(roomId);
+      }
+      if (staleRoomIds.length > 0) {
+        await hashRedisClient.hdel(summaryHashKey, ...staleRoomIds);
       }
       return sortLobbyRoomSummaries(summaries);
     }

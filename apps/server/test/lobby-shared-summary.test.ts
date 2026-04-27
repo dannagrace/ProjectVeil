@@ -54,3 +54,70 @@ test("lobby room summaries are shared through Redis across route instances", asy
 
   assert.deepEqual(afterDelete.map((room) => room.roomId), ["room-shared-b"]);
 });
+
+test("redis lobby room summaries list through the explicit index without scanning keyspace", async (t) => {
+  const redis = new Redis();
+  const keyPrefix = "test:veil:lobby-room-summary-indexed:";
+  let scanCalls = 0;
+  redis.scan = async () => {
+    scanCalls += 1;
+    throw new Error("Redis keyspace scan should not be used for lobby room summary listing");
+  };
+  const store = createRedisLobbyRoomSummaryStore(redis as never, { keyPrefix });
+
+  t.after(async () => {
+    await redis.quit();
+  });
+
+  await store.upsert(makeSummary("room-indexed-a", 1, "2026-04-27T05:02:00.000Z"));
+  await store.upsert(makeSummary("room-indexed-b", 3, "2026-04-27T05:03:00.000Z"));
+
+  const rooms = await store.list();
+
+  assert.equal(scanCalls, 0);
+  assert.deepEqual(
+    rooms.map((room) => [room.roomId, room.connectedPlayers]),
+    [
+      ["room-indexed-b", 3],
+      ["room-indexed-a", 1]
+    ]
+  );
+});
+
+test("redis lobby room summary index removes expired and malformed entries", async (t) => {
+  const redis = new Redis();
+  const keyPrefix = "test:veil:lobby-room-summary-cleanup:";
+  const store = createRedisLobbyRoomSummaryStore(redis as never, { keyPrefix, ttlSeconds: 60 });
+
+  t.after(async () => {
+    await redis.quit();
+  });
+
+  await store.upsert(makeSummary("room-valid", 1, "2026-04-27T05:04:00.000Z"));
+
+  const indexedKeys = await redis.keys(`${keyPrefix}*`);
+  let summaryHashKey: string | null = null;
+  for (const key of indexedKeys) {
+    const type = await redis.type(key);
+    if (type === "hash") {
+      summaryHashKey = key;
+    }
+  }
+  assert.ok(summaryHashKey, "summary hash key should be created");
+
+  await redis.hset(summaryHashKey, "room-malformed", "{not json");
+  await redis.hset(
+    summaryHashKey,
+    "room-expired",
+    JSON.stringify({
+      expiresAtMs: Date.now() - 1_000,
+      summary: makeSummary("room-expired", 1, "2026-04-27T05:01:00.000Z")
+    })
+  );
+
+  const rooms = await store.list();
+
+  assert.deepEqual(rooms.map((room) => room.roomId), ["room-valid"]);
+  assert.equal(await redis.hget(summaryHashKey, "room-malformed"), null);
+  assert.equal(await redis.hget(summaryHashKey, "room-expired"), null);
+});
