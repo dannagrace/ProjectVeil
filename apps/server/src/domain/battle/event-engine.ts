@@ -76,6 +76,13 @@ export interface SeasonalEventOpsAuditEntry {
   metadata?: Record<string, unknown>;
 }
 
+export interface SeasonalEventOpsAuditRedisClient {
+  lpush(key: string, ...values: string[]): Promise<number>;
+  ltrim(key: string, start: number, stop: number): Promise<unknown>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
+  expire?(key: string, seconds: number): Promise<unknown>;
+}
+
 export interface RegisterEventRoutesOptions {
   now?: () => Date;
   eventIndexDocument?: SeasonalEventsDocument;
@@ -86,6 +93,9 @@ export interface RegisterEventRoutesOptions {
   seasonalEventRuntimeRedisClient?: RedisClientLike | null;
   seasonalEventRuntimeRedisUrl?: string | null;
   seasonalEventRuntimeCreateRedisClient?: typeof createRedisClient;
+  seasonalEventOpsAuditRedisClient?: SeasonalEventOpsAuditRedisClient | null;
+  seasonalEventOpsAuditRedisUrl?: string | null;
+  seasonalEventOpsAuditCreateRedisClient?: typeof createRedisClient;
 }
 
 export interface SeasonalEventActionInput {
@@ -119,6 +129,9 @@ const ACTION_SUBMISSION_RATE_LIMIT_WINDOW_MS = 5_000;
 const ACTION_SUBMISSION_RATE_LIMIT_MAX = 1;
 const ACTION_SUBMISSION_RATE_LIMIT_CLUSTER_KEY_PREFIX = "veil:action-submission-rate:";
 const SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY = "veil:seasonal-event-runtime-overrides";
+const SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY = "veil:seasonal-event-ops-audit";
+const SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES = 200;
+const SEASONAL_EVENT_OPS_AUDIT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const SERVER_VERIFIABLE_SEASONAL_EVENT_ACTION_TYPES = new Set<string>(["daily_dungeon_reward_claimed"]);
 const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverride>();
 const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
@@ -288,20 +301,95 @@ function sendStoreUnavailable(
   });
 }
 
-function appendSeasonalEventOpsAuditEntry(entry: Omit<SeasonalEventOpsAuditEntry, "id">): SeasonalEventOpsAuditEntry {
-  const auditEntry: SeasonalEventOpsAuditEntry = {
+function createSeasonalEventOpsAuditEntry(entry: Omit<SeasonalEventOpsAuditEntry, "id">): SeasonalEventOpsAuditEntry {
+  return {
     ...entry,
     id: `seasonal-event-ops:${entry.action}:${entry.eventId}:${entry.occurredAt}`
   };
+}
+
+function cloneSeasonalEventOpsAuditEntry(entry: SeasonalEventOpsAuditEntry): SeasonalEventOpsAuditEntry {
+  return {
+    ...entry,
+    ...(entry.metadata ? { metadata: structuredClone(entry.metadata) } : {})
+  };
+}
+
+function rememberLocalSeasonalEventOpsAuditEntry(auditEntry: SeasonalEventOpsAuditEntry): void {
   seasonalEventOpsAuditTrail.unshift(auditEntry);
-  return auditEntry;
+  seasonalEventOpsAuditTrail.splice(SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES);
 }
 
 export function listSeasonalEventOpsAuditTrail(): SeasonalEventOpsAuditEntry[] {
-  return seasonalEventOpsAuditTrail.map((entry) => ({
-    ...entry,
-    ...(entry.metadata ? { metadata: structuredClone(entry.metadata) } : {})
-  }));
+  return seasonalEventOpsAuditTrail.map(cloneSeasonalEventOpsAuditEntry);
+}
+
+function parseSeasonalEventOpsAuditEntry(value: string): SeasonalEventOpsAuditEntry | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<SeasonalEventOpsAuditEntry>;
+    if (
+      typeof parsed.id !== "string" ||
+      (parsed.action !== "patched" && parsed.action !== "force_ended" && parsed.action !== "player_progress_reset") ||
+      typeof parsed.actor !== "string" ||
+      typeof parsed.eventId !== "string" ||
+      typeof parsed.occurredAt !== "string" ||
+      typeof parsed.detail !== "string"
+    ) {
+      return null;
+    }
+    return {
+      id: parsed.id,
+      action: parsed.action,
+      actor: parsed.actor,
+      eventId: parsed.eventId,
+      occurredAt: parsed.occurredAt,
+      detail: parsed.detail,
+      ...(parsed.metadata && typeof parsed.metadata === "object" && !Array.isArray(parsed.metadata)
+        ? { metadata: structuredClone(parsed.metadata) as Record<string, unknown> }
+        : {})
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function appendSeasonalEventOpsAuditEntryWithSharedStore(
+  entry: Omit<SeasonalEventOpsAuditEntry, "id">,
+  redisClient: SeasonalEventOpsAuditRedisClient | null
+): Promise<SeasonalEventOpsAuditEntry> {
+  const auditEntry = createSeasonalEventOpsAuditEntry(entry);
+  if (!redisClient) {
+    rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
+    return auditEntry;
+  }
+
+  try {
+    await redisClient.lpush(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, JSON.stringify(auditEntry));
+    await redisClient.ltrim(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1);
+    await redisClient.expire?.(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, SEASONAL_EVENT_OPS_AUDIT_TTL_SECONDS);
+    rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
+    return auditEntry;
+  } catch {
+    rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
+    return auditEntry;
+  }
+}
+
+async function listSeasonalEventOpsAuditTrailWithSharedStore(
+  redisClient: SeasonalEventOpsAuditRedisClient | null
+): Promise<SeasonalEventOpsAuditEntry[]> {
+  if (!redisClient) {
+    return listSeasonalEventOpsAuditTrail();
+  }
+
+  try {
+    return (await redisClient.lrange(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1))
+      .map(parseSeasonalEventOpsAuditEntry)
+      .filter((entry): entry is SeasonalEventOpsAuditEntry => Boolean(entry))
+      .map(cloneSeasonalEventOpsAuditEntry);
+  } catch {
+    return listSeasonalEventOpsAuditTrail();
+  }
 }
 
 export function resetSeasonalEventRuntimeState(): void {
@@ -1185,6 +1273,36 @@ function resolveSeasonalEventRuntimeRedisClient(options: RegisterEventRoutesOpti
   return redisUrl ? (options.seasonalEventRuntimeCreateRedisClient ?? createRedisClient)(redisUrl) : null;
 }
 
+function isSeasonalEventOpsAuditRedisClient(
+  redisClient: RedisClientLike | SeasonalEventOpsAuditRedisClient | null
+): redisClient is SeasonalEventOpsAuditRedisClient {
+  return (
+    redisClient !== null &&
+    typeof redisClient.lrange === "function" &&
+    typeof (redisClient as Partial<SeasonalEventOpsAuditRedisClient>).lpush === "function" &&
+    typeof (redisClient as Partial<SeasonalEventOpsAuditRedisClient>).ltrim === "function"
+  );
+}
+
+function resolveSeasonalEventOpsAuditRedisClient(
+  options: RegisterEventRoutesOptions,
+  seasonalEventRuntimeRedisClient: RedisClientLike | null
+): SeasonalEventOpsAuditRedisClient | null {
+  if (options.seasonalEventOpsAuditRedisClient !== undefined) {
+    return options.seasonalEventOpsAuditRedisClient;
+  }
+  if (options.seasonalEventOpsAuditRedisUrl !== undefined) {
+    return options.seasonalEventOpsAuditRedisUrl
+      ? ((options.seasonalEventOpsAuditCreateRedisClient ?? createRedisClient)(
+          options.seasonalEventOpsAuditRedisUrl
+        ) as SeasonalEventOpsAuditRedisClient)
+      : null;
+  }
+  return isSeasonalEventOpsAuditRedisClient(seasonalEventRuntimeRedisClient)
+    ? seasonalEventRuntimeRedisClient
+    : null;
+}
+
 export function registerEventRoutes(
   app: {
     use: (handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void) => void;
@@ -1199,6 +1317,10 @@ export function registerEventRoutes(
   const nowFactory = options.now ?? (() => new Date());
   const rateLimitRedisClient = resolveRateLimitRedisClient(options);
   const seasonalEventRuntimeRedisClient = resolveSeasonalEventRuntimeRedisClient(options);
+  const seasonalEventOpsAuditRedisClient = resolveSeasonalEventOpsAuditRedisClient(
+    options,
+    seasonalEventRuntimeRedisClient
+  );
 
   app.use((request, response, next) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
@@ -1568,7 +1690,7 @@ export function registerEventRoutes(
             : {},
           participation: buildSeasonalEventParticipationStats(event, accounts)
         })),
-        audit: listSeasonalEventOpsAuditTrail()
+        audit: await listSeasonalEventOpsAuditTrailWithSharedStore(seasonalEventOpsAuditRedisClient)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1617,14 +1739,17 @@ export function registerEventRoutes(
           options.eventDocuments
         )
       ).find((entry) => entry.id === eventId)!;
-      const audit = appendSeasonalEventOpsAuditEntry({
-        action: "patched",
-        actor: "admin-runtime",
-        eventId,
-        occurredAt,
-        detail: "Patched seasonal event runtime settings",
-        metadata: patch as unknown as Record<string, unknown>
-      });
+      const audit = await appendSeasonalEventOpsAuditEntryWithSharedStore(
+        {
+          action: "patched",
+          actor: "admin-runtime",
+          eventId,
+          occurredAt,
+          detail: "Patched seasonal event runtime settings",
+          metadata: patch as unknown as Record<string, unknown>
+        },
+        seasonalEventOpsAuditRedisClient
+      );
       sendJson(response, 200, { event: nextEvent, audit });
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -1703,14 +1828,17 @@ export function registerEventRoutes(
         endedEvent,
         now
       );
-      const audit = appendSeasonalEventOpsAuditEntry({
-        action: "force_ended",
-        actor: "admin-runtime",
-        eventId,
-        occurredAt: now.toISOString(),
-        detail: "Force-ended seasonal event and distributed rewards",
-        metadata: distribution as unknown as Record<string, unknown>
-      });
+      const audit = await appendSeasonalEventOpsAuditEntryWithSharedStore(
+        {
+          action: "force_ended",
+          actor: "admin-runtime",
+          eventId,
+          occurredAt: now.toISOString(),
+          detail: "Force-ended seasonal event and distributed rewards",
+          metadata: distribution as unknown as Record<string, unknown>
+        },
+        seasonalEventOpsAuditRedisClient
+      );
       sendJson(response, 200, {
         event: endedEvent,
         distribution,
@@ -1770,17 +1898,20 @@ export function registerEventRoutes(
       const nextAccount = await store.savePlayerAccountProgress(playerId, {
         seasonalEventStates: resetSeasonalEventProgressState(account, eventId)
       });
-      const audit = appendSeasonalEventOpsAuditEntry({
-        action: "player_progress_reset",
-        actor: "admin-runtime",
-        eventId,
-        occurredAt: nowFactory().toISOString(),
-        detail: "Reset seasonal event progress for a single player",
-        metadata: {
-          playerId,
-          previousPoints: existingState.points
-        }
-      });
+      const audit = await appendSeasonalEventOpsAuditEntryWithSharedStore(
+        {
+          action: "player_progress_reset",
+          actor: "admin-runtime",
+          eventId,
+          occurredAt: nowFactory().toISOString(),
+          detail: "Reset seasonal event progress for a single player",
+          metadata: {
+            playerId,
+            previousPoints: existingState.points
+          }
+        },
+        seasonalEventOpsAuditRedisClient
+      );
       sendJson(response, 200, {
         reset: true,
         playerId,
