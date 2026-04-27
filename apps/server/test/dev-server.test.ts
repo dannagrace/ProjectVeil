@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listLobbyRooms } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { listSharedLobbyRooms } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { startDevServer, type DevServerBootstrapDependencies } from "@server/infra/dev-server";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "@server/domain/ops/observability";
 import type {
@@ -403,7 +403,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(guildStore, memoryStore);
   assert.equal(playerAccountStore, memoryStore);
   assert.equal(matchmakingStore, memoryStore);
-  assert.equal(lobbyListRooms, listLobbyRooms);
+  assert.equal(lobbyListRooms, listSharedLobbyRooms);
   assert.equal(lobbyStore, memoryStore);
   assert.deepEqual(base.routeCalls, [
     "prometheus-middleware",

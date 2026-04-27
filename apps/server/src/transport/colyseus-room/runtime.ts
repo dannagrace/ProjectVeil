@@ -15,6 +15,7 @@ import {
   formatBackgroundTaskDetail,
   reportBackgroundTaskFailure
 } from "@server/transport/colyseus-room/error-reporting";
+import type { RedisClientLike } from "@server/infra/redis";
 
 export let configuredRoomSnapshotStore: RoomSnapshotStore | null = null;
 export const lobbyRoomSummaries = new Map<string, LobbyRoomSummary>();
@@ -26,6 +27,21 @@ export function advanceLobbyRoomOwnerToken(): number {
   return nextLobbyRoomOwnerToken;
 }
 export let zombieRoomCleanupHandle: RoomTimerHandle | null = null;
+
+export interface LobbyRoomSummaryStore {
+  upsert(summary: LobbyRoomSummary): Promise<void>;
+  delete(roomId: string): Promise<void>;
+  list(): Promise<LobbyRoomSummary[]>;
+}
+
+export interface RedisLobbyRoomSummaryStoreOptions {
+  keyPrefix?: string;
+  ttlSeconds?: number;
+}
+
+const LOBBY_ROOM_SUMMARY_REDIS_PREFIX = "veil:lobby-room-summary:";
+const LOBBY_ROOM_SUMMARY_TTL_SECONDS = 60;
+let lobbyRoomSummaryStore: LobbyRoomSummaryStore | null = null;
 
 configureConfigRuntimeStatusProvider(() => {
   const rooms = Array.from(activeRoomInstances.values())
@@ -73,10 +89,148 @@ export function resetRoomRuntimeDependencies(): void {
   roomRuntimeDependencies = defaultRoomRuntimeDependencies;
 }
 
-export function listLobbyRooms(): LobbyRoomSummary[] {
-  return Array.from(lobbyRoomSummaries.values()).sort(
+function sortLobbyRoomSummaries(rooms: LobbyRoomSummary[]): LobbyRoomSummary[] {
+  return rooms.sort(
     (left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.roomId.localeCompare(right.roomId)
   );
+}
+
+function normalizeLobbyRoomSummary(input: unknown): LobbyRoomSummary | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const candidate = input as Partial<Record<keyof LobbyRoomSummary, unknown>>;
+  if (
+    typeof candidate.roomId !== "string" ||
+    typeof candidate.seed !== "number" ||
+    typeof candidate.day !== "number" ||
+    typeof candidate.connectedPlayers !== "number" ||
+    typeof candidate.disconnectedPlayers !== "number" ||
+    typeof candidate.heroCount !== "number" ||
+    typeof candidate.activeBattles !== "number" ||
+    typeof candidate.statusLabel !== "string" ||
+    typeof candidate.updatedAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    roomId: candidate.roomId,
+    seed: candidate.seed,
+    day: candidate.day,
+    connectedPlayers: candidate.connectedPlayers,
+    disconnectedPlayers: candidate.disconnectedPlayers,
+    heroCount: candidate.heroCount,
+    activeBattles: candidate.activeBattles,
+    statusLabel: candidate.statusLabel,
+    updatedAt: candidate.updatedAt
+  };
+}
+
+function mergeLobbyRoomSummaries(...groups: LobbyRoomSummary[][]): LobbyRoomSummary[] {
+  const summariesByRoomId = new Map<string, LobbyRoomSummary>();
+  for (const summary of groups.flat()) {
+    const existing = summariesByRoomId.get(summary.roomId);
+    if (!existing || summary.updatedAt.localeCompare(existing.updatedAt) >= 0) {
+      summariesByRoomId.set(summary.roomId, summary);
+    }
+  }
+  return sortLobbyRoomSummaries(Array.from(summariesByRoomId.values()));
+}
+
+function buildLobbyRoomSummaryRedisKey(prefix: string, roomId: string): string {
+  return `${prefix}${roomId}`;
+}
+
+async function listRedisKeysByPrefix(redisClient: RedisClientLike, keyPrefix: string): Promise<string[]> {
+  if (typeof redisClient.scan !== "function") {
+    return [];
+  }
+
+  const keys: string[] = [];
+  let cursor = "0";
+  do {
+    const [nextCursor, batch] = await redisClient.scan(cursor, "MATCH", `${keyPrefix}*`, "COUNT", "100");
+    keys.push(...batch);
+    cursor = nextCursor;
+  } while (cursor !== "0");
+  return keys;
+}
+
+export function createRedisLobbyRoomSummaryStore(
+  redisClient: RedisClientLike,
+  options: RedisLobbyRoomSummaryStoreOptions = {}
+): LobbyRoomSummaryStore {
+  const keyPrefix = options.keyPrefix ?? LOBBY_ROOM_SUMMARY_REDIS_PREFIX;
+  const ttlSeconds = Math.max(1, Math.floor(options.ttlSeconds ?? LOBBY_ROOM_SUMMARY_TTL_SECONDS));
+  return {
+    async upsert(summary) {
+      await redisClient.set(
+        buildLobbyRoomSummaryRedisKey(keyPrefix, summary.roomId),
+        JSON.stringify(summary),
+        "EX",
+        ttlSeconds
+      );
+    },
+    async delete(roomId) {
+      await redisClient.del(buildLobbyRoomSummaryRedisKey(keyPrefix, roomId));
+    },
+    async list() {
+      const keys = await listRedisKeysByPrefix(redisClient, keyPrefix);
+      if (keys.length === 0) {
+        return [];
+      }
+      const serializedEntries = await Promise.all(keys.map((key) => redisClient.get(key)));
+      const summaries: LobbyRoomSummary[] = [];
+      for (let index = 0; index < serializedEntries.length; index += 1) {
+        const serialized = serializedEntries[index];
+        if (!serialized) {
+          continue;
+        }
+        try {
+          const summary = normalizeLobbyRoomSummary(JSON.parse(serialized));
+          if (summary) {
+            summaries.push(summary);
+            continue;
+          }
+        } catch {
+          // Delete malformed entries below.
+        }
+        const key = keys[index];
+        if (key) {
+          await redisClient.del(key);
+        }
+      }
+      return sortLobbyRoomSummaries(summaries);
+    }
+  };
+}
+
+export function configureLobbyRoomSummaryStore(store: LobbyRoomSummaryStore | null): void {
+  lobbyRoomSummaryStore = store;
+}
+
+export function listLobbyRooms(): LobbyRoomSummary[] {
+  return sortLobbyRoomSummaries(Array.from(lobbyRoomSummaries.values()));
+}
+
+export async function listSharedLobbyRooms(): Promise<LobbyRoomSummary[]> {
+  if (!lobbyRoomSummaryStore) {
+    return listLobbyRooms();
+  }
+
+  try {
+    return mergeLobbyRoomSummaries(await lobbyRoomSummaryStore.list(), listLobbyRooms());
+  } catch {
+    return listLobbyRooms();
+  }
+}
+
+export async function publishSharedLobbyRoomSummary(summary: LobbyRoomSummary): Promise<void> {
+  await lobbyRoomSummaryStore?.upsert(summary);
+}
+
+export async function deleteSharedLobbyRoomSummary(roomId: string): Promise<void> {
+  await lobbyRoomSummaryStore?.delete(roomId);
 }
 
 export function resetLobbyRoomRegistry(): void {

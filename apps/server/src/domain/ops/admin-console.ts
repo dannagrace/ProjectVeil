@@ -28,7 +28,7 @@ import type {
   SupportTicketResolveInput,
   SupportTicketStatus
 } from "@server/persistence";
-import { listLobbyRooms, getActiveRoomInstances } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { listSharedLobbyRooms, getActiveRoomInstances } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   loadLaunchRuntimeState,
   resolveActiveLaunchAnnouncements,
@@ -1190,7 +1190,7 @@ export function registerAdminRoutes(
   app.get("/api/admin/overview", async (request, response) => {
     if (!isAdminSecretConfigured()) return sendAdminSecretNotConfigured(response);
     if (!isAuthorized(request)) return sendUnauthorized(response);
-    const lobbyRooms = listLobbyRooms();
+    const lobbyRooms = await listSharedLobbyRooms();
     sendJson(response, 200, {
       serverTime: new Date().toISOString(),
       activeRooms: lobbyRooms.length,

@@ -19,7 +19,13 @@ import {
   type ConfigCenterStore,
   type ConfigRuntimeBundleUpdateTransport
 } from "@server/config-center";
-import { configureRoomSnapshotStore, listLobbyRooms, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import {
+  configureLobbyRoomSummaryStore,
+  configureRoomSnapshotStore,
+  createRedisLobbyRoomSummaryStore,
+  listSharedLobbyRooms,
+  VeilColyseusRoom
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { registerConfigViewerRoutes } from "@server/transport/http/config-viewer";
 import { registerEventRoutes } from "@server/domain/battle/event-engine";
 import { registerGuildRoutes, type GuildChatRealtimeTransport } from "@server/domain/social/guilds";
@@ -254,7 +260,7 @@ export interface DevServerBootstrapDependencies {
   registerWechatPayRoutes(app: unknown, store: DevServerRoomSnapshotStore): void;
   registerLobbyRoutes(
     app: unknown,
-    dependencies: { listRooms: typeof listLobbyRooms; store?: DevServerRoomSnapshotStore | null }
+    dependencies: { listRooms: typeof listSharedLobbyRooms; store?: DevServerRoomSnapshotStore | null }
   ): void;
   registerLaunchRuntimeRoutes(app: unknown, options?: { storage?: Pick<LiveOpsCalendarStorage, "loadLaunchRuntimeState"> }): void;
   registerMatchmakingRoutes(app: unknown, dependencies: { store: DevServerRoomSnapshotStore }): void;
@@ -576,6 +582,9 @@ export async function startDevServer(
   const redisPresence = redisUrl ? deps.createRedisPresence(redisUrl) : null;
   const redisDriver = redisUrl ? deps.createRedisDriver(redisUrl) : null;
   const accountTokenDeliveryRedisClient = redisUrl ? deps.createRedisClient(redisUrl) : null;
+  configureLobbyRoomSummaryStore(
+    accountTokenDeliveryRedisClient ? createRedisLobbyRoomSummaryStore(accountTokenDeliveryRedisClient) : null
+  );
   if (redisPresence && supportsConfigRuntimeBundleUpdateSubscription(configCenterStore)) {
     await configCenterStore.startRuntimeBundleUpdateSubscription(
       redisPresence as unknown as ConfigRuntimeBundleUpdateTransport
@@ -618,7 +627,7 @@ export async function startDevServer(
   deps.registerApplePaymentRoutes(expressApp, effectiveSnapshotStore);
   deps.registerGooglePlayRoutes(expressApp, effectiveSnapshotStore);
   deps.registerWechatPayRoutes(expressApp, effectiveSnapshotStore);
-  deps.registerLobbyRoutes(expressApp, { listRooms: listLobbyRooms, store: effectiveSnapshotStore });
+  deps.registerLobbyRoutes(expressApp, { listRooms: listSharedLobbyRooms, store: effectiveSnapshotStore });
   const liveOpsCalendarStorage =
     configCenterStore.mode === "mysql" ? createSharedLiveOpsCalendarStorage(configCenterStore) : undefined;
   configureLaunchRuntimeStateStorage(liveOpsCalendarStorage ?? null);
@@ -795,6 +804,7 @@ export async function startDevServer(
     }
     liveOpsCalendarScheduler.stop();
     configureLaunchRuntimeStateStorage(null);
+    configureLobbyRoomSummaryStore(null);
     await deps.shutdownAccountTokenDeliveryQueuePersistence();
 
     if (!snapshotStore) {

@@ -13,7 +13,11 @@ import {
   resetAccountTokenDeliveryState
 } from "@server/adapters/account-token-delivery";
 import { registerAdminRoutes } from "@server/domain/ops/admin-console";
-import { getActiveRoomInstances } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import {
+  configureLobbyRoomSummaryStore,
+  getActiveRoomInstances,
+  type LobbyRoomSummary
+} from "@server/transport/colyseus-room/VeilColyseusRoom";
 import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "@server/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
@@ -806,6 +810,61 @@ test("GET /api/admin/overview returns server overview payload with a valid admin
   assert.equal(payload.nodeVersion, process.version);
   assert.ok(Number.isFinite(Date.parse(payload.serverTime)));
   assert.equal(typeof payload.memoryUsage.rss, "number");
+});
+
+test("GET /api/admin/overview reads shared lobby room summaries", async (t) => {
+  const secret = withAdminSecret(t);
+  const summaries: LobbyRoomSummary[] = [
+    {
+      roomId: "shared-room-a",
+      seed: 1001,
+      day: 2,
+      connectedPlayers: 2,
+      disconnectedPlayers: 0,
+      heroCount: 2,
+      activeBattles: 0,
+      statusLabel: "探索中",
+      updatedAt: "2026-04-27T05:00:00.000Z"
+    },
+    {
+      roomId: "shared-room-b",
+      seed: 1002,
+      day: 5,
+      connectedPlayers: 1,
+      disconnectedPlayers: 0,
+      heroCount: 1,
+      activeBattles: 1,
+      statusLabel: "PVP 进行中",
+      updatedAt: "2026-04-27T05:01:00.000Z"
+    }
+  ];
+  configureLobbyRoomSummaryStore({
+    async upsert() {},
+    async delete() {},
+    async list() {
+      return summaries;
+    }
+  });
+  t.after(() => configureLobbyRoomSummaryStore(null));
+
+  const { gets } = registerRoutes();
+  const handler = gets.get("/api/admin/overview");
+  assert.ok(handler);
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      headers: {
+        "x-veil-admin-secret": secret
+      }
+    }),
+    response
+  );
+  const payload = JSON.parse(response.body) as { activeRooms: number; activePlayers: number };
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(payload.activeRooms, 2);
+  assert.equal(payload.activePlayers, 3);
 });
 
 test("GET /api/admin/experiments returns live experiment summaries with metrics", async (t) => {

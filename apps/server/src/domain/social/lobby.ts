@@ -82,7 +82,7 @@ export function registerLobbyRoutes(
     get: (path: string, handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => void;
   },
   options: {
-    listRooms: () => LobbyRoomSummary[];
+    listRooms: () => LobbyRoomSummary[] | Promise<LobbyRoomSummary[]>;
     store?: RoomSnapshotStore | null;
   }
 ): void {
@@ -107,7 +107,7 @@ export function registerLobbyRoutes(
 
     try {
       const limit = parseLimit(request);
-      const rooms = options.listRooms().map(toPublicLobbyRoomSummary);
+      const rooms = (await options.listRooms()).map(toPublicLobbyRoomSummary);
       sendJson(response, 200, {
         items: limit != null ? rooms.slice(0, Math.max(1, Math.floor(limit))) : rooms
       });

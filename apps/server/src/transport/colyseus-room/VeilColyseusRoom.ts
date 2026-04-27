@@ -88,12 +88,14 @@ import {
   hasBattleSnapshotStore,
   hasPlayerReportStore,
   isDefaultPlayerSlotId,
+  deleteSharedLobbyRoomSummary,
   lobbyRoomOwnerTokens,
   lobbyRoomSummaries,
   MAP_SYNC_CHUNK_SIZE,
   MAP_SYNC_CHUNK_PADDING,
   MINOR_PROTECTION_TICK_MS,
   readMinimumSupportedClientVersion,
+  publishSharedLobbyRoomSummary,
   readSuspiciousActionAlertConfig,
   readWebSocketActionRateLimitConfig,
   rebindWorldStatePlayerId,
@@ -122,9 +124,12 @@ import {
 // Re-export public API so existing imports from "@server/transport/colyseus-room/VeilColyseusRoom" continue to work.
 export type { JoinOptions, LobbyRoomSummary, VeilRoomMetadata, VeilRoomOptions } from "@server/transport/colyseus-room";
 export {
+  configureLobbyRoomSummaryStore,
   configureRoomSnapshotStore,
   configureRoomRuntimeDependencies,
+  createRedisLobbyRoomSummaryStore,
   resetRoomRuntimeDependencies,
+  listSharedLobbyRooms,
   listLobbyRooms,
   resetLobbyRoomRegistry,
   getActiveRoomInstances,
@@ -2326,6 +2331,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       updatedAt: new Date().toISOString()
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
+    void publishSharedLobbyRoomSummary(summary).catch(() => undefined);
     recordRuntimeRoom(summary);
     flushPendingConfigUpdate();
   }
@@ -2389,6 +2395,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) === this.lobbyRoomOwnerToken) {
       lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
       lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
+      void deleteSharedLobbyRoomSummary(this.metadata.logicalRoomId).catch(() => undefined);
       removeRuntimeRoom(this.metadata.logicalRoomId);
     }
 
