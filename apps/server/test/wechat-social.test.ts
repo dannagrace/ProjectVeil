@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildFriendLeaderboard,
@@ -33,6 +34,28 @@ test("group challenge tokens round-trip and reject stale payloads", () => {
 
   const expired = validateGroupChallengeToken(token, secret, new Date("2026-04-05T10:00:00.001Z"));
   assert.deepEqual(expired, { ok: false, reason: "expired" });
+});
+
+test("group challenge token validation rejects malformed signatures without direct comparison", () => {
+  const createdAt = new Date("2026-04-04T10:00:00.000Z");
+  const challenge = createGroupChallenge(
+    {
+      creatorPlayerId: "player-7",
+      creatorDisplayName: "雾林司灯",
+      roomId: "room-social",
+      challengeType: "victory"
+    },
+    createdAt
+  );
+  const secret = "test-social-secret";
+  const token = encodeGroupChallengeToken(challenge, secret);
+  const [payload] = token.split(".");
+
+  assert.deepEqual(validateGroupChallengeToken(`${payload}.short`, secret), { ok: false, reason: "invalid" });
+
+  const source = readFileSync(new URL("../src/adapters/wechat-social.ts", import.meta.url), "utf8");
+  assert.match(source, /timingSafeEqual/);
+  assert.doesNotMatch(source, /signature\s*!==\s*expectedSignature/);
 });
 
 test("friend leaderboard sorts by rating and marks the current player", () => {

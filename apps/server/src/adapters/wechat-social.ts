@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { FriendLeaderboardEntry, GroupChallenge, GroupChallengeType, NotificationPreferences } from "@veil/shared/models";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
 
@@ -153,6 +153,16 @@ export function encodeGroupChallengeToken(challenge: GroupChallenge, secret: str
   return `${payload}.${signature}`;
 }
 
+function hasValidGroupChallengeSignature(payload: string, signature: string, secret: string): boolean {
+  const expectedDigest = createHmac("sha256", secret).update(payload).digest();
+  const providedDigest = Buffer.from(signature, "base64url");
+  if (providedDigest.length !== expectedDigest.length) {
+    timingSafeEqual(Buffer.alloc(expectedDigest.length), expectedDigest);
+    return false;
+  }
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
 export function validateGroupChallengeToken(
   token: string,
   secret: string,
@@ -164,8 +174,7 @@ export function validateGroupChallengeToken(
     return { ok: false, reason: "invalid" };
   }
 
-  const expectedSignature = createHmac("sha256", secret).update(payload).digest("base64url");
-  if (signature !== expectedSignature) {
+  if (!hasValidGroupChallengeSignature(payload, signature, secret)) {
     return { ok: false, reason: "invalid" };
   }
 
