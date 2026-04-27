@@ -135,7 +135,7 @@ class MemoryRedisClient implements RedisClientLike {
   async set(
     key: string,
     value: string,
-    _mode?: "PX",
+    _mode?: "PX" | "EX",
     _durationMs?: number,
     condition?: "NX"
   ): Promise<"OK" | null> {

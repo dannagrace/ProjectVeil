@@ -25,10 +25,11 @@ export interface RedisClientLike {
   lrem(key: string, count: number, value: string): Promise<number>;
   quit?(): Promise<unknown>;
   rpush(key: string, ...values: string[]): Promise<number>;
+  scan?(cursor: string, ...args: string[]): Promise<[string, string[]]>;
   set(
     key: string,
     value: string,
-    mode?: "PX",
+    mode?: "PX" | "EX",
     durationMs?: number,
     condition?: "NX"
   ): Promise<"OK" | null>;

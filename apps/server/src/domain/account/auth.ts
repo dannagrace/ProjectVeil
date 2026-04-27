@@ -1816,7 +1816,7 @@ async function handleWechatLogin(
     return;
   }
 
-  cacheWechatSessionKey(playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
+  await cacheWechatSessionKey(playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
 
   const dailyLoginReward = store && rewardAccount ? await issueDailyLoginReward(store, rewardAccount) : null;
 
@@ -2757,7 +2757,7 @@ export function resetGuestAuthSessions(): void {
   passwordRecoveryStateByLoginId.clear();
   guestSessionClusterClientOverride = undefined;
   guestSessionClusterClientCache = undefined;
-  resetWechatSessionKeyCache();
+  void resetWechatSessionKeyCache();
   syncAuthStateTelemetry();
 }
 
@@ -2898,7 +2898,7 @@ export function registerAuthRoutes(
         }
       }
 
-      const cached = cacheWechatSessionKey(authSession.playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
+      const cached = await cacheWechatSessionKey(authSession.playerId, identity.sessionKey, readWechatSessionKeyTtlSeconds());
       sendJson(response, 200, {
         ok: true,
         playerId: authSession.playerId,

@@ -162,12 +162,12 @@ function isAdminAuthorized(request: IncomingMessage): boolean {
   return timingSafeCompareAdminToken(request.headers["x-veil-admin-token"], adminToken);
 }
 
-function validateWechatSignatureEnvelope(
+async function validateWechatSignatureEnvelope(
   response: ServerResponse,
   playerId: string,
   operation: string,
   signature?: WechatSignatureEnvelope | null
-): boolean {
+): Promise<boolean> {
   if (!signature || typeof signature !== "object") {
     logWechatValidationFailure(playerId, operation, "missing_signature");
     sendWechatValidationForbidden(response);
@@ -180,7 +180,7 @@ function validateWechatSignatureEnvelope(
     return false;
   }
 
-  if (!validateWechatSignature({ playerId, rawData: signature.rawData, signature: signature.signature })) {
+  if (!(await validateWechatSignature({ playerId, rawData: signature.rawData, signature: signature.signature }))) {
     logWechatValidationFailure(playerId, operation, "signature_mismatch_or_missing_session_key");
     sendWechatValidationForbidden(response);
     return false;
@@ -4060,7 +4060,7 @@ export function registerPlayerAccountRoutes(
         return;
       }
 
-      const decrypted = decryptWechatPhoneNumber({
+      const decrypted = await decryptWechatPhoneNumber({
         playerId: authSession.playerId,
         encryptedData: body.encryptedData,
         iv: body.iv,
@@ -4194,7 +4194,10 @@ export function registerPlayerAccountRoutes(
         authSession.provider === "wechat-mini-game" &&
         (body.displayName !== undefined || body.avatarUrl !== undefined || wantsPasswordChange);
 
-      if (wantsSensitiveWechatValidation && !validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature)) {
+      if (
+        wantsSensitiveWechatValidation &&
+        !(await validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature))
+      ) {
         return;
       }
 
@@ -4402,7 +4405,7 @@ export function registerPlayerAccountRoutes(
       if (
         authSession.provider === "wechat-mini-game" &&
         (body.displayName !== undefined || body.avatarUrl !== undefined) &&
-        !validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature)
+        !(await validateWechatSignatureEnvelope(response, authSession.playerId, "update-profile", body.wechatSignature))
       ) {
         return;
       }
