@@ -1295,7 +1295,7 @@ function resolveSeasonalEventOpsAuditRedisClient(
     return options.seasonalEventOpsAuditRedisUrl
       ? ((options.seasonalEventOpsAuditCreateRedisClient ?? createRedisClient)(
           options.seasonalEventOpsAuditRedisUrl
-        ) as SeasonalEventOpsAuditRedisClient)
+        ) as unknown as SeasonalEventOpsAuditRedisClient)
       : null;
   }
   return isSeasonalEventOpsAuditRedisClient(seasonalEventRuntimeRedisClient)

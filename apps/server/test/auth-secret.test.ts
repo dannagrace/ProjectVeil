@@ -47,6 +47,14 @@ test("auth token signature validation uses timing-safe comparisons", async () =>
   assert.doesNotMatch(source, /signature\s*!==\s*expectedSignature/);
 });
 
+test("auth tokens include a random nonce before signing", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/account/auth.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /nonce\?: string/);
+  assert.match(source, /nonce: randomUUID\(\)/);
+});
+
 test("account token hashes and refresh token hashes use timing-safe comparisons", async () => {
   const sourcePath = fileURLToPath(new URL("../src/domain/account/auth.ts", import.meta.url));
   const source = await readFile(sourcePath, "utf8");

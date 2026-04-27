@@ -75,6 +75,7 @@ interface GuestAuthTokenPayload {
   sessionId?: string;
   sessionVersion?: number;
   tokenKind?: "access" | "refresh";
+  nonce?: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -1424,6 +1425,7 @@ function issueAuthSession(input: {
     ...(sessionId ? { sessionId } : {}),
     ...(sessionVersion != null ? { sessionVersion } : {}),
     ...(input.tokenKind ? { tokenKind: input.tokenKind } : {}),
+    nonce: randomUUID(),
     issuedAt,
     expiresAt
   };
