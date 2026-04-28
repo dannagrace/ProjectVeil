@@ -459,6 +459,56 @@ test("registerAnalyticsRoutes queues accepted events for the configured analytic
   assert.equal(snapshot.delivery.events.find((event) => event.name === "session_start" && event.source === "cocos-client")?.flushedTotal, 1);
 });
 
+test("analytics pipeline counters bucket unexpected client sources instead of accumulating random keys", async () => {
+  const logs: string[] = [];
+  const redis = createFakeAnalyticsRedisClient();
+  const store = createRedisAnalyticsPipelineCounterStore(redis as never, {
+    keyPrefix: "test:analytics-random-source-cap:"
+  });
+  configureAnalyticsRuntimeDependencies({
+    log: (message) => {
+      logs.push(message);
+    }
+  });
+  configureAnalyticsPipelineCounterStore(store);
+
+  const handler = capturePublicAnalyticsPostHandler();
+  const session = issueGuestAuthSession({ playerId: "player-random-sources", displayName: "Random Sources" });
+  const events = Array.from({ length: 50 }, (_, index) => ({
+    name: "session_start",
+    source: `client-${index}-${crypto.randomUUID()}`,
+    payload: {
+      roomId: "room-random-sources",
+      authMode: "guest",
+      platform: "web"
+    }
+  }));
+  const response = createResponse();
+
+  await handler(
+    createRequest("POST", JSON.stringify({ events }), {
+      authorization: `Bearer ${session.token}`
+    }) as never,
+    response
+  );
+  await flushAnalyticsEventsForTest();
+
+  const snapshot = await getAnalyticsPipelineSnapshot();
+
+  assert.equal(response.statusCode, 202);
+  assert.equal(logs.some((message) => message.includes("accepted 50 event(s) into stdout sink")), true);
+  assert.equal(snapshot.delivery.ingestedEventsTotal, 50);
+  assert.equal(snapshot.delivery.flushedEventsTotal, 50);
+  assert.deepEqual(snapshot.delivery.events, [
+    {
+      name: "session_start",
+      source: "unknown",
+      ingestedTotal: 50,
+      flushedTotal: 50
+    }
+  ]);
+});
+
 test("getAnalyticsPipelineSnapshot aggregates Redis-backed counters across simulated pods", async () => {
   const redis = createFakeAnalyticsRedisClient();
   const store = createRedisAnalyticsPipelineCounterStore(redis as never, {

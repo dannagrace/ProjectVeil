@@ -11,6 +11,7 @@ const ANALYTICS_BUFFER_FLUSH_SIZE = 20;
 const ANALYTICS_BUFFER_FLUSH_DELAY_MS = 250;
 const DEFAULT_ANALYTICS_RETENTION_DAYS = 400;
 const ANALYTICS_PIPELINE_COUNTER_REDIS_PREFIX = "veil:analytics-pipeline:";
+const KNOWN_ANALYTICS_COUNTER_SOURCES = new Set(["server", "cocos-client"]);
 
 export type AnalyticsSink = "stdout" | "http";
 
@@ -180,8 +181,13 @@ function normalizeAnalyticsDimension(value: unknown, fallback: string): string {
   return normalized.length > 0 ? normalized : fallback;
 }
 
+function normalizeAnalyticsCounterSource(value: unknown): string {
+  const source = normalizeAnalyticsDimension(value, "unknown");
+  return KNOWN_ANALYTICS_COUNTER_SOURCES.has(source) ? source : "unknown";
+}
+
 function buildAnalyticsCounterKey(event: { name?: unknown; source?: unknown }): string {
-  return `${normalizeAnalyticsDimension(event.name, "unknown")}::${normalizeAnalyticsDimension(event.source, "unknown")}`;
+  return `${normalizeAnalyticsDimension(event.name, "unknown")}::${normalizeAnalyticsCounterSource(event.source)}`;
 }
 
 function incrementCounter(map: Map<string, number>, key: string, amount = 1): void {
