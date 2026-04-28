@@ -17,6 +17,7 @@ class MemoryRedisClient implements RedisClientLike {
   private readonly values = new Map<string, string>();
   private readonly hashes = new Map<string, Map<string, string>>();
   private readonly lists = new Map<string, string[]>();
+  readonly lremCalls: Array<{ key: string; count: number; value: string }> = [];
 
   async del(...keys: string[]): Promise<number> {
     let deleted = 0;
@@ -108,6 +109,7 @@ class MemoryRedisClient implements RedisClientLike {
   }
 
   async lrem(key: string, count: number, value: string): Promise<number> {
+    this.lremCalls.push({ key, count, value });
     const list = this.lists.get(key) ?? [];
     let removed = 0;
     const next = list.filter((entry) => {
@@ -145,6 +147,35 @@ class MemoryRedisClient implements RedisClientLike {
     this.values.set(key, value);
     return "OK";
   }
+}
+
+function createQueuedDeliveryEntry(key: string, queuedAt = 1_800_000_000_000) {
+  return {
+    key,
+    payload: {
+      kind: "password-recovery" as const,
+      loginId: key.replace(/^password-recovery:/, ""),
+      token: `${key}:token`,
+      expiresAt: "2099-03-29T00:00:00.000Z"
+    },
+    config: {
+      kind: "webhook" as const,
+      url: "https://delivery.projectveil.test/token",
+      timeoutMs: 1_000,
+      maxAttempts: 3,
+      retryBaseDelayMs: 1_000,
+      retryMaxDelayMs: 60_000
+    },
+    attemptCount: 1,
+    maxAttempts: 3,
+    queuedAt,
+    nextAttemptAt: queuedAt + 60_000,
+    lastError: {
+      message: "webhook unavailable",
+      failureReason: "webhook_5xx" as const,
+      statusCode: 500
+    }
+  };
 }
 
 async function startWebhookServer(options: { statusCode?: number } = {}): Promise<{
@@ -488,6 +519,44 @@ test("webhook retry queue restores queued token deliveries from Redis persistenc
   assert.equal(restoredResult.deliveryStatus, "retry_scheduled");
   assert.equal(restoredResult.attemptCount, 1);
   assert.equal(webhook.requests.length, 1);
+});
+
+test("redis token delivery persistence avoids full-list LREM scans on save and delete paths", async () => {
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace: `account-token-delivery:lrem:${Date.now()}`
+  });
+  const entry = createQueuedDeliveryEntry("password-recovery:lrem-ranger");
+
+  await persistence.saveQueuedDelivery(entry);
+  await persistence.saveQueuedDelivery({ ...entry, nextAttemptAt: entry.nextAttemptAt + 1_000 });
+  await persistence.deleteQueuedDelivery(entry.key);
+  await persistence.saveDeadLetterDelivery(entry);
+  await persistence.saveDeadLetterDelivery({ ...entry, attemptCount: 2 });
+  await persistence.deleteDeadLetterDelivery(entry.key);
+
+  assert.deepEqual(
+    redis.lremCalls.filter((call) => call.count === 0),
+    [],
+    "save/delete paths must not issue LREM count=0 full-list scans"
+  );
+});
+
+test("redis token delivery persistence caps dead-letter retention", async () => {
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace: `account-token-delivery:dlq-cap:${Date.now()}`,
+    deadLetterMaxEntries: 2
+  });
+
+  await persistence.saveDeadLetterDelivery(createQueuedDeliveryEntry("password-recovery:oldest", 1_800_000_000_000));
+  await persistence.saveDeadLetterDelivery(createQueuedDeliveryEntry("password-recovery:middle", 1_800_000_060_000));
+  await persistence.saveDeadLetterDelivery(createQueuedDeliveryEntry("password-recovery:newest", 1_800_000_120_000));
+
+  assert.deepEqual(
+    (await persistence.loadDeadLetterDeliveries()).map((entry) => entry.key),
+    ["password-recovery:middle", "password-recovery:newest"]
+  );
 });
 
 test("smtp delivery requires a configured host", async () => {

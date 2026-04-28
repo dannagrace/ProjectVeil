@@ -163,6 +163,7 @@ const DEFAULT_DELIVERY_RETRY_MAX_DELAY_MS = 60_000;
 const DEFAULT_SMTP_PORT = 587;
 const DEFAULT_SMTPS_PORT = 465;
 const DEFAULT_QUEUE_PERSISTENCE_NAMESPACE = "veil:account-token-delivery";
+const DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
 const QUEUE_PROCESSING_LOCK_TTL_MS = 30_000;
 
 const queuedDeliveries = new Map<string, QueuedDeliveryEntry>();
@@ -392,9 +393,13 @@ function snapshotQueueEntry(entry: QueuedDeliveryEntry): AccountTokenDeliveryQue
 
 export function createRedisAccountTokenDeliveryQueuePersistence(
   redis: RedisClientLike,
-  options: { namespace?: string } = {}
+  options: { namespace?: string; deadLetterMaxEntries?: number } = {}
 ): AccountTokenDeliveryQueuePersistence {
   const namespace = normalizeQueueNamespace(options.namespace);
+  const deadLetterMaxEntries =
+    options.deadLetterMaxEntries != null && Number.isFinite(options.deadLetterMaxEntries)
+      ? Math.max(0, Math.floor(options.deadLetterMaxEntries))
+      : DEFAULT_DEAD_LETTER_MAX_ENTRIES;
   const queuedHashKey = `${namespace}:queued`;
   const queuedListKey = `${namespace}:queued-keys`;
   const deadLetterHashKey = `${namespace}:dead-letter`;
@@ -424,14 +429,40 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
   };
 
   const saveEntry = async (hashKey: string, listKey: string, entry: QueuedDeliveryEntry): Promise<void> => {
-    await redis.hset(hashKey, entry.key, JSON.stringify(entry));
-    await redis.lrem(listKey, 0, entry.key);
-    await redis.rpush(listKey, entry.key);
+    const added = await redis.hset(hashKey, entry.key, JSON.stringify(entry));
+    if (added > 0) {
+      await redis.rpush(listKey, entry.key);
+    }
   };
 
   const deleteEntry = async (hashKey: string, listKey: string, key: string): Promise<void> => {
-    await redis.hdel(hashKey, key);
-    await redis.lrem(listKey, 0, key);
+    const deleted = await redis.hdel(hashKey, key);
+    if (deleted > 0) {
+      await redis.lrem(listKey, 1, key);
+    }
+  };
+
+  const enforceDeadLetterCap = async (): Promise<void> => {
+    const length = await redis.llen(deadLetterListKey);
+    const overflow = length - deadLetterMaxEntries;
+    if (overflow <= 0) {
+      return;
+    }
+
+    const staleKeys = await redis.lrange(deadLetterListKey, 0, overflow - 1);
+    if (staleKeys.length === 0) {
+      return;
+    }
+
+    await redis.hdel(deadLetterHashKey, ...staleKeys);
+    for (const key of staleKeys) {
+      await redis.lrem(deadLetterListKey, 1, key);
+    }
+  };
+
+  const saveDeadLetterEntry = async (entry: QueuedDeliveryEntry): Promise<void> => {
+    await saveEntry(deadLetterHashKey, deadLetterListKey, entry);
+    await enforceDeadLetterCap();
   };
 
   return {
@@ -439,7 +470,7 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     loadDeadLetterDeliveries: () => loadEntries(deadLetterHashKey, deadLetterListKey),
     saveQueuedDelivery: (entry) => saveEntry(queuedHashKey, queuedListKey, entry),
     deleteQueuedDelivery: (key) => deleteEntry(queuedHashKey, queuedListKey, key),
-    saveDeadLetterDelivery: (entry) => saveEntry(deadLetterHashKey, deadLetterListKey, entry),
+    saveDeadLetterDelivery: (entry) => saveDeadLetterEntry(entry),
     deleteDeadLetterDelivery: (key) => deleteEntry(deadLetterHashKey, deadLetterListKey, key),
     clear: () => redis.del(queuedHashKey, queuedListKey, deadLetterHashKey, deadLetterListKey, processingLockKey).then(() => undefined),
     acquireProcessingLock: async (ttlMs) =>
