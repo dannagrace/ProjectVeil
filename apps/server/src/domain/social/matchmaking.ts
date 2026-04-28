@@ -471,7 +471,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
 
   async getStatus(playerId: string): Promise<MatchmakingStatusResponse> {
     const normalizedPlayerId = playerId.trim();
-    const result = await this.redis.hget(this.resultKey, normalizedPlayerId);
+    const result = await this.consumeMatchResult(normalizedPlayerId);
     if (result) {
       const parsed = JSON.parse(result) as MatchResult;
       return {
@@ -483,6 +483,21 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     }
 
     return (await this.getQueuedStatus(normalizedPlayerId)) ?? { status: "idle" };
+  }
+
+  private async consumeMatchResult(playerId: string): Promise<string | null> {
+    return (await this.redis.eval(
+      [
+        "local result = redis.call('hget', KEYS[1], ARGV[1])",
+        "if result then",
+        "  redis.call('hdel', KEYS[1], ARGV[1])",
+        "end",
+        "return result"
+      ].join("\n"),
+      1,
+      this.resultKey,
+      playerId
+    )) as string | null;
   }
 
   async pruneStaleEntries(maxAgeMs: number, now = new Date()): Promise<number> {

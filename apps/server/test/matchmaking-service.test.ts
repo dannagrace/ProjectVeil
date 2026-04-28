@@ -174,6 +174,36 @@ test("redis matchmaking service shares queue state and match results across serv
   assert.equal(await serviceA.getQueueDepth(), 0);
 });
 
+test("redis matchmaking service removes a matched result when status is consumed", async (t) => {
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:consume-result";
+  const serviceA = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1
+  });
+  const serviceB = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1
+  });
+
+  t.after(async () => {
+    await serviceA.close();
+  });
+
+  await serviceA.enqueue(createQueueRequest("player-alpha", "2026-03-28T08:00:00.000Z"));
+  await serviceB.enqueue(createQueueRequest("player-beta", "2026-03-28T08:00:05.000Z"));
+
+  assert.notEqual(await redis.hget(`${keyPrefix}:results`, "player-alpha"), null);
+
+  const consumedStatus = await serviceA.getStatus("player-alpha");
+
+  assert.equal(consumedStatus.status, "matched");
+  assert.equal(await redis.hget(`${keyPrefix}:results`, "player-alpha"), null);
+  assert.notEqual(await redis.hget(`${keyPrefix}:results`, "player-beta"), null);
+});
+
 test("redis matchmaking service prunes stale queue entries across shared instances", async (t) => {
   const redis = new Redis();
   const serviceA = new RedisMatchmakingService({
