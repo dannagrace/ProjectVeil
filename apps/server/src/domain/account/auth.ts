@@ -150,6 +150,13 @@ interface GuestSessionClusterDependencies {
   redisClient?: RedisClientLike | null;
 }
 
+type GuestSessionClusterOrderRedisClient = RedisClientLike & {
+  zadd(key: string, score: number | string, member: string): Promise<number>;
+  zcard(key: string): Promise<number>;
+  zrange(key: string, start: number, stop: number): Promise<string[]>;
+  zrem(key: string, ...members: string[]): Promise<number>;
+};
+
 interface PasswordRecoveryState {
   playerId: string;
   loginId: string;
@@ -245,6 +252,7 @@ const passwordRecoveryStateByLoginId = new Map<string, PasswordRecoveryState>();
 let nonProductionAuthSecret: string | null = null;
 let guestSessionClusterClientOverride: RedisClientLike | null | undefined;
 let guestSessionClusterClientCache: RedisClientLike | null | undefined;
+let lastGuestSessionClusterOrderScore = 0;
 const GUEST_SESSION_CLUSTER_KEY_PREFIX = "veil:guest-session:";
 const GUEST_SESSION_CLUSTER_ORDER_KEY = "veil:guest-session-order";
 
@@ -391,6 +399,38 @@ function hydrateGuestSession(session: StoredGuestAuthSession, token: string): Gu
   };
 }
 
+function resolveGuestSessionClusterOrderScore(timestamp: string): number {
+  const parsedTimestamp = Date.parse(timestamp);
+  const score = Number.isFinite(parsedTimestamp) ? parsedTimestamp : nowMs();
+  lastGuestSessionClusterOrderScore = Math.max(score, lastGuestSessionClusterOrderScore + 1);
+  return lastGuestSessionClusterOrderScore;
+}
+
+function resolveGuestSessionClusterOrderClient(redisClient: RedisClientLike): GuestSessionClusterOrderRedisClient {
+  return redisClient as GuestSessionClusterOrderRedisClient;
+}
+
+async function trimGuestSessionClusterOrder(
+  redisClient: GuestSessionClusterOrderRedisClient,
+  maxGuestSessions: number
+): Promise<void> {
+  for (;;) {
+    const size = await redisClient.zcard(GUEST_SESSION_CLUSTER_ORDER_KEY);
+    const excessCount = size - maxGuestSessions;
+    if (excessCount <= 0) {
+      break;
+    }
+
+    const oldestSessionIds = await redisClient.zrange(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, excessCount - 1);
+    if (oldestSessionIds.length === 0) {
+      break;
+    }
+
+    await redisClient.zrem(GUEST_SESSION_CLUSTER_ORDER_KEY, ...oldestSessionIds);
+    await redisClient.del(...oldestSessionIds.map((sessionId) => buildGuestSessionClusterKey(sessionId)));
+  }
+}
+
 async function persistGuestSessionClusterState(
   session: GuestAuthSession,
   config = readAuthRuntimeConfig(),
@@ -411,21 +451,13 @@ async function persistGuestSessionClusterState(
     "PX",
     getGuestSessionTtlMs(session)
   );
-  await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, session.sessionId);
-  await redisClient.rpush(GUEST_SESSION_CLUSTER_ORDER_KEY, session.sessionId);
-
-  for (;;) {
-    const size = await redisClient.llen(GUEST_SESSION_CLUSTER_ORDER_KEY);
-    if (size <= config.maxGuestSessions) {
-      break;
-    }
-    const oldestSessionId = await redisClient.lindex(GUEST_SESSION_CLUSTER_ORDER_KEY, 0);
-    if (!oldestSessionId) {
-      break;
-    }
-    await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 1, oldestSessionId);
-    await redisClient.del(buildGuestSessionClusterKey(oldestSessionId));
-  }
+  const orderRedisClient = resolveGuestSessionClusterOrderClient(redisClient);
+  await orderRedisClient.zadd(
+    GUEST_SESSION_CLUSTER_ORDER_KEY,
+    resolveGuestSessionClusterOrderScore(session.lastUsedAt),
+    session.sessionId
+  );
+  await trimGuestSessionClusterOrder(orderRedisClient, config.maxGuestSessions);
 }
 
 async function touchGuestSessionClusterState(
@@ -460,8 +492,11 @@ async function touchGuestSessionClusterState(
       "PX",
       getGuestSessionTtlMs(nextSession)
     );
-    await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, sessionId);
-    await redisClient.rpush(GUEST_SESSION_CLUSTER_ORDER_KEY, sessionId);
+    await resolveGuestSessionClusterOrderClient(redisClient).zadd(
+      GUEST_SESSION_CLUSTER_ORDER_KEY,
+      resolveGuestSessionClusterOrderScore(nextSession.lastUsedAt),
+      sessionId
+    );
     return hydrateGuestSession(nextSession, token);
   } catch {
     return null;
@@ -480,7 +515,7 @@ async function revokeGuestSessionClusterState(
   }
 
   const deletedCount = await redisClient.del(buildGuestSessionClusterKey(sessionId));
-  await redisClient.lrem(GUEST_SESSION_CLUSTER_ORDER_KEY, 0, sessionId);
+  await resolveGuestSessionClusterOrderClient(redisClient).zrem(GUEST_SESSION_CLUSTER_ORDER_KEY, sessionId);
   guestSessionsById.delete(sessionId);
   syncAuthStateTelemetry();
   return deletedCount > 0;
@@ -2857,6 +2892,7 @@ export function resetGuestAuthSessions(): void {
   accountAuthStateByPlayerId.clear();
   accountRegistrationStateByLoginId.clear();
   passwordRecoveryStateByLoginId.clear();
+  lastGuestSessionClusterOrderScore = 0;
   guestSessionClusterClientOverride = undefined;
   guestSessionClusterClientCache = undefined;
   void resetWechatSessionKeyCache();

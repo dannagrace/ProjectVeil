@@ -73,3 +73,18 @@ test("guest session storage hashes bearer tokens at rest", async () => {
   assert.doesNotMatch(source, /guestSessionsById\.set\([^,]+,\s*session\)/);
   assert.doesNotMatch(source, /existingSession\.token\s*!==\s*token/);
 });
+
+test("guest session cluster ordering uses sorted-set operations instead of list scans", async () => {
+  const sourcePath = fileURLToPath(new URL("../src/domain/account/auth.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+  const orderKeyUsages = source.match(/\.(?:lrem|rpush|llen|lindex|zadd|zcard|zrange|zrem|zremrangebyrank)\(\s*GUEST_SESSION_CLUSTER_ORDER_KEY/g) ?? [];
+
+  assert.ok(orderKeyUsages.some((usage) => usage.includes(".zadd(")));
+  assert.ok(orderKeyUsages.some((usage) => usage.includes(".zcard(")));
+  assert.ok(orderKeyUsages.some((usage) => usage.includes(".zrange(")));
+  assert.ok(orderKeyUsages.some((usage) => usage.includes(".zrem(")));
+  assert.equal(orderKeyUsages.some((usage) => usage.includes(".lrem(")), false);
+  assert.equal(orderKeyUsages.some((usage) => usage.includes(".rpush(")), false);
+  assert.equal(orderKeyUsages.some((usage) => usage.includes(".llen(")), false);
+  assert.equal(orderKeyUsages.some((usage) => usage.includes(".lindex(")), false);
+});
