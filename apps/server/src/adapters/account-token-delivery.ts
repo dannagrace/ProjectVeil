@@ -413,14 +413,14 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     for (const key of keys) {
       const serialized = await redis.hget(hashKey, key);
       if (!serialized) {
-        await redis.lrem(listKey, 0, key);
+        await redis.lrem(listKey, 1, key);
         continue;
       }
 
       const entry = parseQueuedDeliveryEntry(serialized);
       if (!entry) {
         await redis.hdel(hashKey, key);
-        await redis.lrem(listKey, 0, key);
+        await redis.lrem(listKey, 1, key);
         continue;
       }
       entries.push(entry);

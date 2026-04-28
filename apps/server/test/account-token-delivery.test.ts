@@ -521,7 +521,7 @@ test("webhook retry queue restores queued token deliveries from Redis persistenc
   assert.equal(webhook.requests.length, 1);
 });
 
-test("redis token delivery persistence avoids full-list LREM scans on save and delete paths", async () => {
+test("redis token delivery persistence avoids full-list LREM scans on persistence paths", async () => {
   const redis = new MemoryRedisClient();
   const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
     namespace: `account-token-delivery:lrem:${Date.now()}`
@@ -534,11 +534,13 @@ test("redis token delivery persistence avoids full-list LREM scans on save and d
   await persistence.saveDeadLetterDelivery(entry);
   await persistence.saveDeadLetterDelivery({ ...entry, attemptCount: 2 });
   await persistence.deleteDeadLetterDelivery(entry.key);
+  await persistence.loadQueuedDeliveries();
+  await persistence.loadDeadLetterDeliveries();
 
   assert.deepEqual(
     redis.lremCalls.filter((call) => call.count === 0),
     [],
-    "save/delete paths must not issue LREM count=0 full-list scans"
+    "token delivery persistence must not issue LREM count=0 full-list scans"
   );
 });
 
