@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import Redis from "ioredis-mock";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState } from "@veil/shared/models";
 import { createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
 import { MatchmakingService, RedisMatchmakingService } from "@server/domain/social/matchmaking";
+
+test("redis matchmaking queue lifecycle does not remove players with full list scans", async () => {
+  const source = await readFile(new URL("../src/domain/social/matchmaking.ts", import.meta.url), "utf8");
+
+  assert.equal(
+    /lrem\(\s*this\.queueKey\s*,\s*0\s*,/.test(source),
+    false,
+    "Redis matchmaking queue lifecycle should not call lrem(this.queueKey, 0, ...)"
+  );
+});
 
 function createHero(playerId: string, heroId: string): HeroState {
   return {

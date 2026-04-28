@@ -426,29 +426,11 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   async enqueue(request: MatchmakingRequest, now = new Date()): Promise<MatchmakingStatusQueued> {
     return this.withLock(async () => {
       const normalized = normalizeMatchmakingRequest(request);
-      const requestsByPlayerId = await this.loadQueueRequests();
 
       await this.redis.hdel(this.resultKey, normalized.playerId);
-      requestsByPlayerId.delete(normalized.playerId);
-      await this.redis.lrem(this.queueKey, 0, normalized.playerId);
-
-      const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
-      const insertAt = this.findInsertIndex(
-        normalized,
-        queueIds.map((playerId) => requestsByPlayerId.get(playerId)).filter((value): value is MatchmakingRequest => value != null)
-      );
 
       await this.redis.hset(this.requestKey, normalized.playerId, JSON.stringify(normalized));
-      if (insertAt >= queueIds.length) {
-        await this.redis.rpush(this.queueKey, normalized.playerId);
-      } else {
-        const pivotPlayerId = queueIds[insertAt];
-        if (!pivotPlayerId) {
-          await this.redis.rpush(this.queueKey, normalized.playerId);
-        } else {
-          await this.redis.linsert(this.queueKey, "BEFORE", pivotPlayerId, normalized.playerId);
-        }
-      }
+      await this.redis.zadd(this.queueKey, getQueuedPlayerScore(normalized), normalized.playerId);
 
       const status = await this.getQueuedStatus(normalized.playerId);
       await this.matchQueuedPlayers(now);
@@ -464,7 +446,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       const normalizedPlayerId = playerId.trim();
       await this.redis.hdel(this.resultKey, normalizedPlayerId);
       await this.redis.hdel(this.requestKey, normalizedPlayerId);
-      const removed = await this.redis.lrem(this.queueKey, 0, normalizedPlayerId);
+      const removed = await this.redis.zrem(this.queueKey, normalizedPlayerId);
       return removed > 0;
     });
   }
@@ -512,7 +494,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
 
     return this.withLock(async () => {
       const requestsByPlayerId = await this.loadQueueRequests();
-      const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+      const queueIds = await this.redis.zrange(this.queueKey, 0, -1);
       const expiredPlayerIds = queueIds.filter((playerId) => {
         const request = requestsByPlayerId.get(playerId);
         if (!request) {
@@ -527,11 +509,9 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
         return 0;
       }
 
-      for (const playerId of expiredPlayerIds) {
-        await this.redis.lrem(this.queueKey, 0, playerId);
-        await this.redis.hdel(this.requestKey, playerId);
-        await this.redis.hdel(this.resultKey, playerId);
-      }
+      await this.redis.zrem(this.queueKey, ...expiredPlayerIds);
+      await this.redis.hdel(this.requestKey, ...expiredPlayerIds);
+      await this.redis.hdel(this.resultKey, ...expiredPlayerIds);
       return expiredPlayerIds.length;
     });
   }
@@ -541,7 +521,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   async getQueueDepth(): Promise<number> {
-    return await this.redis.llen(this.queueKey);
+    return await this.redis.zcard(this.queueKey);
   }
 
   private get lockKey(): string {
@@ -565,9 +545,8 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   private async getQueuedStatus(playerId: string): Promise<MatchmakingStatusQueued | null> {
-    const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
-    const position = queueIds.indexOf(playerId.trim());
-    if (position < 0) {
+    const position = await this.redis.zrank(this.queueKey, playerId.trim());
+    if (position == null) {
       return null;
     }
 
@@ -579,7 +558,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   private async loadQueueRequests(): Promise<Map<string, MatchmakingRequest>> {
-    const queueIds = await this.redis.lrange(this.queueKey, 0, -1);
+    const queueIds = await this.redis.zrange(this.queueKey, 0, -1);
     const requestsByPlayerId = new Map<string, MatchmakingRequest>();
 
     for (const playerId of queueIds) {
@@ -590,17 +569,6 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     }
 
     return requestsByPlayerId;
-  }
-
-  private findInsertIndex(request: MatchmakingRequest, queue: MatchmakingRequest[]): number {
-    for (let index = 0; index < queue.length; index += 1) {
-      const existingRequest = queue[index];
-      if (existingRequest && compareQueuedPlayers(request, existingRequest) < 0) {
-        return index;
-      }
-    }
-
-    return queue.length;
   }
 
   private async createMatchResult(players: [MatchmakingRequest, MatchmakingRequest], now: Date): Promise<MatchResult> {
@@ -615,7 +583,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   private async matchQueuedPlayers(now: Date): Promise<void> {
-    while ((await this.redis.llen(this.queueKey)) >= 2) {
+    while ((await this.redis.zcard(this.queueKey)) >= 2) {
       const requestsByPlayerId = await this.loadQueueRequests();
       const queue = Array.from(requestsByPlayerId.values());
       const selection = selectBestMatchPair(queue, now);
@@ -624,8 +592,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       }
 
       const [left, right] = selection.players;
-      await this.redis.lrem(this.queueKey, 0, left.playerId);
-      await this.redis.lrem(this.queueKey, 0, right.playerId);
+      await this.redis.zrem(this.queueKey, left.playerId, right.playerId);
       await this.redis.hdel(this.requestKey, left.playerId, right.playerId);
 
       const result = await this.createMatchResult([left, right], now);
@@ -677,6 +644,11 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
 
 function compareQueuedPlayers(left: MatchmakingRequest, right: MatchmakingRequest): number {
   return left.enqueuedAt.localeCompare(right.enqueuedAt) || left.playerId.localeCompare(right.playerId);
+}
+
+function getQueuedPlayerScore(request: MatchmakingRequest): number {
+  const enqueuedAtMs = new Date(request.enqueuedAt).getTime();
+  return Number.isFinite(enqueuedAtMs) ? enqueuedAtMs : 0;
 }
 
 let configuredMatchmakingNotificationStore: RoomSnapshotStore | null = null;

@@ -33,6 +33,11 @@ export interface RedisClientLike {
     durationMs?: number,
     condition?: "NX"
   ): Promise<"OK" | null>;
+  zadd(key: string, score: number | string, member: string): Promise<number>;
+  zcard(key: string): Promise<number>;
+  zrange(key: string, start: number, stop: number): Promise<string[]>;
+  zrank(key: string, member: string): Promise<number | null>;
+  zrem(key: string, ...members: string[]): Promise<number>;
 }
 
 interface RedisEventableClient {
