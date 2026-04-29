@@ -240,7 +240,9 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       }
     });
     this.clock.setInterval(() => {
-      void this.tickMinorPlaytime();
+      void this.tickMinorPlaytime().catch((error) => {
+        this.reportMinorPlaytimeFailure(error);
+      });
     }, MINOR_PROTECTION_TICK_MS);
 
     this.onMessage("connect", async (client, message: Extract<ClientMessage, { type: "connect" }>) => {
@@ -1789,20 +1791,24 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
         })
       );
     } catch (error) {
-      reportBackgroundTaskFailure({
-        taskType: "minor_playtime",
-        errorCode: "minor_playtime_tick_failed",
-        message: "Background minor-playtime tick failed.",
-        logMessage: "[VeilRoom] Failed to update minor playtime",
-        error,
-        roomId: this.metadata.logicalRoomId,
-        roomDay: this.worldRoom.getInternalState().meta.day,
-        detail: formatBackgroundTaskDetail("minor_playtime", error, {
-          connectedPlayers: playerIds.length,
-          playerIds: playerIds.join(",") || null
-        })
-      });
+      this.reportMinorPlaytimeFailure(error, playerIds);
     }
+  }
+
+  private reportMinorPlaytimeFailure(error: unknown, playerIds: string[] = []): void {
+    reportBackgroundTaskFailure({
+      taskType: "minor_playtime",
+      errorCode: "minor_playtime_tick_failed",
+      message: "Background minor-playtime tick failed.",
+      logMessage: "[VeilRoom] Failed to update minor playtime",
+      error,
+      roomId: this.metadata.logicalRoomId,
+      roomDay: this.worldRoom.getInternalState().meta.day,
+      detail: formatBackgroundTaskDetail("minor_playtime", error, {
+        connectedPlayers: playerIds.length,
+        playerIds: playerIds.join(",") || null
+      })
+    });
   }
 
   private async persistRoomState(): Promise<void> {

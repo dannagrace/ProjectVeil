@@ -873,9 +873,35 @@ async function flushEvents(env: NodeJS.ProcessEnv = process.env): Promise<void> 
   }
 }
 
+function handleFlushTaskFailure(error: unknown, env: NodeJS.ProcessEnv): void {
+  const message = error instanceof Error ? `[Analytics] Failed to flush analytics batch: ${error.message}` : "[Analytics] Failed to flush analytics batch";
+  try {
+    analyticsRuntimeDependencies.error(message, error);
+  } catch {
+    // Logging sinks must not turn a handled background failure back into an unhandled rejection.
+  }
+  recordFlushFailure(message);
+  scheduleFlushRetry(env);
+}
+
+function scheduleFlushRetry(env: NodeJS.ProcessEnv): void {
+  if (flushTimer || pendingEvents.length === 0) {
+    return;
+  }
+  flushTimer = analyticsRuntimeDependencies.setTimeout(() => {
+    flushTimer = null;
+    void flushEvents(env).catch((error: unknown) => {
+      handleFlushTaskFailure(error, env);
+    });
+  }, ANALYTICS_BUFFER_FLUSH_DELAY_MS);
+  flushTimer.unref?.();
+}
+
 function scheduleFlush(env: NodeJS.ProcessEnv = process.env): void {
   if (pendingEvents.length >= ANALYTICS_BUFFER_FLUSH_SIZE) {
-    void flushEvents(env);
+    void flushEvents(env).catch((error: unknown) => {
+      handleFlushTaskFailure(error, env);
+    });
     return;
   }
 
@@ -885,7 +911,9 @@ function scheduleFlush(env: NodeJS.ProcessEnv = process.env): void {
 
   flushTimer = analyticsRuntimeDependencies.setTimeout(() => {
     flushTimer = null;
-    void flushEvents(env);
+    void flushEvents(env).catch((error: unknown) => {
+      handleFlushTaskFailure(error, env);
+    });
   }, ANALYTICS_BUFFER_FLUSH_DELAY_MS);
   flushTimer.unref?.();
 }

@@ -52,11 +52,14 @@ interface AuthObservabilityCounters {
   tokenDeliveryRetriesTotal: number;
   tokenDeliveryDeadLettersTotal: number;
   tokenDeliveryDeadLetterDropsTotal: number;
+  tokenDeliveryQueuePumpFailuresTotal: number;
 }
 
 interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
   lockRenewFailuresTotal: number;
+  lockLostTotal: number;
+  lockReleaseStaleTotal: number;
   queueDepth: number;
 }
 
@@ -283,6 +286,7 @@ interface RuntimeHealthPayload {
           | "tokenDeliveryRetriesTotal"
           | "tokenDeliveryDeadLettersTotal"
           | "tokenDeliveryDeadLetterDropsTotal"
+          | "tokenDeliveryQueuePumpFailuresTotal"
         >;
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
@@ -469,7 +473,8 @@ const runtimeObservability: RuntimeObservabilityState = {
       tokenDeliveryFailuresTotal: 0,
       tokenDeliveryRetriesTotal: 0,
       tokenDeliveryDeadLettersTotal: 0,
-      tokenDeliveryDeadLetterDropsTotal: 0
+      tokenDeliveryDeadLetterDropsTotal: 0,
+      tokenDeliveryQueuePumpFailuresTotal: 0
     },
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
@@ -529,6 +534,8 @@ const runtimeObservability: RuntimeObservabilityState = {
     counters: {
       rateLimitedTotal: 0,
       lockRenewFailuresTotal: 0,
+      lockLostTotal: 0,
+      lockReleaseStaleTotal: 0,
       queueDepth: 0
     }
   },
@@ -748,7 +755,8 @@ function buildHealthPayload(
             tokenDeliveryFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryFailuresTotal,
             tokenDeliveryRetriesTotal: runtimeObservability.auth.counters.tokenDeliveryRetriesTotal,
             tokenDeliveryDeadLettersTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal,
-            tokenDeliveryDeadLetterDropsTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal
+            tokenDeliveryDeadLetterDropsTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal,
+            tokenDeliveryQueuePumpFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryQueuePumpFailuresTotal
           },
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
@@ -1463,6 +1471,12 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_lock_renew_failures_total Total Redis matchmaking lock renewal failures.",
     "# TYPE veil_matchmaking_lock_renew_failures_total counter",
     `veil_matchmaking_lock_renew_failures_total ${health.runtime.matchmaking.counters.lockRenewFailuresTotal}`,
+    "# HELP veil_matchmaking_lock_lost_total Total Redis matchmaking actions aborted after repeated lock renewal failures.",
+    "# TYPE veil_matchmaking_lock_lost_total counter",
+    `veil_matchmaking_lock_lost_total ${health.runtime.matchmaking.counters.lockLostTotal}`,
+    "# HELP veil_matchmaking_lock_release_stale_total Total Redis matchmaking lock releases skipped because ownership was lost.",
+    "# TYPE veil_matchmaking_lock_release_stale_total counter",
+    `veil_matchmaking_lock_release_stale_total ${health.runtime.matchmaking.counters.lockReleaseStaleTotal}`,
     "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
     "# TYPE veil_matchmaking_queue_depth gauge",
     `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
@@ -1508,6 +1522,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_dead_letter_drops_total Total account token delivery dead letters dropped by retention caps.",
     "# TYPE veil_auth_token_delivery_dead_letter_drops_total counter",
     `veil_auth_token_delivery_dead_letter_drops_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryDeadLetterDropsTotal}`,
+    "# HELP veil_auth_token_delivery_queue_pump_failures_total Total background account token delivery queue pump failures.",
+    "# TYPE veil_auth_token_delivery_queue_pump_failures_total counter",
+    `veil_auth_token_delivery_queue_pump_failures_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryQueuePumpFailuresTotal}`,
     "# HELP veil_auth_token_delivery_failures_timeout_total Total token delivery failures caused by timeouts.",
     "# TYPE veil_auth_token_delivery_failures_timeout_total counter",
     `veil_auth_token_delivery_failures_timeout_total ${health.runtime.auth.tokenDelivery.failureReasons.timeout}`,
@@ -2150,6 +2167,14 @@ export function recordMatchmakingLockRenewFailure(): void {
   runtimeObservability.matchmaking.counters.lockRenewFailuresTotal += 1;
 }
 
+export function recordMatchmakingLockLost(): void {
+  runtimeObservability.matchmaking.counters.lockLostTotal += 1;
+}
+
+export function recordMatchmakingLockReleaseStale(): void {
+  runtimeObservability.matchmaking.counters.lockReleaseStaleTotal += 1;
+}
+
 export function setMatchmakingQueueDepth(count: number): void {
   runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
 }
@@ -2225,6 +2250,10 @@ export function recordAuthTokenDeliveryDeadLetter(): void {
 
 export function recordAuthTokenDeliveryDeadLetterDrop(count = 1): void {
   runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal += Math.max(0, Math.floor(count));
+}
+
+export function recordAuthTokenDeliveryQueuePumpFailure(): void {
+  runtimeObservability.auth.counters.tokenDeliveryQueuePumpFailuresTotal += 1;
 }
 
 export function setPaymentGrantQueueCount(count: number): void {
@@ -2348,6 +2377,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.tokenDeliveryRetriesTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryQueuePumpFailuresTotal = 0;
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
@@ -2386,6 +2416,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.http.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.lockRenewFailuresTotal = 0;
+  runtimeObservability.matchmaking.counters.lockLostTotal = 0;
+  runtimeObservability.matchmaking.counters.lockReleaseStaleTotal = 0;
   runtimeObservability.matchmaking.counters.queueDepth = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;

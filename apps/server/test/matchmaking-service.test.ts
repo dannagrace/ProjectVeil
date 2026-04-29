@@ -478,3 +478,54 @@ test("redis matchmaking lock renewal failures are caught and counted", async (t)
   assert.deepEqual(unhandledRejections, []);
   assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_renew_failures_total 1$/m);
 });
+
+test("redis matchmaking stops before writing matches after repeated lock renewal failures", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:lock-lost",
+    lockRetryDelayMs: 1,
+    lockTimeoutMs: 250
+  });
+  const originalEval = redis.eval.bind(redis);
+  let zremCalls = 0;
+  const originalZrem = redis.zrem.bind(redis);
+  const originalWarn = console.warn;
+
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    const [script] = args;
+    if (typeof script === "string" && script.includes("pexpire")) {
+      throw new Error("renew failed");
+    }
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+  (redis as unknown as { zrem: (...args: unknown[]) => Promise<unknown> }).zrem = async (...args) => {
+    zremCalls += 1;
+    return originalZrem(...(args as [string, ...string[]]));
+  };
+  console.warn = () => undefined;
+
+  t.after(async () => {
+    console.warn = originalWarn;
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  await assert.rejects(
+    () =>
+      Reflect.get(service as Record<string, unknown>, "withLock").call(service, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 270));
+        await Reflect.get(service as Record<string, unknown>, "matchQueuedPlayers").call(
+          service,
+          new Date("2026-03-29T00:00:00.000Z")
+        );
+      }),
+    /Matchmaking lock lost/
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(zremCalls, 0);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_renew_failures_total 2$/m);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_lost_total 1$/m);
+});

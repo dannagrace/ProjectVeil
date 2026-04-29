@@ -565,6 +565,48 @@ test("getAnalyticsPipelineSnapshot aggregates Redis-backed counters across simul
   );
 });
 
+test("analytics flush trigger failures are caught and counted", async (t) => {
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  configureAnalyticsRuntimeDependencies({
+    error: () => {
+      throw new Error("analytics alert failed");
+    }
+  });
+
+  t.after(() => {
+    process.off("unhandledRejection", onUnhandledRejection);
+    resetAnalyticsRuntimeDependencies();
+  });
+
+  for (let index = 0; index < 20; index += 1) {
+    emitAnalyticsEvent(
+      "session_start",
+      {
+        playerId: `player-${index}`,
+        source: "server",
+        payload: {
+          roomId: "room-a",
+          authMode: "guest",
+          platform: "web"
+        }
+      },
+      {
+        ANALYTICS_ENDPOINT: "https://placeholder.example/events"
+      }
+    );
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const snapshot = await getAnalyticsPipelineSnapshot();
+  assert.deepEqual(unhandledRejections, []);
+  assert.equal(snapshot.delivery.flushFailuresTotal, 1);
+  assert.match(snapshot.delivery.lastErrorMessage ?? "", /analytics alert failed/);
+});
+
 test("getAnalyticsPipelineSnapshot warns when http sink is requested without an endpoint", async () => {
   const snapshot = await getAnalyticsPipelineSnapshot({
     ANALYTICS_SINK: "http"

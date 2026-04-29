@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
@@ -24,6 +25,16 @@ interface FakeClient extends Client {
 }
 
 class InstrumentedRoomSnapshotStore extends MemoryRoomSnapshotStore {}
+
+test("minor playtime interval catches fire-and-forget failures", async () => {
+  const source = await readFile(new URL("../src/transport/colyseus-room/VeilColyseusRoom.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /void this\.tickMinorPlaytime\(\)\.catch\(/,
+    "minor playtime interval must attach a catch handler to the fire-and-forget task"
+  );
+});
 
 async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {
   await matchMaker.setup(
