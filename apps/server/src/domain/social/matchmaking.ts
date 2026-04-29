@@ -579,9 +579,12 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     return requestsByPlayerId;
   }
 
-  private async createMatchResult(players: [MatchmakingRequest, MatchmakingRequest], now: Date): Promise<MatchResult> {
+  private createMatchResult(
+    players: [MatchmakingRequest, MatchmakingRequest],
+    now: Date,
+    sequence: number
+  ): MatchResult {
     const orderedPlayerIds = [players[0].playerId, players[1].playerId].sort() as [string, string];
-    const sequence = await this.redis.incr(this.sequenceKey);
 
     return {
       roomId: `pvp-match-${now.getTime()}-${sequence}`,
@@ -592,25 +595,67 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
 
   private async matchQueuedPlayers(now: Date): Promise<void> {
     const requestsByPlayerId = await this.loadQueueRequests();
+    const matchedPairs: Array<[MatchmakingRequest, MatchmakingRequest]> = [];
 
     while (requestsByPlayerId.size >= 2) {
       const queue = Array.from(requestsByPlayerId.values());
       const selection = selectBestMatchPair(queue, now);
       if (!selection) {
-        return;
+        break;
       }
 
       const [left, right] = selection.players;
       requestsByPlayerId.delete(left.playerId);
       requestsByPlayerId.delete(right.playerId);
-      await this.redis.zrem(this.queueKey, left.playerId, right.playerId);
-      await this.redis.hdel(this.requestKey, left.playerId, right.playerId);
+      matchedPairs.push([left, right]);
+    }
 
-      const result = await this.createMatchResult([left, right], now);
+    if (matchedPairs.length === 0) {
+      return;
+    }
+
+    const lastSequence = Number(
+      await this.redis.eval(
+        "return redis.call('incrby', KEYS[1], ARGV[1])",
+        1,
+        this.sequenceKey,
+        String(matchedPairs.length)
+      )
+    );
+    const firstSequence = lastSequence - matchedPairs.length + 1;
+    const batchArgs: string[] = [];
+    const notifications: Array<{ result: MatchResult; players: [MatchmakingRequest, MatchmakingRequest] }> = [];
+
+    for (const [index, players] of matchedPairs.entries()) {
+      const [left, right] = players;
+      const result = this.createMatchResult(players, now, firstSequence + index);
       const encodedResult = JSON.stringify(result);
-      await this.redis.hset(this.resultKey, left.playerId, encodedResult);
-      await this.redis.hset(this.resultKey, right.playerId, encodedResult);
-      this.onMatchCreated?.(result, [left, right]);
+      batchArgs.push(left.playerId, right.playerId, encodedResult);
+      notifications.push({ result, players });
+    }
+
+    await this.redis.eval(
+      [
+        "for index = 1, #ARGV, 3 do",
+        "  local left = ARGV[index]",
+        "  local right = ARGV[index + 1]",
+        "  local result = ARGV[index + 2]",
+        "  redis.call('zrem', KEYS[1], left, right)",
+        "  redis.call('hdel', KEYS[2], left, right)",
+        "  redis.call('hset', KEYS[3], left, result)",
+        "  redis.call('hset', KEYS[3], right, result)",
+        "end",
+        "return #ARGV / 3"
+      ].join("\n"),
+      3,
+      this.queueKey,
+      this.requestKey,
+      this.resultKey,
+      ...batchArgs
+    );
+
+    for (const { result, players } of notifications) {
+      this.onMatchCreated?.(result, players);
     }
   }
 
@@ -631,11 +676,31 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       await delay(this.lockRetryDelayMs);
     }
 
+    const renewInterval = setInterval(() => {
+      void this.renewLock(token);
+    }, Math.max(100, Math.floor(this.lockTimeoutMs / 2)));
+
     try {
       return await action();
     } finally {
+      clearInterval(renewInterval);
       await this.releaseLock(token);
     }
+  }
+
+  private async renewLock(token: string): Promise<void> {
+    await this.redis.eval(
+      [
+        "if redis.call('get', KEYS[1]) == ARGV[1] then",
+        "  return redis.call('pexpire', KEYS[1], ARGV[2])",
+        "end",
+        "return 0"
+      ].join("\n"),
+      1,
+      this.lockKey,
+      token,
+      String(this.lockTimeoutMs)
+    );
   }
 
   private async releaseLock(token: string): Promise<void> {
