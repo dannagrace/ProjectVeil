@@ -51,6 +51,7 @@ interface AuthObservabilityCounters {
   tokenDeliveryFailuresTotal: number;
   tokenDeliveryRetriesTotal: number;
   tokenDeliveryDeadLettersTotal: number;
+  tokenDeliveryDeadLetterDropsTotal: number;
 }
 
 interface MatchmakingObservabilityCounters {
@@ -136,6 +137,8 @@ interface AuthObservabilityState {
   sessionFailureReasons: Record<AuthSessionFailureReason, number>;
   tokenDeliveryQueueCount: number;
   tokenDeliveryDeadLetterCount: number;
+  tokenDeliveryDeadLetterMaxEntries: number | null;
+  tokenDeliveryDeadLetterCapacityUsedRatio: number | null;
   tokenDeliveryOldestQueuedLatencyMs: number | null;
   tokenDeliveryNextAttemptDelayMs: number | null;
   tokenDeliveryFailureReasons: Record<AuthTokenDeliveryFailureReason, number>;
@@ -267,6 +270,8 @@ interface RuntimeHealthPayload {
       tokenDelivery: {
         queueCount: number;
         deadLetterCount: number;
+        deadLetterMaxEntries: number | null;
+        deadLetterCapacityUsedRatio: number | null;
         oldestQueuedLatencyMs: number | null;
         nextAttemptDelayMs: number | null;
         counters: Pick<
@@ -276,6 +281,7 @@ interface RuntimeHealthPayload {
           | "tokenDeliveryFailuresTotal"
           | "tokenDeliveryRetriesTotal"
           | "tokenDeliveryDeadLettersTotal"
+          | "tokenDeliveryDeadLetterDropsTotal"
         >;
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
@@ -461,7 +467,8 @@ const runtimeObservability: RuntimeObservabilityState = {
       tokenDeliverySuccessesTotal: 0,
       tokenDeliveryFailuresTotal: 0,
       tokenDeliveryRetriesTotal: 0,
-      tokenDeliveryDeadLettersTotal: 0
+      tokenDeliveryDeadLettersTotal: 0,
+      tokenDeliveryDeadLetterDropsTotal: 0
     },
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
@@ -478,6 +485,8 @@ const runtimeObservability: RuntimeObservabilityState = {
     },
     tokenDeliveryQueueCount: 0,
     tokenDeliveryDeadLetterCount: 0,
+    tokenDeliveryDeadLetterMaxEntries: null,
+    tokenDeliveryDeadLetterCapacityUsedRatio: null,
     tokenDeliveryOldestQueuedLatencyMs: null,
     tokenDeliveryNextAttemptDelayMs: null,
     tokenDeliveryFailureReasons: {
@@ -727,6 +736,8 @@ function buildHealthPayload(
         tokenDelivery: {
           queueCount: runtimeObservability.auth.tokenDeliveryQueueCount,
           deadLetterCount: runtimeObservability.auth.tokenDeliveryDeadLetterCount,
+          deadLetterMaxEntries: runtimeObservability.auth.tokenDeliveryDeadLetterMaxEntries,
+          deadLetterCapacityUsedRatio: runtimeObservability.auth.tokenDeliveryDeadLetterCapacityUsedRatio,
           oldestQueuedLatencyMs: runtimeObservability.auth.tokenDeliveryOldestQueuedLatencyMs,
           nextAttemptDelayMs: runtimeObservability.auth.tokenDeliveryNextAttemptDelayMs,
           counters: {
@@ -734,7 +745,8 @@ function buildHealthPayload(
             tokenDeliverySuccessesTotal: runtimeObservability.auth.counters.tokenDeliverySuccessesTotal,
             tokenDeliveryFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryFailuresTotal,
             tokenDeliveryRetriesTotal: runtimeObservability.auth.counters.tokenDeliveryRetriesTotal,
-            tokenDeliveryDeadLettersTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal
+            tokenDeliveryDeadLettersTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal,
+            tokenDeliveryDeadLetterDropsTotal: runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal
           },
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
@@ -807,6 +819,14 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
     alerts.push(`${health.runtime.auth.tokenDelivery.deadLetterCount} token delivery dead-letter(s) need operator attention`);
   }
 
+  if ((health.runtime.auth.tokenDelivery.deadLetterCapacityUsedRatio ?? 0) >= 0.8) {
+    alerts.push(
+      `token delivery dead-letter capacity at ${Math.round(
+        (health.runtime.auth.tokenDelivery.deadLetterCapacityUsedRatio ?? 0) * 100
+      )}%`
+    );
+  }
+
   if (health.runtime.auth.tokenDelivery.queueCount > 5) {
     alerts.push(`${health.runtime.auth.tokenDelivery.queueCount} token deliveries waiting for retry`);
   }
@@ -840,7 +860,11 @@ function buildAuthReadinessPayload(service = "project-veil-server"): AuthReadine
 function buildAuthTokenDeliveryPayload(service = "project-veil-server"): AuthTokenDeliveryPayload {
   const health = buildHealthPayload(service);
   const recentAttempts = runtimeObservability.auth.tokenDeliveryRecentAttempts.map((entry) => ({ ...entry }));
-  const warn = health.runtime.auth.tokenDelivery.deadLetterCount > 0 || health.runtime.auth.tokenDelivery.queueCount > 0;
+  const warn =
+    health.runtime.auth.tokenDelivery.deadLetterCount > 0 ||
+    health.runtime.auth.tokenDelivery.queueCount > 0 ||
+    (health.runtime.auth.tokenDelivery.deadLetterCapacityUsedRatio ?? 0) >= 0.8 ||
+    health.runtime.auth.tokenDelivery.counters.tokenDeliveryDeadLetterDropsTotal > 0;
   return {
     status: warn ? "warn" : "ok",
     service,
@@ -1452,6 +1476,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_dead_letter_count Account token deliveries currently held in the dead-letter set.",
     "# TYPE veil_auth_token_delivery_dead_letter_count gauge",
     `veil_auth_token_delivery_dead_letter_count ${health.runtime.auth.tokenDelivery.deadLetterCount}`,
+    "# HELP veil_auth_token_delivery_dead_letter_capacity_used_ratio Fraction of configured dead-letter capacity currently in use.",
+    "# TYPE veil_auth_token_delivery_dead_letter_capacity_used_ratio gauge",
+    `veil_auth_token_delivery_dead_letter_capacity_used_ratio ${health.runtime.auth.tokenDelivery.deadLetterCapacityUsedRatio ?? 0}`,
     "# HELP veil_auth_token_delivery_oldest_queued_latency_ms Oldest queued token delivery age in milliseconds.",
     "# TYPE veil_auth_token_delivery_oldest_queued_latency_ms gauge",
     `veil_auth_token_delivery_oldest_queued_latency_ms ${health.runtime.auth.tokenDelivery.oldestQueuedLatencyMs ?? 0}`,
@@ -1473,6 +1500,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_dead_letters_total Total account token deliveries that exhausted retries or failed non-retryably.",
     "# TYPE veil_auth_token_delivery_dead_letters_total counter",
     `veil_auth_token_delivery_dead_letters_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryDeadLettersTotal}`,
+    "# HELP veil_auth_token_delivery_dead_letter_drops_total Total account token delivery dead letters dropped by retention caps.",
+    "# TYPE veil_auth_token_delivery_dead_letter_drops_total counter",
+    `veil_auth_token_delivery_dead_letter_drops_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryDeadLetterDropsTotal}`,
     "# HELP veil_auth_token_delivery_failures_timeout_total Total token delivery failures caused by timeouts.",
     "# TYPE veil_auth_token_delivery_failures_timeout_total counter",
     `veil_auth_token_delivery_failures_timeout_total ${health.runtime.auth.tokenDelivery.failureReasons.timeout}`,
@@ -2143,6 +2173,16 @@ export function setAuthTokenDeliveryDeadLetterCount(count: number): void {
   runtimeObservability.auth.tokenDeliveryDeadLetterCount = Math.max(0, Math.floor(count));
 }
 
+export function setAuthTokenDeliveryDeadLetterCapacity(metrics: {
+  maxEntries: number | null;
+  usedRatio: number | null;
+}): void {
+  runtimeObservability.auth.tokenDeliveryDeadLetterMaxEntries =
+    metrics.maxEntries != null ? Math.max(0, Math.floor(metrics.maxEntries)) : null;
+  runtimeObservability.auth.tokenDeliveryDeadLetterCapacityUsedRatio =
+    metrics.usedRatio != null ? Math.max(0, Math.min(1, metrics.usedRatio)) : null;
+}
+
 export function setAuthTokenDeliveryQueueLatency(metrics: {
   oldestQueuedLatencyMs: number | null;
   nextAttemptDelayMs: number | null;
@@ -2172,6 +2212,10 @@ export function recordAuthTokenDeliveryRetry(): void {
 
 export function recordAuthTokenDeliveryDeadLetter(): void {
   runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal += 1;
+}
+
+export function recordAuthTokenDeliveryDeadLetterDrop(count = 1): void {
+  runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal += Math.max(0, Math.floor(count));
 }
 
 export function setPaymentGrantQueueCount(count: number): void {
@@ -2294,6 +2338,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.tokenDeliveryFailuresTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryRetriesTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryDeadLettersTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryDeadLetterDropsTotal = 0;
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
@@ -2306,6 +2351,8 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.sessionFailureReasons.session_revoked = 0;
   runtimeObservability.auth.tokenDeliveryQueueCount = 0;
   runtimeObservability.auth.tokenDeliveryDeadLetterCount = 0;
+  runtimeObservability.auth.tokenDeliveryDeadLetterMaxEntries = null;
+  runtimeObservability.auth.tokenDeliveryDeadLetterCapacityUsedRatio = null;
   runtimeObservability.auth.tokenDeliveryOldestQueuedLatencyMs = null;
   runtimeObservability.auth.tokenDeliveryNextAttemptDelayMs = null;
   runtimeObservability.auth.tokenDeliveryFailureReasons.misconfigured = 0;

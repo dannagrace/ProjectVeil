@@ -4,10 +4,12 @@ import { connect as connectTls, TLSSocket } from "node:tls";
 import {
   recordAuthTokenDeliveryAttempt,
   recordAuthTokenDeliveryDeadLetter,
+  recordAuthTokenDeliveryDeadLetterDrop,
   recordAuthTokenDeliveryFailure,
   recordAuthTokenDeliveryRequest,
   recordAuthTokenDeliveryRetry,
   recordAuthTokenDeliverySuccess,
+  setAuthTokenDeliveryDeadLetterCapacity,
   setAuthTokenDeliveryDeadLetterCount,
   setAuthTokenDeliveryQueueCount,
   setAuthTokenDeliveryQueueLatency
@@ -106,11 +108,12 @@ export interface AccountTokenDeliveryQueueEntrySnapshot {
 }
 
 export interface AccountTokenDeliveryQueuePersistence {
+  readonly deadLetterMaxEntries?: number;
   loadQueuedDeliveries(): Promise<QueuedDeliveryEntry[]>;
   loadDeadLetterDeliveries(): Promise<QueuedDeliveryEntry[]>;
   saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void>;
   deleteQueuedDelivery(key: string): Promise<void>;
-  saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<void>;
+  saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<string[]>;
   deleteDeadLetterDelivery(key: string): Promise<void>;
   clear?(): Promise<void>;
   acquireProcessingLock?(ttlMs: number): Promise<boolean>;
@@ -173,6 +176,7 @@ let queueProcessing = false;
 let queuePersistence: AccountTokenDeliveryQueuePersistence | null = null;
 let queuePersistenceInitialization: Promise<void> | null = null;
 let ownedRedisClient: RedisClientLike | null = null;
+let deadLetterCapacityLimit: number | null = null;
 
 function parseEnvNumber(
   value: string | undefined,
@@ -442,30 +446,32 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     }
   };
 
-  const enforceDeadLetterCap = async (): Promise<void> => {
+  const enforceDeadLetterCap = async (): Promise<string[]> => {
     const length = await redis.llen(deadLetterListKey);
     const overflow = length - deadLetterMaxEntries;
     if (overflow <= 0) {
-      return;
+      return [];
     }
 
     const staleKeys = await redis.lrange(deadLetterListKey, 0, overflow - 1);
     if (staleKeys.length === 0) {
-      return;
+      return [];
     }
 
     await redis.hdel(deadLetterHashKey, ...staleKeys);
     for (const key of staleKeys) {
       await redis.lrem(deadLetterListKey, 1, key);
     }
+    return staleKeys;
   };
 
-  const saveDeadLetterEntry = async (entry: QueuedDeliveryEntry): Promise<void> => {
+  const saveDeadLetterEntry = async (entry: QueuedDeliveryEntry): Promise<string[]> => {
     await saveEntry(deadLetterHashKey, deadLetterListKey, entry);
-    await enforceDeadLetterCap();
+    return enforceDeadLetterCap();
   };
 
   return {
+    deadLetterMaxEntries,
     loadQueuedDeliveries: () => loadEntries(queuedHashKey, queuedListKey),
     loadDeadLetterDeliveries: () => loadEntries(deadLetterHashKey, deadLetterListKey),
     saveQueuedDelivery: (entry) => saveEntry(queuedHashKey, queuedListKey, entry),
@@ -491,6 +497,7 @@ export async function configureAccountTokenDeliveryQueuePersistence(
 ): Promise<void> {
   clearQueueTimer();
   queuePersistence = persistence;
+  deadLetterCapacityLimit = persistence?.deadLetterMaxEntries ?? null;
   queuedDeliveries.clear();
   deadLetterDeliveries.clear();
 
@@ -554,10 +561,11 @@ async function deleteQueuedDelivery(key: string): Promise<void> {
   }
 }
 
-async function saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<void> {
+async function saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<string[]> {
   if (queuePersistence) {
-    await queuePersistence.saveDeadLetterDelivery(entry);
+    return queuePersistence.saveDeadLetterDelivery(entry);
   }
+  return [];
 }
 
 async function deleteDeadLetterDelivery(key: string): Promise<void> {
@@ -570,9 +578,27 @@ async function closeRedisClient(redis: RedisClientLike | null): Promise<void> {
   await redis?.quit?.();
 }
 
+function applyDeadLetterDrops(droppedKeys: string[]): void {
+  if (droppedKeys.length === 0) {
+    return;
+  }
+
+  for (const key of droppedKeys) {
+    deadLetterDeliveries.delete(key);
+  }
+  recordAuthTokenDeliveryDeadLetterDrop(droppedKeys.length);
+}
+
 function syncQueueTelemetry(): void {
   setAuthTokenDeliveryQueueCount(queuedDeliveries.size);
   setAuthTokenDeliveryDeadLetterCount(deadLetterDeliveries.size);
+  setAuthTokenDeliveryDeadLetterCapacity({
+    maxEntries: deadLetterCapacityLimit,
+    usedRatio:
+      deadLetterCapacityLimit != null && deadLetterCapacityLimit > 0
+        ? deadLetterDeliveries.size / deadLetterCapacityLimit
+        : null
+  });
   if (queuedDeliveries.size === 0) {
     setAuthTokenDeliveryQueueLatency({
       oldestQueuedLatencyMs: null,
@@ -630,7 +656,7 @@ async function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDel
   queuedDeliveries.delete(entry.key);
   deadLetterDeliveries.set(entry.key, deadLetterEntry);
   await deleteQueuedDelivery(entry.key);
-  await saveDeadLetterDelivery(deadLetterEntry);
+  applyDeadLetterDrops(await saveDeadLetterDelivery(deadLetterEntry));
   recordAuthTokenDeliveryDeadLetter();
   recordAuthTokenDeliveryAttempt({
     kind: entry.payload.kind,
@@ -1217,6 +1243,7 @@ export function resetAccountTokenDeliveryState(): void {
 }
 
 export async function shutdownAccountTokenDeliveryQueuePersistence(): Promise<void> {
+  deadLetterCapacityLimit = null;
   resetAccountTokenDeliveryState();
   queuePersistence = null;
   queuePersistenceInitialization = null;
@@ -1364,7 +1391,7 @@ export async function deliverAccountToken(
       }
     };
     deadLetterDeliveries.set(key, deadLetterEntry);
-    await saveDeadLetterDelivery(deadLetterEntry);
+    applyDeadLetterDrops(await saveDeadLetterDelivery(deadLetterEntry));
     recordAuthTokenDeliveryDeadLetter();
     recordAuthTokenDeliveryAttempt({
       kind: payload.kind,

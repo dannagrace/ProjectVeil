@@ -300,3 +300,60 @@ test("redis matchmaking service shares queued positions and dequeue updates acro
   assert.equal((await serviceA.getStatus("player-rookie")).status, "idle");
   assert.equal(await serviceB.getQueueDepth(), 1);
 });
+
+test("redis matchmaking batches queue request reads while draining multiple pairs", async (t) => {
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:batch-load";
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1
+  });
+  const queueKey = `${keyPrefix}:queue`;
+  const requestKey = `${keyPrefix}:requests`;
+  const zrangeCalls: unknown[][] = [];
+  const hgetCalls: unknown[][] = [];
+  const hmgetCalls: unknown[][] = [];
+  const originalZrange = redis.zrange.bind(redis);
+  const originalHget = redis.hget.bind(redis);
+  const originalHmget = redis.hmget.bind(redis);
+
+  (redis as unknown as { zrange: (...args: unknown[]) => Promise<string[]> }).zrange = async (...args) => {
+    zrangeCalls.push(args);
+    return originalZrange(...(args as [string, number, number]));
+  };
+  (redis as unknown as { hget: (...args: unknown[]) => Promise<string | null> }).hget = async (...args) => {
+    hgetCalls.push(args);
+    return originalHget(...(args as [string, string]));
+  };
+  (redis as unknown as { hmget: (...args: unknown[]) => Promise<Array<string | null>> }).hmget = async (...args) => {
+    hmgetCalls.push(args);
+    return originalHmget(...(args as [string, ...string[]]));
+  };
+
+  t.after(async () => {
+    await service.close();
+  });
+
+  const requests = [
+    createQueueRequest("player-alpha", "2026-03-28T08:00:00.000Z"),
+    createQueueRequest("player-beta", "2026-03-28T08:00:01.000Z"),
+    createQueueRequest("player-gamma", "2026-03-28T08:00:02.000Z"),
+    createQueueRequest("player-delta", "2026-03-28T08:00:03.000Z")
+  ];
+
+  for (const [index, request] of requests.entries()) {
+    await redis.zadd(queueKey, index, request.playerId);
+    await redis.hset(requestKey, request.playerId, JSON.stringify(request));
+  }
+
+  await Reflect.get(service as Record<string, unknown>, "matchQueuedPlayers").call(
+    service,
+    new Date("2026-03-28T08:05:00.000Z")
+  );
+
+  assert.equal(await redis.zcard(queueKey), 0);
+  assert.equal(zrangeCalls.length, 1);
+  assert.equal(hmgetCalls.length, 1);
+  assert.equal(hgetCalls.length, 0);
+});

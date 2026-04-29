@@ -5,7 +5,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState, type WorldState } from "@veil/shared/models";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { applyEloMatchResult, createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
-import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
+import { issueAccountAuthSession, issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
   MatchmakingService,
@@ -149,19 +149,24 @@ function createRateLimitRequest(ipAddress: string): {
 
 function createMatchmakingRouteCaptureApp(): {
   getHandlers: Map<string, (request: never, response: never) => void | Promise<void>>;
+  postHandlers: Map<string, (request: never, response: never) => void | Promise<void>>;
   use(): void;
   get(path: string, handler: (request: never, response: never) => void | Promise<void>): void;
-  post(): void;
+  post(path: string, handler: (request: never, response: never) => void | Promise<void>): void;
   delete(): void;
 } {
   const getHandlers = new Map<string, (request: never, response: never) => void | Promise<void>>();
+  const postHandlers = new Map<string, (request: never, response: never) => void | Promise<void>>();
   return {
     getHandlers,
+    postHandlers,
     use() {},
     get(path, handler) {
       getHandlers.set(path, handler);
     },
-    post() {},
+    post(path, handler) {
+      postHandlers.set(path, handler);
+    },
     delete() {}
   };
 }
@@ -392,8 +397,16 @@ test("matchmaking routes send match-found notifications when a match is created"
 
   const port = 43000 + Math.floor(Math.random() * 1000);
   const server = await startMatchmakingServer(store, port);
-  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
-  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+  const sessionOne = issueAccountAuthSession({
+    playerId: "player-1",
+    displayName: "One",
+    loginId: "wx-open-id-player-1"
+  });
+  const sessionTwo = issueAccountAuthSession({
+    playerId: "player-2",
+    displayName: "Two",
+    loginId: "wx-open-id-player-2"
+  });
 
   t.after(async () => {
     resetGuestAuthSessions();
@@ -403,18 +416,20 @@ test("matchmaking routes send match-found notifications when a match is created"
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+  const enqueueOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${sessionOne.token}`
     }
   });
-  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+  assert.equal(enqueueOne.status, 200);
+  const enqueueTwo = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${sessionTwo.token}`
     }
   });
+  assert.equal(enqueueTwo.status, 200);
 
   await waitFor(() => subscribeCalls.length === 2);
   assert.deepEqual(
@@ -500,8 +515,16 @@ test("matchmaking routes log match-found notification failures without breaking 
 
   const port = 43000 + Math.floor(Math.random() * 1000);
   const server = await startMatchmakingServer(store, port);
-  const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
-  const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
+  const sessionOne = issueAccountAuthSession({
+    playerId: "player-1",
+    displayName: "One",
+    loginId: "wx-open-id-player-1"
+  });
+  const sessionTwo = issueAccountAuthSession({
+    playerId: "player-2",
+    displayName: "Two",
+    loginId: "wx-open-id-player-2"
+  });
 
   t.after(async () => {
     console.error = originalConsoleError;
@@ -512,18 +535,20 @@ test("matchmaking routes log match-found notification failures without breaking 
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+  const enqueueOne = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${sessionOne.token}`
     }
   });
-  await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
+  assert.equal(enqueueOne.status, 200);
+  const enqueueTwo = await fetch(`http://127.0.0.1:${port}/api/matchmaking/enqueue`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${sessionTwo.token}`
     }
   });
+  assert.equal(enqueueTwo.status, 200);
 
   await waitFor(() => errorCalls.length === 1);
   assert.equal(errorCalls[0]?.[0], "[matchmaking] Failed to send match-found notification");
@@ -756,6 +781,43 @@ test("matchmaking enqueue prunes stale queue entries before adding new players",
   });
   assert.equal(enqueueResponse.status, 200);
   assert.equal(service.getStatus("player-stale").status, "idle");
+});
+
+test("matchmaking enqueue does not prune stale queue entries before auth", async (t) => {
+  const store = createMemoryRoomSnapshotStore();
+  await store.save("room-prune-auth", createSnapshot("room-prune-auth", [createHero("player-stale", "hero-stale")]));
+  await store.ensurePlayerAccount({ playerId: "player-stale", displayName: "Ghost", lastRoomId: "room-prune-auth" });
+
+  const service = new MatchmakingService();
+  service.enqueue({
+    playerId: "player-stale",
+    heroSnapshot: createMatchmakingHeroSnapshot(createHero("player-stale", "hero-stale")),
+    rating: 950,
+    enqueuedAt: "2026-03-24T00:00:00.000Z"
+  });
+
+  const app = createMatchmakingRouteCaptureApp();
+  registerMatchmakingRoutes(app as never, { store, service, queueTtlSeconds: 60 });
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    resetMatchmakingService();
+    await store.close();
+  });
+
+  const response = createTestResponse();
+  await app.postHandlers.get("/api/matchmaking/enqueue")?.(
+    {
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1" },
+      url: "/api/matchmaking/enqueue",
+      method: "POST"
+    } as never,
+    response as never
+  );
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(service.getStatus("player-stale").status, "queued");
 });
 
 test("matchmaking routes return 429 with Retry-After after the per-IP rate limit is exceeded", { concurrency: false }, async (t) => {

@@ -7,10 +7,12 @@ import {
   configureAccountTokenDeliveryQueuePersistence,
   createRedisAccountTokenDeliveryQueuePersistence,
   deliverAccountToken,
+  listAccountTokenDeliveryDeadLetters,
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode,
   resetAccountTokenDeliveryState
 } from "@server/adapters/account-token-delivery";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import type { RedisClientLike } from "@server/infra/redis";
 
 class MemoryRedisClient implements RedisClientLike {
@@ -559,6 +561,58 @@ test("redis token delivery persistence caps dead-letter retention", async () => 
     (await persistence.loadDeadLetterDeliveries()).map((entry) => entry.key),
     ["password-recovery:middle", "password-recovery:newest"]
   );
+});
+
+test("dead-letter cap evicts in-memory entries and records drops", async (t) => {
+  resetRuntimeObservability();
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace: `account-token-delivery:dlq-drop:${Date.now()}`,
+    deadLetterMaxEntries: 2
+  });
+  const webhook = await startWebhookServer({ statusCode: 500 });
+  const env = {
+    VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL: webhook.url,
+    VEIL_AUTH_TOKEN_DELIVERY_MAX_ATTEMPTS: "1",
+    VEIL_AUTH_TOKEN_DELIVERY_RETRY_BASE_DELAY_MS: "600000",
+    VEIL_AUTH_TOKEN_DELIVERY_RETRY_MAX_DELAY_MS: "600000"
+  };
+
+  t.after(async () => {
+    resetRuntimeObservability();
+    resetAccountTokenDeliveryState();
+    await configureAccountTokenDeliveryQueuePersistence(null);
+    await webhook.close().catch(() => undefined);
+  });
+
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+
+  for (const loginId of ["oldest", "middle", "newest"]) {
+    await assert.rejects(
+      () =>
+        deliverAccountToken(
+          "webhook",
+          {
+            kind: "password-recovery",
+            loginId,
+            playerId: `player-${loginId}`,
+            token: `${loginId}-token`,
+            expiresAt: "2099-03-29T00:00:00.000Z"
+          },
+          env
+        ),
+      /Token delivery webhook returned 500 Internal Server Error/
+    );
+  }
+
+  const deadLetterKeys = listAccountTokenDeliveryDeadLetters().map((entry) => entry.key);
+  assert.equal(deadLetterKeys.includes("password-recovery:oldest"), false);
+  assert.deepEqual(new Set(deadLetterKeys), new Set(["password-recovery:middle", "password-recovery:newest"]));
+
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_count 2$/m);
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_drops_total 1$/m);
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_capacity_used_ratio 1$/m);
 });
 
 test("smtp delivery requires a configured host", async () => {

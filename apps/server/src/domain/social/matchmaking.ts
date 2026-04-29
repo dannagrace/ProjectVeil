@@ -560,9 +560,17 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   private async loadQueueRequests(): Promise<Map<string, MatchmakingRequest>> {
     const queueIds = await this.redis.zrange(this.queueKey, 0, -1);
     const requestsByPlayerId = new Map<string, MatchmakingRequest>();
+    if (queueIds.length === 0) {
+      return requestsByPlayerId;
+    }
 
-    for (const playerId of queueIds) {
-      const encoded = await this.redis.hget(this.requestKey, playerId);
+    const encodedRequests =
+      typeof this.redis.hmget === "function"
+        ? await this.redis.hmget(this.requestKey, ...queueIds)
+        : await Promise.all(queueIds.map((playerId) => this.redis.hget(this.requestKey, playerId)));
+
+    for (const [index, playerId] of queueIds.entries()) {
+      const encoded = encodedRequests[index];
       if (encoded) {
         requestsByPlayerId.set(playerId, JSON.parse(encoded) as MatchmakingRequest);
       }
@@ -583,8 +591,9 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   private async matchQueuedPlayers(now: Date): Promise<void> {
-    while ((await this.redis.zcard(this.queueKey)) >= 2) {
-      const requestsByPlayerId = await this.loadQueueRequests();
+    const requestsByPlayerId = await this.loadQueueRequests();
+
+    while (requestsByPlayerId.size >= 2) {
       const queue = Array.from(requestsByPlayerId.values());
       const selection = selectBestMatchPair(queue, now);
       if (!selection) {
@@ -592,6 +601,8 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       }
 
       const [left, right] = selection.players;
+      requestsByPlayerId.delete(left.playerId);
+      requestsByPlayerId.delete(right.playerId);
       await this.redis.zrem(this.queueKey, left.playerId, right.playerId);
       await this.redis.hdel(this.requestKey, left.playerId, right.playerId);
 
@@ -810,11 +821,6 @@ export function registerMatchmakingRoutes(
       return;
     }
 
-    if (queueTtlMs > 0) {
-      await Promise.resolve(service.pruneStaleEntries(queueTtlMs));
-      await refreshMatchmakingQueueDepth(service);
-    }
-
     const authSession = await requireAuthSession(request, response, options.store);
     if (!authSession) {
       return;
@@ -828,6 +834,11 @@ export function registerMatchmakingRoutes(
         }
       });
       return;
+    }
+
+    if (queueTtlMs > 0) {
+      await Promise.resolve(service.pruneStaleEntries(queueTtlMs));
+      await refreshMatchmakingQueueDepth(service);
     }
 
     try {

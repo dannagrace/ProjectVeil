@@ -16,6 +16,7 @@ export interface RedisClientLike {
   get(key: string): Promise<string | null>;
   hdel(key: string, ...fields: string[]): Promise<number>;
   hget(key: string, field: string): Promise<string | null>;
+  hmget?(key: string, ...fields: string[]): Promise<Array<string | null>>;
   hset(key: string, field: string, value: string): Promise<number>;
   incr(key: string): Promise<number>;
   lindex(key: string, index: number): Promise<string | null>;

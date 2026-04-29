@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   applyEloMatchResult,
@@ -122,4 +123,11 @@ test("matchmaking keeps protected onboarding players out of top-tier pairings", 
   ];
 
   assert.equal(selectBestMatchPair(requests, new Date("2026-03-28T08:20:00.000Z")), null);
+});
+
+test("matchmaking uses a bounded large-queue selector", async () => {
+  const source = await readFile(new URL("../src/matchmaking.ts", import.meta.url), "utf8");
+
+  assert.match(source, /LARGE_MATCHMAKING_QUEUE_THRESHOLD/);
+  assert.match(source, /selectBestMatchPairFromRatingWindow/);
 });
