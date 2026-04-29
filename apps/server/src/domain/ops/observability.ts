@@ -67,6 +67,13 @@ interface MatchmakingObservabilityCounters {
   queueDepth: number;
 }
 
+interface SeasonalEventOpsAuditObservabilityCounters {
+  persistSuccessTotal: number;
+  persistFailuresTotal: number;
+  readFailuresTotal: number;
+  localFallbackWritesTotal: number;
+}
+
 interface LeaderboardAbuseObservabilityCounters {
   alertsTotal: number;
 }
@@ -216,6 +223,9 @@ interface RuntimeObservabilityState {
   matchmaking: {
     counters: MatchmakingObservabilityCounters;
   };
+  seasonalEventOpsAudit: {
+    counters: SeasonalEventOpsAuditObservabilityCounters;
+  };
   leaderboardAbuse: {
     counters: LeaderboardAbuseObservabilityCounters;
     recentAlerts: LeaderboardAlertEvent[];
@@ -307,6 +317,9 @@ interface RuntimeHealthPayload {
     };
     matchmaking: {
       counters: MatchmakingObservabilityCounters;
+    };
+    seasonalEventOpsAudit: {
+      counters: SeasonalEventOpsAuditObservabilityCounters;
     };
     leaderboardAbuse: {
       counters: LeaderboardAbuseObservabilityCounters;
@@ -550,6 +563,14 @@ const runtimeObservability: RuntimeObservabilityState = {
       queueDepth: 0
     }
   },
+  seasonalEventOpsAudit: {
+    counters: {
+      persistSuccessTotal: 0,
+      persistFailuresTotal: 0,
+      readFailuresTotal: 0,
+      localFallbackWritesTotal: 0
+    }
+  },
   leaderboardAbuse: {
     counters: {
       alertsTotal: 0
@@ -784,6 +805,9 @@ function buildHealthPayload(
       },
       matchmaking: {
         counters: { ...runtimeObservability.matchmaking.counters }
+      },
+      seasonalEventOpsAudit: {
+        counters: { ...runtimeObservability.seasonalEventOpsAudit.counters }
       },
       leaderboardAbuse: {
         counters: { ...runtimeObservability.leaderboardAbuse.counters },
@@ -1494,6 +1518,18 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_fenced_write_rejected_total Total Redis matchmaking writes rejected by lock-token fencing.",
     "# TYPE veil_matchmaking_fenced_write_rejected_total counter",
     `veil_matchmaking_fenced_write_rejected_total ${health.runtime.matchmaking.counters.fencedWriteRejectedTotal}`,
+    "# HELP veil_seasonal_event_ops_audit_persist_success_total Total seasonal-event ops audit entries persisted to shared storage.",
+    "# TYPE veil_seasonal_event_ops_audit_persist_success_total counter",
+    `veil_seasonal_event_ops_audit_persist_success_total ${health.runtime.seasonalEventOpsAudit.counters.persistSuccessTotal}`,
+    "# HELP veil_seasonal_event_ops_audit_persist_failures_total Total seasonal-event ops audit shared-storage write failures.",
+    "# TYPE veil_seasonal_event_ops_audit_persist_failures_total counter",
+    `veil_seasonal_event_ops_audit_persist_failures_total ${health.runtime.seasonalEventOpsAudit.counters.persistFailuresTotal}`,
+    "# HELP veil_seasonal_event_ops_audit_read_failures_total Total seasonal-event ops audit shared-storage read failures.",
+    "# TYPE veil_seasonal_event_ops_audit_read_failures_total counter",
+    `veil_seasonal_event_ops_audit_read_failures_total ${health.runtime.seasonalEventOpsAudit.counters.readFailuresTotal}`,
+    "# HELP veil_seasonal_event_ops_audit_local_fallback_writes_total Total seasonal-event ops audit entries written only to local fallback after shared-storage failure.",
+    "# TYPE veil_seasonal_event_ops_audit_local_fallback_writes_total counter",
+    `veil_seasonal_event_ops_audit_local_fallback_writes_total ${health.runtime.seasonalEventOpsAudit.counters.localFallbackWritesTotal}`,
     "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
     "# TYPE veil_matchmaking_queue_depth gauge",
     `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
@@ -2205,6 +2241,22 @@ export function recordMatchmakingFencedWriteRejected(): void {
   runtimeObservability.matchmaking.counters.fencedWriteRejectedTotal += 1;
 }
 
+export function recordSeasonalEventOpsAuditPersistSuccess(): void {
+  runtimeObservability.seasonalEventOpsAudit.counters.persistSuccessTotal += 1;
+}
+
+export function recordSeasonalEventOpsAuditPersistFailure(): void {
+  runtimeObservability.seasonalEventOpsAudit.counters.persistFailuresTotal += 1;
+}
+
+export function recordSeasonalEventOpsAuditReadFailure(): void {
+  runtimeObservability.seasonalEventOpsAudit.counters.readFailuresTotal += 1;
+}
+
+export function recordSeasonalEventOpsAuditLocalFallbackWrite(): void {
+  runtimeObservability.seasonalEventOpsAudit.counters.localFallbackWritesTotal += 1;
+}
+
 export function setMatchmakingQueueDepth(count: number): void {
   runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
 }
@@ -2465,6 +2517,10 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.matchmaking.counters.lockReleaseStaleTotal = 0;
   runtimeObservability.matchmaking.counters.fencedWriteRejectedTotal = 0;
   runtimeObservability.matchmaking.counters.queueDepth = 0;
+  runtimeObservability.seasonalEventOpsAudit.counters.persistSuccessTotal = 0;
+  runtimeObservability.seasonalEventOpsAudit.counters.persistFailuresTotal = 0;
+  runtimeObservability.seasonalEventOpsAudit.counters.readFailuresTotal = 0;
+  runtimeObservability.seasonalEventOpsAudit.counters.localFallbackWritesTotal = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
   runtimeObservability.antiCheat.counters.alertsTotal = 0;

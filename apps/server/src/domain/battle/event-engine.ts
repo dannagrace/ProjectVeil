@@ -10,6 +10,12 @@ import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mai
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import {
+  recordSeasonalEventOpsAuditLocalFallbackWrite,
+  recordSeasonalEventOpsAuditPersistFailure,
+  recordSeasonalEventOpsAuditPersistSuccess,
+  recordSeasonalEventOpsAuditReadFailure
+} from "@server/domain/ops/observability";
+import {
   consumeRedisBackedOrLocalRateLimit,
   createLocalRateLimitState,
   type RateLimitResult
@@ -80,6 +86,7 @@ export interface SeasonalEventOpsAuditRedisClient {
   lpush(key: string, ...values: string[]): Promise<number>;
   ltrim(key: string, start: number, stop: number): Promise<unknown>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
+  del?(key: string): Promise<unknown>;
   expire?(key: string, seconds: number): Promise<unknown>;
 }
 
@@ -137,6 +144,16 @@ const seasonalEventRuntimeOverrides = new Map<string, SeasonalEventRuntimeOverri
 const seasonalEventOpsAuditTrail: SeasonalEventOpsAuditEntry[] = [];
 const actionSubmissionRateLimitState = createLocalRateLimitState();
 let defaultActionSubmissionRateLimitRedisClient: RedisClientLike | null | undefined;
+
+interface SeasonalEventOpsAuditAppendResult {
+  entry: SeasonalEventOpsAuditEntry;
+  degraded: boolean;
+}
+
+interface SeasonalEventOpsAuditListResult {
+  entries: SeasonalEventOpsAuditEntry[];
+  degraded: boolean;
+}
 
 export interface ActionSubmissionRateLimitOptions {
   redisClient?: RedisClientLike | null;
@@ -356,45 +373,57 @@ function parseSeasonalEventOpsAuditEntry(value: string): SeasonalEventOpsAuditEn
 async function appendSeasonalEventOpsAuditEntryWithSharedStore(
   entry: Omit<SeasonalEventOpsAuditEntry, "id">,
   redisClient: SeasonalEventOpsAuditRedisClient | null
-): Promise<SeasonalEventOpsAuditEntry> {
+): Promise<SeasonalEventOpsAuditAppendResult> {
   const auditEntry = createSeasonalEventOpsAuditEntry(entry);
   if (!redisClient) {
     rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
-    return auditEntry;
+    return { entry: auditEntry, degraded: false };
   }
 
   try {
     await redisClient.lpush(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, JSON.stringify(auditEntry));
     await redisClient.ltrim(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1);
     await redisClient.expire?.(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, SEASONAL_EVENT_OPS_AUDIT_TTL_SECONDS);
+    recordSeasonalEventOpsAuditPersistSuccess();
     rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
-    return auditEntry;
-  } catch {
+    return { entry: auditEntry, degraded: false };
+  } catch (error) {
+    recordSeasonalEventOpsAuditPersistFailure();
+    recordSeasonalEventOpsAuditLocalFallbackWrite();
+    console.error("Seasonal event ops audit persistence failed; using local fallback", error);
     rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
-    return auditEntry;
+    return { entry: auditEntry, degraded: true };
   }
 }
 
 async function listSeasonalEventOpsAuditTrailWithSharedStore(
   redisClient: SeasonalEventOpsAuditRedisClient | null
-): Promise<SeasonalEventOpsAuditEntry[]> {
+): Promise<SeasonalEventOpsAuditListResult> {
   if (!redisClient) {
-    return listSeasonalEventOpsAuditTrail();
+    return { entries: listSeasonalEventOpsAuditTrail(), degraded: false };
   }
 
   try {
-    return (await redisClient.lrange(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1))
-      .map(parseSeasonalEventOpsAuditEntry)
-      .filter((entry): entry is SeasonalEventOpsAuditEntry => Boolean(entry))
-      .map(cloneSeasonalEventOpsAuditEntry);
-  } catch {
-    return listSeasonalEventOpsAuditTrail();
+    return {
+      entries: (await redisClient.lrange(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1))
+        .map(parseSeasonalEventOpsAuditEntry)
+        .filter((entry): entry is SeasonalEventOpsAuditEntry => Boolean(entry))
+        .map(cloneSeasonalEventOpsAuditEntry),
+      degraded: false
+    };
+  } catch (error) {
+    recordSeasonalEventOpsAuditReadFailure();
+    console.error("Seasonal event ops audit read failed; using local fallback", error);
+    return { entries: listSeasonalEventOpsAuditTrail(), degraded: true };
   }
 }
 
-export function resetSeasonalEventRuntimeState(): void {
+export async function resetSeasonalEventRuntimeState(redisClient?: SeasonalEventOpsAuditRedisClient | null): Promise<void> {
   seasonalEventRuntimeOverrides.clear();
   seasonalEventOpsAuditTrail.length = 0;
+  if (redisClient?.del) {
+    await redisClient.del(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY);
+  }
 }
 
 function cloneSeasonalEventRuntimeOverride(override: SeasonalEventRuntimeOverride): SeasonalEventRuntimeOverride {
@@ -1677,6 +1706,7 @@ export function registerEventRoutes(
         options.eventDocuments
       );
       const accounts = store?.listPlayerAccounts ? await store.listPlayerAccounts({ limit: 10_000, offset: 0 }) : [];
+      const audit = await listSeasonalEventOpsAuditTrailWithSharedStore(seasonalEventOpsAuditRedisClient);
       sendJson(response, 200, {
         checkedAt: now.toISOString(),
         events: events.map((event) => ({
@@ -1690,7 +1720,8 @@ export function registerEventRoutes(
             : {},
           participation: buildSeasonalEventParticipationStats(event, accounts)
         })),
-        audit: await listSeasonalEventOpsAuditTrailWithSharedStore(seasonalEventOpsAuditRedisClient)
+        audit: audit.entries,
+        auditDegraded: audit.degraded
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1750,7 +1781,7 @@ export function registerEventRoutes(
         },
         seasonalEventOpsAuditRedisClient
       );
-      sendJson(response, 200, { event: nextEvent, audit });
+      sendJson(response, 200, { event: nextEvent, audit: audit.entry, auditDegraded: audit.degraded });
     } catch (error) {
       if (error instanceof SyntaxError) {
         sendJson(response, 400, { error: { code: "invalid_json", message: "Request body must be valid JSON" } });
@@ -1842,7 +1873,8 @@ export function registerEventRoutes(
       sendJson(response, 200, {
         event: endedEvent,
         distribution,
-        audit
+        audit: audit.entry,
+        auditDegraded: audit.degraded
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1917,7 +1949,8 @@ export function registerEventRoutes(
         playerId,
         eventId,
         account: nextAccount,
-        audit
+        audit: audit.entry,
+        auditDegraded: audit.degraded
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
