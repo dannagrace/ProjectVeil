@@ -56,6 +56,7 @@ interface AuthObservabilityCounters {
 
 interface MatchmakingObservabilityCounters {
   rateLimitedTotal: number;
+  lockRenewFailuresTotal: number;
   queueDepth: number;
 }
 
@@ -527,6 +528,7 @@ const runtimeObservability: RuntimeObservabilityState = {
   matchmaking: {
     counters: {
       rateLimitedTotal: 0,
+      lockRenewFailuresTotal: 0,
       queueDepth: 0
     }
   },
@@ -1458,6 +1460,9 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
+    "# HELP veil_matchmaking_lock_renew_failures_total Total Redis matchmaking lock renewal failures.",
+    "# TYPE veil_matchmaking_lock_renew_failures_total counter",
+    `veil_matchmaking_lock_renew_failures_total ${health.runtime.matchmaking.counters.lockRenewFailuresTotal}`,
     "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
     "# TYPE veil_matchmaking_queue_depth gauge",
     `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
@@ -2141,6 +2146,10 @@ export function recordMatchmakingRateLimited(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
 }
 
+export function recordMatchmakingLockRenewFailure(): void {
+  runtimeObservability.matchmaking.counters.lockRenewFailuresTotal += 1;
+}
+
 export function setMatchmakingQueueDepth(count: number): void {
   runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
 }
@@ -2376,6 +2385,7 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.http.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;
+  runtimeObservability.matchmaking.counters.lockRenewFailuresTotal = 0;
   runtimeObservability.matchmaking.counters.queueDepth = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
