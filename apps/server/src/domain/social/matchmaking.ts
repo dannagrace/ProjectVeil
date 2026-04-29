@@ -5,7 +5,11 @@ import { createMatchmakingHeroSnapshot, estimateMatchmakingWaitSeconds, type Mat
 import { resolveMapVariantIdForRoom } from "@veil/shared/world";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { sendMobilePushNotification } from "@server/adapters/mobile-push";
-import { recordMatchmakingRateLimited, setMatchmakingQueueDepth } from "@server/domain/ops/observability";
+import {
+  recordMatchmakingLockRenewFailure,
+  recordMatchmakingRateLimited,
+  setMatchmakingQueueDepth
+} from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
 import {
   consumeRedisBackedOrLocalRateLimit,
@@ -677,7 +681,12 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     }
 
     const renewInterval = setInterval(() => {
-      void this.renewLock(token);
+      void this.renewLock(token).catch((error: unknown) => {
+        recordMatchmakingLockRenewFailure();
+        console.warn("[matchmaking] Redis lock renewal failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
     }, Math.max(100, Math.floor(this.lockTimeoutMs / 2)));
 
     try {

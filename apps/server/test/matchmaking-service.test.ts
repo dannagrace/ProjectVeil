@@ -4,6 +4,7 @@ import test from "node:test";
 import Redis from "ioredis-mock";
 import { createDefaultHeroLoadout, createDefaultHeroProgression, type HeroState } from "@veil/shared/models";
 import { createMatchmakingHeroSnapshot, type MatchmakingRequest } from "@veil/shared/social";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import { MatchmakingService, RedisMatchmakingService } from "@server/domain/social/matchmaking";
 
 test("redis matchmaking queue lifecycle does not remove players with full list scans", async () => {
@@ -434,4 +435,46 @@ test("redis matchmaking drains matched pairs with bounded Redis write round trip
   const resultGamma = JSON.parse((await redis.hget(resultKey, "player-gamma")) ?? "{}") as { roomId?: string };
   assert.match(resultAlpha.roomId ?? "", /-1$/);
   assert.match(resultGamma.roomId ?? "", /-2$/);
+});
+
+test("redis matchmaking lock renewal failures are caught and counted", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:renew-failure",
+    lockRetryDelayMs: 1,
+    lockTimeoutMs: 200
+  });
+  const originalEval = redis.eval.bind(redis);
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+  const originalWarn = console.warn;
+
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    const [script] = args;
+    if (typeof script === "string" && script.includes("pexpire")) {
+      throw new Error("renew failed");
+    }
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+  console.warn = () => undefined;
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  t.after(async () => {
+    process.off("unhandledRejection", onUnhandledRejection);
+    console.warn = originalWarn;
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  await Reflect.get(service as Record<string, unknown>, "withLock").call(service, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 160));
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(unhandledRejections, []);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_renew_failures_total 1$/m);
 });
