@@ -693,18 +693,22 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       if (lockLost) {
         return;
       }
-      void this.renewLock(token).catch((error: unknown) => {
-        recordMatchmakingLockRenewFailure();
-        consecutiveRenewFailures += 1;
-        console.warn("[matchmaking] Redis lock renewal failed", {
-          error: error instanceof Error ? error.message : String(error)
+      void this.renewLock(token)
+        .then(() => {
+          consecutiveRenewFailures = 0;
+        })
+        .catch((error: unknown) => {
+          recordMatchmakingLockRenewFailure();
+          consecutiveRenewFailures += 1;
+          console.warn("[matchmaking] Redis lock renewal failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          if (consecutiveRenewFailures >= MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE) {
+            lockLost = true;
+            recordMatchmakingLockLost();
+            clearInterval(renewInterval);
+          }
         });
-        if (consecutiveRenewFailures >= MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE) {
-          lockLost = true;
-          recordMatchmakingLockLost();
-          clearInterval(renewInterval);
-        }
-      });
     }, Math.max(100, Math.floor(this.lockTimeoutMs / 2)));
 
     try {

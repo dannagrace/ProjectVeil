@@ -479,6 +479,48 @@ test("redis matchmaking lock renewal failures are caught and counted", async (t)
   assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_renew_failures_total 1$/m);
 });
 
+test("redis matchmaking lock renewal failure streak resets after successful renewals", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix: "test:matchmaking:renew-recovery",
+    lockRetryDelayMs: 1,
+    lockTimeoutMs: 250
+  });
+  const originalEval = redis.eval.bind(redis);
+  const originalWarn = console.warn;
+  let renewAttempts = 0;
+
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    const [script] = args;
+    if (typeof script === "string" && script.includes("pexpire")) {
+      renewAttempts += 1;
+      if (renewAttempts === 1 || renewAttempts === 3) {
+        await originalEval(...(args as [string, number, ...string[]]));
+        throw new Error("transient renew failed");
+      }
+    }
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+  console.warn = () => undefined;
+
+  t.after(async () => {
+    console.warn = originalWarn;
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  await Reflect.get(service as Record<string, unknown>, "withLock").call(service, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 430));
+  });
+
+  const metrics = buildPrometheusMetricsDocument();
+  assert.equal(renewAttempts >= 3, true);
+  assert.match(metrics, /^veil_matchmaking_lock_renew_failures_total 2$/m);
+  assert.match(metrics, /^veil_matchmaking_lock_lost_total 0$/m);
+});
+
 test("redis matchmaking stops before writing matches after repeated lock renewal failures", async (t) => {
   resetRuntimeObservability();
   const redis = new Redis();
