@@ -519,10 +519,11 @@ export async function configureAccountTokenDeliveryQueuePersistence(
   deadLetterDeliveries.clear();
 
   if (queuePersistence) {
-    const [queued, deadLetters] = await Promise.all([
+    const [queued, loadedDeadLetters] = await Promise.all([
       queuePersistence.loadQueuedDeliveries(),
       queuePersistence.loadDeadLetterDeliveries()
     ]);
+    const deadLetters = await trimHydratedDeadLetters(queuePersistence, loadedDeadLetters);
     for (const entry of queued) {
       queuedDeliveries.set(entry.key, entry);
     }
@@ -593,6 +594,24 @@ async function deleteDeadLetterDelivery(key: string): Promise<void> {
 
 async function closeRedisClient(redis: RedisClientLike | null): Promise<void> {
   await redis?.quit?.();
+}
+
+async function trimHydratedDeadLetters(
+  persistence: AccountTokenDeliveryQueuePersistence,
+  deadLetters: QueuedDeliveryEntry[]
+): Promise<QueuedDeliveryEntry[]> {
+  const maxEntries = persistence.deadLetterMaxEntries;
+  if (maxEntries == null || deadLetters.length <= maxEntries) {
+    return deadLetters;
+  }
+
+  const overflow = Math.max(0, Math.floor(deadLetters.length - maxEntries));
+  const droppedEntries = deadLetters.slice(0, overflow);
+  for (const entry of droppedEntries) {
+    await persistence.deleteDeadLetterDelivery(entry.key);
+  }
+  recordAuthTokenDeliveryDeadLetterDrop(droppedEntries.length);
+  return deadLetters.slice(overflow);
 }
 
 function applyDeadLetterDrops(droppedKeys: string[]): void {
@@ -1273,7 +1292,7 @@ export async function shutdownAccountTokenDeliveryQueuePersistence(): Promise<vo
 export async function listAccountTokenDeliveryDeadLetters(): Promise<AccountTokenDeliveryQueueEntrySnapshot[]> {
   let entries = Array.from(deadLetterDeliveries.values());
   if (queuePersistence) {
-    entries = await queuePersistence.loadDeadLetterDeliveries();
+    entries = await trimHydratedDeadLetters(queuePersistence, await queuePersistence.loadDeadLetterDeliveries());
     deadLetterDeliveries.clear();
     for (const entry of entries) {
       deadLetterDeliveries.set(entry.key, entry);

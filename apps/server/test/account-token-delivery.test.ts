@@ -564,6 +564,60 @@ test("redis token delivery persistence caps dead-letter retention", async () => 
   );
 });
 
+test("startup hydration trims preexisting dead-letter overflow and records drops", async () => {
+  resetRuntimeObservability();
+  const namespace = `account-token-delivery:hydrate-cap:${Date.now()}`;
+  const deadLetterHashKey = `${namespace}:dead-letter`;
+  const deadLetterListKey = `${namespace}:dead-letter-keys`;
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace,
+    deadLetterMaxEntries: 2
+  });
+
+  await redis.hset(
+    deadLetterHashKey,
+    "password-recovery:oldest",
+    JSON.stringify(createQueuedDeliveryEntry("password-recovery:oldest", 1_800_000_000_000))
+  );
+  await redis.hset(
+    deadLetterHashKey,
+    "password-recovery:middle",
+    JSON.stringify(createQueuedDeliveryEntry("password-recovery:middle", 1_800_000_060_000))
+  );
+  await redis.hset(
+    deadLetterHashKey,
+    "password-recovery:newest",
+    JSON.stringify(createQueuedDeliveryEntry("password-recovery:newest", 1_800_000_120_000))
+  );
+  await redis.rpush(
+    deadLetterListKey,
+    "password-recovery:oldest",
+    "password-recovery:middle",
+    "password-recovery:newest"
+  );
+
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+
+  assert.deepEqual((await listAccountTokenDeliveryDeadLetters()).map((entry) => entry.key), [
+    "password-recovery:newest",
+    "password-recovery:middle"
+  ]);
+  assert.deepEqual(
+    (await persistence.loadDeadLetterDeliveries()).map((entry) => entry.key),
+    ["password-recovery:middle", "password-recovery:newest"]
+  );
+
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_count 2$/m);
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_drops_total 1$/m);
+  assert.match(metrics, /^veil_auth_token_delivery_dead_letter_capacity_used_ratio 1$/m);
+
+  resetRuntimeObservability();
+  resetAccountTokenDeliveryState();
+  await configureAccountTokenDeliveryQueuePersistence(null);
+});
+
 test("admin dead-letter list and requeue read Redis persistence instead of local process cache", async () => {
   const namespace = `account-token-delivery:admin-cross-pod:${Date.now()}`;
   const deadLetterHashKey = `${namespace}:dead-letter`;
