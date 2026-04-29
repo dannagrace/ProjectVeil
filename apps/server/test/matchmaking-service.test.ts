@@ -357,3 +357,81 @@ test("redis matchmaking batches queue request reads while draining multiple pair
   assert.equal(hmgetCalls.length, 1);
   assert.equal(hgetCalls.length, 0);
 });
+
+test("redis matchmaking drains matched pairs with bounded Redis write round trips", async (t) => {
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:batch-write";
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1
+  });
+  const queueKey = `${keyPrefix}:queue`;
+  const requestKey = `${keyPrefix}:requests`;
+  const resultKey = `${keyPrefix}:results`;
+  const evalCalls: unknown[][] = [];
+  const zremCalls: unknown[][] = [];
+  const hdelCalls: unknown[][] = [];
+  const hsetCalls: unknown[][] = [];
+  const incrCalls: unknown[][] = [];
+  const originalEval = redis.eval.bind(redis);
+  const originalZrem = redis.zrem.bind(redis);
+  const originalHdel = redis.hdel.bind(redis);
+  const originalHset = redis.hset.bind(redis);
+  const originalIncr = redis.incr.bind(redis);
+
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    evalCalls.push(args);
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+  (redis as unknown as { zrem: (...args: unknown[]) => Promise<number> }).zrem = async (...args) => {
+    zremCalls.push(args);
+    return originalZrem(...(args as [string, ...string[]]));
+  };
+  (redis as unknown as { hdel: (...args: unknown[]) => Promise<number> }).hdel = async (...args) => {
+    hdelCalls.push(args);
+    return originalHdel(...(args as [string, ...string[]]));
+  };
+  (redis as unknown as { hset: (...args: unknown[]) => Promise<number> }).hset = async (...args) => {
+    hsetCalls.push(args);
+    return originalHset(...(args as [string, string, string]));
+  };
+  (redis as unknown as { incr: (...args: unknown[]) => Promise<number> }).incr = async (...args) => {
+    incrCalls.push(args);
+    return originalIncr(...(args as [string]));
+  };
+
+  t.after(async () => {
+    await service.close();
+  });
+
+  const requests = [
+    createQueueRequest("player-alpha", "2026-03-28T08:00:00.000Z"),
+    createQueueRequest("player-beta", "2026-03-28T08:00:01.000Z"),
+    createQueueRequest("player-gamma", "2026-03-28T08:00:02.000Z"),
+    createQueueRequest("player-delta", "2026-03-28T08:00:03.000Z")
+  ];
+
+  for (const [index, request] of requests.entries()) {
+    await redis.zadd(queueKey, index, request.playerId);
+    await redis.hset(requestKey, request.playerId, JSON.stringify(request));
+  }
+  hsetCalls.length = 0;
+
+  await Reflect.get(service as Record<string, unknown>, "matchQueuedPlayers").call(
+    service,
+    new Date("2026-03-28T08:05:00.000Z")
+  );
+
+  assert.equal(await redis.zcard(queueKey), 0);
+  assert.equal(zremCalls.length, 0);
+  assert.equal(hdelCalls.length, 0);
+  assert.equal(hsetCalls.length, 0);
+  assert.equal(incrCalls.length, 0);
+  assert.equal(evalCalls.length, 2);
+
+  const resultAlpha = JSON.parse((await redis.hget(resultKey, "player-alpha")) ?? "{}") as { roomId?: string };
+  const resultGamma = JSON.parse((await redis.hget(resultKey, "player-gamma")) ?? "{}") as { roomId?: string };
+  assert.match(resultAlpha.roomId ?? "", /-1$/);
+  assert.match(resultGamma.roomId ?? "", /-2$/);
+});
