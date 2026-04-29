@@ -4933,7 +4933,7 @@ function render(): void {
         <h1>H5 调试壳</h1>
         <p class="lead">这里保留给浏览器调试、配置联调和回归验证使用；主客户端运行时已切到 Cocos Creator。</p>
         <div class="session-meta-row">
-          <p class="muted" data-testid="session-meta">Room: ${roomId} · Player: ${playerId}</p>
+          <p class="muted" data-testid="session-meta">Room: ${escapeHtml(roomId)} · Player: ${escapeHtml(playerId)}</p>
           <button class="session-link" data-toggle-achievements="true">${state.achievementPanel.open ? "收起成就" : "成就面板"}</button>
           <button class="session-link" data-return-lobby="true">返回大厅</button>
           <button class="session-link" data-logout-guest="true">切换游客账号</button>
