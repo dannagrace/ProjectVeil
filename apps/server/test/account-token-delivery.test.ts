@@ -10,6 +10,7 @@ import {
   listAccountTokenDeliveryDeadLetters,
   readAccountRegistrationDeliveryMode,
   readPasswordRecoveryDeliveryMode,
+  requeueAccountTokenDeliveryDeadLetter,
   resetAccountTokenDeliveryState
 } from "@server/adapters/account-token-delivery";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
@@ -598,7 +599,7 @@ test("startup hydration trims preexisting dead-letter overflow and records drops
 
   await configureAccountTokenDeliveryQueuePersistence(persistence);
 
-  assert.deepEqual(listAccountTokenDeliveryDeadLetters().map((entry) => entry.key), [
+  assert.deepEqual((await listAccountTokenDeliveryDeadLetters()).map((entry) => entry.key), [
     "password-recovery:newest",
     "password-recovery:middle"
   ]);
@@ -613,6 +614,44 @@ test("startup hydration trims preexisting dead-letter overflow and records drops
   assert.match(metrics, /^veil_auth_token_delivery_dead_letter_capacity_used_ratio 1$/m);
 
   resetRuntimeObservability();
+  resetAccountTokenDeliveryState();
+  await configureAccountTokenDeliveryQueuePersistence(null);
+});
+
+test("admin dead-letter list and requeue read Redis persistence instead of local process cache", async () => {
+  const namespace = `account-token-delivery:admin-cross-pod:${Date.now()}`;
+  const deadLetterHashKey = `${namespace}:dead-letter`;
+  const deadLetterListKey = `${namespace}:dead-letter-keys`;
+  const queuedHashKey = `${namespace}:queued`;
+  const queuedListKey = `${namespace}:queued-keys`;
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace,
+    deadLetterMaxEntries: 10
+  });
+  const entry = createQueuedDeliveryEntry("password-recovery:remote-pod", 1_800_000_180_000);
+
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+  await redis.hset(deadLetterHashKey, entry.key, JSON.stringify(entry));
+  await redis.rpush(deadLetterListKey, entry.key);
+
+  const deadLetters = await listAccountTokenDeliveryDeadLetters();
+  assert.deepEqual(deadLetters.map((snapshot) => snapshot.key), [entry.key]);
+
+  resetAccountTokenDeliveryState();
+  const requeued = await requeueAccountTokenDeliveryDeadLetter(entry.key);
+
+  assert.equal(requeued?.key, entry.key);
+  assert.equal(await redis.hget(deadLetterHashKey, entry.key), null);
+  const persistedQueued = JSON.parse((await redis.hget(queuedHashKey, entry.key)) ?? "{}") as {
+    key?: string;
+    attemptCount?: number;
+  };
+  assert.equal(persistedQueued.key, entry.key);
+  assert.equal(persistedQueued.attemptCount, 0);
+  assert.deepEqual(await redis.lrange(deadLetterListKey, 0, -1), []);
+  assert.deepEqual(await redis.lrange(queuedListKey, 0, -1), [entry.key]);
+
   resetAccountTokenDeliveryState();
   await configureAccountTokenDeliveryQueuePersistence(null);
 });
@@ -659,7 +698,7 @@ test("dead-letter cap evicts in-memory entries and records drops", async (t) => 
     );
   }
 
-  const deadLetterKeys = listAccountTokenDeliveryDeadLetters().map((entry) => entry.key);
+  const deadLetterKeys = (await listAccountTokenDeliveryDeadLetters()).map((entry) => entry.key);
   assert.equal(deadLetterKeys.includes("password-recovery:oldest"), false);
   assert.deepEqual(new Set(deadLetterKeys), new Set(["password-recovery:middle", "password-recovery:newest"]));
 
