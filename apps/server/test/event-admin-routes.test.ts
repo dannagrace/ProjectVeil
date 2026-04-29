@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerEventRoutes, resetSeasonalEventRuntimeState } from "@server/domain/battle/event-engine";
 import { issueGuestAuthSession } from "@server/domain/account/auth";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -26,10 +27,18 @@ function createFakeEventClusterRedisClient() {
 function createFakeSeasonalEventOpsAuditRedisClient() {
   const lists = new Map<string, string[]>();
   const expireSecondsByKey = new Map<string, number>();
+  const failureMode = {
+    lpush: false,
+    lrange: false
+  };
 
   return {
     expireSecondsByKey,
+    failureMode,
     async lpush(key: string, ...values: string[]): Promise<number> {
+      if (failureMode.lpush) {
+        throw new Error("audit write unavailable");
+      }
       const list = lists.get(key) ?? [];
       list.unshift(...values);
       lists.set(key, list);
@@ -41,12 +50,19 @@ function createFakeSeasonalEventOpsAuditRedisClient() {
       return "OK";
     },
     async lrange(key: string, start: number, stop: number): Promise<string[]> {
+      if (failureMode.lrange) {
+        throw new Error("audit read unavailable");
+      }
       const list = lists.get(key) ?? [];
       return list.slice(start, stop + 1);
     },
     async expire(key: string, seconds: number): Promise<number> {
       expireSecondsByKey.set(key, seconds);
       return lists.has(key) ? 1 : 0;
+    },
+    async del(key: string): Promise<number> {
+      const existed = lists.delete(key);
+      return existed ? 1 : 0;
     }
   };
 }
@@ -484,6 +500,100 @@ test("PATCH /api/admin/seasonal-events/:id publishes audit rows across route ins
   assert.equal(listPayload.audit[0]?.eventId, "defend-the-bridge");
   assert.equal(listPayload.audit[0]?.occurredAt, "2026-04-04T12:00:00.000Z");
   assert.equal(redis.expireSecondsByKey.size, 1);
+});
+
+test("PATCH /api/admin/seasonal-events/:id surfaces degraded audit persistence", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => {
+    resetSeasonalEventRuntimeState();
+    resetRuntimeObservability();
+  });
+  const token = withAdminToken(t);
+  const redis = createFakeSeasonalEventOpsAuditRedisClient();
+  redis.failureMode.lpush = true;
+  const { patches } = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", {
+    seasonalEventOpsAuditRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2]);
+  const patchHandler = patches.get("/api/admin/seasonal-events/:id");
+  assert.ok(patchHandler);
+
+  const response = createResponse();
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.audit.action, "patched");
+  assert.equal(payload.auditDegraded, true);
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_seasonal_event_ops_audit_persist_failures_total 1$/m);
+  assert.match(metrics, /^veil_seasonal_event_ops_audit_local_fallback_writes_total 1$/m);
+});
+
+test("GET /api/admin/seasonal-events surfaces degraded audit reads", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => {
+    resetSeasonalEventRuntimeState();
+    resetRuntimeObservability();
+  });
+  const token = withAdminToken(t);
+  const redis = createFakeSeasonalEventOpsAuditRedisClient();
+  const options = {
+    seasonalEventOpsAuditRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2];
+  const routes = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", options);
+  const patchHandler = routes.patches.get("/api/admin/seasonal-events/:id");
+  const listHandler = routes.gets.get("/api/admin/seasonal-events");
+  assert.ok(patchHandler);
+  assert.ok(listHandler);
+
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    createResponse()
+  );
+
+  redis.failureMode.lrange = true;
+  const response = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": token
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.audit[0]?.action, "patched");
+  assert.equal(payload.auditDegraded, true);
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_seasonal_event_ops_audit_persist_success_total 1$/m);
+  assert.match(metrics, /^veil_seasonal_event_ops_audit_read_failures_total 1$/m);
 });
 
 test("POST /api/admin/seasonal-events/:id/end force-ends an active event and distributes mailbox rewards", async (t) => {
