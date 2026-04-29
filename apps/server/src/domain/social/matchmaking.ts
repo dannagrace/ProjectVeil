@@ -6,6 +6,8 @@ import { resolveMapVariantIdForRoom } from "@veil/shared/world";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
 import { sendMobilePushNotification } from "@server/adapters/mobile-push";
 import {
+  recordMatchmakingLockLost,
+  recordMatchmakingLockReleaseStale,
   recordMatchmakingLockRenewFailure,
   recordMatchmakingRateLimited,
   setMatchmakingQueueDepth
@@ -23,6 +25,11 @@ import { sendWechatSubscribeMessage } from "@server/adapters/wechat-subscribe";
 export const DEFAULT_MATCHMAKING_QUEUE_TTL_SECONDS = 5 * 60;
 const DEFAULT_RATE_LIMIT_MATCHMAKING_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MATCHMAKING_MAX = 30;
+const MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE = 2;
+
+interface MatchmakingLockContext {
+  isLockLost(): boolean;
+}
 
 interface MatchmakingRuntimeConfig {
   rateLimitWindowMs: number;
@@ -428,7 +435,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   async enqueue(request: MatchmakingRequest, now = new Date()): Promise<MatchmakingStatusQueued> {
-    return this.withLock(async () => {
+    return this.withLock(async (lock) => {
       const normalized = normalizeMatchmakingRequest(request);
 
       await this.redis.hdel(this.resultKey, normalized.playerId);
@@ -437,7 +444,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       await this.redis.zadd(this.queueKey, getQueuedPlayerScore(normalized), normalized.playerId);
 
       const status = await this.getQueuedStatus(normalized.playerId);
-      await this.matchQueuedPlayers(now);
+      await this.matchQueuedPlayers(now, lock);
       if (!status) {
         throw new Error(`Failed to enqueue player for matchmaking: ${normalized.playerId}`);
       }
@@ -597,11 +604,11 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     };
   }
 
-  private async matchQueuedPlayers(now: Date): Promise<void> {
+  private async matchQueuedPlayers(now: Date, lock?: MatchmakingLockContext): Promise<void> {
     const requestsByPlayerId = await this.loadQueueRequests();
     const matchedPairs: Array<[MatchmakingRequest, MatchmakingRequest]> = [];
 
-    while (requestsByPlayerId.size >= 2) {
+    while (!lock?.isLockLost() && requestsByPlayerId.size >= 2) {
       const queue = Array.from(requestsByPlayerId.values());
       const selection = selectBestMatchPair(queue, now);
       if (!selection) {
@@ -614,7 +621,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       matchedPairs.push([left, right]);
     }
 
-    if (matchedPairs.length === 0) {
+    if (matchedPairs.length === 0 || lock?.isLockLost()) {
       return;
     }
 
@@ -663,7 +670,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     }
   }
 
-  private async withLock<T>(action: () => Promise<T>): Promise<T> {
+  private async withLock<T>(action: (lock: MatchmakingLockContext) => Promise<T>): Promise<T> {
     const token = `${process.pid}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const timeoutAt = Date.now() + this.lockTimeoutMs;
 
@@ -680,25 +687,43 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       await delay(this.lockRetryDelayMs);
     }
 
+    let lockLost = false;
+    let consecutiveRenewFailures = 0;
     const renewInterval = setInterval(() => {
+      if (lockLost) {
+        return;
+      }
       void this.renewLock(token).catch((error: unknown) => {
         recordMatchmakingLockRenewFailure();
+        consecutiveRenewFailures += 1;
         console.warn("[matchmaking] Redis lock renewal failed", {
           error: error instanceof Error ? error.message : String(error)
         });
+        if (consecutiveRenewFailures >= MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE) {
+          lockLost = true;
+          recordMatchmakingLockLost();
+          clearInterval(renewInterval);
+        }
       });
     }, Math.max(100, Math.floor(this.lockTimeoutMs / 2)));
 
     try {
-      return await action();
+      const result = await action({ isLockLost: () => lockLost });
+      if (lockLost) {
+        throw new Error("Matchmaking lock lost mid-action; results discarded");
+      }
+      return result;
     } finally {
       clearInterval(renewInterval);
-      await this.releaseLock(token);
+      const released = await this.releaseLock(token);
+      if (!released) {
+        recordMatchmakingLockReleaseStale();
+      }
     }
   }
 
   private async renewLock(token: string): Promise<void> {
-    await this.redis.eval(
+    const renewed = await this.redis.eval(
       [
         "if redis.call('get', KEYS[1]) == ARGV[1] then",
         "  return redis.call('pexpire', KEYS[1], ARGV[2])",
@@ -710,10 +735,13 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       token,
       String(this.lockTimeoutMs)
     );
+    if (Number(renewed) !== 1) {
+      throw new Error("Redis matchmaking lock renewal lost ownership");
+    }
   }
 
-  private async releaseLock(token: string): Promise<void> {
-    await this.redis.eval(
+  private async releaseLock(token: string): Promise<boolean> {
+    const released = await this.redis.eval(
       [
         "if redis.call('get', KEYS[1]) == ARGV[1] then",
         "  return redis.call('del', KEYS[1])",
@@ -724,6 +752,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       this.lockKey,
       token
     );
+    return Number(released) === 1;
   }
 }
 

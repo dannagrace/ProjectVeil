@@ -6,6 +6,7 @@ import {
   recordAuthTokenDeliveryDeadLetter,
   recordAuthTokenDeliveryDeadLetterDrop,
   recordAuthTokenDeliveryFailure,
+  recordAuthTokenDeliveryQueuePumpFailure,
   recordAuthTokenDeliveryRequest,
   recordAuthTokenDeliveryRetry,
   recordAuthTokenDeliverySuccess,
@@ -665,17 +666,23 @@ function clearQueueTimer(): void {
   }
 }
 
-function scheduleQueuePump(): void {
+function scheduleQueuePump(minDelayMs = 0): void {
   clearQueueTimer();
   if (queuedDeliveries.size === 0) {
     return;
   }
 
   const nextAttemptAt = Math.min(...Array.from(queuedDeliveries.values()).map((entry) => entry.nextAttemptAt));
-  const delayMs = Math.max(0, nextAttemptAt - Date.now());
+  const delayMs = Math.max(minDelayMs, nextAttemptAt - Date.now());
   queueTimer = setTimeout(() => {
     queueTimer = null;
-    void processQueuedDeliveries();
+    void processQueuedDeliveries().catch((error: unknown) => {
+      recordAuthTokenDeliveryQueuePumpFailure();
+      console.warn("[account-token-delivery] Queue pump failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      scheduleQueuePump(1_000);
+    });
   }, delayMs);
 }
 

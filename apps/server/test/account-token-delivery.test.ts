@@ -13,6 +13,7 @@ import {
   requeueAccountTokenDeliveryDeadLetter,
   resetAccountTokenDeliveryState
 } from "@server/adapters/account-token-delivery";
+import type { AccountTokenDeliveryQueuePersistence } from "@server/adapters/account-token-delivery";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import type { RedisClientLike } from "@server/infra/redis";
 
@@ -545,6 +546,53 @@ test("redis token delivery persistence avoids full-list LREM scans on persistenc
     [],
     "token delivery persistence must not issue LREM count=0 full-list scans"
   );
+});
+
+test("queued token delivery pump lock failures are caught and counted", async (t) => {
+  resetRuntimeObservability();
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+  const dueEntry = createQueuedDeliveryEntry("password-recovery:pump-ranger", Date.now() - 60_000);
+  let acquireCalls = 0;
+  const persistence: AccountTokenDeliveryQueuePersistence = {
+    async loadQueuedDeliveries() {
+      return [dueEntry];
+    },
+    async loadDeadLetterDeliveries() {
+      return [];
+    },
+    async loadDeadLetterDelivery() {
+      return null;
+    },
+    async saveQueuedDelivery() {},
+    async deleteQueuedDelivery() {},
+    async saveDeadLetterDelivery() {
+      return [];
+    },
+    async deleteDeadLetterDelivery() {},
+    async acquireProcessingLock() {
+      acquireCalls += 1;
+      throw new Error("lock unavailable");
+    }
+  };
+
+  process.on("unhandledRejection", onUnhandledRejection);
+  t.after(async () => {
+    process.off("unhandledRejection", onUnhandledRejection);
+    resetRuntimeObservability();
+    resetAccountTokenDeliveryState();
+    await configureAccountTokenDeliveryQueuePersistence(null);
+  });
+
+  await configureAccountTokenDeliveryQueuePersistence(persistence);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  resetAccountTokenDeliveryState();
+  assert.ok(acquireCalls >= 1);
+  assert.deepEqual(unhandledRejections, []);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_queue_pump_failures_total 1$/m);
 });
 
 test("redis token delivery persistence caps dead-letter retention", async () => {
