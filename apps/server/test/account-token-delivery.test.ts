@@ -595,6 +595,20 @@ test("queued token delivery pump lock failures are caught and counted", async (t
   assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_queue_pump_failures_total 1$/m);
 });
 
+test("queued token delivery processing lock is renewed and stale releases are counted", async () => {
+  const source = await import("node:fs/promises").then((fs) =>
+    fs.readFile(new URL("../src/adapters/account-token-delivery.ts", import.meta.url), "utf8")
+  );
+
+  assert.match(source, /renewProcessingLock\?/);
+  assert.match(source, /recordAuthTokenDeliveryProcessingLockRenewFailure/);
+  assert.match(source, /recordAuthTokenDeliveryProcessingLockLost/);
+  assert.match(source, /recordAuthTokenDeliveryProcessingLockReleaseStale/);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_renew_failures_total 0$/m);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_lost_total 0$/m);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_release_stale_total 0$/m);
+});
+
 test("redis token delivery persistence caps dead-letter retention", async () => {
   const redis = new MemoryRedisClient();
   const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {

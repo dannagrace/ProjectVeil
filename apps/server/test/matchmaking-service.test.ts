@@ -571,3 +571,52 @@ test("redis matchmaking stops before writing matches after repeated lock renewal
   assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_renew_failures_total 2$/m);
   assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_lock_lost_total 1$/m);
 });
+
+test("redis matchmaking fenced batch writes reject stale lock ownership", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:fenced-write";
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1,
+    lockTimeoutMs: 250
+  });
+  const originalEval = redis.eval.bind(redis);
+  const lockKey = `${keyPrefix}:lock`;
+  const requestKey = `${keyPrefix}:requests`;
+  const queueKey = `${keyPrefix}:queue`;
+  const resultKey = `${keyPrefix}:results`;
+  const originalWarn = console.warn;
+
+  t.after(async () => {
+    console.warn = originalWarn;
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  console.warn = () => undefined;
+  await redis.hset(requestKey, "player-alpha", JSON.stringify(createQueueRequest("player-alpha", "2026-03-29T00:00:00.000Z")));
+  await redis.hset(requestKey, "player-beta", JSON.stringify(createQueueRequest("player-beta", "2026-03-29T00:00:01.000Z")));
+  await redis.zadd(queueKey, 1, "player-alpha", 2, "player-beta");
+
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    const [script] = args;
+    if (typeof script === "string" && script.includes("hset") && script.includes("zrem")) {
+      await redis.set(lockKey, "other-token");
+    }
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+
+  await Reflect.get(service as Record<string, unknown>, "withLock").call(service, async (lock: unknown) => {
+    await Reflect.get(service as Record<string, unknown>, "matchQueuedPlayers").call(
+      service,
+      new Date("2026-03-29T00:00:00.000Z"),
+      lock
+    );
+  });
+
+  assert.equal(await redis.hget(resultKey, "player-alpha"), null);
+  assert.deepEqual(await redis.zrange(queueKey, 0, -1), ["player-alpha", "player-beta"]);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_fenced_write_rejected_total 1$/m);
+});

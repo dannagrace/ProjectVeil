@@ -6,6 +6,9 @@ import {
   recordAuthTokenDeliveryDeadLetter,
   recordAuthTokenDeliveryDeadLetterDrop,
   recordAuthTokenDeliveryFailure,
+  recordAuthTokenDeliveryProcessingLockLost,
+  recordAuthTokenDeliveryProcessingLockReleaseStale,
+  recordAuthTokenDeliveryProcessingLockRenewFailure,
   recordAuthTokenDeliveryQueuePumpFailure,
   recordAuthTokenDeliveryRequest,
   recordAuthTokenDeliveryRetry,
@@ -119,7 +122,8 @@ export interface AccountTokenDeliveryQueuePersistence {
   deleteDeadLetterDelivery(key: string): Promise<void>;
   clear?(): Promise<void>;
   acquireProcessingLock?(ttlMs: number): Promise<boolean>;
-  releaseProcessingLock?(): Promise<void>;
+  renewProcessingLock?(ttlMs: number): Promise<void>;
+  releaseProcessingLock?(): Promise<boolean | void>;
 }
 
 export interface AccountTokenDeliveryResult {
@@ -170,6 +174,11 @@ const DEFAULT_SMTPS_PORT = 465;
 const DEFAULT_QUEUE_PERSISTENCE_NAMESPACE = "veil:account-token-delivery";
 const DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
 const QUEUE_PROCESSING_LOCK_TTL_MS = 30_000;
+const QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE = 2;
+
+interface QueueProcessingLockContext {
+  isLockLost(): boolean;
+}
 
 const queuedDeliveries = new Map<string, QueuedDeliveryEntry>();
 const deadLetterDeliveries = new Map<string, QueuedDeliveryEntry>();
@@ -499,13 +508,26 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     clear: () => redis.del(queuedHashKey, queuedListKey, deadLetterHashKey, deadLetterListKey, processingLockKey).then(() => undefined),
     acquireProcessingLock: async (ttlMs) =>
       (await redis.set(processingLockKey, lockOwner, "PX", ttlMs, "NX")) === "OK",
+    renewProcessingLock: async (ttlMs) => {
+      const renewed = await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+        1,
+        processingLockKey,
+        lockOwner,
+        String(ttlMs)
+      );
+      if (Number(renewed) !== 1) {
+        throw new Error("Account token delivery processing lock renewal lost ownership");
+      }
+    },
     releaseProcessingLock: async () => {
-      await redis.eval(
+      const released = await redis.eval(
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
         1,
         processingLockKey,
         lockOwner
       );
+      return Number(released) === 1;
     }
   };
 }
@@ -1155,24 +1177,68 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
   }
 }
 
+async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext) => Promise<void>): Promise<void> {
+  if (!queuePersistence?.acquireProcessingLock) {
+    await action({ isLockLost: () => false });
+    return;
+  }
+
+  const lockAcquired = await queuePersistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
+  if (!lockAcquired) {
+    scheduleQueuePump();
+    return;
+  }
+
+  let lockLost = false;
+  let consecutiveRenewFailures = 0;
+  const renewInterval =
+    queuePersistence.renewProcessingLock &&
+    setInterval(() => {
+      if (lockLost) {
+        return;
+      }
+      void queuePersistence?.renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS).catch((error: unknown) => {
+        recordAuthTokenDeliveryProcessingLockRenewFailure();
+        consecutiveRenewFailures += 1;
+        console.warn("[account-token-delivery] Processing lock renewal failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        if (consecutiveRenewFailures >= QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE) {
+          lockLost = true;
+          recordAuthTokenDeliveryProcessingLockLost();
+          if (renewInterval) {
+            clearInterval(renewInterval);
+          }
+        }
+      });
+    }, Math.max(100, Math.floor(QUEUE_PROCESSING_LOCK_TTL_MS / 2)));
+
+  try {
+    await action({ isLockLost: () => lockLost });
+    if (lockLost) {
+      throw new Error("Account token delivery processing lock lost mid-action; remaining entries deferred");
+    }
+  } finally {
+    if (renewInterval) {
+      clearInterval(renewInterval);
+    }
+    const released = await queuePersistence.releaseProcessingLock?.();
+    if (released === false) {
+      recordAuthTokenDeliveryProcessingLockReleaseStale();
+    }
+  }
+}
+
 async function processQueuedDeliveries(): Promise<void> {
   if (queueProcessing) {
     scheduleQueuePump();
     return;
   }
 
-  let lockAcquired = false;
-  if (queuePersistence?.acquireProcessingLock) {
-    lockAcquired = await queuePersistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
-    if (!lockAcquired) {
-      scheduleQueuePump();
-      return;
-    }
-  }
-
   queueProcessing = true;
   try {
-    while (true) {
+    await withQueueProcessingLock(async (lock) => {
+      while (!lock.isLockLost()) {
       const dueEntry = Array.from(queuedDeliveries.values())
         .sort((left, right) => left.nextAttemptAt - right.nextAttemptAt)[0];
       if (!dueEntry || dueEntry.nextAttemptAt > Date.now()) {
@@ -1181,15 +1247,10 @@ async function processQueuedDeliveries(): Promise<void> {
 
       await processQueuedDelivery(dueEntry);
     }
+    });
   } finally {
     queueProcessing = false;
-    try {
-      if (lockAcquired) {
-        await queuePersistence?.releaseProcessingLock?.();
-      }
-    } finally {
-      scheduleQueuePump();
-    }
+    scheduleQueuePump();
   }
 }
 
