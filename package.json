@@ -73,16 +73,16 @@
     "ws": "^8.18.3"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1032.0",
+    "@aws-sdk/client-secrets-manager": "^3.1037.0",
     "@colyseus/redis-driver": "^0.17.7",
     "@colyseus/redis-presence": "^0.17.7",
-    "@colyseus/sdk": "^0.17.41",
+    "@colyseus/sdk": "^0.17.42",
     "@veil/shared": "file:packages/shared",
     "cc": "file:packages/cc-runtime-stub",
-    "colyseus": "^0.17.9",
+    "colyseus": "^0.17.10",
     "dotenv": "^17.4.2",
     "ioredis": "^5.10.1",
-    "mysql2": "^3.22.1",
+    "mysql2": "^3.22.3",
     "xlsx": "^0.18.5"
   }
 }
