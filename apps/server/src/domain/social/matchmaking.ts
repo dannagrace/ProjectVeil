@@ -9,6 +9,7 @@ import {
   recordMatchmakingLockLost,
   recordMatchmakingLockReleaseStale,
   recordMatchmakingLockRenewFailure,
+  recordMatchmakingFencedWriteRejected,
   recordMatchmakingRateLimited,
   setMatchmakingQueueDepth
 } from "@server/domain/ops/observability";
@@ -29,6 +30,7 @@ const MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE = 2;
 
 interface MatchmakingLockContext {
   isLockLost(): boolean;
+  token?: string;
 }
 
 interface MatchmakingRuntimeConfig {
@@ -627,12 +629,23 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
 
     const lastSequence = Number(
       await this.redis.eval(
-        "return redis.call('incrby', KEYS[1], ARGV[1])",
-        1,
+        [
+          "if ARGV[1] ~= '' and redis.call('get', KEYS[2]) ~= ARGV[1] then",
+          "  return -1",
+          "end",
+          "return redis.call('incrby', KEYS[1], ARGV[2])"
+        ].join("\n"),
+        2,
         this.sequenceKey,
+        this.lockKey,
+        lock?.token ?? "",
         String(matchedPairs.length)
       )
     );
+    if (lastSequence < 0 || lock?.isLockLost()) {
+      recordMatchmakingFencedWriteRejected();
+      return;
+    }
     const firstSequence = lastSequence - matchedPairs.length + 1;
     const batchArgs: string[] = [];
     const notifications: Array<{ result: MatchResult; players: [MatchmakingRequest, MatchmakingRequest] }> = [];
@@ -645,25 +658,36 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       notifications.push({ result, players });
     }
 
-    await this.redis.eval(
-      [
-        "for index = 1, #ARGV, 3 do",
-        "  local left = ARGV[index]",
-        "  local right = ARGV[index + 1]",
-        "  local result = ARGV[index + 2]",
-        "  redis.call('zrem', KEYS[1], left, right)",
-        "  redis.call('hdel', KEYS[2], left, right)",
-        "  redis.call('hset', KEYS[3], left, result)",
-        "  redis.call('hset', KEYS[3], right, result)",
-        "end",
-        "return #ARGV / 3"
-      ].join("\n"),
-      3,
-      this.queueKey,
-      this.requestKey,
-      this.resultKey,
-      ...batchArgs
+    const writtenCount = Number(
+      await this.redis.eval(
+        [
+          "if ARGV[1] ~= '' and redis.call('get', KEYS[4]) ~= ARGV[1] then",
+          "  return -1",
+          "end",
+          "for index = 2, #ARGV, 3 do",
+          "  local left = ARGV[index]",
+          "  local right = ARGV[index + 1]",
+          "  local result = ARGV[index + 2]",
+          "  redis.call('zrem', KEYS[1], left, right)",
+          "  redis.call('hdel', KEYS[2], left, right)",
+          "  redis.call('hset', KEYS[3], left, result)",
+          "  redis.call('hset', KEYS[3], right, result)",
+          "end",
+          "return (#ARGV - 1) / 3"
+        ].join("\n"),
+        4,
+        this.queueKey,
+        this.requestKey,
+        this.resultKey,
+        this.lockKey,
+        lock?.token ?? "",
+        ...batchArgs
+      )
     );
+    if (writtenCount < 0 || lock?.isLockLost()) {
+      recordMatchmakingFencedWriteRejected();
+      return;
+    }
 
     for (const { result, players } of notifications) {
       this.onMatchCreated?.(result, players);
@@ -693,22 +717,26 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       if (lockLost) {
         return;
       }
-      void this.renewLock(token).catch((error: unknown) => {
-        recordMatchmakingLockRenewFailure();
-        consecutiveRenewFailures += 1;
-        console.warn("[matchmaking] Redis lock renewal failed", {
-          error: error instanceof Error ? error.message : String(error)
+      void this.renewLock(token)
+        .then(() => {
+          consecutiveRenewFailures = 0;
+        })
+        .catch((error: unknown) => {
+          recordMatchmakingLockRenewFailure();
+          consecutiveRenewFailures += 1;
+          console.warn("[matchmaking] Redis lock renewal failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          if (consecutiveRenewFailures >= MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE) {
+            lockLost = true;
+            recordMatchmakingLockLost();
+            clearInterval(renewInterval);
+          }
         });
-        if (consecutiveRenewFailures >= MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE) {
-          lockLost = true;
-          recordMatchmakingLockLost();
-          clearInterval(renewInterval);
-        }
-      });
     }, Math.max(100, Math.floor(this.lockTimeoutMs / 2)));
 
     try {
-      const result = await action({ isLockLost: () => lockLost });
+      const result = await action({ isLockLost: () => lockLost, token });
       if (lockLost) {
         throw new Error("Matchmaking lock lost mid-action; results discarded");
       }
