@@ -111,6 +111,7 @@ export interface AccountTokenDeliveryQueuePersistence {
   readonly deadLetterMaxEntries?: number;
   loadQueuedDeliveries(): Promise<QueuedDeliveryEntry[]>;
   loadDeadLetterDeliveries(): Promise<QueuedDeliveryEntry[]>;
+  loadDeadLetterDelivery(key: string): Promise<QueuedDeliveryEntry | null>;
   saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void>;
   deleteQueuedDelivery(key: string): Promise<void>;
   saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<string[]>;
@@ -446,6 +447,21 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     }
   };
 
+  const loadEntry = async (hashKey: string, listKey: string, key: string): Promise<QueuedDeliveryEntry | null> => {
+    const serialized = await redis.hget(hashKey, key);
+    if (!serialized) {
+      return null;
+    }
+
+    const entry = parseQueuedDeliveryEntry(serialized);
+    if (!entry) {
+      await redis.hdel(hashKey, key);
+      await redis.lrem(listKey, 1, key);
+      return null;
+    }
+    return entry;
+  };
+
   const enforceDeadLetterCap = async (): Promise<string[]> => {
     const length = await redis.llen(deadLetterListKey);
     const overflow = length - deadLetterMaxEntries;
@@ -474,6 +490,7 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     deadLetterMaxEntries,
     loadQueuedDeliveries: () => loadEntries(queuedHashKey, queuedListKey),
     loadDeadLetterDeliveries: () => loadEntries(deadLetterHashKey, deadLetterListKey),
+    loadDeadLetterDelivery: (key) => loadEntry(deadLetterHashKey, deadLetterListKey, key),
     saveQueuedDelivery: (entry) => saveEntry(queuedHashKey, queuedListKey, entry),
     deleteQueuedDelivery: (key) => deleteEntry(queuedHashKey, queuedListKey, key),
     saveDeadLetterDelivery: (entry) => saveDeadLetterEntry(entry),
@@ -1253,8 +1270,18 @@ export async function shutdownAccountTokenDeliveryQueuePersistence(): Promise<vo
   }
 }
 
-export function listAccountTokenDeliveryDeadLetters(): AccountTokenDeliveryQueueEntrySnapshot[] {
-  return Array.from(deadLetterDeliveries.values())
+export async function listAccountTokenDeliveryDeadLetters(): Promise<AccountTokenDeliveryQueueEntrySnapshot[]> {
+  let entries = Array.from(deadLetterDeliveries.values());
+  if (queuePersistence) {
+    entries = await queuePersistence.loadDeadLetterDeliveries();
+    deadLetterDeliveries.clear();
+    for (const entry of entries) {
+      deadLetterDeliveries.set(entry.key, entry);
+    }
+    syncQueueTelemetry();
+  }
+
+  return entries
     .sort((left, right) => right.nextAttemptAt - left.nextAttemptAt)
     .map(snapshotQueueEntry);
 }
@@ -1262,7 +1289,9 @@ export function listAccountTokenDeliveryDeadLetters(): AccountTokenDeliveryQueue
 export async function requeueAccountTokenDeliveryDeadLetter(
   key: string
 ): Promise<AccountTokenDeliveryQueueEntrySnapshot | null> {
-  const entry = deadLetterDeliveries.get(key);
+  const entry = queuePersistence
+    ? await queuePersistence.loadDeadLetterDelivery(key)
+    : deadLetterDeliveries.get(key);
   if (!entry) {
     return null;
   }
