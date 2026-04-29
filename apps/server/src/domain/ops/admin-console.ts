@@ -1215,7 +1215,7 @@ export function registerAdminRoutes(
     if (!requireSupportRole(response, request, ["admin", "support-supervisor"])) return;
     sendJson(response, 200, {
       serverTime: new Date().toISOString(),
-      deadLetters: listAccountTokenDeliveryDeadLetters()
+      deadLetters: await listAccountTokenDeliveryDeadLetters()
     });
   });
 

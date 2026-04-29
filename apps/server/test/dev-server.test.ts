@@ -1147,6 +1147,7 @@ test("dev server enables Redis-backed Colyseus scaling resources when REDIS_URL 
     createAccountTokenDeliveryQueuePersistence: () => ({
       loadQueuedDeliveries: async () => [],
       loadDeadLetterDeliveries: async () => [],
+      loadDeadLetterDelivery: async () => null,
       saveQueuedDelivery: async () => undefined,
       deleteQueuedDelivery: async () => undefined,
       saveDeadLetterDelivery: async () => [],
