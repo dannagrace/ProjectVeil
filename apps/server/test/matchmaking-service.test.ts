@@ -437,6 +437,47 @@ test("redis matchmaking drains matched pairs with bounded Redis write round trip
   assert.match(resultGamma.roomId ?? "", /-2$/);
 });
 
+test("redis matchmaking rejects fenced writes after lock ownership changes", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:fenced-prewrite";
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1
+  });
+  const queueKey = `${keyPrefix}:queue`;
+  const requestKey = `${keyPrefix}:requests`;
+  const resultKey = `${keyPrefix}:results`;
+  const lockKey = `${keyPrefix}:lock`;
+  const requests = [
+    createQueueRequest("player-alpha", "2026-03-28T08:00:00.000Z"),
+    createQueueRequest("player-beta", "2026-03-28T08:00:01.000Z")
+  ];
+
+  t.after(async () => {
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  for (const [index, request] of requests.entries()) {
+    await redis.zadd(queueKey, index, request.playerId);
+    await redis.hset(requestKey, request.playerId, JSON.stringify(request));
+  }
+  await redis.set(lockKey, "other-owner");
+
+  await Reflect.get(service as Record<string, unknown>, "matchQueuedPlayers").call(
+    service,
+    new Date("2026-03-28T08:05:00.000Z"),
+    { isLockLost: () => false, token: "expected-owner" }
+  );
+
+  assert.deepEqual(await redis.zrange(queueKey, 0, -1), ["player-alpha", "player-beta"]);
+  assert.equal(await redis.hget(resultKey, "player-alpha"), null);
+  assert.equal(await redis.hget(resultKey, "player-beta"), null);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_fenced_write_rejected_total 1$/m);
+});
+
 test("redis matchmaking lock renewal failures are caught and counted", async (t) => {
   resetRuntimeObservability();
   const redis = new Redis();

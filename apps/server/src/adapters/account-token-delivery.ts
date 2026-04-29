@@ -1197,20 +1197,25 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
       if (lockLost) {
         return;
       }
-      void queuePersistence?.renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS).catch((error: unknown) => {
-        recordAuthTokenDeliveryProcessingLockRenewFailure();
-        consecutiveRenewFailures += 1;
-        console.warn("[account-token-delivery] Processing lock renewal failed", {
-          error: error instanceof Error ? error.message : String(error)
-        });
-        if (consecutiveRenewFailures >= QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE) {
-          lockLost = true;
-          recordAuthTokenDeliveryProcessingLockLost();
-          if (renewInterval) {
-            clearInterval(renewInterval);
+      void queuePersistence
+        ?.renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS)
+        .then(() => {
+          consecutiveRenewFailures = 0;
+        })
+        .catch((error: unknown) => {
+          recordAuthTokenDeliveryProcessingLockRenewFailure();
+          consecutiveRenewFailures += 1;
+          console.warn("[account-token-delivery] Processing lock renewal failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          if (consecutiveRenewFailures >= QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE) {
+            lockLost = true;
+            recordAuthTokenDeliveryProcessingLockLost();
+            if (renewInterval) {
+              clearInterval(renewInterval);
+            }
           }
-        }
-      });
+        });
     }, Math.max(100, Math.floor(QUEUE_PROCESSING_LOCK_TTL_MS / 2)));
 
   try {
@@ -1239,14 +1244,15 @@ async function processQueuedDeliveries(): Promise<void> {
   try {
     await withQueueProcessingLock(async (lock) => {
       while (!lock.isLockLost()) {
-      const dueEntry = Array.from(queuedDeliveries.values())
-        .sort((left, right) => left.nextAttemptAt - right.nextAttemptAt)[0];
-      if (!dueEntry || dueEntry.nextAttemptAt > Date.now()) {
-        break;
-      }
+        const dueEntry = Array.from(queuedDeliveries.values()).sort(
+          (left, right) => left.nextAttemptAt - right.nextAttemptAt
+        )[0];
+        if (!dueEntry || dueEntry.nextAttemptAt > Date.now()) {
+          break;
+        }
 
-      await processQueuedDelivery(dueEntry);
-    }
+        await processQueuedDelivery(dueEntry);
+      }
     });
   } finally {
     queueProcessing = false;
