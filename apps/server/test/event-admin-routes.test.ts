@@ -681,6 +681,59 @@ test("PATCH /api/admin/seasonal-events/:id archives audit rows to long-term stor
   assert.equal((store.archive[0] as { eventId?: string }).eventId, "defend-the-bridge");
 });
 
+test("GET /api/admin/seasonal-events filtered audit reads include recent Redis rows before archive catches up", async (t) => {
+  const token = withAdminToken(t);
+  const redis = createFakeSeasonalEventOpsAuditRedisClient();
+  const store = createStore() as ReturnType<typeof createStore> & {
+    listSeasonalEventOpsAuditLogs: () => Promise<unknown[]>;
+  };
+  store.listSeasonalEventOpsAuditLogs = async () => [];
+  const routes = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", {
+    seasonalEventOpsAuditRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2]);
+  const patchHandler = routes.patches.get("/api/admin/seasonal-events/:id");
+  assert.ok(patchHandler);
+
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    createResponse()
+  );
+
+  const { gets } = registerRoutes(store, "2026-04-04T12:01:00.000Z", {
+    seasonalEventOpsAuditRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2]);
+  const listHandler = gets.get("/api/admin/seasonal-events");
+  assert.ok(listHandler);
+
+  const response = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": token
+      },
+      url: "/api/admin/seasonal-events?eventId=defend-the-bridge"
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.audit[0]?.action, "patched");
+  assert.equal(payload.audit[0]?.eventId, "defend-the-bridge");
+  assert.equal(payload.auditSource, "mysql-archived");
+});
+
 test("GET /api/admin/seasonal-events surfaces degraded audit reads", async (t) => {
   resetRuntimeObservability();
   t.after(() => {

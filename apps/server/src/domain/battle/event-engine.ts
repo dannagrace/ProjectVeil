@@ -399,6 +399,48 @@ function parseSeasonalEventOpsAuditEntry(value: string): SeasonalEventOpsAuditEn
   }
 }
 
+function normalizeSeasonalEventOpsAuditLimit(limit: number | undefined): number {
+  return Math.max(1, Math.floor(limit ?? SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES));
+}
+
+function matchesSeasonalEventOpsAuditOptions(
+  entry: SeasonalEventOpsAuditEntry,
+  options: { since?: string; actor?: string; eventId?: string; limit?: number }
+): boolean {
+  if (options.since && entry.occurredAt < options.since) {
+    return false;
+  }
+  if (options.actor && entry.actor !== options.actor) {
+    return false;
+  }
+  if (options.eventId && entry.eventId !== options.eventId) {
+    return false;
+  }
+  return true;
+}
+
+function orderSeasonalEventOpsAuditEntries(
+  entries: SeasonalEventOpsAuditEntry[],
+  options: { since?: string; actor?: string; eventId?: string; limit?: number } = {}
+): SeasonalEventOpsAuditEntry[] {
+  return entries
+    .filter((entry) => matchesSeasonalEventOpsAuditOptions(entry, options))
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id))
+    .slice(0, normalizeSeasonalEventOpsAuditLimit(options.limit));
+}
+
+function mergeSeasonalEventOpsAuditEntries(
+  entries: SeasonalEventOpsAuditEntry[],
+  archived: SeasonalEventOpsAuditEntry[],
+  options: { since?: string; actor?: string; eventId?: string; limit?: number } = {}
+): SeasonalEventOpsAuditEntry[] {
+  const byId = new Map<string, SeasonalEventOpsAuditEntry>();
+  for (const entry of [...entries, ...archived]) {
+    byId.set(entry.id, cloneSeasonalEventOpsAuditEntry(entry));
+  }
+  return orderSeasonalEventOpsAuditEntries(Array.from(byId.values()), options);
+}
+
 async function appendSeasonalEventOpsAuditEntryWithSharedStore(
   entry: Omit<SeasonalEventOpsAuditEntry, "id">,
   redisClient: SeasonalEventOpsAuditRedisClient | null,
@@ -438,23 +480,16 @@ async function listSeasonalEventOpsAuditTrailWithSharedStore(
   options: { since?: string; actor?: string; eventId?: string; limit?: number } = {}
 ): Promise<SeasonalEventOpsAuditListResult> {
   const listArchivedAuditLogs = archiveStore?.listSeasonalEventOpsAuditLogs;
-  if (listArchivedAuditLogs && (options.since || options.actor || options.eventId)) {
-    return {
-      entries: await listArchivedAuditLogs.call(archiveStore, options),
-      degraded: false,
-      source: "mysql-archived"
-    };
-  }
 
   if (!redisClient) {
     if (listArchivedAuditLogs) {
       return {
-        entries: await listArchivedAuditLogs.call(archiveStore, options),
+        entries: orderSeasonalEventOpsAuditEntries(await listArchivedAuditLogs.call(archiveStore, options), options),
         degraded: false,
         source: "mysql-archived"
       };
     }
-    return { entries: listSeasonalEventOpsAuditTrail(), degraded: false, source: "local" };
+    return { entries: orderSeasonalEventOpsAuditEntries(listSeasonalEventOpsAuditTrail(), options), degraded: false, source: "local" };
   }
 
   try {
@@ -462,25 +497,31 @@ async function listSeasonalEventOpsAuditTrailWithSharedStore(
         .map(parseSeasonalEventOpsAuditEntry)
         .filter((entry): entry is SeasonalEventOpsAuditEntry => Boolean(entry))
         .map(cloneSeasonalEventOpsAuditEntry);
-    if (listArchivedAuditLogs && entries.length < Math.min(options.limit ?? SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES)) {
+    const filteredEntries = orderSeasonalEventOpsAuditEntries(entries, options);
+    const shouldReadArchive =
+      Boolean(options.since || options.actor || options.eventId) ||
+      filteredEntries.length <
+        Math.min(normalizeSeasonalEventOpsAuditLimit(options.limit), SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES);
+    if (listArchivedAuditLogs && shouldReadArchive) {
       const archived = await listArchivedAuditLogs.call(archiveStore, options);
-      const byId = new Map<string, SeasonalEventOpsAuditEntry>();
-      for (const entry of [...entries, ...archived]) {
-        byId.set(entry.id, cloneSeasonalEventOpsAuditEntry(entry));
-      }
       return {
-        entries: Array.from(byId.values())
-          .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id))
-          .slice(0, Math.max(1, Math.floor(options.limit ?? SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES))),
+        entries: mergeSeasonalEventOpsAuditEntries(filteredEntries, archived, options),
         degraded: false,
         source: "mysql-archived"
       };
     }
-    return { entries, degraded: false, source: "redis-recent" };
+    return { entries: filteredEntries, degraded: false, source: "redis-recent" };
   } catch (error) {
     recordSeasonalEventOpsAuditReadFailure();
     console.error("Seasonal event ops audit read failed; using local fallback", error);
-    return { entries: listSeasonalEventOpsAuditTrail(), degraded: true, source: "local" };
+    if (listArchivedAuditLogs) {
+      return {
+        entries: orderSeasonalEventOpsAuditEntries(await listArchivedAuditLogs.call(archiveStore, options), options),
+        degraded: true,
+        source: "mysql-archived"
+      };
+    }
+    return { entries: orderSeasonalEventOpsAuditEntries(listSeasonalEventOpsAuditTrail(), options), degraded: true, source: "local" };
   }
 }
 
