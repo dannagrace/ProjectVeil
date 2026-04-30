@@ -1,7 +1,10 @@
 // Node.js 原生 fetch 联调脚本
 
 async function testAdminSync() {
-  const ADMIN_SECRET = 'veil-admin-2026';
+  const ADMIN_SECRET = process.env.VEIL_ADMIN_TOKEN?.trim();
+  if (!ADMIN_SECRET) {
+    throw new Error('VEIL_ADMIN_TOKEN must be set before running scripts/test-admin-sync.mjs');
+  }
   const baseUrl = 'http://localhost:2567';
 
   console.log('--- ProjectVeil Admin Sync 联调测试 ---');

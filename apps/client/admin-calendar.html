@@ -243,6 +243,18 @@
         return secretInput.value.trim();
       }
 
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"'\/`]/g, (character) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#39;",
+          "/": "&#47;",
+          "`": "&#96;"
+        })[character] || character);
+      }
+
       async function requestJson(url, options = {}) {
         const secret = readSecret();
         const response = await fetch(url, {
@@ -287,26 +299,26 @@
             const row = document.createElement("tr");
             row.innerHTML = `
               <td>
-                <strong>${entry.id}</strong><br />
-                <span class="muted">${entry.title}</span><br />
-                <span class="muted">${entry.description || ""}</span>
+                <strong>${escapeHtml(entry.id)}</strong><br />
+                <span class="muted">${escapeHtml(entry.title)}</span><br />
+                <span class="muted">${escapeHtml(entry.description || "")}</span>
               </td>
               <td>
-                <div>${entry.startsAt}</div>
-                <div class="muted">${entry.endsAt || "无结束时间"}</div>
+                <div>${escapeHtml(entry.startsAt)}</div>
+                <div class="muted">${escapeHtml(entry.endsAt || "无结束时间")}</div>
               </td>
               <td>
-                <div>${entry.status}</div>
-                <div class="muted">started ${entry.startedAtActual || "-"}</div>
-                <div class="muted">ended ${entry.endedAtActual || "-"}</div>
+                <div>${escapeHtml(entry.status)}</div>
+                <div class="muted">started ${escapeHtml(entry.startedAtActual || "-")}</div>
+                <div class="muted">ended ${escapeHtml(entry.endedAtActual || "-")}</div>
               </td>
               <td>
                 <div class="actions">
-                  <button type="button" data-action="start" data-id="${entry.id}">手动开始</button>
-                  <button type="button" class="secondary" data-action="end" data-id="${entry.id}">手动结束</button>
-                  <button type="button" class="danger" data-action="delete" data-id="${entry.id}">删除</button>
+                  <button type="button" data-action="start" data-id="${escapeHtml(entry.id)}">手动开始</button>
+                  <button type="button" class="secondary" data-action="end" data-id="${escapeHtml(entry.id)}">手动结束</button>
+                  <button type="button" class="danger" data-action="delete" data-id="${escapeHtml(entry.id)}">删除</button>
                 </div>
-                <pre>${JSON.stringify({ action: entry.action, endAction: entry.endAction || null }, null, 2)}</pre>
+                <pre>${escapeHtml(JSON.stringify({ action: entry.action, endAction: entry.endAction || null }, null, 2))}</pre>
               </td>
             `;
             entriesBody.appendChild(row);

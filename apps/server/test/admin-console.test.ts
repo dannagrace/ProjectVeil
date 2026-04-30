@@ -1817,12 +1817,37 @@ test("admin console html includes compensation form and history table", async ()
   assert.match(html, /fetchCompensationHistory/);
 });
 
+test("admin console html does not prefill credentials and escapes dynamic content", async () => {
+  const adminHtmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin.html");
+  const html = await readFile(adminHtmlPath, "utf8");
+
+  assert.doesNotMatch(html, /id="adminSecret"[^>]*\bvalue=/);
+  assert.doesNotMatch(html, /veil-admin-2026|dev-admin-token/);
+  assert.match(html, /function escapeHtml/);
+  assert.match(html, /escapeHtml\(data\.account\.displayName/);
+  assert.match(html, /escapeHtml\(item\.reason/);
+  assert.match(html, /escapeHtml\(report\.description/);
+});
+
 test("admin kill-switch html exposes the matrix view", async () => {
   const htmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin-kill-switches.html");
   const html = await readFile(htmlPath, "utf8");
   assert.match(html, /Kill Switch Matrix/);
   assert.match(html, /clientMinVersion/i);
   assert.match(html, /api\/admin\/runtime\/kill-switches/);
+});
+
+test("admin calendar and kill-switch html escape dynamic rows", async () => {
+  const clientDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client");
+  const calendarHtml = await readFile(path.join(clientDir, "admin-calendar.html"), "utf8");
+  const killSwitchHtml = await readFile(path.join(clientDir, "admin-kill-switches.html"), "utf8");
+
+  assert.match(calendarHtml, /function escapeHtml/);
+  assert.match(calendarHtml, /escapeHtml\(entry\.description/);
+  assert.match(calendarHtml, /escapeHtml\(JSON\.stringify/);
+  assert.match(killSwitchHtml, /function escapeHtml/);
+  assert.match(killSwitchHtml, /escapeHtml\(item\.label/);
+  assert.match(killSwitchHtml, /escapeHtml\(item\.summary/);
 });
 
 test("POST /api/admin/broadcast returns 401 without a valid admin secret", async (t) => {

@@ -52,7 +52,7 @@
             <h1>Veil Admin Console (v2.0)</h1>
             <div class="form-group">
                 <label>Admin Secret</label>
-                <input type="password" id="adminSecret" value="veil-admin-2026" />
+                <input type="password" id="adminSecret" placeholder="From secrets manager" autocomplete="off" />
             </div>
             <div id="status"></div>
         </div>
@@ -248,6 +248,18 @@
         const batchCompensationBody = document.getElementById('batchCompensationBody');
         const auditLogBody = document.getElementById('auditLogBody');
 
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"'\/`]/g, (character) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+                '/': '&#47;',
+                '`': '&#96;'
+            })[character] || character);
+        }
+
         function showStatus(msg, type) {
             statusDiv.textContent = msg;
             statusDiv.className = type === 'error' ? 'status-error' : 'status-success';
@@ -304,12 +316,12 @@
 
             compensationHistoryBody.innerHTML = items.map((item) => `
                 <tr>
-                    <td>${item.createdAt}</td>
+                    <td>${escapeHtml(item.createdAt)}</td>
                     <td>${item.type === 'deduct' ? '扣减' : '发放'}</td>
-                    <td>${item.currency}</td>
-                    <td>${item.amount}</td>
-                    <td>${item.previousBalance} -> ${item.balanceAfter}</td>
-                    <td>${item.reason}</td>
+                    <td>${escapeHtml(item.currency)}</td>
+                    <td>${escapeHtml(item.amount)}</td>
+                    <td>${escapeHtml(item.previousBalance)} -> ${escapeHtml(item.balanceAfter)}</td>
+                    <td>${escapeHtml(item.reason)}</td>
                 </tr>
             `).join('');
         }
@@ -327,12 +339,12 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">加载失败：${escapeHtml(data.error || res.status)}</td></tr>`;
                     return;
                 }
                 renderCompensationHistory(data.items || []);
             } catch (e) {
-                compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">网络错误：${e.message}</td></tr>`;
+                compensationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">网络错误：${escapeHtml(e.message)}</td></tr>`;
             }
         }
 
@@ -377,12 +389,12 @@
 
         function renderPlayerOverview(data) {
             playerOverviewBody.innerHTML = `
-                <tr><td><strong>${data.account.displayName || data.playerId}</strong> · ${data.playerId}</td></tr>
-                <tr><td>段位：${data.account.rankDivision || '-'} · Elo：${data.account.eloRating || 0} · 战令：${data.account.seasonPassTier || 0}</td></tr>
-                <tr><td>封禁状态：${data.moderation.currentBan?.banStatus || 'none'} · 工单 ${data.supportTickets.length} · 举报 ${data.reports.againstPlayer.length} · 邮件 ${(data.mailbox || []).length}</td></tr>
-                <tr><td>最近补偿：${data.compensationHistory[0] ? `${data.compensationHistory[0].currency} ${data.compensationHistory[0].amount} (${data.compensationHistory[0].reason})` : '无'}</td></tr>
-                <tr><td>最近消费：${data.purchaseHistory.items[0] ? `${data.purchaseHistory.items[0].itemId} / ${data.purchaseHistory.items[0].amount}` : '无'}</td></tr>
-                <tr><td>最近战斗：${data.battleHistory[0] ? `${data.battleHistory[0].battleId} / ${data.battleHistory[0].status}` : '无'}</td></tr>
+                <tr><td><strong>${escapeHtml(data.account.displayName || data.playerId)}</strong> · ${escapeHtml(data.playerId)}</td></tr>
+                <tr><td>段位：${escapeHtml(data.account.rankDivision || '-')} · Elo：${escapeHtml(data.account.eloRating || 0)} · 战令：${escapeHtml(data.account.seasonPassTier || 0)}</td></tr>
+                <tr><td>封禁状态：${escapeHtml(data.moderation.currentBan?.banStatus || 'none')} · 工单 ${escapeHtml(data.supportTickets.length)} · 举报 ${escapeHtml(data.reports.againstPlayer.length)} · 邮件 ${escapeHtml((data.mailbox || []).length)}</td></tr>
+                <tr><td>最近补偿：${data.compensationHistory[0] ? `${escapeHtml(data.compensationHistory[0].currency)} ${escapeHtml(data.compensationHistory[0].amount)} (${escapeHtml(data.compensationHistory[0].reason)})` : '无'}</td></tr>
+                <tr><td>最近消费：${data.purchaseHistory.items[0] ? `${escapeHtml(data.purchaseHistory.items[0].itemId)} / ${escapeHtml(data.purchaseHistory.items[0].amount)}` : '无'}</td></tr>
+                <tr><td>最近战斗：${data.battleHistory[0] ? `${escapeHtml(data.battleHistory[0].battleId)} / ${escapeHtml(data.battleHistory[0].status)}` : '无'}</td></tr>
             `;
         }
 
@@ -398,12 +410,12 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    playerOverviewBody.innerHTML = `<tr><td class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    playerOverviewBody.innerHTML = `<tr><td class="empty-state">加载失败：${escapeHtml(data.error || res.status)}</td></tr>`;
                     return;
                 }
                 renderPlayerOverview(data);
             } catch (e) {
-                playerOverviewBody.innerHTML = `<tr><td class="empty-state">网络错误：${e.message}</td></tr>`;
+                playerOverviewBody.innerHTML = `<tr><td class="empty-state">网络错误：${escapeHtml(e.message)}</td></tr>`;
             }
         }
 
@@ -433,7 +445,7 @@
             }
             batchCompensationBody.innerHTML = data.targets.map((target) => `
                 <tr>
-                    <td><strong>${target.displayName}</strong> · ${target.playerId} · 段位 ${target.rankDivision || '-'} · Elo ${target.eloRating || 0}</td>
+                    <td><strong>${escapeHtml(target.displayName)}</strong> · ${escapeHtml(target.playerId)} · 段位 ${escapeHtml(target.rankDivision || '-')} · Elo ${escapeHtml(target.eloRating || 0)}</td>
                 </tr>
             `).join('');
         }
@@ -491,7 +503,7 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    auditLogBody.innerHTML = `<tr><td class="empty-state">加载失败：${data.error || res.status}</td></tr>`;
+                    auditLogBody.innerHTML = `<tr><td class="empty-state">加载失败：${escapeHtml(data.error || res.status)}</td></tr>`;
                     return;
                 }
                 if (!(data.items || []).length) {
@@ -499,10 +511,10 @@
                     return;
                 }
                 auditLogBody.innerHTML = (data.items || []).map((item) => `
-                    <tr><td><strong>${item.action}</strong> · ${item.actorPlayerId} · ${item.targetPlayerId || item.targetScope || '-'} · ${item.occurredAt}<br/>${item.summary}</td></tr>
+                    <tr><td><strong>${escapeHtml(item.action)}</strong> · ${escapeHtml(item.actorPlayerId)} · ${escapeHtml(item.targetPlayerId || item.targetScope || '-')} · ${escapeHtml(item.occurredAt)}<br/>${escapeHtml(item.summary)}</td></tr>
                 `).join('');
             } catch (e) {
-                auditLogBody.innerHTML = `<tr><td class="empty-state">网络错误：${e.message}</td></tr>`;
+                auditLogBody.innerHTML = `<tr><td class="empty-state">网络错误：${escapeHtml(e.message)}</td></tr>`;
             }
         }
 
@@ -514,14 +526,14 @@
 
             reportList.innerHTML = items.map((report) => `
                 <div class="report-row">
-                    <div><strong>${report.reportId}</strong> · ${report.reporterId} -> ${report.targetId}</div>
-                    <p>原因：${report.reason} · 房间：${report.roomId} · 状态：${report.status}</p>
-                    <p>创建时间：${report.createdAt}${report.description ? `\n说明：${report.description}` : ''}</p>
+                    <div><strong>${escapeHtml(report.reportId)}</strong> · ${escapeHtml(report.reporterId)} -> ${escapeHtml(report.targetId)}</div>
+                    <p>原因：${escapeHtml(report.reason)} · 房间：${escapeHtml(report.roomId)} · 状态：${escapeHtml(report.status)}</p>
+                    <p>创建时间：${escapeHtml(report.createdAt)}${report.description ? `\n说明：${escapeHtml(report.description)}` : ''}</p>
                     ${report.status === 'pending' ? `
                         <div class="report-actions">
-                            <button data-report-id="${report.reportId}" data-status="dismissed">驳回</button>
-                            <button data-report-id="${report.reportId}" data-status="warned">警告</button>
-                            <button data-report-id="${report.reportId}" data-status="banned">封禁</button>
+                            <button data-report-id="${escapeHtml(report.reportId)}" data-status="dismissed">驳回</button>
+                            <button data-report-id="${escapeHtml(report.reportId)}" data-status="warned">警告</button>
+                            <button data-report-id="${escapeHtml(report.reportId)}" data-status="banned">封禁</button>
                         </div>
                     ` : ''}
                 </div>
@@ -566,13 +578,13 @@
                 });
                 if (!res.ok) {
                     const data = await res.json();
-                    reportList.innerHTML = `<div class="empty-state">加载失败：${data.error || res.status}</div>`;
+                    reportList.innerHTML = `<div class="empty-state">加载失败：${escapeHtml(data.error || res.status)}</div>`;
                     return;
                 }
                 const data = await res.json();
                 renderReports(data.items || []);
             } catch (e) {
-                reportList.innerHTML = `<div class="empty-state">网络错误：${e.message}</div>`;
+                reportList.innerHTML = `<div class="empty-state">网络错误：${escapeHtml(e.message)}</div>`;
             }
         }
 

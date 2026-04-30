@@ -36,6 +36,11 @@ function isProductionEnvironment(env: NodeJS.ProcessEnv): boolean {
   return env.NODE_ENV?.trim().toLowerCase() === "production";
 }
 
+function isUnsafeProductionAdminToken(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "dev-admin-token" || normalized === "veil-admin-2026" || /^dev[-_]/.test(normalized);
+}
+
 function readRequiredEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
   if (!value) {
@@ -177,11 +182,24 @@ function validateProductionRuntimeSecrets(env: NodeJS.ProcessEnv): void {
   if (!isProductionEnvironment(env)) {
     return;
   }
-  if (readRuntimeSecret("VEIL_AUTH_SECRET", env)) {
-    return;
+
+  const missing: RuntimeSecretKey[] = [];
+  if (!readRuntimeSecret("VEIL_AUTH_SECRET", env)) {
+    missing.push("VEIL_AUTH_SECRET");
   }
 
-  throw new Error("VEIL_AUTH_SECRET must be configured for production startup");
+  const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN", env);
+  if (!adminToken) {
+    missing.push("VEIL_ADMIN_TOKEN");
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`${missing.join(", ")} must be configured for production startup`);
+  }
+
+  if (adminToken && isUnsafeProductionAdminToken(adminToken)) {
+    throw new Error("VEIL_ADMIN_TOKEN must be a non-development secret for production startup");
+  }
 }
 
 export function readRuntimeSecret(key: RuntimeSecretKey, env: NodeJS.ProcessEnv = process.env): string | undefined {

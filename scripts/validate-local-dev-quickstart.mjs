@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertSupportedRuntime } from "./runtime-preflight.mjs";
 import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
@@ -11,7 +12,7 @@ export const QUICKSTART_H5_BUILD_SCRIPT = "build:client:h5";
 export const QUICKSTART_H5_DEV_SCRIPT = "dev:client:h5";
 export const QUICKSTART_SERVER_URL = "http://127.0.0.1:2567";
 export const QUICKSTART_HEALTH_CHECKS = ["/api/runtime/health", "/api/runtime/auth-readiness", "/api/lobby/rooms"];
-const QUICKSTART_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
+const QUICKSTART_ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || randomUUID();
 const startupTimeoutMs = 20_000;
 
 function logStep(message) {

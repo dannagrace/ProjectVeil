@@ -148,7 +148,15 @@ const DEV_DAILY_QUEST_SMOKE_ROTATIONS = JSON.stringify({
   ]
 });
 
-function applyDevServerSmokeDefaults(env: NodeJS.ProcessEnv = process.env): void {
+function isProductionRuntimeEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV?.trim().toLowerCase() === "production";
+}
+
+export function applyDevServerSmokeDefaults(env: NodeJS.ProcessEnv = process.env): void {
+  if (isProductionRuntimeEnvironment(env)) {
+    return;
+  }
+
   env.ANALYTICS_SINK ??= env.ANALYTICS_ENDPOINT?.trim() || env.ANALYTICS_HTTP_ENDPOINT?.trim() ? "http" : "stdout";
   env.VEIL_ADMIN_TOKEN ??= "dev-admin-token";
   env.VEIL_DAILY_QUESTS_ENABLED ??= "1";

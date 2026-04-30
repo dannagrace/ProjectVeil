@@ -113,21 +113,33 @@
       const switchRows = document.getElementById("switchRows");
       const summary = document.getElementById("clientVersionSummary");
 
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"'\/`]/g, (character) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#39;",
+          "/": "&#47;",
+          "`": "&#96;"
+        })[character] || character);
+      }
+
       function render(payload) {
         headline.textContent = `已加载 ${payload.serverTime} · activeVersion=${payload.clientMinVersion.activeVersion}`;
         summary.textContent = `默认最低版本 ${payload.clientMinVersion.defaultVersion} · ${
           payload.clientMinVersion.upgradeMessage || "未配置升级提示"
         }`;
         versionRows.innerHTML = Object.entries(payload.clientMinVersion.channels || {})
-          .map(([channel, version]) => `<tr><td>${channel}</td><td>${version}</td></tr>`)
+          .map(([channel, version]) => `<tr><td>${escapeHtml(channel)}</td><td>${escapeHtml(version)}</td></tr>`)
           .join("") || '<tr><td colspan="2" class="muted">当前没有按渠道覆盖。</td></tr>';
         switchRows.innerHTML = payload.killSwitches
           .map((item) => `
             <tr>
-              <td>${item.key}<div class="muted">${item.label}</div></td>
+              <td>${escapeHtml(item.key)}<div class="muted">${escapeHtml(item.label)}</div></td>
               <td><span class="pill ${item.enabled ? "warn" : ""}">${item.enabled ? "enabled" : "disabled"}</span></td>
-              <td>${(item.channels || []).join(", ") || '<span class="muted">all</span>'}</td>
-              <td>${item.summary || '<span class="muted">无备注</span>'}</td>
+              <td>${(item.channels || []).length ? escapeHtml((item.channels || []).join(", ")) : '<span class="muted">all</span>'}</td>
+              <td>${item.summary ? escapeHtml(item.summary) : '<span class="muted">无备注</span>'}</td>
             </tr>
           `)
           .join("");

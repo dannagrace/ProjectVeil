@@ -13,7 +13,7 @@ const DEFAULT_SERVER_WS_URL = "ws://127.0.0.1:2567";
 const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LIMIT = 80;
-const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
+const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || randomUUID();
 
 export interface SmokeRuntimeTargets {
   serverUrl: string;
@@ -116,7 +116,7 @@ function runBlockingStep(label: string, args: readonly string[]): void {
 function spawnManagedProcess(label: string, args: readonly string[]): RunningProcess {
   const child = spawn(npmCommand(), [...args], {
     cwd: process.cwd(),
-    env: process.env,
+    env: { ...process.env, VEIL_ADMIN_TOKEN: ADMIN_TOKEN },
     stdio: ["ignore", "pipe", "pipe"]
   });
   const logTail: string[] = [];

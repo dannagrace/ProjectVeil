@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { listSharedLobbyRooms } from "@server/transport/colyseus-room/VeilColyseusRoom";
-import { startDevServer, type DevServerBootstrapDependencies } from "@server/infra/dev-server";
+import { applyDevServerSmokeDefaults, startDevServer, type DevServerBootstrapDependencies } from "@server/infra/dev-server";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "@server/domain/ops/observability";
 import type {
   MySqlPersistenceConfig,
@@ -14,6 +14,17 @@ interface TestLogger {
   warnings: string[];
   errors: Array<{ message: string; error: unknown }>;
 }
+
+test("dev-server smoke defaults do not inject admin credentials in production", () => {
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: "production"
+  };
+
+  applyDevServerSmokeDefaults(env);
+
+  assert.equal(env.VEIL_ADMIN_TOKEN, undefined);
+  assert.equal(env.VEIL_RATE_LIMIT_HTTP_ADMIN_MAX, undefined);
+});
 
 interface TestProcess {
   handlers: Partial<
@@ -795,8 +806,10 @@ test("dev server exits non-zero in production when schema migrations are pending
   };
   const originalNodeEnv = process.env.NODE_ENV;
   const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.NODE_ENV = "production";
   process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
+  process.env.VEIL_ADMIN_TOKEN = "production-admin-token-for-test";
   let memoryStoreCreated = false;
   let mysqlStoreCreated = false;
   let mysqlConfigStoreCreated = false;
@@ -869,6 +882,11 @@ test("dev server exits non-zero in production when schema migrations are pending
     } else {
       process.env.VEIL_AUTH_SECRET = originalAuthSecret;
     }
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+    }
   }
 
   assert.equal(memoryStoreCreated, false);
@@ -908,8 +926,10 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
   };
   const originalNodeEnv = process.env.NODE_ENV;
   const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.NODE_ENV = "production";
   process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
+  process.env.VEIL_ADMIN_TOKEN = "production-admin-token-for-test";
   let memoryStoreCreated = false;
 
   try {
@@ -973,6 +993,11 @@ test("dev server exits non-zero in production when MySQL bootstrap fails instead
       delete process.env.VEIL_AUTH_SECRET;
     } else {
       process.env.VEIL_AUTH_SECRET = originalAuthSecret;
+    }
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
     }
   }
 
@@ -1470,8 +1495,10 @@ test("dev server fails closed when backup storage validation warns in production
   const memoryStore = createMemoryStore();
   const originalNodeEnv = process.env.NODE_ENV;
   const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.NODE_ENV = "production";
   process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
+  process.env.VEIL_ADMIN_TOKEN = "production-admin-token-for-test";
 
   try {
     await assert.rejects(
@@ -1508,6 +1535,11 @@ test("dev server fails closed when backup storage validation warns in production
     } else {
       process.env.VEIL_AUTH_SECRET = originalAuthSecret;
     }
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
+    }
   }
 
   assert.equal(configCenterStore.initializeCalls, 1);
@@ -1525,9 +1557,11 @@ test("dev server emits a prominent production warning when SENTRY_DSN is absent"
   const originalNodeEnv = process.env.NODE_ENV;
   const originalSentryDsn = process.env.SENTRY_DSN;
   const originalAuthSecret = process.env.VEIL_AUTH_SECRET;
+  const originalAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.NODE_ENV = "production";
   delete process.env.SENTRY_DSN;
   process.env.VEIL_AUTH_SECRET = "dev-server-production-test-secret";
+  process.env.VEIL_ADMIN_TOKEN = "production-admin-token-for-test";
 
   try {
     await startDevServer(3112, "127.0.0.1", {
@@ -1589,6 +1623,11 @@ test("dev server emits a prominent production warning when SENTRY_DSN is absent"
       delete process.env.VEIL_AUTH_SECRET;
     } else {
       process.env.VEIL_AUTH_SECRET = originalAuthSecret;
+    }
+    if (originalAdminToken === undefined) {
+      delete process.env.VEIL_ADMIN_TOKEN;
+    } else {
+      process.env.VEIL_ADMIN_TOKEN = originalAdminToken;
     }
   }
 

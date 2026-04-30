@@ -20,6 +20,7 @@ export * from "./display-name-validation.ts";
 export * from "./equipment.ts";
 export * from "./error-codes.ts";
 export * from "./event-log.ts";
+export * from "./escape-html.ts";
 export * from "./feature-flags.ts";
 export * from "./feedback.ts";
 export * from "./guilds.ts";

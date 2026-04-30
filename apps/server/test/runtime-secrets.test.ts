@@ -124,3 +124,48 @@ test("loadRuntimeSecrets rejects production env startup when VEIL_AUTH_SECRET is
     }
   }
 });
+
+test("loadRuntimeSecrets rejects production env startup when VEIL_ADMIN_TOKEN is missing", { concurrency: false }, async () => {
+  resetRuntimeSecretsForTest();
+
+  await assert.rejects(
+    loadRuntimeSecrets({
+      ...process.env,
+      NODE_ENV: "production",
+      VEIL_SECRET_PROVIDER: "env",
+      VEIL_AUTH_SECRET: "production-auth-secret",
+      VEIL_ADMIN_TOKEN: undefined
+    }),
+    /VEIL_ADMIN_TOKEN/
+  );
+
+  resetRuntimeSecretsForTest();
+});
+
+test("loadRuntimeSecrets rejects development admin tokens in production", { concurrency: false }, async () => {
+  resetRuntimeSecretsForTest();
+
+  await assert.rejects(
+    loadRuntimeSecrets({
+      ...process.env,
+      NODE_ENV: "production",
+      VEIL_SECRET_PROVIDER: "env",
+      VEIL_AUTH_SECRET: "production-auth-secret",
+      VEIL_ADMIN_TOKEN: "dev-admin-token"
+    }),
+    /VEIL_ADMIN_TOKEN must be a non-development secret/
+  );
+
+  await assert.rejects(
+    loadRuntimeSecrets({
+      ...process.env,
+      NODE_ENV: "production",
+      VEIL_SECRET_PROVIDER: "env",
+      VEIL_AUTH_SECRET: "production-auth-secret",
+      VEIL_ADMIN_TOKEN: "veil-admin-2026"
+    }),
+    /VEIL_ADMIN_TOKEN must be a non-development secret/
+  );
+
+  resetRuntimeSecretsForTest();
+});

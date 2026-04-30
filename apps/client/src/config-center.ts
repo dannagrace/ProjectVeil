@@ -1,3 +1,4 @@
+import { escapeHtml } from "@veil/shared/escape-html";
 import { createConfigCenterController, MAX_STAGE_DOCUMENTS } from "./config-center-controller";
 
 type ConfigDocumentId =
@@ -963,15 +964,6 @@ function initializeConfigCenterRuntime(): void {
 function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function currentParseState(): { valid: boolean; detail: string; rootKeys: number } {
