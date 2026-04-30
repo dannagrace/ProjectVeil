@@ -601,6 +601,9 @@ test("queued token delivery processing lock is renewed and stale releases are co
   );
 
   assert.match(source, /renewProcessingLock\?/);
+  assert.match(source, /const persistence = queuePersistence;/);
+  assert.doesNotMatch(source, /queuePersistence\s*\?\s*\.\s*renewProcessingLock/);
+  assert.doesNotMatch(source, /queuePersistence\s*\.\s*releaseProcessingLock/);
   assert.match(source, /recordAuthTokenDeliveryProcessingLockRenewFailure/);
   assert.match(source, /recordAuthTokenDeliveryProcessingLockLost/);
   assert.match(source, /recordAuthTokenDeliveryProcessingLockReleaseStale/);

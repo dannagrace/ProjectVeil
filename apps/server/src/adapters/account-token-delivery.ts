@@ -1178,12 +1178,13 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
 }
 
 async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext) => Promise<void>): Promise<void> {
-  if (!queuePersistence?.acquireProcessingLock) {
+  const persistence = queuePersistence;
+  if (!persistence?.acquireProcessingLock) {
     await action({ isLockLost: () => false });
     return;
   }
 
-  const lockAcquired = await queuePersistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
+  const lockAcquired = await persistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
   if (!lockAcquired) {
     scheduleQueuePump();
     return;
@@ -1192,25 +1193,30 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
   let lockLost = false;
   let consecutiveRenewFailures = 0;
   const renewInterval =
-    queuePersistence.renewProcessingLock &&
+    persistence.renewProcessingLock &&
     setInterval(() => {
       if (lockLost) {
         return;
       }
-      void queuePersistence?.renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS).catch((error: unknown) => {
-        recordAuthTokenDeliveryProcessingLockRenewFailure();
-        consecutiveRenewFailures += 1;
-        console.warn("[account-token-delivery] Processing lock renewal failed", {
-          error: error instanceof Error ? error.message : String(error)
-        });
-        if (consecutiveRenewFailures >= QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE) {
-          lockLost = true;
-          recordAuthTokenDeliveryProcessingLockLost();
-          if (renewInterval) {
-            clearInterval(renewInterval);
+      void persistence
+        .renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS)
+        .then(() => {
+          consecutiveRenewFailures = 0;
+        })
+        .catch((error: unknown) => {
+          recordAuthTokenDeliveryProcessingLockRenewFailure();
+          consecutiveRenewFailures += 1;
+          console.warn("[account-token-delivery] Processing lock renewal failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          if (consecutiveRenewFailures >= QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE) {
+            lockLost = true;
+            recordAuthTokenDeliveryProcessingLockLost();
+            if (renewInterval) {
+              clearInterval(renewInterval);
+            }
           }
-        }
-      });
+        });
     }, Math.max(100, Math.floor(QUEUE_PROCESSING_LOCK_TTL_MS / 2)));
 
   try {
@@ -1222,7 +1228,7 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
     if (renewInterval) {
       clearInterval(renewInterval);
     }
-    const released = await queuePersistence.releaseProcessingLock?.();
+    const released = await persistence.releaseProcessingLock?.();
     if (released === false) {
       recordAuthTokenDeliveryProcessingLockReleaseStale();
     }
@@ -1239,14 +1245,15 @@ async function processQueuedDeliveries(): Promise<void> {
   try {
     await withQueueProcessingLock(async (lock) => {
       while (!lock.isLockLost()) {
-      const dueEntry = Array.from(queuedDeliveries.values())
-        .sort((left, right) => left.nextAttemptAt - right.nextAttemptAt)[0];
-      if (!dueEntry || dueEntry.nextAttemptAt > Date.now()) {
-        break;
-      }
+        const dueEntry = Array.from(queuedDeliveries.values()).sort(
+          (left, right) => left.nextAttemptAt - right.nextAttemptAt
+        )[0];
+        if (!dueEntry || dueEntry.nextAttemptAt > Date.now()) {
+          break;
+        }
 
-      await processQueuedDelivery(dueEntry);
-    }
+        await processQueuedDelivery(dueEntry);
+      }
     });
   } finally {
     queueProcessing = false;
