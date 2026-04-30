@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RoomSnapshotStore } from "@server/persistence";
+import type { AdminAuditLogCreateInput, AdminAuditLogRecord, RoomSnapshotStore } from "@server/persistence";
 import { loadReengagementPolicies, previewReengagementCandidates, runReengagementSweep } from "@server/domain/ops/reengagement";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
@@ -24,6 +24,28 @@ function readAdminSecret(): string | null {
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
   return timingSafeCompareAdminToken(request.headers["x-veil-admin-secret"], adminSecret);
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
 }
 
 export function registerReengagementAdminRoutes(app: AdminApp, store: RoomSnapshotStore | null): void {
@@ -64,6 +86,21 @@ export function registerReengagementAdminRoutes(app: AdminApp, store: RoomSnapsh
     }
     const result = await runReengagementSweep(store, {
       policies: loadReengagementPolicies()
+    });
+    await appendAdminAuditLogIfAvailable(store, {
+      actorPlayerId: "admin:reengagement",
+      actorRole: "admin",
+      action: "reengagement_run",
+      targetScope: "reengagement-sweep",
+      summary: "Ran reengagement sweep",
+      metadataJson: JSON.stringify({
+        candidatesEvaluated: result.candidates.length,
+        deliveries: result.deliveries.length,
+        skipped: result.skipped.length,
+        deliveredPlayerIds: result.deliveries.map((entry) => entry.playerId),
+        requestIp: readRequestIp(request)
+      }),
+      occurredAt: result.processedAt
     });
     sendJson(response, 200, result);
   });

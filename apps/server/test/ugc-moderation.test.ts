@@ -6,7 +6,16 @@ import { tmpdir } from "node:os";
 
 import { normalizeGuildState } from "@veil/shared/social";
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
-import { appendUgcCandidateKeyword, buildUgcReviewQueue, resolveUgcReviewEntry, scoreUgcContent } from "@server/domain/social/ugc-moderation";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
+import {
+  appendUgcCandidateKeyword,
+  buildUgcReviewQueue,
+  getUgcModerationConfigMeta,
+  loadUgcModerationConfig,
+  resolveUgcReviewEntry,
+  scoreUgcContent,
+  validateUgcModerationConfigForStartup
+} from "@server/domain/social/ugc-moderation";
 
 async function withKeywordConfig(t: { after(fn: () => void | Promise<void>): void }, payload: unknown): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "veil-ugc-review-"));
@@ -133,6 +142,46 @@ test("appendUgcCandidateKeyword appends unique normalized terms", async (t) => {
   });
   const config = appendUgcCandidateKeyword("Discord-123", filePath);
   assert.equal(config.candidateTerms.includes("discord123"), true);
+});
+
+test("loadUgcModerationConfig records file fallback failures and startup rejects empty production config", async (t) => {
+  resetRuntimeObservability();
+  const errors: unknown[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args);
+  };
+  t.after(() => {
+    console.error = originalError;
+    resetRuntimeObservability();
+  });
+
+  const config = loadUgcModerationConfig(path.join(tmpdir(), `missing-ugc-${Date.now()}.json`));
+  const meta = getUgcModerationConfigMeta();
+
+  assert.deepEqual(config.candidateTerms, []);
+  assert.equal(meta.loadSource, "fallback-empty");
+  assert.equal(meta.candidateTermsCount, 0);
+  assert.equal(errors.length, 1);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_ugc_moderation_config_load_failures_total 1$/m);
+
+  await assert.rejects(
+    () =>
+      validateUgcModerationConfigForStartup(
+        {
+          configStorage: {
+            async load() {
+              return { schemaVersion: 1, reviewThreshold: 40, approvedTerms: [], candidateTerms: [] };
+            },
+            async save(config) {
+              return config;
+            }
+          }
+        },
+        { NODE_ENV: "production" } as NodeJS.ProcessEnv
+      ),
+    /0 candidate terms/
+  );
 });
 
 test("resolveUgcReviewEntry persists rejected candidate keywords through injected config storage", async (t) => {

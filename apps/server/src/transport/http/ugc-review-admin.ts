@@ -1,7 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
-import { buildUgcReviewQueue, resolveUgcReviewEntry, type UgcModerationConfigStorage } from "@server/domain/social/ugc-moderation";
+import {
+  buildUgcReviewQueue,
+  getUgcModerationConfigMeta,
+  resolveUgcReviewEntry,
+  type UgcModerationConfigStorage
+} from "@server/domain/social/ugc-moderation";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 type AdminRouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;
@@ -62,7 +67,10 @@ export function registerUgcReviewAdminRoutes(
       sendJson(response, 503, { error: "UGC moderation queue requires configured room persistence storage" });
       return;
     }
-    sendJson(response, 200, { items: await buildUgcReviewQueue(store, options) });
+    sendJson(response, 200, {
+      items: await buildUgcReviewQueue(store, options),
+      configMeta: getUgcModerationConfigMeta()
+    });
   });
 
   app.post("/api/admin/ugc-review/:itemId/resolve", async (request, response) => {

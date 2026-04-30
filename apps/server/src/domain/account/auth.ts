@@ -14,12 +14,16 @@ import {
   recordAuthAccountBinding,
   recordAuthAccountLogin,
   recordAuthAccountRegistration,
+  recordAccountRegistrationStateRedisReadFailure,
+  recordAccountRegistrationStateRedisWriteFailure,
   recordAuthCredentialStuffingBlocked,
   recordAuthGuestLogin,
   recordAuthInvalidCredentials,
   recordAuthLogout,
   recordAuthRateLimited,
   recordAuthTokenDeliveryFailure,
+  recordPasswordRecoveryStateRedisReadFailure,
+  recordPasswordRecoveryStateRedisWriteFailure,
   recordAuthRefresh,
   recordAuthSessionCheck,
   recordAuthSessionFailure,
@@ -1058,7 +1062,11 @@ async function getAccountRegistrationState(loginId: string): Promise<AccountRegi
     accountRegistrationStateByLoginId.set(loginId, state);
     syncAuthStateTelemetry();
     return state;
-  } catch {
+  } catch (error) {
+    recordAccountRegistrationStateRedisReadFailure();
+    console.error("[auth] account-registration state read fallback to local", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return getLocalAccountRegistrationState(loginId);
   }
 }
@@ -1086,8 +1094,11 @@ async function storeAccountRegistrationState(loginId: string, requestedDisplayNa
         "PX",
         getAccountRegistrationStateTtlMs(state)
       );
-    } catch {
-      // Keep local fallback state when Redis is unavailable.
+    } catch (error) {
+      recordAccountRegistrationStateRedisWriteFailure();
+      console.error("[auth] account-registration state write fallback to local", {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   return state;
@@ -1190,7 +1201,11 @@ async function getPasswordRecoveryState(loginId: string): Promise<PasswordRecove
     passwordRecoveryStateByLoginId.set(loginId, state);
     syncAuthStateTelemetry();
     return state;
-  } catch {
+  } catch (error) {
+    recordPasswordRecoveryStateRedisReadFailure();
+    console.error("[auth] password-recovery state read fallback to local", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return getLocalPasswordRecoveryState(loginId);
   }
 }
@@ -1218,8 +1233,11 @@ async function storePasswordRecoveryState(playerId: string, loginId: string, tok
         "PX",
         getPasswordRecoveryStateTtlMs(state)
       );
-    } catch {
-      // Keep local fallback state when Redis is unavailable.
+    } catch (error) {
+      recordPasswordRecoveryStateRedisWriteFailure();
+      console.error("[auth] password-recovery state write fallback to local", {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   return state;
@@ -2908,6 +2926,13 @@ export const __authRateLimitInternals = {
   consumeAuthRateLimit,
   consumeSlidingWindowRateLimit,
   AUTH_RATE_LIMIT_REDIS_SCRIPT
+};
+
+export const __authStateInternals = {
+  getAccountRegistrationState,
+  storeAccountRegistrationState,
+  getPasswordRecoveryState,
+  storePasswordRecoveryState
 };
 
 export function registerAuthRoutes(

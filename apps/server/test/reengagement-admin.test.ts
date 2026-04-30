@@ -117,6 +117,9 @@ test("reengagement admin routes preview candidates and run a sweep", async (t) =
   const runPayload = JSON.parse(runResponse.body) as { deliveries: Array<{ playerId: string }> };
   assert.equal(runResponse.statusCode, 200);
   assert.equal(runPayload.deliveries[0]?.playerId, "player-reengage");
+  const audits = await store.listAdminAuditLogs?.({ action: "reengagement_run", targetScope: "reengagement-sweep", limit: 5 });
+  assert.equal(audits?.length, 1);
+  assert.match(audits?.[0]?.metadataJson ?? "", /player-reengage/);
 });
 
 test("reengagement admin routes reject invalid admin secret", async (t) => {

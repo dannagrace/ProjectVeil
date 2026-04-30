@@ -15,11 +15,13 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LIMIT = 80;
 const ADMIN_TOKEN = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
 
-interface SmokeRuntimeTargets {
+export interface SmokeRuntimeTargets {
   serverUrl: string;
   clientUrl: string;
   serverWsUrl: string;
 }
+
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export function resolveSmokeRuntimeTargets(env: NodeJS.ProcessEnv): SmokeRuntimeTargets {
   return {
@@ -31,6 +33,21 @@ export function resolveSmokeRuntimeTargets(env: NodeJS.ProcessEnv): SmokeRuntime
 
 const SMOKE_RUNTIME_TARGETS = resolveSmokeRuntimeTargets(process.env);
 const { serverUrl: SERVER_URL, clientUrl: CLIENT_URL, serverWsUrl: SERVER_WS_URL } = SMOKE_RUNTIME_TARGETS;
+
+interface GuestAuthPayload {
+  session?: {
+    playerId?: string | null;
+    displayName?: string | null;
+    token?: string | null;
+  } | null;
+}
+
+export interface SmokeGuestAuthContext {
+  headers: Record<string, string>;
+  token: string;
+  playerId: string;
+  displayName: string;
+}
 
 interface HttpJsonResponse<T> {
   status: number;
@@ -138,6 +155,53 @@ async function fetchJson<T>(url: string, headers?: Record<string, string>): Prom
   };
 }
 
+export async function createSmokeGuestAuthContext(
+  fetchImpl: FetchLike = fetch,
+  targets: SmokeRuntimeTargets = SMOKE_RUNTIME_TARGETS
+): Promise<SmokeGuestAuthContext> {
+  const url = `${targets.serverUrl}/api/auth/guest-login`;
+  const response = await fetchImpl(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      displayName: "Smoke Runner",
+      privacyConsentAccepted: true
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`POST ${url} returned HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as GuestAuthPayload;
+  const playerId = payload.session?.playerId?.trim();
+  const token = payload.session?.token?.trim();
+  const displayName = payload.session?.displayName?.trim() || "Smoke Runner";
+  if (!playerId) {
+    throw new Error("guest auth response is missing session.playerId");
+  }
+  if (!token) {
+    throw new Error("guest auth response is missing session.token");
+  }
+
+  return {
+    headers: {
+      Authorization: `Bearer ${token}`
+    },
+    token,
+    playerId,
+    displayName
+  };
+}
+
+export async function createSmokeGuestAuthHeaders(
+  fetchImpl: FetchLike = fetch,
+  targets: SmokeRuntimeTargets = SMOKE_RUNTIME_TARGETS
+): Promise<Record<string, string>> {
+  return (await createSmokeGuestAuthContext(fetchImpl, targets)).headers;
+}
+
 async function fetchRuntimeHealth(url: string, label: string): Promise<HttpJsonResponse<RuntimeStatusPayload>> {
   const response = await fetch(url);
   const body = (await response.json()) as RuntimeStatusPayload;
@@ -166,7 +230,7 @@ async function waitFor(check: () => Promise<void>, description: string, timeoutM
   throw new Error(`${description} did not become ready within ${timeoutMs / 1000}s: ${reason}`);
 }
 
-async function verifyClientBoot(): Promise<void> {
+async function verifyClientBoot(authHeaders: Record<string, string>): Promise<void> {
   await waitFor(
     async () => {
       const html = await fetchText(`${CLIENT_URL}/`);
@@ -192,7 +256,7 @@ async function verifyClientBoot(): Promise<void> {
     throw new Error(`client-proxied auth readiness is ${JSON.stringify(authReadiness.body)}`);
   }
 
-  const lobbyRooms = await fetchJson<LobbyRoomsPayload>(`${CLIENT_URL}/api/lobby/rooms`);
+  const lobbyRooms = await fetchJson<LobbyRoomsPayload>(`${CLIENT_URL}/api/lobby/rooms`, authHeaders);
   if (!Array.isArray(lobbyRooms.body.items)) {
     throw new Error("client-proxied lobby rooms payload is missing items[]");
   }
@@ -243,14 +307,15 @@ async function waitForMessage<T extends ServerMessage["type"]>(
   });
 }
 
-async function verifyRoomJoin(): Promise<void> {
+async function verifyRoomJoin(authContext: SmokeGuestAuthContext): Promise<void> {
   const roomId = `client-boot-room-smoke-${Date.now()}`;
-  const playerId = "player-1";
+  const playerId = authContext.playerId;
   const requestId = randomUUID();
   const client = new Client(SERVER_WS_URL);
   const room = await client.joinOrCreate("veil", {
     logicalRoomId: roomId,
     playerId,
+    authToken: authContext.token,
     seed: 1001
   });
 
@@ -261,7 +326,8 @@ async function verifyRoomJoin(): Promise<void> {
       requestId,
       roomId,
       playerId,
-      displayName: "Smoke Runner"
+      authToken: authContext.token,
+      displayName: authContext.displayName
     };
     room.send("connect", connectMessage);
 
@@ -276,7 +342,7 @@ async function verifyRoomJoin(): Promise<void> {
 
     await waitFor(
       async () => {
-        const lobbyRooms = await fetchJson<LobbyRoomsPayload>(`${SERVER_URL}/api/lobby/rooms`);
+        const lobbyRooms = await fetchJson<LobbyRoomsPayload>(`${SERVER_URL}/api/lobby/rooms`, authContext.headers);
         const summary = lobbyRooms.body.items?.find((item) => item.roomId === roomId);
         if (!summary) {
           throw new Error("joined room is not visible in lobby summary");
@@ -305,10 +371,12 @@ async function main(): Promise<void> {
   try {
     logStep("waiting for server readiness");
     await waitForServerReadiness();
+    logStep("creating guest auth session");
+    const authContext = await createSmokeGuestAuthContext();
     logStep("verifying client boot surface");
-    await verifyClientBoot();
+    await verifyClientBoot(authContext.headers);
     logStep("verifying room join flow");
-    await verifyRoomJoin();
+    await verifyRoomJoin(authContext);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${message}${formatLogTail(processes)}`);

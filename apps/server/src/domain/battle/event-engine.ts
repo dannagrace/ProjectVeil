@@ -11,9 +11,13 @@ import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import {
   recordSeasonalEventOpsAuditLocalFallbackWrite,
+  recordSeasonalEventOpsAuditMySqlPersistFailure,
   recordSeasonalEventOpsAuditPersistFailure,
   recordSeasonalEventOpsAuditPersistSuccess,
-  recordSeasonalEventOpsAuditReadFailure
+  recordSeasonalEventOpsAuditReadFailure,
+  recordSeasonalEventRuntimeOverrideLocalFallbackWrite,
+  recordSeasonalEventRuntimeOverridePersistFailure,
+  recordSeasonalEventRuntimeOverrideReadFailure
 } from "@server/domain/ops/observability";
 import {
   consumeRedisBackedOrLocalRateLimit,
@@ -90,6 +94,16 @@ export interface SeasonalEventOpsAuditRedisClient {
   expire?(key: string, seconds: number): Promise<unknown>;
 }
 
+export interface SeasonalEventOpsAuditArchiveStore {
+  appendSeasonalEventOpsAuditLog?(entry: SeasonalEventOpsAuditEntry): Promise<unknown>;
+  listSeasonalEventOpsAuditLogs?(options?: {
+    since?: string;
+    actor?: string;
+    eventId?: string;
+    limit?: number;
+  }): Promise<SeasonalEventOpsAuditEntry[]>;
+}
+
 export interface RegisterEventRoutesOptions {
   now?: () => Date;
   eventIndexDocument?: SeasonalEventsDocument;
@@ -152,6 +166,21 @@ interface SeasonalEventOpsAuditAppendResult {
 
 interface SeasonalEventOpsAuditListResult {
   entries: SeasonalEventOpsAuditEntry[];
+  degraded: boolean;
+  source: "redis-recent" | "mysql-archived" | "local";
+}
+
+interface SeasonalEventRuntimeOverrideLoadResult {
+  override: SeasonalEventRuntimeOverride | null;
+  degraded: boolean;
+}
+
+interface SeasonalEventRuntimeOverrideApplyResult {
+  degraded: boolean;
+}
+
+interface SeasonalEventClusterStateResult {
+  events: SeasonalEventDefinition[];
   degraded: boolean;
 }
 
@@ -372,9 +401,16 @@ function parseSeasonalEventOpsAuditEntry(value: string): SeasonalEventOpsAuditEn
 
 async function appendSeasonalEventOpsAuditEntryWithSharedStore(
   entry: Omit<SeasonalEventOpsAuditEntry, "id">,
-  redisClient: SeasonalEventOpsAuditRedisClient | null
+  redisClient: SeasonalEventOpsAuditRedisClient | null,
+  archiveStore?: SeasonalEventOpsAuditArchiveStore | null
 ): Promise<SeasonalEventOpsAuditAppendResult> {
   const auditEntry = createSeasonalEventOpsAuditEntry(entry);
+  if (archiveStore?.appendSeasonalEventOpsAuditLog) {
+    void archiveStore.appendSeasonalEventOpsAuditLog(cloneSeasonalEventOpsAuditEntry(auditEntry)).catch((error: unknown) => {
+      recordSeasonalEventOpsAuditMySqlPersistFailure();
+      console.error("Seasonal event ops audit archive persistence failed", error);
+    });
+  }
   if (!redisClient) {
     rememberLocalSeasonalEventOpsAuditEntry(auditEntry);
     return { entry: auditEntry, degraded: false };
@@ -397,32 +433,65 @@ async function appendSeasonalEventOpsAuditEntryWithSharedStore(
 }
 
 async function listSeasonalEventOpsAuditTrailWithSharedStore(
-  redisClient: SeasonalEventOpsAuditRedisClient | null
+  redisClient: SeasonalEventOpsAuditRedisClient | null,
+  archiveStore?: SeasonalEventOpsAuditArchiveStore | null,
+  options: { since?: string; actor?: string; eventId?: string; limit?: number } = {}
 ): Promise<SeasonalEventOpsAuditListResult> {
+  const listArchivedAuditLogs = archiveStore?.listSeasonalEventOpsAuditLogs;
+  if (listArchivedAuditLogs && (options.since || options.actor || options.eventId)) {
+    return {
+      entries: await listArchivedAuditLogs.call(archiveStore, options),
+      degraded: false,
+      source: "mysql-archived"
+    };
+  }
+
   if (!redisClient) {
-    return { entries: listSeasonalEventOpsAuditTrail(), degraded: false };
+    if (listArchivedAuditLogs) {
+      return {
+        entries: await listArchivedAuditLogs.call(archiveStore, options),
+        degraded: false,
+        source: "mysql-archived"
+      };
+    }
+    return { entries: listSeasonalEventOpsAuditTrail(), degraded: false, source: "local" };
   }
 
   try {
-    return {
-      entries: (await redisClient.lrange(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1))
+    const entries = (await redisClient.lrange(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY, 0, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES - 1))
         .map(parseSeasonalEventOpsAuditEntry)
         .filter((entry): entry is SeasonalEventOpsAuditEntry => Boolean(entry))
-        .map(cloneSeasonalEventOpsAuditEntry),
-      degraded: false
-    };
+        .map(cloneSeasonalEventOpsAuditEntry);
+    if (listArchivedAuditLogs && entries.length < Math.min(options.limit ?? SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES, SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES)) {
+      const archived = await listArchivedAuditLogs.call(archiveStore, options);
+      const byId = new Map<string, SeasonalEventOpsAuditEntry>();
+      for (const entry of [...entries, ...archived]) {
+        byId.set(entry.id, cloneSeasonalEventOpsAuditEntry(entry));
+      }
+      return {
+        entries: Array.from(byId.values())
+          .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id))
+          .slice(0, Math.max(1, Math.floor(options.limit ?? SEASONAL_EVENT_OPS_AUDIT_MAX_ENTRIES))),
+        degraded: false,
+        source: "mysql-archived"
+      };
+    }
+    return { entries, degraded: false, source: "redis-recent" };
   } catch (error) {
     recordSeasonalEventOpsAuditReadFailure();
     console.error("Seasonal event ops audit read failed; using local fallback", error);
-    return { entries: listSeasonalEventOpsAuditTrail(), degraded: true };
+    return { entries: listSeasonalEventOpsAuditTrail(), degraded: true, source: "local" };
   }
 }
 
-export async function resetSeasonalEventRuntimeState(redisClient?: SeasonalEventOpsAuditRedisClient | null): Promise<void> {
+export async function resetSeasonalEventRuntimeState(
+  redisClient?: (SeasonalEventOpsAuditRedisClient & Pick<RedisClientLike, "del">) | RedisClientLike | null
+): Promise<void> {
   seasonalEventRuntimeOverrides.clear();
   seasonalEventOpsAuditTrail.length = 0;
   if (redisClient?.del) {
     await redisClient.del(SEASONAL_EVENT_OPS_AUDIT_REDIS_LIST_KEY);
+    await redisClient.del(SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY);
   }
 }
 
@@ -485,9 +554,9 @@ function applySeasonalEventRuntimeOverride(
 async function loadSeasonalEventRuntimeOverride(
   redisClient: RedisClientLike | null,
   eventId: string
-): Promise<SeasonalEventRuntimeOverride | null> {
+): Promise<SeasonalEventRuntimeOverrideLoadResult> {
   if (!redisClient) {
-    return seasonalEventRuntimeOverrides.get(eventId) ?? null;
+    return { override: seasonalEventRuntimeOverrides.get(eventId) ?? null, degraded: false };
   }
 
   try {
@@ -495,13 +564,15 @@ async function loadSeasonalEventRuntimeOverride(
     const override = parseSeasonalEventRuntimeOverride(encoded);
     if (override) {
       seasonalEventRuntimeOverrides.set(eventId, cloneSeasonalEventRuntimeOverride(override));
-      return override;
+      return { override, degraded: false };
     }
-  } catch {
-    return seasonalEventRuntimeOverrides.get(eventId) ?? null;
+  } catch (error) {
+    recordSeasonalEventRuntimeOverrideReadFailure();
+    console.error("Seasonal event runtime override read failed; using local fallback", error);
+    return { override: seasonalEventRuntimeOverrides.get(eventId) ?? null, degraded: true };
   }
 
-  return seasonalEventRuntimeOverrides.get(eventId) ?? null;
+  return { override: seasonalEventRuntimeOverrides.get(eventId) ?? null, degraded: false };
 }
 
 export function resolveSeasonalEventStatus(
@@ -658,10 +729,10 @@ async function applySeasonalEventAdminPatchWithClusterState(
   eventId: string,
   patch: SeasonalEventRuntimeOverride,
   redisClient: RedisClientLike | null
-): Promise<void> {
+): Promise<SeasonalEventRuntimeOverrideApplyResult> {
   if (!redisClient) {
     applySeasonalEventAdminPatch(eventId, patch);
-    return;
+    return { degraded: false };
   }
 
   try {
@@ -670,8 +741,13 @@ async function applySeasonalEventAdminPatchWithClusterState(
     const next = mergeSeasonalEventRuntimeOverride(current, patch);
     await redisClient.hset(SEASONAL_EVENT_RUNTIME_OVERRIDE_REDIS_HASH_KEY, eventId, JSON.stringify(next));
     seasonalEventRuntimeOverrides.set(eventId, cloneSeasonalEventRuntimeOverride(next));
-  } catch {
+    return { degraded: false };
+  } catch (error) {
+    recordSeasonalEventRuntimeOverridePersistFailure();
+    recordSeasonalEventRuntimeOverrideLocalFallbackWrite();
+    console.error("Seasonal event runtime override persistence failed; using local fallback", error);
     applySeasonalEventAdminPatch(eventId, patch);
+    return { degraded: true };
   }
 }
 
@@ -1103,22 +1179,33 @@ export function getActiveSeasonalEvents(events: SeasonalEventDefinition[], now =
   return events.filter((event) => resolveSeasonalEventStatus(event, now) === "active");
 }
 
+async function resolveSeasonalEventsWithClusterStateDetails(
+  redisClient: RedisClientLike | null,
+  eventIndexDocument: SeasonalEventsDocument | undefined,
+  eventDocuments: Record<string, SeasonalEventDefinitionDocument> | undefined
+): Promise<SeasonalEventClusterStateResult> {
+  const events = resolveSeasonalEvents(eventIndexDocument, eventDocuments);
+  if (!redisClient) {
+    return { events, degraded: false };
+  }
+
+  let degraded = false;
+  const resolvedEvents = await Promise.all(
+    events.map(async (event) => {
+      const { override, degraded: eventDegraded } = await loadSeasonalEventRuntimeOverride(redisClient, event.id);
+      degraded = degraded || eventDegraded;
+      return override ? applySeasonalEventRuntimeOverride(event, override) : event;
+    })
+  );
+  return { events: resolvedEvents, degraded };
+}
+
 async function resolveSeasonalEventsWithClusterState(
   redisClient: RedisClientLike | null,
   eventIndexDocument: SeasonalEventsDocument | undefined,
   eventDocuments: Record<string, SeasonalEventDefinitionDocument> | undefined
 ): Promise<SeasonalEventDefinition[]> {
-  const events = resolveSeasonalEvents(eventIndexDocument, eventDocuments);
-  if (!redisClient) {
-    return events;
-  }
-
-  return Promise.all(
-    events.map(async (event) => {
-      const override = await loadSeasonalEventRuntimeOverride(redisClient, event.id);
-      return override ? applySeasonalEventRuntimeOverride(event, override) : event;
-    })
-  );
+  return (await resolveSeasonalEventsWithClusterStateDetails(redisClient, eventIndexDocument, eventDocuments)).events;
 }
 
 export function findSeasonalEventState(
@@ -1700,13 +1787,36 @@ export function registerEventRoutes(
 
     try {
       const now = nowFactory();
-      const events = await resolveSeasonalEventsWithClusterState(
+      const clusterState = await resolveSeasonalEventsWithClusterStateDetails(
         seasonalEventRuntimeRedisClient,
         options.eventIndexDocument,
         options.eventDocuments
       );
+      const events = clusterState.events;
       const accounts = store?.listPlayerAccounts ? await store.listPlayerAccounts({ limit: 10_000, offset: 0 }) : [];
-      const audit = await listSeasonalEventOpsAuditTrailWithSharedStore(seasonalEventOpsAuditRedisClient);
+      const url = new URL(request.url ?? "/api/admin/seasonal-events", "http://events.local");
+      const auditOptions: { since?: string; actor?: string; eventId?: string; limit?: number } = {};
+      const since = url.searchParams.get("since")?.trim();
+      const actor = url.searchParams.get("actor")?.trim();
+      const eventId = url.searchParams.get("eventId")?.trim();
+      const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
+      if (since) {
+        auditOptions.since = since;
+      }
+      if (actor) {
+        auditOptions.actor = actor;
+      }
+      if (eventId) {
+        auditOptions.eventId = eventId;
+      }
+      if (limit !== undefined && Number.isFinite(limit)) {
+        auditOptions.limit = limit;
+      }
+      const audit = await listSeasonalEventOpsAuditTrailWithSharedStore(
+        seasonalEventOpsAuditRedisClient,
+        store as SeasonalEventOpsAuditArchiveStore | null,
+        auditOptions
+      );
       sendJson(response, 200, {
         checkedAt: now.toISOString(),
         events: events.map((event) => ({
@@ -1721,7 +1831,9 @@ export function registerEventRoutes(
           participation: buildSeasonalEventParticipationStats(event, accounts)
         })),
         audit: audit.entries,
-        auditDegraded: audit.degraded
+        auditDegraded: audit.degraded,
+        auditSource: audit.source,
+        patchDegraded: clusterState.degraded
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1762,7 +1874,7 @@ export function registerEventRoutes(
       }
       const occurredAt = nowFactory().toISOString();
       const patch = normalizeAdminEventPatch(eventId, body as Record<string, unknown>, event);
-      await applySeasonalEventAdminPatchWithClusterState(eventId, patch, seasonalEventRuntimeRedisClient);
+      const patchResult = await applySeasonalEventAdminPatchWithClusterState(eventId, patch, seasonalEventRuntimeRedisClient);
       const nextEvent = (
         await resolveSeasonalEventsWithClusterState(
           seasonalEventRuntimeRedisClient,
@@ -1779,9 +1891,15 @@ export function registerEventRoutes(
           detail: "Patched seasonal event runtime settings",
           metadata: patch as unknown as Record<string, unknown>
         },
-        seasonalEventOpsAuditRedisClient
+        seasonalEventOpsAuditRedisClient,
+        store as SeasonalEventOpsAuditArchiveStore | null
       );
-      sendJson(response, 200, { event: nextEvent, audit: audit.entry, auditDegraded: audit.degraded });
+      sendJson(response, 200, {
+        event: nextEvent,
+        audit: audit.entry,
+        auditDegraded: audit.degraded,
+        patchDegraded: patchResult.degraded
+      });
     } catch (error) {
       if (error instanceof SyntaxError) {
         sendJson(response, 400, { error: { code: "invalid_json", message: "Request body must be valid JSON" } });
@@ -1838,7 +1956,7 @@ export function registerEventRoutes(
         return;
       }
 
-      await applySeasonalEventAdminPatchWithClusterState(
+      const patchResult = await applySeasonalEventAdminPatchWithClusterState(
         eventId,
         {
           endsAt: now.toISOString(),
@@ -1868,13 +1986,15 @@ export function registerEventRoutes(
           detail: "Force-ended seasonal event and distributed rewards",
           metadata: distribution as unknown as Record<string, unknown>
         },
-        seasonalEventOpsAuditRedisClient
+        seasonalEventOpsAuditRedisClient,
+        store as SeasonalEventOpsAuditArchiveStore | null
       );
       sendJson(response, 200, {
         event: endedEvent,
         distribution,
         audit: audit.entry,
-        auditDegraded: audit.degraded
+        auditDegraded: audit.degraded,
+        patchDegraded: patchResult.degraded
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -1942,7 +2062,8 @@ export function registerEventRoutes(
             previousPoints: existingState.points
           }
         },
-        seasonalEventOpsAuditRedisClient
+        seasonalEventOpsAuditRedisClient,
+        store as SeasonalEventOpsAuditArchiveStore | null
       );
       sendJson(response, 200, {
         reset: true,

@@ -6,6 +6,11 @@ import type { GuildChatMessage } from "@veil/shared/social";
 import type { AdminAuditActorRole, AdminAuditLogRecord, AdminAuditAction, PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { loadDisplayNameValidationRules } from "@server/domain/account/display-name-rules";
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
+import {
+  recordUgcModerationConfigLoadFailure,
+  setUgcModerationConfigStatus,
+  type UgcModerationConfigLoadSource
+} from "@server/domain/ops/observability";
 
 const DEFAULT_UGC_BANNED_KEYWORDS_PATH = path.resolve(process.cwd(), "configs", "ugc-banned-keywords.json");
 const UGC_MODERATION_CONFIG_DOCUMENT_ID = "ugcBannedKeywords";
@@ -18,6 +23,13 @@ export interface UgcModerationConfig {
   reviewThreshold: number;
   approvedTerms: string[];
   candidateTerms: string[];
+}
+
+export interface UgcModerationConfigMeta {
+  candidateTermsCount: number;
+  approvedTermsCount: number;
+  loadSource: UgcModerationConfigLoadSource;
+  lastLoadFailureAt: string | null;
 }
 
 export interface UgcModerationConfigStorage {
@@ -80,6 +92,33 @@ interface UgcScoreResult {
   normalizedValue: string;
 }
 
+let ugcModerationConfigMeta: UgcModerationConfigMeta = {
+  candidateTermsCount: 0,
+  approvedTermsCount: 0,
+  loadSource: "unknown",
+  lastLoadFailureAt: null
+};
+
+function updateUgcModerationConfigMeta(config: UgcModerationConfig, loadSource: UgcModerationConfigLoadSource): UgcModerationConfigMeta {
+  ugcModerationConfigMeta = {
+    ...ugcModerationConfigMeta,
+    candidateTermsCount: config.candidateTerms.length,
+    approvedTermsCount: config.approvedTerms.length,
+    loadSource
+  };
+  setUgcModerationConfigStatus({
+    loaded: loadSource !== "fallback-empty",
+    candidateTermsCount: config.candidateTerms.length,
+    approvedTermsCount: config.approvedTerms.length,
+    source: loadSource
+  });
+  return getUgcModerationConfigMeta();
+}
+
+export function getUgcModerationConfigMeta(): UgcModerationConfigMeta {
+  return { ...ugcModerationConfigMeta };
+}
+
 function normalizeTerms(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -115,9 +154,24 @@ export function normalizeUgcModerationConfig(input?: Partial<UgcModerationConfig
 export function loadUgcModerationConfig(configPath = process.env.VEIL_UGC_BANNED_KEYWORDS_PATH || DEFAULT_UGC_BANNED_KEYWORDS_PATH): UgcModerationConfig {
   try {
     const raw = fs.readFileSync(configPath, "utf8");
-    return normalizeUgcModerationConfig(JSON.parse(raw) as Partial<UgcModerationConfig>);
-  } catch {
-    return normalizeUgcModerationConfig();
+    const config = normalizeUgcModerationConfig(JSON.parse(raw) as Partial<UgcModerationConfig>);
+    updateUgcModerationConfigMeta(config, "file");
+    return config;
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    recordUgcModerationConfigLoadFailure(new Date(failedAt));
+    console.error("[ugc-moderation] Failed to load banned keywords config; falling back to empty candidate terms", {
+      configPath,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    const config = normalizeUgcModerationConfig();
+    ugcModerationConfigMeta = {
+      candidateTermsCount: config.candidateTerms.length,
+      approvedTermsCount: config.approvedTerms.length,
+      loadSource: "fallback-empty",
+      lastLoadFailureAt: failedAt
+    };
+    return config;
   }
 }
 
@@ -144,7 +198,25 @@ async function loadUgcModerationConfigForRuntime(options: UgcModerationRuntimeOp
   if (!options.configStorage) {
     return loadUgcModerationConfig();
   }
-  return normalizeUgcModerationConfig(await options.configStorage.load());
+  const config = normalizeUgcModerationConfig(await options.configStorage.load());
+  updateUgcModerationConfigMeta(config, "config-center");
+  return config;
+}
+
+export async function validateUgcModerationConfigForStartup(
+  options: UgcModerationRuntimeOptions = {},
+  env: NodeJS.ProcessEnv = process.env
+): Promise<UgcModerationConfigMeta> {
+  const config = await loadUgcModerationConfigForRuntime(options);
+  const meta = getUgcModerationConfigMeta();
+  if (config.candidateTerms.length === 0) {
+    const message = "UGC moderation config has 0 candidate terms";
+    if (env.NODE_ENV === "production") {
+      throw new Error(`${message}; refusing to start in production`);
+    }
+    console.warn(`[ugc-moderation] ${message}; review scoring will rely only on heuristic rules outside production`);
+  }
+  return meta;
 }
 
 export async function appendUgcCandidateKeywordForRuntime(
@@ -162,9 +234,12 @@ export async function appendUgcCandidateKeywordForRuntime(
   });
   if (!options.configStorage) {
     saveUgcModerationConfig(next);
+    updateUgcModerationConfigMeta(next, "file");
     return next;
   }
-  return normalizeUgcModerationConfig((await options.configStorage.save(next)) ?? next);
+  const saved = normalizeUgcModerationConfig((await options.configStorage.save(next)) ?? next);
+  updateUgcModerationConfigMeta(saved, "config-center");
+  return saved;
 }
 
 export function createUgcModerationConfigStorageFromConfigCenter(

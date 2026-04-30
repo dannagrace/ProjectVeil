@@ -588,6 +588,10 @@ test("POST /api/admin/leaderboard/season-rollover closes the current season, arc
   assert.equal(firstAccount?.seasonHistory?.[0]?.rewardClaimed, true);
   assert.equal(firstAccount?.eloRating, 1300);
   assert.equal((await store.getCurrentSeason())?.seasonId, "season-10");
+  const auditLogs = await store.listAdminAuditLogs?.({ action: "season_rolled_over", limit: 1 });
+  assert.equal(auditLogs?.length, 1);
+  assert.match(auditLogs?.[0]?.metadataJson ?? "", /"fromSeasonId":"season-9"/);
+  assert.match(auditLogs?.[0]?.metadataJson ?? "", /"toSeasonId":"season-10"/);
 });
 
 test("POST /api/admin/leaderboard/season-rollover is idempotent for the same season pair", async (t) => {

@@ -5,6 +5,7 @@ import {
   recordAuthTokenDeliveryAttempt,
   recordAuthTokenDeliveryDeadLetter,
   recordAuthTokenDeliveryDeadLetterDrop,
+  recordAuthTokenDeliveryFencedWriteRejected,
   recordAuthTokenDeliveryFailure,
   recordAuthTokenDeliveryProcessingLockLost,
   recordAuthTokenDeliveryProcessingLockReleaseStale,
@@ -116,14 +117,14 @@ export interface AccountTokenDeliveryQueuePersistence {
   loadQueuedDeliveries(): Promise<QueuedDeliveryEntry[]>;
   loadDeadLetterDeliveries(): Promise<QueuedDeliveryEntry[]>;
   loadDeadLetterDelivery(key: string): Promise<QueuedDeliveryEntry | null>;
-  saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void>;
-  deleteQueuedDelivery(key: string): Promise<void>;
-  saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<string[]>;
-  deleteDeadLetterDelivery(key: string): Promise<void>;
+  saveQueuedDelivery(entry: QueuedDeliveryEntry, lockToken?: string): Promise<void>;
+  deleteQueuedDelivery(key: string, lockToken?: string): Promise<void>;
+  saveDeadLetterDelivery(entry: QueuedDeliveryEntry, lockToken?: string): Promise<string[]>;
+  deleteDeadLetterDelivery(key: string, lockToken?: string): Promise<void>;
   clear?(): Promise<void>;
-  acquireProcessingLock?(ttlMs: number): Promise<boolean>;
-  renewProcessingLock?(ttlMs: number): Promise<void>;
-  releaseProcessingLock?(): Promise<boolean | void>;
+  acquireProcessingLock?(ttlMs: number): Promise<string | null>;
+  renewProcessingLock?(ttlMs: number, lockToken?: string): Promise<void>;
+  releaseProcessingLock?(lockToken?: string): Promise<boolean | void>;
 }
 
 export interface AccountTokenDeliveryResult {
@@ -178,6 +179,7 @@ const QUEUE_PROCESSING_LOCK_RENEW_FAILURE_TOLERANCE = 2;
 
 interface QueueProcessingLockContext {
   isLockLost(): boolean;
+  token?: string;
 }
 
 const queuedDeliveries = new Map<string, QueuedDeliveryEntry>();
@@ -443,14 +445,82 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     return entries;
   };
 
-  const saveEntry = async (hashKey: string, listKey: string, entry: QueuedDeliveryEntry): Promise<void> => {
+  const assertFencedWriteAccepted = (result: unknown): void => {
+    if (Number(result) < 0) {
+      recordAuthTokenDeliveryFencedWriteRejected();
+      throw new Error("Account token delivery fenced write rejected");
+    }
+  };
+
+  const saveEntry = async (
+    hashKey: string,
+    listKey: string,
+    entry: QueuedDeliveryEntry,
+    lockToken?: string
+  ): Promise<void> => {
+    if (lockToken) {
+      assertFencedWriteAccepted(
+        await redis.eval(
+          [
+            "-- account token delivery fenced save",
+            "if redis.call('get', KEYS[1]) ~= ARGV[1] then",
+            "  return -1",
+            "end",
+            "local added = redis.call('hset', KEYS[2], ARGV[2], ARGV[3])",
+            "if added > 0 then",
+            "  redis.call('rpush', KEYS[3], ARGV[2])",
+            "end",
+            "return 1"
+          ].join("\n"),
+          3,
+          processingLockKey,
+          hashKey,
+          listKey,
+          lockToken,
+          entry.key,
+          JSON.stringify(entry)
+        )
+      );
+      return;
+    }
+
     const added = await redis.hset(hashKey, entry.key, JSON.stringify(entry));
     if (added > 0) {
       await redis.rpush(listKey, entry.key);
     }
   };
 
-  const deleteEntry = async (hashKey: string, listKey: string, key: string): Promise<void> => {
+  const deleteEntry = async (
+    hashKey: string,
+    listKey: string,
+    key: string,
+    lockToken?: string
+  ): Promise<void> => {
+    if (lockToken) {
+      assertFencedWriteAccepted(
+        await redis.eval(
+          [
+            "-- account token delivery fenced delete",
+            "if redis.call('get', KEYS[1]) ~= ARGV[1] then",
+            "  return -1",
+            "end",
+            "local deleted = redis.call('hdel', KEYS[2], ARGV[2])",
+            "if deleted > 0 then",
+            "  redis.call('lrem', KEYS[3], 1, ARGV[2])",
+            "end",
+            "return deleted"
+          ].join("\n"),
+          3,
+          processingLockKey,
+          hashKey,
+          listKey,
+          lockToken,
+          key
+        )
+      );
+      return;
+    }
+
     const deleted = await redis.hdel(hashKey, key);
     if (deleted > 0) {
       await redis.lrem(listKey, 1, key);
@@ -491,7 +561,45 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     return staleKeys;
   };
 
-  const saveDeadLetterEntry = async (entry: QueuedDeliveryEntry): Promise<string[]> => {
+  const saveDeadLetterEntry = async (entry: QueuedDeliveryEntry, lockToken?: string): Promise<string[]> => {
+    if (lockToken) {
+      const result = await redis.eval(
+        [
+          "-- account token delivery fenced dead-letter save",
+          "if redis.call('get', KEYS[1]) ~= ARGV[1] then",
+          "  return -1",
+          "end",
+          "local added = redis.call('hset', KEYS[2], ARGV[2], ARGV[3])",
+          "if added > 0 then",
+          "  redis.call('rpush', KEYS[3], ARGV[2])",
+          "end",
+          "local maxEntries = tonumber(ARGV[4])",
+          "local overflow = redis.call('llen', KEYS[3]) - maxEntries",
+          "if overflow <= 0 then",
+          "  return {}",
+          "end",
+          "local staleKeys = redis.call('lrange', KEYS[3], 0, overflow - 1)",
+          "for _, staleKey in ipairs(staleKeys) do",
+          "  redis.call('hdel', KEYS[2], staleKey)",
+          "end",
+          "redis.call('ltrim', KEYS[3], overflow, -1)",
+          "return staleKeys"
+        ].join("\n"),
+        3,
+        processingLockKey,
+        deadLetterHashKey,
+        deadLetterListKey,
+        lockToken,
+        entry.key,
+        JSON.stringify(entry),
+        String(deadLetterMaxEntries)
+      );
+      if (Number(result) < 0) {
+        recordAuthTokenDeliveryFencedWriteRejected();
+        throw new Error("Account token delivery fenced write rejected");
+      }
+      return Array.isArray(result) ? result.map(String) : [];
+    }
     await saveEntry(deadLetterHashKey, deadLetterListKey, entry);
     return enforceDeadLetterCap();
   };
@@ -501,31 +609,31 @@ export function createRedisAccountTokenDeliveryQueuePersistence(
     loadQueuedDeliveries: () => loadEntries(queuedHashKey, queuedListKey),
     loadDeadLetterDeliveries: () => loadEntries(deadLetterHashKey, deadLetterListKey),
     loadDeadLetterDelivery: (key) => loadEntry(deadLetterHashKey, deadLetterListKey, key),
-    saveQueuedDelivery: (entry) => saveEntry(queuedHashKey, queuedListKey, entry),
-    deleteQueuedDelivery: (key) => deleteEntry(queuedHashKey, queuedListKey, key),
-    saveDeadLetterDelivery: (entry) => saveDeadLetterEntry(entry),
-    deleteDeadLetterDelivery: (key) => deleteEntry(deadLetterHashKey, deadLetterListKey, key),
+    saveQueuedDelivery: (entry, lockToken) => saveEntry(queuedHashKey, queuedListKey, entry, lockToken),
+    deleteQueuedDelivery: (key, lockToken) => deleteEntry(queuedHashKey, queuedListKey, key, lockToken),
+    saveDeadLetterDelivery: (entry, lockToken) => saveDeadLetterEntry(entry, lockToken),
+    deleteDeadLetterDelivery: (key, lockToken) => deleteEntry(deadLetterHashKey, deadLetterListKey, key, lockToken),
     clear: () => redis.del(queuedHashKey, queuedListKey, deadLetterHashKey, deadLetterListKey, processingLockKey).then(() => undefined),
     acquireProcessingLock: async (ttlMs) =>
-      (await redis.set(processingLockKey, lockOwner, "PX", ttlMs, "NX")) === "OK",
-    renewProcessingLock: async (ttlMs) => {
+      (await redis.set(processingLockKey, lockOwner, "PX", ttlMs, "NX")) === "OK" ? lockOwner : null,
+    renewProcessingLock: async (ttlMs, lockToken = lockOwner) => {
       const renewed = await redis.eval(
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
         1,
         processingLockKey,
-        lockOwner,
+        lockToken,
         String(ttlMs)
       );
       if (Number(renewed) !== 1) {
         throw new Error("Account token delivery processing lock renewal lost ownership");
       }
     },
-    releaseProcessingLock: async () => {
+    releaseProcessingLock: async (lockToken = lockOwner) => {
       const released = await redis.eval(
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
         1,
         processingLockKey,
-        lockOwner
+        lockToken
       );
       return Number(released) === 1;
     }
@@ -590,28 +698,28 @@ async function ensureAccountTokenDeliveryQueuePersistence(env: NodeJS.ProcessEnv
   await queuePersistenceInitialization;
 }
 
-async function saveQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> {
+async function saveQueuedDelivery(entry: QueuedDeliveryEntry, lock?: QueueProcessingLockContext): Promise<void> {
   if (queuePersistence) {
-    await queuePersistence.saveQueuedDelivery(entry);
+    await queuePersistence.saveQueuedDelivery(entry, lock?.token);
   }
 }
 
-async function deleteQueuedDelivery(key: string): Promise<void> {
+async function deleteQueuedDelivery(key: string, lock?: QueueProcessingLockContext): Promise<void> {
   if (queuePersistence) {
-    await queuePersistence.deleteQueuedDelivery(key);
+    await queuePersistence.deleteQueuedDelivery(key, lock?.token);
   }
 }
 
-async function saveDeadLetterDelivery(entry: QueuedDeliveryEntry): Promise<string[]> {
+async function saveDeadLetterDelivery(entry: QueuedDeliveryEntry, lock?: QueueProcessingLockContext): Promise<string[]> {
   if (queuePersistence) {
-    return queuePersistence.saveDeadLetterDelivery(entry);
+    return queuePersistence.saveDeadLetterDelivery(entry, lock?.token);
   }
   return [];
 }
 
-async function deleteDeadLetterDelivery(key: string): Promise<void> {
+async function deleteDeadLetterDelivery(key: string, lock?: QueueProcessingLockContext): Promise<void> {
   if (queuePersistence) {
-    await queuePersistence.deleteDeadLetterDelivery(key);
+    await queuePersistence.deleteDeadLetterDelivery(key, lock?.token);
   }
 }
 
@@ -708,7 +816,12 @@ function scheduleQueuePump(minDelayMs = 0): void {
   }, delayMs);
 }
 
-async function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDeliveryError, attemptNumber: number): Promise<void> {
+async function markDeadLetter(
+  entry: QueuedDeliveryEntry,
+  error: AccountTokenDeliveryError,
+  attemptNumber: number,
+  lock?: QueueProcessingLockContext
+): Promise<void> {
   const deadLetterEntry = {
     ...entry,
     attemptCount: attemptNumber,
@@ -720,8 +833,8 @@ async function markDeadLetter(entry: QueuedDeliveryEntry, error: AccountTokenDel
   };
   queuedDeliveries.delete(entry.key);
   deadLetterDeliveries.set(entry.key, deadLetterEntry);
-  await deleteQueuedDelivery(entry.key);
-  applyDeadLetterDrops(await saveDeadLetterDelivery(deadLetterEntry));
+  await deleteQueuedDelivery(entry.key, lock);
+  applyDeadLetterDrops(await saveDeadLetterDelivery(deadLetterEntry, lock));
   recordAuthTokenDeliveryDeadLetter();
   recordAuthTokenDeliveryAttempt({
     kind: entry.payload.kind,
@@ -1101,7 +1214,7 @@ function successMessageForDeliveryMode(mode: Extract<AccountTokenDeliveryMode, "
   return mode === "smtp" ? "Token delivery SMTP transport accepted the message" : "Token delivery webhook accepted the payload";
 }
 
-async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> {
+async function processQueuedDelivery(entry: QueuedDeliveryEntry, lock?: QueueProcessingLockContext): Promise<void> {
   if (isExpired(entry.payload.expiresAt)) {
     await markDeadLetter(
       entry,
@@ -1109,7 +1222,8 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
         retryable: false,
         failureReason: "timeout"
       }),
-      entry.attemptCount
+      entry.attemptCount,
+      lock
     );
     return;
   }
@@ -1119,8 +1233,8 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
     await deliverViaTransport(entry.payload, entry.config);
     queuedDeliveries.delete(entry.key);
     deadLetterDeliveries.delete(entry.key);
-    await deleteQueuedDelivery(entry.key);
-    await deleteDeadLetterDelivery(entry.key);
+    await deleteQueuedDelivery(entry.key, lock);
+    await deleteDeadLetterDelivery(entry.key, lock);
     recordAuthTokenDeliverySuccess();
     recordAuthTokenDeliveryAttempt({
       kind: entry.payload.kind,
@@ -1141,7 +1255,7 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
     recordAuthTokenDeliveryFailure(error.failureReason);
 
     if (!error.retryable || attemptNumber >= entry.maxAttempts) {
-      await markDeadLetter(entry, error, attemptNumber);
+      await markDeadLetter(entry, error, attemptNumber, lock);
       return;
     }
 
@@ -1158,7 +1272,7 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
       }
     };
     queuedDeliveries.set(entry.key, queuedEntry);
-    await saveQueuedDelivery(queuedEntry);
+    await saveQueuedDelivery(queuedEntry, lock);
     recordAuthTokenDeliveryRetry();
     recordAuthTokenDeliveryAttempt({
       kind: entry.payload.kind,
@@ -1184,8 +1298,8 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
     return;
   }
 
-  const lockAcquired = await persistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
-  if (!lockAcquired) {
+  const lockToken = await persistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
+  if (!lockToken) {
     scheduleQueuePump();
     return;
   }
@@ -1199,7 +1313,7 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
         return;
       }
       void persistence
-        .renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS)
+        .renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS, lockToken)
         .then(() => {
           consecutiveRenewFailures = 0;
         })
@@ -1217,10 +1331,10 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
             }
           }
         });
-    }, Math.max(100, Math.floor(QUEUE_PROCESSING_LOCK_TTL_MS / 2)));
+  }, Math.max(100, Math.floor(QUEUE_PROCESSING_LOCK_TTL_MS / 2)));
 
   try {
-    await action({ isLockLost: () => lockLost });
+    await action({ isLockLost: () => lockLost, token: lockToken });
     if (lockLost) {
       throw new Error("Account token delivery processing lock lost mid-action; remaining entries deferred");
     }
@@ -1228,7 +1342,7 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
     if (renewInterval) {
       clearInterval(renewInterval);
     }
-    const released = await persistence.releaseProcessingLock?.();
+    const released = await persistence.releaseProcessingLock?.(lockToken);
     if (released === false) {
       recordAuthTokenDeliveryProcessingLockReleaseStale();
     }
@@ -1252,7 +1366,7 @@ async function processQueuedDeliveries(): Promise<void> {
           break;
         }
 
-        await processQueuedDelivery(dueEntry);
+        await processQueuedDelivery(dueEntry, lock);
       }
     });
   } finally {

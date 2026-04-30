@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Redis from "ioredis-mock";
 import {
+  __authStateInternals,
   __authRateLimitInternals,
   issueGuestAuthSession,
   resetGuestAuthSessions,
@@ -9,6 +10,7 @@ import {
   setGuestSessionClusterClientForTest,
   validateGuestAuthToken
 } from "@server/domain/account/auth";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 function waitForClusterSync(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -133,6 +135,50 @@ test("revoking a guest auth session removes it from the shared Redis session sto
     setGuestSessionClusterClientForTest(undefined);
     await redis.quit();
     resetGuestAuthSessions();
+  }
+});
+
+test("account registration and password recovery Redis fallback failures are observable", async () => {
+  resetGuestAuthSessions();
+  resetRuntimeObservability();
+  const redis = {
+    async get() {
+      throw new Error("redis read unavailable");
+    },
+    async set() {
+      throw new Error("redis write unavailable");
+    },
+    async del() {
+      return 0;
+    }
+  };
+  const originalError = console.error;
+  console.error = () => undefined;
+  setGuestSessionClusterClientForTest(redis as never);
+
+  try {
+    await __authStateInternals.storeAccountRegistrationState("fallback-register", "Fallback", "register-token");
+    assert.equal(
+      (await __authStateInternals.getAccountRegistrationState("fallback-register"))?.loginId,
+      "fallback-register"
+    );
+
+    await __authStateInternals.storePasswordRecoveryState("player-fallback", "fallback-recovery", "recovery-token");
+    assert.equal(
+      (await __authStateInternals.getPasswordRecoveryState("fallback-recovery"))?.loginId,
+      "fallback-recovery"
+    );
+
+    const metrics = buildPrometheusMetricsDocument();
+    assert.match(metrics, /^veil_auth_account_registration_state_redis_read_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_account_registration_state_redis_write_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_password_recovery_state_redis_read_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_password_recovery_state_redis_write_failures_total 1$/m);
+  } finally {
+    console.error = originalError;
+    setGuestSessionClusterClientForTest(undefined);
+    resetGuestAuthSessions();
+    resetRuntimeObservability();
   }
 });
 

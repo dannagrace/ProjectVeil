@@ -215,6 +215,7 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
   await withTempCalendarPaths(t);
   const secret = withAdminSecret(t);
   const refreshCalls: string[] = [];
+  const auditLogs: Array<{ action: string; metadataJson?: string }> = [];
   const { app, gets, posts, deletes } = createTestApp();
   registerLiveOpsCalendarRoutes(app, {
     scheduler: {
@@ -226,7 +227,17 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
         throw new Error("tick should not be called in route test");
       }
     },
-    now: () => new Date("2026-04-17T10:00:00.000Z")
+    now: () => new Date("2026-04-17T10:00:00.000Z"),
+    auditStore: {
+      async appendAdminAuditLog(input) {
+        auditLogs.push(input);
+        return {
+          auditId: `audit-${auditLogs.length}`,
+          occurredAt: "2026-04-17T10:00:00.000Z",
+          ...input
+        };
+      }
+    }
   });
 
   const createHandler = posts.get("/api/admin/live-ops-calendar");
@@ -311,6 +322,13 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
   );
   assert.equal(deleteResponse.statusCode, 200);
   assert.ok(refreshCalls.length >= 3);
+  assert.deepEqual(auditLogs.map((entry) => entry.action), [
+    "live_ops_calendar_upsert",
+    "live_ops_calendar_started",
+    "live_ops_calendar_ended",
+    "live_ops_calendar_deleted"
+  ]);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /calendar-entry-1/);
 });
 
 test("admin live ops calendar routes reject invalid admin secret", async (t) => {

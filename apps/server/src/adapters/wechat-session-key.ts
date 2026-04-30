@@ -1,6 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
+import {
+  recordWechatSessionKeyCacheRedisReadFailure,
+  recordWechatSessionKeyCacheRedisWriteFailure
+} from "@server/domain/ops/observability";
 
 interface CachedWechatSessionKeyEntry {
   sessionKey: string;
@@ -251,8 +255,11 @@ export function createWechatSessionKeyCache(options: WechatSessionKeyCacheOption
             "EX",
             normalizedTtlSeconds
           );
-        } catch {
-          // Local Map remains the fallback when Redis is unavailable.
+        } catch (error) {
+          recordWechatSessionKeyCacheRedisWriteFailure();
+          console.warn("[wechat-session-key] Redis cache write failed; relying on local Map", {
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
       }
 
@@ -295,7 +302,11 @@ export function createWechatSessionKeyCache(options: WechatSessionKeyCacheOption
         };
         localCache.set(normalizedPlayerId, localEntry);
         return toSnapshot(normalizedPlayerId, localEntry);
-      } catch {
+      } catch (error) {
+        recordWechatSessionKeyCacheRedisReadFailure();
+        console.warn("[wechat-session-key] Redis cache read failed; returning local fallback miss", {
+          error: error instanceof Error ? error.message : String(error)
+        });
         return null;
       }
     },

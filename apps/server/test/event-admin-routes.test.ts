@@ -9,17 +9,35 @@ type RouteHandler = (request: any, response: ServerResponse) => void | Promise<v
 
 function createFakeEventClusterRedisClient() {
   const hashes = new Map<string, Map<string, string>>();
+  const deletedKeys: string[] = [];
+  const failureMode = {
+    hget: false,
+    hset: false
+  };
 
   return {
+    deletedKeys,
+    failureMode,
     async hget(key: string, field: string): Promise<string | null> {
+      if (failureMode.hget) {
+        throw new Error("runtime override read unavailable");
+      }
       return hashes.get(key)?.get(field) ?? null;
     },
     async hset(key: string, field: string, value: string): Promise<number> {
+      if (failureMode.hset) {
+        throw new Error("runtime override write unavailable");
+      }
       const hash = hashes.get(key) ?? new Map<string, string>();
       const inserted = hash.has(field) ? 0 : 1;
       hash.set(field, value);
       hashes.set(key, hash);
       return inserted;
+    },
+    async del(key: string): Promise<number> {
+      deletedKeys.push(key);
+      const existed = hashes.delete(key);
+      return existed ? 1 : 0;
     }
   };
 }
@@ -541,6 +559,126 @@ test("PATCH /api/admin/seasonal-events/:id surfaces degraded audit persistence",
   const metrics = buildPrometheusMetricsDocument();
   assert.match(metrics, /^veil_seasonal_event_ops_audit_persist_failures_total 1$/m);
   assert.match(metrics, /^veil_seasonal_event_ops_audit_local_fallback_writes_total 1$/m);
+});
+
+test("PATCH /api/admin/seasonal-events/:id surfaces degraded runtime override persistence", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => {
+    resetSeasonalEventRuntimeState();
+    resetRuntimeObservability();
+  });
+  const token = withAdminToken(t);
+  const redis = createFakeEventClusterRedisClient();
+  redis.failureMode.hset = true;
+  const originalError = console.error;
+  console.error = () => undefined;
+  t.after(() => {
+    console.error = originalError;
+  });
+  const { patches } = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", {
+    seasonalEventRuntimeRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2]);
+  const patchHandler = patches.get("/api/admin/seasonal-events/:id");
+  assert.ok(patchHandler);
+
+  const response = createResponse();
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.patchDegraded, true);
+  assert.equal(payload.event.isActive, false);
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_seasonal_event_runtime_override_persist_failures_total 1$/m);
+  assert.match(metrics, /^veil_seasonal_event_runtime_override_local_fallback_writes_total 1$/m);
+});
+
+test("GET /api/admin/seasonal-events records degraded runtime override reads", async (t) => {
+  resetRuntimeObservability();
+  t.after(() => {
+    resetSeasonalEventRuntimeState();
+    resetRuntimeObservability();
+  });
+  const token = withAdminToken(t);
+  const redis = createFakeEventClusterRedisClient();
+  redis.failureMode.hget = true;
+  const originalError = console.error;
+  console.error = () => undefined;
+  t.after(() => {
+    console.error = originalError;
+  });
+  const { gets } = registerRoutes(createStore(), "2026-04-04T12:00:00.000Z", {
+    seasonalEventRuntimeRedisClient: redis as never
+  } as unknown as Parameters<typeof registerEventRoutes>[2]);
+  const listHandler = gets.get("/api/admin/seasonal-events");
+  assert.ok(listHandler);
+
+  const response = createResponse();
+  await listHandler(
+    createRequest({
+      headers: {
+        "x-veil-admin-token": token
+      }
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).patchDegraded, true);
+  assert.match(
+    buildPrometheusMetricsDocument(),
+    /^veil_seasonal_event_runtime_override_read_failures_total 1$/m
+  );
+});
+
+test("PATCH /api/admin/seasonal-events/:id archives audit rows to long-term store", async (t) => {
+  const token = withAdminToken(t);
+  const store = createStore() as ReturnType<typeof createStore> & {
+    archive: unknown[];
+    appendSeasonalEventOpsAuditLog: (entry: unknown) => Promise<void>;
+  };
+  store.archive = [];
+  store.appendSeasonalEventOpsAuditLog = async (entry) => {
+    store.archive.push(structuredClone(entry));
+  };
+  const { patches } = registerRoutes(store);
+  const patchHandler = patches.get("/api/admin/seasonal-events/:id");
+  assert.ok(patchHandler);
+
+  const response = createResponse();
+  await patchHandler(
+    createRequest({
+      method: "PATCH",
+      headers: {
+        "x-veil-admin-token": token
+      },
+      params: {
+        id: "defend-the-bridge"
+      },
+      body: JSON.stringify({
+        isActive: false
+      })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal((store.archive[0] as { action?: string }).action, "patched");
+  assert.equal((store.archive[0] as { eventId?: string }).eventId, "defend-the-bridge");
 });
 
 test("GET /api/admin/seasonal-events surfaces degraded audit reads", async (t) => {

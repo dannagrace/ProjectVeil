@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RoomSnapshotStore } from "@server/persistence";
+import type { AdminAuditLogCreateInput, AdminAuditLogRecord, RoomSnapshotStore } from "@server/persistence";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
@@ -14,6 +14,32 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function safeSerialize(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
 }
 
 function isAdminAuthorized(request: IncomingMessage): boolean {
@@ -205,6 +231,18 @@ export function registerSeasonRoutes(
         ? String((body as Record<string, unknown>)["seasonId"] ?? "")
         : `season_${Date.now()}`;
       const season = await store.createSeason(seasonId || `season_${Date.now()}`);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin:seasons",
+        actorRole: "admin",
+        action: "season_created",
+        targetScope: "season",
+        summary: `Created season ${season.seasonId}`,
+        afterJson: safeSerialize(season),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          seasonId: season.seasonId
+        })
+      });
       sendJson(response, 201, { season });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -245,6 +283,20 @@ export function registerSeasonRoutes(
         return;
       }
       const summary = await store.closeSeason(currentSeason.seasonId);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin:seasons",
+        actorRole: "admin",
+        action: "season_closed",
+        targetScope: "season",
+        summary: `Closed season ${currentSeason.seasonId}`,
+        beforeJson: safeSerialize(currentSeason),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          seasonId: currentSeason.seasonId,
+          playersRewarded: summary.playersRewarded,
+          totalGemsGranted: summary.totalGemsGranted
+        })
+      });
       sendJson(response, 200, { closed: true, ...summary });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });

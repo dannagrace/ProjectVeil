@@ -8,7 +8,7 @@ import {
   parseLeaderboardTierThresholdsConfigDocument,
   type LeaderboardTierThreshold
 } from "@server/domain/social/leaderboard-tier-thresholds";
-import type { RoomSnapshotStore } from "@server/persistence";
+import type { AdminAuditLogCreateInput, AdminAuditLogRecord, RoomSnapshotStore } from "@server/persistence";
 import { isLeaderboardFrozen, isLeaderboardHidden } from "@server/domain/social/leaderboard-anti-abuse";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
@@ -24,6 +24,32 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function safeSerialize(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
 }
 
 function readHeaderValue(value: string | string[] | undefined): string | null {
@@ -290,6 +316,21 @@ export function registerLeaderboardRoutes(
 
       const closeSummary = await store.closeSeason(seasonId);
       const nextSeason = currentSeason.seasonId === nextSeasonId ? currentSeason : await store.createSeason(nextSeasonId);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin:season-rollover",
+        actorRole: "admin",
+        action: "season_rolled_over",
+        targetScope: "season",
+        summary: `Rolled season ${seasonId} over to ${nextSeason.seasonId}`,
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          fromSeasonId: seasonId,
+          toSeasonId: nextSeason.seasonId,
+          rolledOver: currentSeason.seasonId === seasonId,
+          playersRewarded: closeSummary.playersRewarded,
+          totalGemsGranted: closeSummary.totalGemsGranted
+        })
+      });
       sendJson(response, 200, {
         rolledOver: currentSeason.seasonId === seasonId,
         seasonId,

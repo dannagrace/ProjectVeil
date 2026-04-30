@@ -21,8 +21,15 @@ import {
   validateAuthSessionFromRequest,
   verifyAccountPassword
 } from "@server/domain/account/auth";
-import { recordAuthInvalidCredentials, removeAuthAccountSession, removeAuthAccountSessionsForPlayer } from "@server/domain/ops/observability";
+import {
+  recordAdminMailboxDelivery,
+  recordAuthInvalidCredentials,
+  removeAuthAccountSession,
+  removeAuthAccountSessionsForPlayer
+} from "@server/domain/ops/observability";
 import type {
+  AdminAuditLogCreateInput,
+  AdminAuditLogRecord,
   PlayerAccountProfilePatch,
   PlayerAccountProgressPatch,
   PlayerAccountSnapshot,
@@ -88,6 +95,44 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function safeSerialize(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function summarizeMailboxGrant(grant: unknown): Record<string, string> | null {
+  if (!grant || typeof grant !== "object" || Array.isArray(grant)) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(grant).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? "array" : value === null ? "null" : typeof value
+    ])
+  );
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
 }
 
 class PayloadTooLargeError extends Error {
@@ -1685,6 +1730,28 @@ export function registerPlayerAccountRoutes(
         playerIds,
         message
       });
+      recordAdminMailboxDelivery({
+        delivered: result.deliveredPlayerIds.length,
+        skipped: result.skippedPlayerIds.length
+      });
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin:player-mailbox",
+        actorRole: "admin",
+        action: "player_mailbox_delivered",
+        targetScope: "player-mailbox",
+        summary: `Delivered mailbox ${message.id} to ${result.deliveredPlayerIds.length} player(s)`,
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          playerIdsCount: playerIds.length,
+          deliveredCount: result.deliveredPlayerIds.length,
+          skippedCount: result.skippedPlayerIds.length,
+          deliveredPlayerIds: result.deliveredPlayerIds,
+          skippedPlayerIds: result.skippedPlayerIds,
+          messageId: message.id,
+          messageKind: message.kind,
+          grantSummary: summarizeMailboxGrant(message.grant)
+        })
+      });
       sendJson(response, 200, {
         delivered: result.deliveredPlayerIds.length,
         skipped: result.skippedPlayerIds.length,
@@ -1693,6 +1760,7 @@ export function registerPlayerAccountRoutes(
         message: result.message
       });
     } catch (error) {
+      recordAdminMailboxDelivery({ failed: true });
       if (error instanceof PayloadTooLargeError) {
         sendJson(response, 413, {
           error: {

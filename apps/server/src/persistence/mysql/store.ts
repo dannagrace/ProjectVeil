@@ -152,11 +152,13 @@ export interface RoomSnapshotStore {
     input: PlayerCompensationCreateInput
   ): Promise<PlayerCompensationRecord>;
   appendAdminAuditLog?(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord>;
+  appendSeasonalEventOpsAuditLog?(input: SeasonalEventOpsAuditLogCreateInput): Promise<SeasonalEventOpsAuditLogRecord>;
   listPlayerCompensationHistory?(
     playerId: string,
     options?: PlayerCompensationListOptions
   ): Promise<PlayerCompensationRecord[]>;
   listAdminAuditLogs?(options?: AdminAuditLogListOptions): Promise<AdminAuditLogRecord[]>;
+  listSeasonalEventOpsAuditLogs?(options?: SeasonalEventOpsAuditLogListOptions): Promise<SeasonalEventOpsAuditLogRecord[]>;
   listPlayerPurchaseHistory?(
     playerId: string,
     query?: PlayerPurchaseHistoryQuery
@@ -533,6 +535,16 @@ interface AdminAuditLogRow extends RowDataPacket {
   after_json: string | null;
   metadata_json: string | null;
   occurred_at: Date | string;
+}
+
+interface SeasonalEventOpsAuditLogRow extends RowDataPacket {
+  audit_id: string;
+  action: string;
+  actor: string;
+  event_id: string;
+  occurred_at: Date | string;
+  detail: string;
+  metadata_json: string | null;
 }
 
 interface GuildChatMessageRow extends RowDataPacket {
@@ -1181,6 +1193,26 @@ export type AdminAuditAction =
   | "risk_review_warned"
   | "risk_review_cleared"
   | "risk_review_banned"
+  | "wechat_payment_retry"
+  | "wechat_payment_retry_batch"
+  | "player_mailbox_delivered"
+  | "global_broadcast"
+  | "launch_announcement_upserted"
+  | "launch_announcement_deleted"
+  | "maintenance_mode_enabled"
+  | "maintenance_mode_disabled"
+  | "leaderboard_player_frozen"
+  | "leaderboard_player_unfrozen"
+  | "leaderboard_player_removed"
+  | "season_created"
+  | "season_closed"
+  | "season_rolled_over"
+  | "live_ops_calendar_upsert"
+  | "live_ops_calendar_deleted"
+  | "live_ops_calendar_started"
+  | "live_ops_calendar_ended"
+  | "reengagement_run"
+  | "auth_token_delivery_dlq_requeue"
   | "reengagement_sent"
   | "reengagement_opened"
   | "reengagement_returned";
@@ -1218,6 +1250,27 @@ export interface AdminAuditLogListOptions {
   action?: AdminAuditAction;
   targetPlayerId?: string;
   targetScope?: string;
+  since?: string;
+  limit?: number;
+}
+
+export type SeasonalEventOpsAuditAction = "patched" | "force_ended" | "player_progress_reset";
+
+export interface SeasonalEventOpsAuditLogRecord {
+  id: string;
+  action: SeasonalEventOpsAuditAction;
+  actor: string;
+  eventId: string;
+  occurredAt: string;
+  detail: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type SeasonalEventOpsAuditLogCreateInput = SeasonalEventOpsAuditLogRecord;
+
+export interface SeasonalEventOpsAuditLogListOptions {
+  actor?: string;
+  eventId?: string;
   since?: string;
   limit?: number;
 }
@@ -1317,6 +1370,7 @@ import {
   MYSQL_PLAYER_ROOM_PROFILE_UPDATED_AT_INDEX,
   MYSQL_ROOM_SNAPSHOT_TABLE,
   MYSQL_ROOM_SNAPSHOT_UPDATED_AT_INDEX,
+  MYSQL_SEASONAL_EVENT_OPS_AUDIT_LOG_TABLE,
   MYSQL_SEASON_RANKINGS_TABLE,
   MYSQL_SEASON_REWARD_LOG_TABLE,
   MYSQL_SEASON_TABLE,
@@ -1610,6 +1664,34 @@ function normalizeAdminAuditAction(value: string): AdminAuditAction {
     case "player_unbanned":
     case "report_resolved":
     case "support_ticket_resolved":
+    case "ugc_review_approved":
+    case "ugc_review_rejected":
+    case "risk_review_warned":
+    case "risk_review_cleared":
+    case "risk_review_banned":
+    case "wechat_payment_retry":
+    case "wechat_payment_retry_batch":
+    case "player_mailbox_delivered":
+    case "global_broadcast":
+    case "launch_announcement_upserted":
+    case "launch_announcement_deleted":
+    case "maintenance_mode_enabled":
+    case "maintenance_mode_disabled":
+    case "leaderboard_player_frozen":
+    case "leaderboard_player_unfrozen":
+    case "leaderboard_player_removed":
+    case "season_created":
+    case "season_closed":
+    case "season_rolled_over":
+    case "live_ops_calendar_upsert":
+    case "live_ops_calendar_deleted":
+    case "live_ops_calendar_started":
+    case "live_ops_calendar_ended":
+    case "reengagement_run":
+    case "auth_token_delivery_dlq_requeue":
+    case "reengagement_sent":
+    case "reengagement_opened":
+    case "reengagement_returned":
       return value;
     default:
       throw new Error("admin audit action is not supported");
@@ -1634,6 +1716,30 @@ function toAdminAuditLogRecord(row: AdminAuditLogRow): AdminAuditLogRecord {
     ...(row.after_json ? { afterJson: row.after_json } : {}),
     ...(row.metadata_json ? { metadataJson: row.metadata_json } : {}),
     occurredAt
+  };
+}
+
+function normalizeSeasonalEventOpsAuditAction(value: string): SeasonalEventOpsAuditAction {
+  if (value === "patched" || value === "force_ended" || value === "player_progress_reset") {
+    return value;
+  }
+  throw new Error("seasonal event ops audit action is not supported");
+}
+
+function toSeasonalEventOpsAuditLogRecord(row: SeasonalEventOpsAuditLogRow): SeasonalEventOpsAuditLogRecord {
+  const occurredAt = formatTimestamp(row.occurred_at);
+  if (!occurredAt) {
+    throw new Error("seasonal event ops audit occurred_at must be present");
+  }
+
+  return {
+    id: row.audit_id,
+    action: normalizeSeasonalEventOpsAuditAction(row.action),
+    actor: row.actor,
+    eventId: row.event_id,
+    occurredAt,
+    detail: row.detail,
+    ...(row.metadata_json ? { metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) } : {})
   };
 }
 
@@ -7210,6 +7316,96 @@ export class MySqlRoomSnapshotStore implements RoomSnapshotStore {
     );
 
     return rows.map((row) => toAdminAuditLogRecord(row));
+  }
+
+  async appendSeasonalEventOpsAuditLog(input: SeasonalEventOpsAuditLogCreateInput): Promise<SeasonalEventOpsAuditLogRecord> {
+    const occurredAt = new Date(input.occurredAt);
+    if (Number.isNaN(occurredAt.getTime())) {
+      throw new Error("occurredAt must be a valid ISO timestamp");
+    }
+    const record: SeasonalEventOpsAuditLogRecord = {
+      id: input.id.trim().slice(0, 191),
+      action: input.action,
+      actor: input.actor.trim().slice(0, 128) || "unknown",
+      eventId: input.eventId.trim().slice(0, 64),
+      occurredAt: occurredAt.toISOString(),
+      detail: input.detail.trim(),
+      ...(input.metadata ? { metadata: structuredClone(input.metadata) } : {})
+    };
+
+    await this.pool.query(
+      `INSERT INTO \`${MYSQL_SEASONAL_EVENT_OPS_AUDIT_LOG_TABLE}\` (
+         audit_id,
+         occurred_at,
+         action,
+         actor,
+         event_id,
+         detail,
+         metadata_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         occurred_at = VALUES(occurred_at),
+         action = VALUES(action),
+         actor = VALUES(actor),
+         event_id = VALUES(event_id),
+         detail = VALUES(detail),
+         metadata_json = VALUES(metadata_json)`,
+      [
+        record.id,
+        occurredAt,
+        record.action,
+        record.actor,
+        record.eventId,
+        record.detail,
+        record.metadata ? JSON.stringify(record.metadata) : null
+      ]
+    );
+
+    return record;
+  }
+
+  async listSeasonalEventOpsAuditLogs(
+    options: SeasonalEventOpsAuditLogListOptions = {}
+  ): Promise<SeasonalEventOpsAuditLogRecord[]> {
+    const clauses: string[] = [];
+    const params: Array<string | Date | number> = [];
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 200)));
+
+    if (options.eventId?.trim()) {
+      clauses.push("event_id = ?");
+      params.push(options.eventId.trim());
+    }
+    if (options.actor?.trim()) {
+      clauses.push("actor = ?");
+      params.push(options.actor.trim());
+    }
+    if (options.since?.trim()) {
+      const since = new Date(options.since);
+      if (Number.isNaN(since.getTime())) {
+        throw new Error("since must be a valid ISO timestamp");
+      }
+      clauses.push("occurred_at >= ?");
+      params.push(since);
+    }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const [rows] = await this.pool.query<SeasonalEventOpsAuditLogRow[]>(
+      `SELECT
+         audit_id,
+         occurred_at,
+         action,
+         actor,
+         event_id,
+         detail,
+         metadata_json
+       FROM \`${MYSQL_SEASONAL_EVENT_OPS_AUDIT_LOG_TABLE}\`
+       ${whereClause}
+       ORDER BY occurred_at DESC, audit_id DESC
+       LIMIT ?`,
+      [...params, safeLimit]
+    );
+
+    return rows.map((row) => toSeasonalEventOpsAuditLogRecord(row));
   }
 
   async listPlayerPurchaseHistory(

@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import test, { type TestContext } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerSeasonRoutes } from "@server/domain/social/seasons";
-import type { RoomSnapshotStore, SeasonListOptions, SeasonSnapshot } from "@server/persistence";
+import type { AdminAuditLogCreateInput, RoomSnapshotStore, SeasonListOptions, SeasonSnapshot } from "@server/persistence";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 
@@ -70,6 +70,7 @@ function createResponse(): ServerResponse & { body: string; headers: Record<stri
 }
 
 function createSeasonStore(seasons: SeasonSnapshot[], calls: SeasonListOptions[]): RoomSnapshotStore {
+  const adminAuditLogs: AdminAuditLogCreateInput[] = [];
   return {
     async listSeasons(options: SeasonListOptions = {}) {
       calls.push(options);
@@ -95,6 +96,24 @@ function createSeasonStore(seasons: SeasonSnapshot[], calls: SeasonListOptions[]
         playersRewarded: 2,
         totalGemsGranted: 75
       };
+    },
+    async appendAdminAuditLog(input: AdminAuditLogCreateInput) {
+      adminAuditLogs.unshift(input);
+      return {
+        auditId: `audit-${adminAuditLogs.length}`,
+        occurredAt: new Date().toISOString(),
+        ...input
+      };
+    },
+    async listAdminAuditLogs(options: { action?: string; limit?: number } = {}) {
+      return adminAuditLogs
+        .filter((entry) => !options.action || entry.action === options.action)
+        .slice(0, Math.max(1, Math.floor(options.limit ?? 50)))
+        .map((entry, index) => ({
+          auditId: `audit-${index + 1}`,
+          occurredAt: new Date().toISOString(),
+          ...entry
+        }));
     },
     async load() {
       return null;
@@ -298,6 +317,33 @@ test("POST /api/admin/seasons/close returns the reward distribution summary", as
     playersRewarded: 2,
     totalGemsGranted: 75
   });
+  const auditLogs = await store.listAdminAuditLogs?.({ action: "season_closed", limit: 1 });
+  assert.equal(auditLogs?.length, 1);
+  assert.match(auditLogs?.[0]?.metadataJson ?? "", /"seasonId":"season-9"/);
+});
+
+test("POST /api/admin/seasons/create writes an admin audit log", async (t) => {
+  const token = withAdminToken(t);
+  const store = createSeasonStore([], []);
+  const { posts } = registerRoutes(store);
+  const handler = posts.get("/api/admin/seasons/create");
+  const response = createResponse();
+
+  assert.ok(handler);
+  await handler(
+    createRequest({
+      method: "POST",
+      url: "/api/admin/seasons/create",
+      headers: { "x-veil-admin-token": token },
+      body: JSON.stringify({ seasonId: "season-audit" })
+    }),
+    response
+  );
+
+  assert.equal(response.statusCode, 201);
+  const auditLogs = await store.listAdminAuditLogs?.({ action: "season_created", limit: 1 });
+  assert.equal(auditLogs?.length, 1);
+  assert.match(auditLogs?.[0]?.metadataJson ?? "", /season-audit/);
 });
 
 test("POST /api/admin/seasons/create returns 400 for malformed JSON", async (t) => {

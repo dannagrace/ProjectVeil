@@ -24,7 +24,7 @@ import {
   unsupportedPaymentGatewayOperation
 } from "@server/domain/payment/PaymentGateway";
 import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
-import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
+import type { AdminAuditLogCreateInput, AdminAuditLogRecord, PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
@@ -462,6 +462,28 @@ function isPaymentStoreReady(store: RoomSnapshotStore | null) {
 
 function isPaymentOpsStoreReady(store: RoomSnapshotStore | null) {
   return isPaymentRetryOpsStoreReady(store);
+}
+
+function hasAdminAuditStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: RoomSnapshotStore | null,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
 }
 
 function readAdminToken(): string | null {
@@ -1347,6 +1369,27 @@ export function registerWechatPayRoutes(
             orderStatus: settlement.order.status
           });
         }
+        await appendAdminAuditLogIfAvailable(store, {
+          actorPlayerId: "admin:wechat-pay",
+          actorRole: "admin",
+          action: "wechat_payment_retry",
+          targetPlayerId: settlement.order.playerId,
+          targetScope: "payment-order",
+          summary: `Manually retried wechat payment ${settlement.order.orderId}`,
+          beforeJson: JSON.stringify(currentOrder),
+          afterJson: JSON.stringify(settlement.order),
+          metadataJson: JSON.stringify({
+            orderId: settlement.order.orderId,
+            productId: settlement.order.productId,
+            amount: settlement.order.amount,
+            previousStatus: currentOrder.status,
+            nextStatus: settlement.order.status,
+            credited: settlement.credited,
+            includeDeadLetter: body.includeDeadLetter === true,
+            requestIp: readRequestIp(request)
+          }),
+          occurredAt: processedAt.toISOString()
+        });
         await refreshPaymentGrantObservability(store, processedAt);
         sendJson(response, 200, {
           processedAt: processedAt.toISOString(),
@@ -1426,6 +1469,20 @@ export function registerWechatPayRoutes(
         }
       }
 
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin:wechat-pay",
+        actorRole: "admin",
+        action: "wechat_payment_retry_batch",
+        targetScope: "payment-order",
+        summary: `Manually retried ${results.length} queued wechat payment grant(s)`,
+        metadataJson: JSON.stringify({
+          limit,
+          includeDeadLetter: body.includeDeadLetter === true,
+          requestIp: readRequestIp(request),
+          results
+        }),
+        occurredAt: processedAt.toISOString()
+      });
       await refreshPaymentGrantObservability(store, processedAt);
       sendJson(response, 200, {
         processedAt: processedAt.toISOString(),

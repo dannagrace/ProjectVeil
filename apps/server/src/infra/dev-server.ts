@@ -54,6 +54,7 @@ import { registerRiskReviewAdminRoutes } from "@server/transport/http/risk-revie
 import { registerUgcReviewAdminRoutes } from "@server/transport/http/ugc-review-admin";
 import {
   createUgcModerationConfigStorageFromConfigCenter,
+  validateUgcModerationConfigForStartup,
   type UgcModerationConfigDocumentStore,
   type UgcModerationConfigStorage
 } from "@server/domain/social/ugc-moderation";
@@ -662,8 +663,10 @@ export async function startDevServer(
     presence: redisPresence ?? undefined
   });
   deps.registerAdminRoutes(expressApp, effectiveSnapshotStore, gameServer);
+  const ugcModerationConfigStorage = createUgcModerationConfigStorageFromConfigCenter(configCenterStore);
+  await validateUgcModerationConfigForStartup({ configStorage: ugcModerationConfigStorage });
   deps.registerUgcReviewAdminRoutes(expressApp, effectiveSnapshotStore, {
-    configStorage: createUgcModerationConfigStorageFromConfigCenter(configCenterStore)
+    configStorage: ugcModerationConfigStorage
   });
   deps.registerRiskReviewAdminRoutes(expressApp, effectiveSnapshotStore);
   deps.registerReengagementAdminRoutes(expressApp, effectiveSnapshotStore);
@@ -676,6 +679,10 @@ export async function startDevServer(
   });
   registerLiveOpsCalendarRoutes(expressApp as Parameters<typeof registerLiveOpsCalendarRoutes>[0], {
     scheduler: liveOpsCalendarScheduler,
+    auditStore: effectiveSnapshotStore as unknown as Exclude<
+      NonNullable<Parameters<typeof registerLiveOpsCalendarRoutes>[1]>["auditStore"],
+      undefined
+    >,
     ...(liveOpsCalendarStorage ? { storage: liveOpsCalendarStorage } : {})
   });
   await liveOpsCalendarScheduler.refresh();

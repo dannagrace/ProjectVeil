@@ -273,8 +273,14 @@ function hasBattleSnapshotHistoryStore(
 function hasAdminAuditStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "appendAdminAuditLog" | "listAdminAuditLogs">> {
-  return Boolean(store?.appendAdminAuditLog && store.listAdminAuditLogs);
+  Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+function hasAdminAuditListStore(
+  store: RoomSnapshotStore | null
+): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listAdminAuditLogs">> {
+  return Boolean(store?.listAdminAuditLogs);
 }
 
 function sendInvalidJson(response: ServerResponse): void {
@@ -767,6 +773,12 @@ function safeSerialize(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
+}
+
 function describeAuditActor(role: AdminRole): string {
   return `${role}:admin-console`;
 }
@@ -1233,6 +1245,23 @@ export function registerAdminRoutes(
       return;
     }
 
+    const role = readAdminRole(request) ?? "admin";
+    await appendAdminAuditLogIfAvailable(store, {
+      actorPlayerId: describeAuditActor(role),
+      actorRole: role,
+      action: "auth_token_delivery_dlq_requeue",
+      ...(queuedEntry.playerId ? { targetPlayerId: queuedEntry.playerId } : {}),
+      targetScope: "auth-token-dlq",
+      summary: `Requeued account-token delivery dead-letter ${key}`,
+      metadataJson: JSON.stringify({
+        key,
+        kind: queuedEntry.kind,
+        loginId: queuedEntry.loginId,
+        playerId: queuedEntry.playerId ?? null,
+        deliveryMode: queuedEntry.deliveryMode,
+        nextAttemptAt: queuedEntry.nextAttemptAt
+      })
+    });
     sendJson(response, 202, {
       serverTime: new Date().toISOString(),
       queuedEntry
@@ -1453,7 +1482,7 @@ export function registerAdminRoutes(
               })
             : Promise.resolve({ items: [], total: 0, limit: 20, offset: 0 }),
           hasBattleSnapshotHistoryStore(store) ? store.listBattleSnapshotsForPlayer(playerId, { limit: 20 }) : Promise.resolve([]),
-          hasAdminAuditStore(store) ? store.listAdminAuditLogs({ targetPlayerId: playerId, limit: 30 }) : Promise.resolve([])
+          hasAdminAuditListStore(store) ? store.listAdminAuditLogs({ targetPlayerId: playerId, limit: 30 }) : Promise.resolve([])
         ]);
 
       await appendAdminAuditLogIfAvailable(store, {
@@ -1596,16 +1625,18 @@ export function registerAdminRoutes(
   app.get("/api/admin/audit-log", async (request, response) => {
     const role = requireSupportRole(response, request, ["admin", "support-moderator", "support-supervisor"]);
     if (!role) return;
-    if (!hasAdminAuditStore(store)) return sendStoreUnavailable(response);
+    if (!hasAdminAuditListStore(store)) return sendStoreUnavailable(response);
 
     try {
       const actorPlayerId = readOptionalQueryString(request, "actorPlayerId");
+      const action = readOptionalQueryString(request, "action") as AdminAuditLogListOptions["action"] | undefined;
       const targetPlayerId = readOptionalQueryString(request, "targetPlayerId");
       const targetScope = readOptionalQueryString(request, "targetScope");
       const since = readOptionalQueryString(request, "since");
       const items = await store.listAdminAuditLogs({
         limit: readLimit(request, 50),
         ...(actorPlayerId ? { actorPlayerId } : {}),
+        ...(action ? { action } : {}),
         ...(targetPlayerId ? { targetPlayerId } : {}),
         ...(targetScope ? { targetScope } : {}),
         ...(since ? { since } : {})
@@ -1626,6 +1657,18 @@ export function registerAdminRoutes(
     try {
       const { message, type } = parseBroadcastBody(await readJsonBody(request));
       broadcastGlobalAnnouncement(message, type);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: "global_broadcast",
+        targetScope: "global-announcement",
+        summary: `Broadcast ${type} announcement`,
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          type,
+          messageLength: message.length
+        })
+      });
       sendJson(response, 200, { ok: true });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -1804,6 +1847,20 @@ export function registerAdminRoutes(
         updatedAt: new Date().toISOString()
       });
       broadcastGlobalAnnouncement(`${announcement.title}：${announcement.message}`, announcement.tone);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: "launch_announcement_upserted",
+        targetScope: "launch-announcement",
+        summary: `Upserted launch announcement ${announcement.id}`,
+        afterJson: safeSerialize(announcement),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          announcementId: announcement.id,
+          tone: announcement.tone,
+          activeCount: resolveActiveLaunchAnnouncements(nextState).length
+        })
+      });
       sendJson(response, 200, {
         ok: true,
         announcement,
@@ -1839,6 +1896,20 @@ export function registerAdminRoutes(
         ...state,
         announcements: state.announcements.filter((entry) => entry.id !== id),
         updatedAt: new Date().toISOString()
+      });
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: "launch_announcement_deleted",
+        targetScope: "launch-announcement",
+        summary: `Deleted launch announcement ${id}`,
+        ...(existing ? { beforeJson: safeSerialize(existing) } : {}),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          announcementId: id,
+          removed: Boolean(existing),
+          activeCount: resolveActiveLaunchAnnouncements(nextState).length
+        })
       });
       sendJson(response, 200, {
         ok: true,
@@ -1876,6 +1947,21 @@ export function registerAdminRoutes(
         );
       }
 
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor("admin"),
+        actorRole: "admin",
+        action: maintenanceMode.enabled ? "maintenance_mode_enabled" : "maintenance_mode_disabled",
+        targetScope: "maintenance-mode",
+        summary: `Maintenance mode ${maintenanceMode.enabled ? "enabled" : "disabled"}`,
+        afterJson: safeSerialize(maintenanceMode),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          enabled: maintenanceMode.enabled,
+          nextOpenAt: maintenanceMode.nextOpenAt ?? null,
+          whitelistPlayerIds: maintenanceMode.whitelistPlayerIds,
+          whitelistLoginIds: maintenanceMode.whitelistLoginIds
+        })
+      });
       sendJson(response, 200, {
         ok: true,
         maintenanceMode: resolveLaunchMaintenanceAccess(nextState),
@@ -2121,6 +2207,19 @@ export function registerAdminRoutes(
         at: leaderboardModerationState.frozenAt,
         detail: `Leaderboard frozen by ${actorPlayerId}${input.reason ? ` (${input.reason})` : ""}.`
       });
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId,
+        actorRole: role,
+        action: "leaderboard_player_frozen",
+        targetPlayerId: playerId,
+        targetScope: "leaderboard-moderation",
+        summary: `Froze leaderboard movement for ${playerId}`,
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          reason: input.reason ?? null,
+          frozenAt
+        })
+      });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -2199,6 +2298,21 @@ export function registerAdminRoutes(
             reason: input.reason
           })
         ])
+      });
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId,
+        actorRole: role,
+        action: "leaderboard_player_unfrozen",
+        targetPlayerId: playerId,
+        targetScope: "leaderboard-moderation",
+        summary: `Cleared leaderboard freeze for ${playerId}`,
+        beforeJson: safeSerialize(previousModerationState),
+        afterJson: safeSerialize(leaderboardModerationState),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          reason: input.reason ?? null,
+          clearedAt
+        })
       });
 
       sendJson(response, 200, {
@@ -2288,6 +2402,21 @@ export function registerAdminRoutes(
       };
       const updatedAccount = await store.savePlayerAccountProgress(playerId, {
         leaderboardModerationState
+      });
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: `${role}:admin-console`,
+        actorRole: role,
+        action: "leaderboard_player_removed",
+        targetPlayerId: playerId,
+        targetScope: "leaderboard-moderation",
+        summary: `Removed ${playerId} from leaderboard output`,
+        beforeJson: safeSerialize(account.leaderboardModerationState ?? {}),
+        afterJson: safeSerialize(leaderboardModerationState),
+        metadataJson: safeSerialize({
+          actorIp: readRequestIp(request),
+          reason: input.reason ?? null,
+          hiddenAt: leaderboardModerationState.hiddenAt
+        })
       });
       sendJson(response, 200, { ok: true, account: updatedAccount });
     } catch (error) {

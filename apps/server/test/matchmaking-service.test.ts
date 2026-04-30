@@ -620,3 +620,44 @@ test("redis matchmaking fenced batch writes reject stale lock ownership", async 
   assert.deepEqual(await redis.zrange(queueKey, 0, -1), ["player-alpha", "player-beta"]);
   assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_fenced_write_rejected_total 1$/m);
 });
+
+test("redis matchmaking enqueue writes are fenced by lock ownership", async (t) => {
+  resetRuntimeObservability();
+  const redis = new Redis();
+  const keyPrefix = "test:matchmaking:fenced-enqueue";
+  const service = new RedisMatchmakingService({
+    redisClient: redis as never,
+    keyPrefix,
+    lockRetryDelayMs: 1,
+    lockTimeoutMs: 250
+  });
+  const originalEval = redis.eval.bind(redis);
+  const lockKey = `${keyPrefix}:lock`;
+  const requestKey = `${keyPrefix}:requests`;
+  const queueKey = `${keyPrefix}:queue`;
+  const originalWarn = console.warn;
+
+  t.after(async () => {
+    console.warn = originalWarn;
+    resetRuntimeObservability();
+    await service.close();
+  });
+
+  console.warn = () => undefined;
+  (redis as unknown as { eval: (...args: unknown[]) => Promise<unknown> }).eval = async (...args) => {
+    const [script] = args;
+    if (typeof script === "string" && script.includes("matchmaking enqueue")) {
+      await redis.set(lockKey, "other-token");
+    }
+    return originalEval(...(args as [string, number, ...string[]]));
+  };
+
+  await assert.rejects(
+    () => service.enqueue(createQueueRequest("player-alpha", "2026-03-29T00:00:00.000Z")),
+    /Matchmaking lock lost mid-enqueue/
+  );
+
+  assert.equal(await redis.hget(requestKey, "player-alpha"), null);
+  assert.deepEqual(await redis.zrange(queueKey, 0, -1), []);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_matchmaking_fenced_write_rejected_total 1$/m);
+});

@@ -56,6 +56,13 @@ interface AuthObservabilityCounters {
   tokenDeliveryProcessingLockRenewFailuresTotal: number;
   tokenDeliveryProcessingLockLostTotal: number;
   tokenDeliveryProcessingLockReleaseStaleTotal: number;
+  tokenDeliveryFencedWriteRejectedTotal: number;
+  accountRegistrationStateRedisReadFailuresTotal: number;
+  accountRegistrationStateRedisWriteFailuresTotal: number;
+  passwordRecoveryStateRedisReadFailuresTotal: number;
+  passwordRecoveryStateRedisWriteFailuresTotal: number;
+  wechatSessionKeyCacheRedisReadFailuresTotal: number;
+  wechatSessionKeyCacheRedisWriteFailuresTotal: number;
 }
 
 interface MatchmakingObservabilityCounters {
@@ -72,6 +79,25 @@ interface SeasonalEventOpsAuditObservabilityCounters {
   persistFailuresTotal: number;
   readFailuresTotal: number;
   localFallbackWritesTotal: number;
+  mysqlPersistFailuresTotal: number;
+}
+
+interface SeasonalEventRuntimeOverrideObservabilityCounters {
+  persistFailuresTotal: number;
+  readFailuresTotal: number;
+  localFallbackWritesTotal: number;
+}
+
+export type UgcModerationConfigLoadSource = "unknown" | "config-center" | "file" | "fallback-empty";
+
+interface UgcModerationConfigObservabilityCounters {
+  loadFailuresTotal: number;
+}
+
+interface AdminMailboxDeliveryObservabilityCounters {
+  deliveredTotal: number;
+  skippedTotal: number;
+  failedTotal: number;
 }
 
 interface LeaderboardAbuseObservabilityCounters {
@@ -226,6 +252,20 @@ interface RuntimeObservabilityState {
   seasonalEventOpsAudit: {
     counters: SeasonalEventOpsAuditObservabilityCounters;
   };
+  seasonalEventRuntimeOverride: {
+    counters: SeasonalEventRuntimeOverrideObservabilityCounters;
+  };
+  ugcModerationConfig: {
+    loaded: boolean;
+    candidateTermsCount: number;
+    approvedTermsCount: number;
+    source: UgcModerationConfigLoadSource;
+    lastLoadFailureAt: string | null;
+    counters: UgcModerationConfigObservabilityCounters;
+  };
+  adminMailboxDelivery: {
+    counters: AdminMailboxDeliveryObservabilityCounters;
+  };
   leaderboardAbuse: {
     counters: LeaderboardAbuseObservabilityCounters;
     recentAlerts: LeaderboardAlertEvent[];
@@ -304,6 +344,7 @@ interface RuntimeHealthPayload {
           | "tokenDeliveryProcessingLockRenewFailuresTotal"
           | "tokenDeliveryProcessingLockLostTotal"
           | "tokenDeliveryProcessingLockReleaseStaleTotal"
+          | "tokenDeliveryFencedWriteRejectedTotal"
         >;
         failureReasons: Record<AuthTokenDeliveryFailureReason, number>;
       };
@@ -320,6 +361,20 @@ interface RuntimeHealthPayload {
     };
     seasonalEventOpsAudit: {
       counters: SeasonalEventOpsAuditObservabilityCounters;
+    };
+    seasonalEventRuntimeOverride: {
+      counters: SeasonalEventRuntimeOverrideObservabilityCounters;
+    };
+    ugcModerationConfig: {
+      loaded: boolean;
+      candidateTermsCount: number;
+      approvedTermsCount: number;
+      source: UgcModerationConfigLoadSource;
+      lastLoadFailureAt: string | null;
+      counters: UgcModerationConfigObservabilityCounters;
+    };
+    adminMailboxDelivery: {
+      counters: AdminMailboxDeliveryObservabilityCounters;
     };
     leaderboardAbuse: {
       counters: LeaderboardAbuseObservabilityCounters;
@@ -497,7 +552,14 @@ const runtimeObservability: RuntimeObservabilityState = {
       tokenDeliveryQueuePumpFailuresTotal: 0,
       tokenDeliveryProcessingLockRenewFailuresTotal: 0,
       tokenDeliveryProcessingLockLostTotal: 0,
-      tokenDeliveryProcessingLockReleaseStaleTotal: 0
+      tokenDeliveryProcessingLockReleaseStaleTotal: 0,
+      tokenDeliveryFencedWriteRejectedTotal: 0,
+      accountRegistrationStateRedisReadFailuresTotal: 0,
+      accountRegistrationStateRedisWriteFailuresTotal: 0,
+      passwordRecoveryStateRedisReadFailuresTotal: 0,
+      passwordRecoveryStateRedisWriteFailuresTotal: 0,
+      wechatSessionKeyCacheRedisReadFailuresTotal: 0,
+      wechatSessionKeyCacheRedisWriteFailuresTotal: 0
     },
     activeGuestSessionCount: 0,
     activeAccountSessions: new Map<string, { playerId: string; provider: string }>(),
@@ -568,7 +630,32 @@ const runtimeObservability: RuntimeObservabilityState = {
       persistSuccessTotal: 0,
       persistFailuresTotal: 0,
       readFailuresTotal: 0,
+      localFallbackWritesTotal: 0,
+      mysqlPersistFailuresTotal: 0
+    }
+  },
+  seasonalEventRuntimeOverride: {
+    counters: {
+      persistFailuresTotal: 0,
+      readFailuresTotal: 0,
       localFallbackWritesTotal: 0
+    }
+  },
+  ugcModerationConfig: {
+    loaded: false,
+    candidateTermsCount: 0,
+    approvedTermsCount: 0,
+    source: "unknown",
+    lastLoadFailureAt: null,
+    counters: {
+      loadFailuresTotal: 0
+    }
+  },
+  adminMailboxDelivery: {
+    counters: {
+      deliveredTotal: 0,
+      skippedTotal: 0,
+      failedTotal: 0
     }
   },
   leaderboardAbuse: {
@@ -791,7 +878,8 @@ function buildHealthPayload(
             tokenDeliveryQueuePumpFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryQueuePumpFailuresTotal,
             tokenDeliveryProcessingLockRenewFailuresTotal: runtimeObservability.auth.counters.tokenDeliveryProcessingLockRenewFailuresTotal,
             tokenDeliveryProcessingLockLostTotal: runtimeObservability.auth.counters.tokenDeliveryProcessingLockLostTotal,
-            tokenDeliveryProcessingLockReleaseStaleTotal: runtimeObservability.auth.counters.tokenDeliveryProcessingLockReleaseStaleTotal
+            tokenDeliveryProcessingLockReleaseStaleTotal: runtimeObservability.auth.counters.tokenDeliveryProcessingLockReleaseStaleTotal,
+            tokenDeliveryFencedWriteRejectedTotal: runtimeObservability.auth.counters.tokenDeliveryFencedWriteRejectedTotal
           },
           failureReasons: { ...runtimeObservability.auth.tokenDeliveryFailureReasons }
         }
@@ -808,6 +896,20 @@ function buildHealthPayload(
       },
       seasonalEventOpsAudit: {
         counters: { ...runtimeObservability.seasonalEventOpsAudit.counters }
+      },
+      seasonalEventRuntimeOverride: {
+        counters: { ...runtimeObservability.seasonalEventRuntimeOverride.counters }
+      },
+      ugcModerationConfig: {
+        loaded: runtimeObservability.ugcModerationConfig.loaded,
+        candidateTermsCount: runtimeObservability.ugcModerationConfig.candidateTermsCount,
+        approvedTermsCount: runtimeObservability.ugcModerationConfig.approvedTermsCount,
+        source: runtimeObservability.ugcModerationConfig.source,
+        lastLoadFailureAt: runtimeObservability.ugcModerationConfig.lastLoadFailureAt,
+        counters: { ...runtimeObservability.ugcModerationConfig.counters }
+      },
+      adminMailboxDelivery: {
+        counters: { ...runtimeObservability.adminMailboxDelivery.counters }
       },
       leaderboardAbuse: {
         counters: { ...runtimeObservability.leaderboardAbuse.counters },
@@ -1530,6 +1632,33 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_seasonal_event_ops_audit_local_fallback_writes_total Total seasonal-event ops audit entries written only to local fallback after shared-storage failure.",
     "# TYPE veil_seasonal_event_ops_audit_local_fallback_writes_total counter",
     `veil_seasonal_event_ops_audit_local_fallback_writes_total ${health.runtime.seasonalEventOpsAudit.counters.localFallbackWritesTotal}`,
+    "# HELP veil_seasonal_event_ops_audit_mysql_persist_failures_total Total seasonal-event ops audit archive writes that failed.",
+    "# TYPE veil_seasonal_event_ops_audit_mysql_persist_failures_total counter",
+    `veil_seasonal_event_ops_audit_mysql_persist_failures_total ${health.runtime.seasonalEventOpsAudit.counters.mysqlPersistFailuresTotal}`,
+    "# HELP veil_seasonal_event_runtime_override_persist_failures_total Total seasonal-event runtime override shared-storage write failures.",
+    "# TYPE veil_seasonal_event_runtime_override_persist_failures_total counter",
+    `veil_seasonal_event_runtime_override_persist_failures_total ${health.runtime.seasonalEventRuntimeOverride.counters.persistFailuresTotal}`,
+    "# HELP veil_seasonal_event_runtime_override_read_failures_total Total seasonal-event runtime override shared-storage read failures.",
+    "# TYPE veil_seasonal_event_runtime_override_read_failures_total counter",
+    `veil_seasonal_event_runtime_override_read_failures_total ${health.runtime.seasonalEventRuntimeOverride.counters.readFailuresTotal}`,
+    "# HELP veil_seasonal_event_runtime_override_local_fallback_writes_total Total seasonal-event runtime overrides written only to local fallback after shared-storage failure.",
+    "# TYPE veil_seasonal_event_runtime_override_local_fallback_writes_total counter",
+    `veil_seasonal_event_runtime_override_local_fallback_writes_total ${health.runtime.seasonalEventRuntimeOverride.counters.localFallbackWritesTotal}`,
+    "# HELP veil_ugc_moderation_config_load_failures_total Total UGC moderation config load failures.",
+    "# TYPE veil_ugc_moderation_config_load_failures_total counter",
+    `veil_ugc_moderation_config_load_failures_total ${health.runtime.ugcModerationConfig.counters.loadFailuresTotal}`,
+    "# HELP veil_ugc_moderation_config_candidate_terms Current UGC moderation candidate term count.",
+    "# TYPE veil_ugc_moderation_config_candidate_terms gauge",
+    `veil_ugc_moderation_config_candidate_terms ${health.runtime.ugcModerationConfig.candidateTermsCount}`,
+    "# HELP veil_admin_mailbox_delivery_delivered_total Total admin mailbox delivery target players delivered.",
+    "# TYPE veil_admin_mailbox_delivery_delivered_total counter",
+    `veil_admin_mailbox_delivery_delivered_total ${health.runtime.adminMailboxDelivery.counters.deliveredTotal}`,
+    "# HELP veil_admin_mailbox_delivery_skipped_total Total admin mailbox delivery target players skipped.",
+    "# TYPE veil_admin_mailbox_delivery_skipped_total counter",
+    `veil_admin_mailbox_delivery_skipped_total ${health.runtime.adminMailboxDelivery.counters.skippedTotal}`,
+    "# HELP veil_admin_mailbox_delivery_failed_total Total admin mailbox delivery route failures.",
+    "# TYPE veil_admin_mailbox_delivery_failed_total counter",
+    `veil_admin_mailbox_delivery_failed_total ${health.runtime.adminMailboxDelivery.counters.failedTotal}`,
     "# HELP veil_matchmaking_queue_depth Current matchmaking queue depth across the active backing store.",
     "# TYPE veil_matchmaking_queue_depth gauge",
     `veil_matchmaking_queue_depth ${health.runtime.matchmaking.counters.queueDepth}`,
@@ -1587,6 +1716,27 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_token_delivery_processing_lock_release_stale_total Total account token delivery processing lock releases skipped because ownership was lost.",
     "# TYPE veil_auth_token_delivery_processing_lock_release_stale_total counter",
     `veil_auth_token_delivery_processing_lock_release_stale_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryProcessingLockReleaseStaleTotal}`,
+    "# HELP veil_auth_token_delivery_fenced_write_rejected_total Total account token delivery persistence writes rejected by processing-lock fencing.",
+    "# TYPE veil_auth_token_delivery_fenced_write_rejected_total counter",
+    `veil_auth_token_delivery_fenced_write_rejected_total ${health.runtime.auth.tokenDelivery.counters.tokenDeliveryFencedWriteRejectedTotal}`,
+    "# HELP veil_auth_account_registration_state_redis_read_failures_total Total account-registration state Redis read failures that fell back locally.",
+    "# TYPE veil_auth_account_registration_state_redis_read_failures_total counter",
+    `veil_auth_account_registration_state_redis_read_failures_total ${health.runtime.auth.counters.accountRegistrationStateRedisReadFailuresTotal}`,
+    "# HELP veil_auth_account_registration_state_redis_write_failures_total Total account-registration state Redis write failures that fell back locally.",
+    "# TYPE veil_auth_account_registration_state_redis_write_failures_total counter",
+    `veil_auth_account_registration_state_redis_write_failures_total ${health.runtime.auth.counters.accountRegistrationStateRedisWriteFailuresTotal}`,
+    "# HELP veil_auth_password_recovery_state_redis_read_failures_total Total password-recovery state Redis read failures that fell back locally.",
+    "# TYPE veil_auth_password_recovery_state_redis_read_failures_total counter",
+    `veil_auth_password_recovery_state_redis_read_failures_total ${health.runtime.auth.counters.passwordRecoveryStateRedisReadFailuresTotal}`,
+    "# HELP veil_auth_password_recovery_state_redis_write_failures_total Total password-recovery state Redis write failures that fell back locally.",
+    "# TYPE veil_auth_password_recovery_state_redis_write_failures_total counter",
+    `veil_auth_password_recovery_state_redis_write_failures_total ${health.runtime.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal}`,
+    "# HELP veil_wechat_session_key_cache_redis_read_failures_total Total WeChat session key Redis cache read failures.",
+    "# TYPE veil_wechat_session_key_cache_redis_read_failures_total counter",
+    `veil_wechat_session_key_cache_redis_read_failures_total ${health.runtime.auth.counters.wechatSessionKeyCacheRedisReadFailuresTotal}`,
+    "# HELP veil_wechat_session_key_cache_redis_write_failures_total Total WeChat session key Redis cache write failures.",
+    "# TYPE veil_wechat_session_key_cache_redis_write_failures_total counter",
+    `veil_wechat_session_key_cache_redis_write_failures_total ${health.runtime.auth.counters.wechatSessionKeyCacheRedisWriteFailuresTotal}`,
     "# HELP veil_auth_token_delivery_failures_timeout_total Total token delivery failures caused by timeouts.",
     "# TYPE veil_auth_token_delivery_failures_timeout_total counter",
     `veil_auth_token_delivery_failures_timeout_total ${health.runtime.auth.tokenDelivery.failureReasons.timeout}`,
@@ -2257,6 +2407,53 @@ export function recordSeasonalEventOpsAuditLocalFallbackWrite(): void {
   runtimeObservability.seasonalEventOpsAudit.counters.localFallbackWritesTotal += 1;
 }
 
+export function recordSeasonalEventOpsAuditMySqlPersistFailure(): void {
+  runtimeObservability.seasonalEventOpsAudit.counters.mysqlPersistFailuresTotal += 1;
+}
+
+export function recordSeasonalEventRuntimeOverridePersistFailure(): void {
+  runtimeObservability.seasonalEventRuntimeOverride.counters.persistFailuresTotal += 1;
+}
+
+export function recordSeasonalEventRuntimeOverrideReadFailure(): void {
+  runtimeObservability.seasonalEventRuntimeOverride.counters.readFailuresTotal += 1;
+}
+
+export function recordSeasonalEventRuntimeOverrideLocalFallbackWrite(): void {
+  runtimeObservability.seasonalEventRuntimeOverride.counters.localFallbackWritesTotal += 1;
+}
+
+export function recordUgcModerationConfigLoadFailure(occurredAt = new Date()): void {
+  runtimeObservability.ugcModerationConfig.counters.loadFailuresTotal += 1;
+  runtimeObservability.ugcModerationConfig.loaded = false;
+  runtimeObservability.ugcModerationConfig.source = "fallback-empty";
+  runtimeObservability.ugcModerationConfig.lastLoadFailureAt = occurredAt.toISOString();
+}
+
+export function setUgcModerationConfigStatus(input: {
+  loaded: boolean;
+  candidateTermsCount: number;
+  approvedTermsCount: number;
+  source: UgcModerationConfigLoadSource;
+}): void {
+  runtimeObservability.ugcModerationConfig.loaded = input.loaded;
+  runtimeObservability.ugcModerationConfig.candidateTermsCount = Math.max(0, Math.floor(input.candidateTermsCount));
+  runtimeObservability.ugcModerationConfig.approvedTermsCount = Math.max(0, Math.floor(input.approvedTermsCount));
+  runtimeObservability.ugcModerationConfig.source = input.source;
+}
+
+export function recordAdminMailboxDelivery(input: {
+  delivered?: number;
+  skipped?: number;
+  failed?: boolean;
+}): void {
+  runtimeObservability.adminMailboxDelivery.counters.deliveredTotal += Math.max(0, Math.floor(input.delivered ?? 0));
+  runtimeObservability.adminMailboxDelivery.counters.skippedTotal += Math.max(0, Math.floor(input.skipped ?? 0));
+  if (input.failed) {
+    runtimeObservability.adminMailboxDelivery.counters.failedTotal += 1;
+  }
+}
+
 export function setMatchmakingQueueDepth(count: number): void {
   runtimeObservability.matchmaking.counters.queueDepth = Math.max(0, Math.floor(count));
 }
@@ -2348,6 +2545,34 @@ export function recordAuthTokenDeliveryProcessingLockLost(): void {
 
 export function recordAuthTokenDeliveryProcessingLockReleaseStale(): void {
   runtimeObservability.auth.counters.tokenDeliveryProcessingLockReleaseStaleTotal += 1;
+}
+
+export function recordAuthTokenDeliveryFencedWriteRejected(): void {
+  runtimeObservability.auth.counters.tokenDeliveryFencedWriteRejectedTotal += 1;
+}
+
+export function recordAccountRegistrationStateRedisReadFailure(): void {
+  runtimeObservability.auth.counters.accountRegistrationStateRedisReadFailuresTotal += 1;
+}
+
+export function recordAccountRegistrationStateRedisWriteFailure(): void {
+  runtimeObservability.auth.counters.accountRegistrationStateRedisWriteFailuresTotal += 1;
+}
+
+export function recordPasswordRecoveryStateRedisReadFailure(): void {
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisReadFailuresTotal += 1;
+}
+
+export function recordPasswordRecoveryStateRedisWriteFailure(): void {
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal += 1;
+}
+
+export function recordWechatSessionKeyCacheRedisReadFailure(): void {
+  runtimeObservability.auth.counters.wechatSessionKeyCacheRedisReadFailuresTotal += 1;
+}
+
+export function recordWechatSessionKeyCacheRedisWriteFailure(): void {
+  runtimeObservability.auth.counters.wechatSessionKeyCacheRedisWriteFailuresTotal += 1;
 }
 
 export function setPaymentGrantQueueCount(count: number): void {
@@ -2475,6 +2700,13 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.tokenDeliveryProcessingLockRenewFailuresTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryProcessingLockLostTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryProcessingLockReleaseStaleTotal = 0;
+  runtimeObservability.auth.counters.tokenDeliveryFencedWriteRejectedTotal = 0;
+  runtimeObservability.auth.counters.accountRegistrationStateRedisReadFailuresTotal = 0;
+  runtimeObservability.auth.counters.accountRegistrationStateRedisWriteFailuresTotal = 0;
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisReadFailuresTotal = 0;
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal = 0;
+  runtimeObservability.auth.counters.wechatSessionKeyCacheRedisReadFailuresTotal = 0;
+  runtimeObservability.auth.counters.wechatSessionKeyCacheRedisWriteFailuresTotal = 0;
   runtimeObservability.auth.activeGuestSessionCount = 0;
   runtimeObservability.auth.activeAccountSessions.clear();
   runtimeObservability.auth.activeAccountLockCount = 0;
@@ -2521,6 +2753,19 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.seasonalEventOpsAudit.counters.persistFailuresTotal = 0;
   runtimeObservability.seasonalEventOpsAudit.counters.readFailuresTotal = 0;
   runtimeObservability.seasonalEventOpsAudit.counters.localFallbackWritesTotal = 0;
+  runtimeObservability.seasonalEventOpsAudit.counters.mysqlPersistFailuresTotal = 0;
+  runtimeObservability.seasonalEventRuntimeOverride.counters.persistFailuresTotal = 0;
+  runtimeObservability.seasonalEventRuntimeOverride.counters.readFailuresTotal = 0;
+  runtimeObservability.seasonalEventRuntimeOverride.counters.localFallbackWritesTotal = 0;
+  runtimeObservability.ugcModerationConfig.loaded = false;
+  runtimeObservability.ugcModerationConfig.candidateTermsCount = 0;
+  runtimeObservability.ugcModerationConfig.approvedTermsCount = 0;
+  runtimeObservability.ugcModerationConfig.source = "unknown";
+  runtimeObservability.ugcModerationConfig.lastLoadFailureAt = null;
+  runtimeObservability.ugcModerationConfig.counters.loadFailuresTotal = 0;
+  runtimeObservability.adminMailboxDelivery.counters.deliveredTotal = 0;
+  runtimeObservability.adminMailboxDelivery.counters.skippedTotal = 0;
+  runtimeObservability.adminMailboxDelivery.counters.failedTotal = 0;
   runtimeObservability.leaderboardAbuse.counters.alertsTotal = 0;
   runtimeObservability.leaderboardAbuse.recentAlerts.length = 0;
   runtimeObservability.antiCheat.counters.alertsTotal = 0;

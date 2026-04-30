@@ -19,7 +19,9 @@ import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/displa
 import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "@server/domain/battle/event-engine";
 import { resolveActiveDailyDungeon } from "@server/domain/battle/pve-content";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 import type {
+  AdminAuditLogCreateInput,
   PlayerAccountBanHistoryListOptions,
   PlayerAccountBanInput,
   PlayerAccountBanSnapshot,
@@ -136,6 +138,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     resolvedAt?: string;
     updatedAt: string;
   }>>();
+  private readonly adminAuditLogs: AdminAuditLogCreateInput[] = [];
   private readonly referrals = new Set<string>();
   private readonly referralCountsByReferrer = new Map<string, number>();
   private nextNameHistoryId = 1;
@@ -454,6 +457,26 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
     }
 
     return { deliveredPlayerIds, skippedPlayerIds, message };
+  }
+
+  async appendAdminAuditLog(input: AdminAuditLogCreateInput) {
+    this.adminAuditLogs.unshift(input);
+    return {
+      auditId: `audit-${this.adminAuditLogs.length}`,
+      occurredAt: new Date().toISOString(),
+      ...input
+    };
+  }
+
+  async listAdminAuditLogs(options: { action?: string; limit?: number } = {}) {
+    return this.adminAuditLogs
+      .filter((entry) => !options.action || entry.action === options.action)
+      .slice(0, Math.max(1, Math.floor(options.limit ?? 50)))
+      .map((entry, index) => ({
+        auditId: `audit-${index + 1}`,
+        occurredAt: new Date().toISOString(),
+        ...entry
+      }));
   }
 
   async claimPlayerMailboxMessage(playerId: string, messageId: string, claimedAt?: string) {
@@ -4443,8 +4466,10 @@ test("mailbox routes list delivered compensation and repeated claims stay idempo
 
 test("admin mailbox delivery route skips duplicate message ids for the same player", async (t) => {
   process.env.VEIL_ADMIN_TOKEN = "test-admin-token";
+  resetRuntimeObservability();
   t.after(() => {
     delete process.env.VEIL_ADMIN_TOKEN;
+    resetRuntimeObservability();
   });
 
   const port = 44940 + Math.floor(Math.random() * 1000);
@@ -4500,6 +4525,13 @@ test("admin mailbox delivery route skips duplicate message ids for the same play
   assert.equal(secondResponse.status, 200);
   assert.equal(secondPayload.delivered, 0);
   assert.equal(secondPayload.skipped, 1);
+  const auditLogs = await store.listAdminAuditLogs({ action: "player_mailbox_delivered", limit: 5 });
+  assert.equal(auditLogs.length, 2);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /"grantSummary":/);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /"skippedCount":1/);
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /^veil_admin_mailbox_delivery_delivered_total 1$/m);
+  assert.match(metrics, /^veil_admin_mailbox_delivery_skipped_total 1$/m);
 });
 
 test("support ticket routes accept authenticated player submissions and list the created ticket", async (t) => {

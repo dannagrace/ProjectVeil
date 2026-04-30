@@ -1303,6 +1303,15 @@ test("wechat pay verify persists grant_pending failures and admin retry can sett
     assert.equal(retryPayload.order.grantAttemptCount, 2);
     assert.equal(settledOrder?.status, "settled");
     assert.equal(accountAfterRetry?.gems, 120);
+    const retryAudits = await store.listAdminAuditLogs?.({
+      action: "wechat_payment_retry",
+      targetPlayerId: "wechat-player",
+      limit: 5
+    });
+    assert.equal(retryAudits?.length, 1);
+    assert.equal(retryAudits?.[0]?.targetScope, "payment-order");
+    assert.match(retryAudits?.[0]?.metadataJson ?? "", /wechat-order-retry/);
+    assert.match(retryAudits?.[0]?.metadataJson ?? "", /"amount":600/);
 
     const runtimeAfterRetry = await app.invoke("/api/runtime/wechat-payment-grants", {
       method: "GET",

@@ -5,11 +5,13 @@ import test, { type TestContext } from "node:test";
 import {
   cacheWechatSessionKey,
   clearCachedWechatSessionKey,
+  createWechatSessionKeyCache,
   getCachedWechatSessionKey,
   readWechatSessionKeyTtlSeconds,
   resetWechatSessionKeyCache,
   validateWechatSignature,
 } from "@server/adapters/wechat-session-key";
+import { buildPrometheusMetricsDocument, resetRuntimeObservability } from "@server/domain/ops/observability";
 
 function withCleanCache(t: TestContext): void {
   void resetWechatSessionKeyCache();
@@ -97,6 +99,28 @@ test("cacheWechatSessionKey: trims whitespace from playerId and sessionKey", asy
   assert.equal(snapshot.sessionKey, "trimmedkey==");
 });
 
+test("cacheWechatSessionKey: records Redis write fallback without dropping local cache", async () => {
+  resetRuntimeObservability();
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  const cache = createWechatSessionKeyCache({
+    env: { VEIL_AUTH_SECRET: "test-secret" },
+    redisClient: {
+      async set() {
+        throw new Error("redis write unavailable");
+      }
+    } as never
+  });
+
+  const snapshot = await cache.cache("player-redis-write", "session-key==", 60);
+
+  assert.equal(snapshot.playerId, "player-redis-write");
+  assert.equal((await cache.get("player-redis-write"))?.sessionKey, "session-key==");
+  assert.match(buildPrometheusMetricsDocument(), /^veil_wechat_session_key_cache_redis_write_failures_total 1$/m);
+  console.warn = originalWarn;
+  resetRuntimeObservability();
+});
+
 // ---------------------------------------------------------------------------
 // getCachedWechatSessionKey
 // ---------------------------------------------------------------------------
@@ -123,6 +147,25 @@ test("getCachedWechatSessionKey: expiresAt from get matches expiresAt from cache
   const retrieved = await getCachedWechatSessionKey("player-6");
   assert.ok(retrieved !== null);
   assert.equal(retrieved.expiresAt, cached.expiresAt);
+});
+
+test("getCachedWechatSessionKey: records Redis read fallback when shared cache is unavailable", async () => {
+  resetRuntimeObservability();
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  const cache = createWechatSessionKeyCache({
+    env: { VEIL_AUTH_SECRET: "test-secret" },
+    redisClient: {
+      async get() {
+        throw new Error("redis read unavailable");
+      }
+    } as never
+  });
+
+  assert.equal(await cache.get("player-redis-read"), null);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_wechat_session_key_cache_redis_read_failures_total 1$/m);
+  console.warn = originalWarn;
+  resetRuntimeObservability();
 });
 
 // ---------------------------------------------------------------------------

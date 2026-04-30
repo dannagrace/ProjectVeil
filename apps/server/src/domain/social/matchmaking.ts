@@ -30,7 +30,7 @@ const MATCHMAKING_LOCK_RENEW_FAILURE_TOLERANCE = 2;
 
 interface MatchmakingLockContext {
   isLockLost(): boolean;
-  token?: string;
+  token: string;
 }
 
 interface MatchmakingRuntimeConfig {
@@ -440,10 +440,33 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
     return this.withLock(async (lock) => {
       const normalized = normalizeMatchmakingRequest(request);
 
-      await this.redis.hdel(this.resultKey, normalized.playerId);
-
-      await this.redis.hset(this.requestKey, normalized.playerId, JSON.stringify(normalized));
-      await this.redis.zadd(this.queueKey, getQueuedPlayerScore(normalized), normalized.playerId);
+      const written = Number(
+        await this.redis.eval(
+          [
+            "-- matchmaking enqueue",
+            "if ARGV[1] ~= '' and redis.call('get', KEYS[4]) ~= ARGV[1] then",
+            "  return -1",
+            "end",
+            "redis.call('hdel', KEYS[1], ARGV[2])",
+            "redis.call('hset', KEYS[2], ARGV[2], ARGV[3])",
+            "redis.call('zadd', KEYS[3], ARGV[4], ARGV[2])",
+            "return 1"
+          ].join("\n"),
+          4,
+          this.resultKey,
+          this.requestKey,
+          this.queueKey,
+          this.lockKey,
+          lock.token,
+          normalized.playerId,
+          JSON.stringify(normalized),
+          String(getQueuedPlayerScore(normalized))
+        )
+      );
+      if (written < 0 || lock.isLockLost()) {
+        recordMatchmakingFencedWriteRejected();
+        throw new Error("Matchmaking lock lost mid-enqueue");
+      }
 
       const status = await this.getQueuedStatus(normalized.playerId);
       await this.matchQueuedPlayers(now, lock);
@@ -455,11 +478,32 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
   }
 
   async dequeue(playerId: string): Promise<boolean> {
-    return this.withLock(async () => {
+    return this.withLock(async (lock) => {
       const normalizedPlayerId = playerId.trim();
-      await this.redis.hdel(this.resultKey, normalizedPlayerId);
-      await this.redis.hdel(this.requestKey, normalizedPlayerId);
-      const removed = await this.redis.zrem(this.queueKey, normalizedPlayerId);
+      const removed = Number(
+        await this.redis.eval(
+          [
+            "-- matchmaking dequeue",
+            "if ARGV[1] ~= '' and redis.call('get', KEYS[4]) ~= ARGV[1] then",
+            "  return -1",
+            "end",
+            "redis.call('hdel', KEYS[1], ARGV[2])",
+            "redis.call('hdel', KEYS[2], ARGV[2])",
+            "return redis.call('zrem', KEYS[3], ARGV[2])"
+          ].join("\n"),
+          4,
+          this.resultKey,
+          this.requestKey,
+          this.queueKey,
+          this.lockKey,
+          lock.token,
+          normalizedPlayerId
+        )
+      );
+      if (removed < 0 || lock.isLockLost()) {
+        recordMatchmakingFencedWriteRejected();
+        throw new Error("Matchmaking lock lost mid-dequeue");
+      }
       return removed > 0;
     });
   }
@@ -505,7 +549,7 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
       return 0;
     }
 
-    return this.withLock(async () => {
+    return this.withLock(async (lock) => {
       const requestsByPlayerId = await this.loadQueueRequests();
       const queueIds = await this.redis.zrange(this.queueKey, 0, -1);
       const expiredPlayerIds = queueIds.filter((playerId) => {
@@ -522,10 +566,34 @@ export class RedisMatchmakingService implements MatchmakingServiceController {
         return 0;
       }
 
-      await this.redis.zrem(this.queueKey, ...expiredPlayerIds);
-      await this.redis.hdel(this.requestKey, ...expiredPlayerIds);
-      await this.redis.hdel(this.resultKey, ...expiredPlayerIds);
-      return expiredPlayerIds.length;
+      const removed = Number(
+        await this.redis.eval(
+          [
+            "-- matchmaking prune",
+            "if ARGV[1] ~= '' and redis.call('get', KEYS[4]) ~= ARGV[1] then",
+            "  return -1",
+            "end",
+            "for index = 2, #ARGV do",
+            "  redis.call('zrem', KEYS[1], ARGV[index])",
+            "  redis.call('hdel', KEYS[2], ARGV[index])",
+            "  redis.call('hdel', KEYS[3], ARGV[index])",
+            "end",
+            "return #ARGV - 1"
+          ].join("\n"),
+          4,
+          this.queueKey,
+          this.requestKey,
+          this.resultKey,
+          this.lockKey,
+          lock.token,
+          ...expiredPlayerIds
+        )
+      );
+      if (removed < 0 || lock.isLockLost()) {
+        recordMatchmakingFencedWriteRejected();
+        throw new Error("Matchmaking lock lost mid-prune");
+      }
+      return removed;
     });
   }
 

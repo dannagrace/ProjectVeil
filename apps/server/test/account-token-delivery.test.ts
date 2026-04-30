@@ -39,10 +39,58 @@ class MemoryRedisClient implements RedisClientLike {
     return deleted;
   }
 
-  async eval(_script: string, _numKeys: number, ...args: string[]): Promise<unknown> {
-    const [key, expectedValue] = args;
-    if (key && this.values.get(key) === expectedValue) {
-      this.values.delete(key);
+  async eval(script: string, _numKeys: number, ...args: string[]): Promise<unknown> {
+    const [firstKey, secondKey, thirdKey, ...argv] = args;
+    const [expectedToken, entryKey, serializedEntry] = argv;
+
+    if (script.includes("fenced dead-letter save") && secondKey && thirdKey && entryKey && serializedEntry) {
+      if (expectedToken && this.values.get(firstKey) !== expectedToken) {
+        return -1;
+      }
+      const added = await this.hset(secondKey, entryKey, serializedEntry);
+      if (added > 0) {
+        await this.rpush(thirdKey, entryKey);
+      }
+      const maxEntries = Number(argv[3]);
+      const staleKeys = (this.lists.get(thirdKey) ?? []).slice(0, Math.max(0, (this.lists.get(thirdKey) ?? []).length - maxEntries));
+      for (const staleKey of staleKeys) {
+        await this.hdel(secondKey, staleKey);
+      }
+      if (staleKeys.length > 0) {
+        await this.ltrim(thirdKey, staleKeys.length, -1);
+      }
+      return staleKeys;
+    }
+
+    if (script.includes("fenced save") && secondKey && thirdKey && entryKey && serializedEntry) {
+      if (expectedToken && this.values.get(firstKey) !== expectedToken) {
+        return -1;
+      }
+      const added = await this.hset(secondKey, entryKey, serializedEntry);
+      if (added > 0) {
+        await this.rpush(thirdKey, entryKey);
+      }
+      return 1;
+    }
+
+    if (script.includes("fenced delete") && secondKey && thirdKey && expectedToken && entryKey) {
+      if (this.values.get(firstKey) !== expectedToken) {
+        return -1;
+      }
+      const deleted = await this.hdel(secondKey, entryKey);
+      if (deleted > 0) {
+        await this.lrem(thirdKey, 1, entryKey);
+      }
+      return deleted;
+    }
+
+    if (script.includes("pexpire")) {
+      return firstKey && this.values.get(firstKey) === secondKey ? 1 : 0;
+    }
+
+    const expectedValue = secondKey;
+    if (firstKey && this.values.get(firstKey) === expectedValue) {
+      this.values.delete(firstKey);
       return 1;
     }
     return 0;
@@ -610,6 +658,55 @@ test("queued token delivery processing lock is renewed and stale releases are co
   assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_renew_failures_total 0$/m);
   assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_lost_total 0$/m);
   assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_processing_lock_release_stale_total 0$/m);
+});
+
+test("redis token delivery persistence rejects stale fenced queued writes", async () => {
+  resetRuntimeObservability();
+  const namespace = `account-token-delivery:fenced-write:${Date.now()}`;
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace
+  });
+  const entry = createQueuedDeliveryEntry("password-recovery:fenced-ranger");
+
+  await redis.set(`${namespace}:processor-lock`, "new-owner");
+
+  await assert.rejects(
+    () => persistence.saveQueuedDelivery(entry, "stale-owner"),
+    /Account token delivery fenced write rejected/
+  );
+  assert.equal(await redis.hget(`${namespace}:queued`, entry.key), null);
+  assert.deepEqual(await redis.lrange(`${namespace}:queued-keys`, 0, -1), []);
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_fenced_write_rejected_total 1$/m);
+
+  resetRuntimeObservability();
+});
+
+test("redis token delivery persistence rejects stale fenced dead-letter writes", async () => {
+  resetRuntimeObservability();
+  const namespace = `account-token-delivery:fenced-dlq-cap:${Date.now()}`;
+  const redis = new MemoryRedisClient();
+  const persistence = createRedisAccountTokenDeliveryQueuePersistence(redis, {
+    namespace,
+    deadLetterMaxEntries: 1
+  });
+  const firstEntry = createQueuedDeliveryEntry("password-recovery:fenced-oldest", 1_800_000_000_000);
+  const secondEntry = createQueuedDeliveryEntry("password-recovery:fenced-newest", 1_800_000_060_000);
+
+  await redis.set(`${namespace}:processor-lock`, "current-owner");
+  await persistence.saveDeadLetterDelivery(firstEntry);
+  await assert.rejects(
+    () => persistence.saveDeadLetterDelivery(secondEntry, "stale-owner"),
+    /Account token delivery fenced write rejected/
+  );
+
+  assert.deepEqual(
+    (await persistence.loadDeadLetterDeliveries()).map((entry) => entry.key),
+    [firstEntry.key]
+  );
+  assert.match(buildPrometheusMetricsDocument(), /^veil_auth_token_delivery_fenced_write_rejected_total 1$/m);
+
+  resetRuntimeObservability();
 });
 
 test("redis token delivery persistence caps dead-letter retention", async () => {

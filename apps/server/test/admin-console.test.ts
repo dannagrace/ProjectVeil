@@ -18,7 +18,7 @@ import {
   getActiveRoomInstances,
   type LobbyRoomSummary
 } from "@server/transport/colyseus-room/VeilColyseusRoom";
-import type { PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "@server/persistence";
+import type { AdminAuditLogCreateInput, PlayerBanHistoryRecord, PlayerCompensationRecord, PlayerPurchaseHistoryRecord, RoomSnapshotStore } from "@server/persistence";
 
 type RouteHandler = (request: any, response: ServerResponse) => void | Promise<void>;
 
@@ -972,6 +972,7 @@ test("GET /api/admin/experiments returns live experiment summaries with metrics"
 test("admin auth-token delivery DLQ routes list global dead letters and requeue without exposing tokens", async (t) => {
   withAdminSecret(t);
   const { supervisor } = withSupportSecrets(t);
+  const auditLogs: AdminAuditLogCreateInput[] = [];
   t.after(() => resetAccountTokenDeliveryState());
 
   await assert.rejects(() =>
@@ -992,7 +993,16 @@ test("admin auth-token delivery DLQ routes list global dead letters and requeue 
     )
   );
 
-  const { gets, posts } = registerRoutes();
+  const { gets, posts } = registerRoutes({
+    async appendAdminAuditLog(input: AdminAuditLogCreateInput) {
+      auditLogs.push(input);
+      return {
+        auditId: `audit-${auditLogs.length}`,
+        occurredAt: new Date().toISOString(),
+        ...input
+      };
+    }
+  } as unknown as RoomSnapshotStore);
   const listHandler = gets.get("/api/admin/auth-token-delivery/dead-letters");
   assert.ok(listHandler);
 
@@ -1038,6 +1048,10 @@ test("admin auth-token delivery DLQ routes list global dead letters and requeue 
   };
   assert.equal(requeuePayload.queuedEntry.key, "password-recovery:admin-dlq-ranger");
   assert.equal("token" in requeuePayload.queuedEntry, false);
+  assert.equal(auditLogs.length, 1);
+  assert.equal(auditLogs[0]?.action, "auth_token_delivery_dlq_requeue");
+  assert.equal(auditLogs[0]?.targetPlayerId, "player-admin-dlq");
+  assert.match(auditLogs[0]?.metadataJson ?? "", /admin-dlq-ranger/);
 });
 
 test("GET /api/admin/runtime/kill-switches returns minimum versions and kill-switch matrix", async (t) => {
@@ -1778,6 +1792,20 @@ test("GET /api/admin/audit-log returns filtered GM audit entries", async (t) => 
   assert.equal(payload.items.length, 1);
   assert.equal(payload.items[0]?.targetPlayerId, "player-1");
   assert.equal(payload.items[0]?.action, "player_overview_viewed");
+
+  const actionResponse = createResponse();
+  await handler(
+    createRequest({
+      headers: { "x-veil-admin-secret": moderator },
+      url: "/api/admin/audit-log?action=support_ticket_resolved"
+    }),
+    actionResponse
+  );
+  const actionPayload = JSON.parse(actionResponse.body) as { items: Array<{ targetPlayerId?: string; action: string }> };
+  assert.equal(actionResponse.statusCode, 200);
+  assert.equal(actionPayload.items.length, 1);
+  assert.equal(actionPayload.items[0]?.targetPlayerId, "player-2");
+  assert.equal(actionPayload.items[0]?.action, "support_ticket_resolved");
 });
 
 test("admin console html includes compensation form and history table", async () => {
@@ -1818,7 +1846,8 @@ test("POST /api/admin/broadcast returns 401 without a valid admin secret", async
 
 test("POST /api/admin/broadcast broadcasts to all active rooms and succeeds when none are active", async (t) => {
   const secret = withAdminSecret(t);
-  const { posts } = registerRoutes();
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
   const handler = posts.get("/api/admin/broadcast");
   assert.ok(handler);
 
@@ -1891,6 +1920,9 @@ test("POST /api/admin/broadcast broadcasts to all active rooms and succeeds when
 
   assert.equal(noRoomsResponse.statusCode, 200);
   assert.deepEqual(JSON.parse(noRoomsResponse.body), { ok: true });
+  const auditLogs = await store.listAdminAuditLogs({ action: "global_broadcast", limit: 5 });
+  assert.equal(auditLogs.length, 2);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /messageLength/);
 });
 
 test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t) => {
@@ -2137,7 +2169,8 @@ test("admin launch runtime routes list, create, and delete announcements", async
     updatedAt: "2026-04-17T09:00:00.000Z"
   });
 
-  const { gets, posts, deletes } = registerRoutes(createStore() as RoomSnapshotStore);
+  const store = createStore();
+  const { gets, posts, deletes } = registerRoutes(store as RoomSnapshotStore);
   const listHandler = gets.get("/api/admin/announcements");
   const createHandler = posts.get("/api/admin/announcements");
   const deleteHandler = deletes.get("/api/admin/announcements/:id");
@@ -2216,6 +2249,12 @@ test("admin launch runtime routes list, create, and delete announcements", async
   assert.equal(deletePayload.removed, true);
   assert.equal(deletePayload.announcement?.id, "launch-1");
   assert.deepEqual(deletePayload.active.map((item) => item.id), ["launch-2"]);
+  const auditLogs = await store.listAdminAuditLogs({ targetScope: "launch-announcement", limit: 5 });
+  assert.deepEqual(auditLogs.map((entry) => entry.action), [
+    "launch_announcement_deleted",
+    "launch_announcement_upserted"
+  ]);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /"removed":true/);
 });
 
 test("admin maintenance mode route persists the current maintenance snapshot", async (t) => {
@@ -2232,7 +2271,8 @@ test("admin maintenance mode route persists the current maintenance snapshot", a
     updatedAt: "2026-04-17T09:00:00.000Z"
   });
 
-  const { posts } = registerRoutes(createStore() as RoomSnapshotStore);
+  const store = createStore();
+  const { posts } = registerRoutes(store as RoomSnapshotStore);
   const handler = posts.get("/api/admin/maintenance-mode");
   assert.ok(handler);
 
@@ -2274,6 +2314,9 @@ test("admin maintenance mode route persists the current maintenance snapshot", a
   assert.equal(payload.maintenanceMode.message, "预计 30 分钟后恢复开放。");
   assert.equal(payload.maintenanceMode.nextOpenAt, nextOpenAt);
   assert.ok(payload.updatedAt);
+  const auditLogs = await store.listAdminAuditLogs({ action: "maintenance_mode_enabled", limit: 1 });
+  assert.equal(auditLogs.length, 1);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /ops-player/);
 });
 
 test("GET /api/admin/support-tickets returns open support tickets", async (t) => {
@@ -2803,6 +2846,9 @@ test("POST /api/admin/players/:id/leaderboard/freeze freezes leaderboard movemen
   assert.equal(payload.account.leaderboardModerationState?.frozenByPlayerId, "support-moderator:admin-console");
   assert.equal(payload.account.leaderboardModerationState?.freezeReason, "Suspicious ELO spike");
   assert.ok(payload.account.leaderboardModerationState?.frozenAt);
+  const auditLogs = await store.listAdminAuditLogs({ action: "leaderboard_player_frozen", targetPlayerId: "player-freeze", limit: 1 });
+  assert.equal(auditLogs.length, 1);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /Suspicious ELO spike/);
 });
 
 test("GET /api/admin/players/:id/leaderboard/abuse-state returns structured abuse state and alert history", async (t) => {
@@ -2936,6 +2982,13 @@ test("DELETE /api/admin/players/:id/leaderboard/freeze clears frozen state and a
   assert.deepEqual(updatedAccount?.leaderboardModerationState ?? {}, {});
   assert.equal(updatedAccount?.recentEventLog?.[0]?.id.startsWith("leaderboard:freeze_cleared:"), true);
   assert.match(updatedAccount?.recentEventLog?.[0]?.description ?? "", /Investigation complete/);
+  const auditLogs = await store.listAdminAuditLogs({
+    action: "leaderboard_player_unfrozen",
+    targetPlayerId: "player-clear-freeze",
+    limit: 1
+  });
+  assert.equal(auditLogs.length, 1);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /Investigation complete/);
 });
 
 test("DELETE /api/admin/players/:id/leaderboard/freeze returns 404 for unknown players", async (t) => {
@@ -3080,6 +3133,13 @@ test("POST /api/admin/players/:id/leaderboard/remove hides a player from leaderb
   assert.equal(payload.account.leaderboardModerationState?.hiddenByPlayerId, "support-moderator:admin-console");
   assert.equal(payload.account.leaderboardModerationState?.hiddenReason, "Leaderboard manipulation investigation");
   assert.ok(payload.account.leaderboardModerationState?.hiddenAt);
+  const auditLogs = await store.listAdminAuditLogs({
+    action: "leaderboard_player_removed",
+    targetPlayerId: "player-hidden",
+    limit: 1
+  });
+  assert.equal(auditLogs.length, 1);
+  assert.match(auditLogs[0]?.metadataJson ?? "", /Leaderboard manipulation investigation/);
 });
 
 test("support moderators can hide and inspect guild moderation audit", async (t) => {

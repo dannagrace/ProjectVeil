@@ -20,6 +20,7 @@ import {
 } from "@server/domain/ops/launch-runtime-state";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
+import type { AdminAuditLogCreateInput, AdminAuditLogRecord } from "@server/persistence";
 
 type CalendarRequest = IncomingMessage & { params?: Record<string, string | undefined> };
 type CalendarRouteHandler = (request: CalendarRequest, response: ServerResponse) => void | Promise<void>;
@@ -86,6 +87,11 @@ interface LiveOpsCalendarRouteOptions {
   now?: () => Date;
   filePath?: string;
   storage?: LiveOpsCalendarStorage;
+  auditStore?: LiveOpsCalendarAuditStore | null;
+}
+
+interface LiveOpsCalendarAuditStore {
+  appendAdminAuditLog?(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord>;
 }
 
 interface LiveOpsCalendarSchedulerOptions {
@@ -655,6 +661,28 @@ function isAuthorized(request: IncomingMessage): boolean {
   return timingSafeCompareAdminToken(readHeaderSecret(request), adminSecret);
 }
 
+function hasAdminAuditStore(
+  store: LiveOpsCalendarAuditStore | null | undefined
+): store is Required<LiveOpsCalendarAuditStore> {
+  return Boolean(store?.appendAdminAuditLog);
+}
+
+async function appendAdminAuditLogIfAvailable(
+  store: LiveOpsCalendarAuditStore | null | undefined,
+  input: AdminAuditLogCreateInput
+): Promise<AdminAuditLogRecord | null> {
+  if (!hasAdminAuditStore(store)) {
+    return null;
+  }
+  return store.appendAdminAuditLog(input);
+}
+
+function readRequestIp(request: IncomingMessage): string | undefined {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  const candidate = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+  return candidate?.split(",")[0]?.trim() || request.socket?.remoteAddress || undefined;
+}
+
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -718,6 +746,7 @@ export function registerLiveOpsCalendarRoutes(
       options.filePath ? { calendarFilePath: options.filePath } : {}
     );
   const scheduler = options.scheduler;
+  const auditStore = options.auditStore ?? null;
 
   app.get("/admin/calendar", async (_request, response) => {
     try {
@@ -768,6 +797,24 @@ export function registerLiveOpsCalendarRoutes(
           updatedAt: nowFactory().toISOString()
         }
       );
+      await appendAdminAuditLogIfAvailable(auditStore, {
+        actorPlayerId: "admin:live-ops-calendar",
+        actorRole: "admin",
+        action: "live_ops_calendar_upsert",
+        targetScope: "live-ops-event",
+        summary: `Upserted live-ops calendar entry ${entry.id}`,
+        afterJson: JSON.stringify(entry),
+        metadataJson: JSON.stringify({
+          entryId: entry.id,
+          title: entry.title,
+          status: entry.status,
+          startsAt: entry.startsAt,
+          endsAt: entry.endsAt ?? null,
+          actionType: entry.action.type,
+          requestIp: readRequestIp(request)
+        }),
+        occurredAt: nowFactory().toISOString()
+      });
       await scheduler?.refresh();
       sendJson(response, 200, {
         ok: true,
@@ -796,12 +843,27 @@ export function registerLiveOpsCalendarRoutes(
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
       const state = await storage.loadCalendarState(nowFactory());
+      const deletedEntry = state.entries.find((entry) => entry.id === entryId);
       const nextState = await storage.saveCalendarState(
         {
           entries: state.entries.filter((entry) => entry.id !== entryId),
           updatedAt: nowFactory().toISOString()
         }
       );
+      await appendAdminAuditLogIfAvailable(auditStore, {
+        actorPlayerId: "admin:live-ops-calendar",
+        actorRole: "admin",
+        action: "live_ops_calendar_deleted",
+        targetScope: "live-ops-event",
+        summary: `Deleted live-ops calendar entry ${entryId}`,
+        ...(deletedEntry ? { beforeJson: JSON.stringify(deletedEntry) } : {}),
+        metadataJson: JSON.stringify({
+          entryId,
+          existed: Boolean(deletedEntry),
+          requestIp: readRequestIp(request)
+        }),
+        occurredAt: nowFactory().toISOString()
+      });
       await scheduler?.refresh();
       sendJson(response, 200, {
         ok: true,
@@ -825,6 +887,21 @@ export function registerLiveOpsCalendarRoutes(
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
       const entry = await runCalendarEntryTransition(entryId, "start", nowFactory(), storage);
+      await appendAdminAuditLogIfAvailable(auditStore, {
+        actorPlayerId: "admin:live-ops-calendar",
+        actorRole: "admin",
+        action: "live_ops_calendar_started",
+        targetScope: "live-ops-event",
+        summary: `Started live-ops calendar entry ${entry.id}`,
+        afterJson: JSON.stringify(entry),
+        metadataJson: JSON.stringify({
+          entryId: entry.id,
+          status: entry.status,
+          startedAtActual: entry.startedAtActual ?? null,
+          requestIp: readRequestIp(request)
+        }),
+        occurredAt: nowFactory().toISOString()
+      });
       await scheduler?.refresh();
       sendJson(response, 200, { ok: true, entry });
     } catch (error) {
@@ -845,6 +922,21 @@ export function registerLiveOpsCalendarRoutes(
         throw new InvalidLiveOpsCalendarPayloadError("calendar entry id is required");
       }
       const entry = await runCalendarEntryTransition(entryId, "end", nowFactory(), storage);
+      await appendAdminAuditLogIfAvailable(auditStore, {
+        actorPlayerId: "admin:live-ops-calendar",
+        actorRole: "admin",
+        action: "live_ops_calendar_ended",
+        targetScope: "live-ops-event",
+        summary: `Ended live-ops calendar entry ${entry.id}`,
+        afterJson: JSON.stringify(entry),
+        metadataJson: JSON.stringify({
+          entryId: entry.id,
+          status: entry.status,
+          endedAtActual: entry.endedAtActual ?? null,
+          requestIp: readRequestIp(request)
+        }),
+        occurredAt: nowFactory().toISOString()
+      });
       await scheduler?.refresh();
       sendJson(response, 200, { ok: true, entry });
     } catch (error) {
