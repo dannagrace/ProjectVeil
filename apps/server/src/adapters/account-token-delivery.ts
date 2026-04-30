@@ -1178,12 +1178,13 @@ async function processQueuedDelivery(entry: QueuedDeliveryEntry): Promise<void> 
 }
 
 async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext) => Promise<void>): Promise<void> {
-  if (!queuePersistence?.acquireProcessingLock) {
+  const persistence = queuePersistence;
+  if (!persistence?.acquireProcessingLock) {
     await action({ isLockLost: () => false });
     return;
   }
 
-  const lockAcquired = await queuePersistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
+  const lockAcquired = await persistence.acquireProcessingLock(QUEUE_PROCESSING_LOCK_TTL_MS);
   if (!lockAcquired) {
     scheduleQueuePump();
     return;
@@ -1192,13 +1193,13 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
   let lockLost = false;
   let consecutiveRenewFailures = 0;
   const renewInterval =
-    queuePersistence.renewProcessingLock &&
+    persistence.renewProcessingLock &&
     setInterval(() => {
       if (lockLost) {
         return;
       }
-      void queuePersistence
-        ?.renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS)
+      void persistence
+        .renewProcessingLock?.(QUEUE_PROCESSING_LOCK_TTL_MS)
         .then(() => {
           consecutiveRenewFailures = 0;
         })
@@ -1227,7 +1228,7 @@ async function withQueueProcessingLock(action: (lock: QueueProcessingLockContext
     if (renewInterval) {
       clearInterval(renewInterval);
     }
-    const released = await queuePersistence.releaseProcessingLock?.();
+    const released = await persistence.releaseProcessingLock?.();
     if (released === false) {
       recordAuthTokenDeliveryProcessingLockReleaseStale();
     }
