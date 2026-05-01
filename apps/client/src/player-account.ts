@@ -469,9 +469,11 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
       ...(authSession?.token ? { headers: buildAuthHeaders(authSession.token) } : {})
     }, authSession)) as PlayerAccountApiPayload;
     const resolvedPlayerId = payload.account?.playerId?.trim() || authSession?.playerId || playerId;
+    const profileAuthSession =
+      authSession?.token && payload.session ? storeAuthSession(asStoredAuthSession(payload.session, authSession)) : authSession ?? null;
     const [recentBattleReplays, battleReportCenter] = await Promise.all([
-      loadPlayerBattleReplaySummariesWithSession(resolvedPlayerId, authSession ?? null),
-      loadPlayerBattleReportCenterWithSession(resolvedPlayerId, authSession ?? null)
+      loadPlayerBattleReplaySummariesWithSession(resolvedPlayerId, profileAuthSession),
+      loadPlayerBattleReportCenterWithSession(resolvedPlayerId, profileAuthSession)
     ]);
     const profile = {
       ...asPlayerAccountProfile(resolvedPlayerId, roomId, "remote", payload.account, storedDisplayName, battleReportCenter),
@@ -480,10 +482,6 @@ export async function loadPlayerAccountProfile(playerId: string, roomId: string)
 
     if (storage) {
       writeStoredPlayerDisplayName(storage, profile.playerId, profile.displayName);
-    }
-
-    if (authSession?.token && payload.session) {
-      storeAuthSession(asStoredAuthSession(payload.session, authSession));
     }
 
     return profile;

@@ -1311,6 +1311,226 @@ test("player account profile loader merges recent battle replays from the dedica
   }
 });
 
+test("player account loader reuses rotated session from profile response for replay and report reads", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const localStorageValues = new Map<string, string>([
+    [
+      "project-veil:auth-session",
+      JSON.stringify({
+        playerId: "player-1",
+        displayName: "暮火侦骑",
+        authMode: "guest",
+        sessionId: "session-current",
+        token: "old-token",
+        refreshToken: "refresh-token",
+        source: "remote"
+      })
+    ]
+  ]);
+  const requests: Array<{ url: string; authorization?: string }> = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return localStorageValues.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          localStorageValues.set(key, value);
+        },
+        removeItem(key: string): void {
+          localStorageValues.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+    requests.push({ url, authorization });
+
+    if (url.endsWith("/api/player-accounts/me")) {
+      assert.equal(authorization, "Bearer old-token");
+      return new Response(
+        JSON.stringify({
+          account: {
+            playerId: "player-1",
+            displayName: "暮火侦骑",
+            globalResources: {
+              gold: 75,
+              wood: 2,
+              ore: 1
+            },
+            achievements: [],
+            recentEventLog: []
+          },
+          session: {
+            playerId: "player-1",
+            displayName: "暮火侦骑",
+            authMode: "guest",
+            sessionId: "session-current",
+            token: "new-token",
+            refreshToken: "new-refresh-token"
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (authorization !== "Bearer new-token") {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "session_revoked",
+            message: "old token was rotated by the profile response"
+          }
+        }),
+        {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    if (url.endsWith("/api/player-accounts/me/battle-reports")) {
+      return new Response(
+        JSON.stringify({
+          latestReportId: "replay-after-rotation",
+          items: [
+            {
+              id: "replay-after-rotation",
+              replayId: "replay-after-rotation",
+              roomId: "room-alpha",
+              playerId: "player-1",
+              battleId: "battle-rotation",
+              battleKind: "neutral",
+              playerCamp: "attacker",
+              heroId: "hero-1",
+              neutralArmyId: "neutral-1",
+              startedAt: "2026-04-24T08:00:00.000Z",
+              completedAt: "2026-04-24T08:01:00.000Z",
+              result: "victory",
+              turnCount: 1,
+              actionCount: 0,
+              rewards: [],
+              evidence: {
+                replay: "available",
+                rewards: "missing"
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "replay-after-rotation",
+            roomId: "room-alpha",
+            playerId: "player-1",
+            battleId: "battle-rotation",
+            battleKind: "neutral",
+            playerCamp: "attacker",
+            heroId: "hero-1",
+            neutralArmyId: "neutral-1",
+            startedAt: "2026-04-24T08:00:00.000Z",
+            completedAt: "2026-04-24T08:01:00.000Z",
+            initialState: {
+              id: "battle-rotation",
+              round: 1,
+              lanes: 1,
+              activeUnitId: "unit-1",
+              turnOrder: ["unit-1"],
+              units: {
+                "unit-1": {
+                  id: "unit-1",
+                  camp: "attacker",
+                  templateId: "hero_guard_basic",
+                  lane: 0,
+                  stackName: "暮火侦骑",
+                  initiative: 4,
+                  attack: 2,
+                  defense: 2,
+                  minDamage: 1,
+                  maxDamage: 2,
+                  count: 12,
+                  currentHp: 10,
+                  maxHp: 10,
+                  hasRetaliated: false,
+                  defending: false
+                }
+              },
+              environment: [],
+              log: [],
+              rng: { seed: 8, cursor: 0 }
+            },
+            steps: [],
+            result: "attacker_victory"
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+  }) as typeof fetch;
+
+  try {
+    const profile = await loadPlayerAccountProfile("player-1", "room-alpha");
+
+    assert.deepEqual(requests, [
+      {
+        url: "http://127.0.0.1:2567/api/player-accounts/me",
+        authorization: "Bearer old-token"
+      },
+      {
+        url: "http://127.0.0.1:2567/api/player-accounts/me/battle-replays",
+        authorization: "Bearer new-token"
+      },
+      {
+        url: "http://127.0.0.1:2567/api/player-accounts/me/battle-reports",
+        authorization: "Bearer new-token"
+      }
+    ]);
+    assert.deepEqual(profile.recentBattleReplays.map((replay) => replay.id), ["replay-after-rotation"]);
+    assert.equal(profile.battleReportCenter?.latestReportId, "replay-after-rotation");
+    assert.equal(JSON.parse(localStorageValues.get("project-veil:auth-session") ?? "{}").token, "new-token");
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("player progression loader normalizes summary, achievements, and limited event history", async () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
