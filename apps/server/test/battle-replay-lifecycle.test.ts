@@ -218,6 +218,79 @@ function startNeutralBattle(room: ReturnType<typeof createRoom>, playerId: strin
   return battleResult;
 }
 
+function placeAuthoritativeHeroOnTile(
+  room: ReturnType<typeof createRoom>,
+  heroId: string,
+  position: { x: number; y: number }
+): void {
+  const state = room.getInternalState();
+  const hero = state.heroes.find((entry) => entry.id === heroId);
+  assert.ok(hero);
+
+  const previousTile = state.map.tiles.find((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === heroId);
+  if (previousTile) {
+    previousTile.occupant = undefined;
+  }
+
+  const nextTile = state.map.tiles.find((tile) => tile.position.x === position.x && tile.position.y === position.y);
+  assert.ok(nextTile);
+
+  hero.position = { ...position };
+  hero.move.remaining = hero.move.total;
+  nextTile.occupant = { kind: "hero", refId: heroId };
+  state.visibilityByPlayer = updateVisibilityByPlayer(state.map as never, state.heroes as never, state as never);
+}
+
+test("authoritative room replaces stale same-id neutral replay capture before persisting the player replay", () => {
+  const room = createRoom("same-id-replay-replacement-room", 1001);
+
+  placeAuthoritativeHeroOnTile(room, "hero-2", { x: 5, y: 3 });
+  const staleEncounter = room.dispatch("player-2", {
+    type: "hero.move",
+    heroId: "hero-2",
+    destination: { x: 5, y: 4 }
+  });
+  assert.equal(staleEncounter.ok, true);
+  assert.equal(staleEncounter.battle?.worldHeroId, "hero-2");
+
+  placeAuthoritativeHeroOnTile(room, "hero-1", { x: 5, y: 3 });
+  const playerEncounter = room.dispatch("player-1", {
+    type: "hero.move",
+    heroId: "hero-1",
+    destination: { x: 5, y: 4 }
+  });
+  assert.equal(playerEncounter.ok, true);
+  assert.equal(playerEncounter.battle?.worldHeroId, "hero-1");
+
+  const battle = room.getBattleForPlayer("player-1");
+  assert.ok(battle);
+  const activeUnit = battle.activeUnitId ? battle.units[battle.activeUnitId] : undefined;
+  const target = activeUnit
+    ? Object.values(battle.units).find((unit) => unit.camp !== activeUnit.camp && unit.count > 0)
+    : undefined;
+  assert.ok(activeUnit);
+  assert.ok(target);
+  assert.ok(activeUnit.skills?.some((skill) => skill.id === "power_shot"));
+
+  target.count = 1;
+  target.currentHp = 1;
+
+  const result = room.dispatchBattle("player-1", {
+    type: "battle.skill",
+    unitId: activeUnit.id,
+    skillId: "power_shot",
+    targetId: target.id
+  });
+  assert.equal(result.ok, true);
+  assert.ok(result.events?.some((event) => event.type === "battle.resolved"));
+
+  const completed = room.consumeCompletedBattleReplays();
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0]?.attackerPlayerId, "player-1");
+  assert.equal(completed[0]?.battleState.worldHeroId, "hero-1");
+  assert.equal(room.getBattleForPlayer("player-2"), null);
+});
+
 function placeHeroOnTile(
   room: VeilColyseusRoom,
   heroId: string,

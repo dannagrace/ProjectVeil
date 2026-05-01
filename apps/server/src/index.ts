@@ -174,6 +174,18 @@ export class AuthoritativeWorldRoom {
   }
 
   private setBattle(battle: BattleState): void {
+    const previous = this.battles.get(battle.id);
+    const replacesBattleParticipant =
+      previous && (previous.worldHeroId !== battle.worldHeroId || previous.defenderHeroId !== battle.defenderHeroId);
+    if (replacesBattleParticipant) {
+      if (previous.worldHeroId) {
+        this.battleIdByHeroId.delete(previous.worldHeroId);
+      }
+      if (previous.defenderHeroId) {
+        this.battleIdByHeroId.delete(previous.defenderHeroId);
+      }
+      this.battleStartedAtByBattleId.set(battle.id, Date.now());
+    }
     this.battles.set(battle.id, battle);
     if (!this.battleStartedAtByBattleId.has(battle.id)) {
       this.battleStartedAtByBattleId.set(battle.id, Date.now());
@@ -199,27 +211,36 @@ export class AuthoritativeWorldRoom {
 
   private trackStartedBattle(battle: BattleState): void {
     this.setBattle(battle);
-    if (!this.battleReplayByBattleId.has(battle.id)) {
-      const attackerHero =
-        battle.worldHeroId ? this.state.heroes.find((hero) => hero.id === battle.worldHeroId) : undefined;
-      if (!attackerHero) {
-        return;
-      }
-
-      const defenderHero =
-        battle.defenderHeroId ? this.state.heroes.find((hero) => hero.id === battle.defenderHeroId) : undefined;
-      this.battleReplayByBattleId.set(
-        battle.id,
-        createBattleReplayCapture(
-          this.state.meta.roomId,
-          battle,
-          {
-            attackerPlayerId: attackerHero.playerId,
-            ...(defenderHero?.playerId ? { defenderPlayerId: defenderHero.playerId } : {})
-          }
-        )
-      );
+    const attackerHero =
+      battle.worldHeroId ? this.state.heroes.find((hero) => hero.id === battle.worldHeroId) : undefined;
+    if (!attackerHero) {
+      return;
     }
+
+    const defenderHero =
+      battle.defenderHeroId ? this.state.heroes.find((hero) => hero.id === battle.defenderHeroId) : undefined;
+    const existingReplay = this.battleReplayByBattleId.get(battle.id);
+    const replayMatchesBattle =
+      existingReplay &&
+      existingReplay.initialState.worldHeroId === battle.worldHeroId &&
+      existingReplay.initialState.defenderHeroId === battle.defenderHeroId &&
+      existingReplay.attackerPlayerId === attackerHero.playerId &&
+      existingReplay.defenderPlayerId === defenderHero?.playerId;
+    if (replayMatchesBattle) {
+      return;
+    }
+
+    this.battleReplayByBattleId.set(
+      battle.id,
+      createBattleReplayCapture(
+        this.state.meta.roomId,
+        battle,
+        {
+          attackerPlayerId: attackerHero.playerId,
+          ...(defenderHero?.playerId ? { defenderPlayerId: defenderHero.playerId } : {})
+        }
+      )
+    );
   }
 
   private trackBattleAction(
