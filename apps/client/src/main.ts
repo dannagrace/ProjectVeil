@@ -71,6 +71,13 @@ import {
   resolveRecoveryRoomStateLabel,
   resolveRoomFeedbackTone
 } from "./room-feedback";
+import {
+  renderBattleLogLines,
+  renderBattleModalBody,
+  renderBattleModalTitle,
+  renderEventLogLines,
+  renderTimelineCopy
+} from "./main/html-safe-render";
 import { createMainSessionRuntime } from "./main-session-runtime";
 import { bindClientRuntimeErrorBoundary } from "./runtime-error-reporting";
 import {
@@ -4378,7 +4385,7 @@ function renderBattleLog(): string {
   }
 
   const lines = state.battle.log.slice(-6).reverse();
-  return `<div class="battle-log" data-testid="battle-log">${lines.map((line) => `<div class="battle-log-line">${line}</div>`).join("")}</div>`;
+  return `<div class="battle-log" data-testid="battle-log">${renderBattleLogLines(lines)}</div>`;
 }
 
 function renderTimeline(): string {
@@ -4396,7 +4403,7 @@ function renderTimeline(): string {
                 <span class="timeline-source">${sourceLabel(item.source)}</span>
                 <span class="timeline-tone-pill tone-${item.tone}">${renderUiIcon(item.tone === "move" ? "move" : item.tone === "battle" ? "battle" : item.tone === "loot" ? "loot" : item.tone === "sync" ? "sync" : "system", item.tone === "battle" ? "accent" : item.tone === "move" ? "success" : item.tone === "loot" ? "info" : "neutral")}${timelineToneLabel(item.tone)}</span>
               </div>
-              <strong class="timeline-copy">${item.text}</strong>
+              ${renderTimelineCopy(item.text)}
             </div>
           `
         )
@@ -4414,8 +4421,8 @@ function renderModal(): string {
     <div class="modal-backdrop" data-testid="battle-modal-backdrop" data-close-modal="true">
       <div class="modal-card" data-testid="battle-modal" role="dialog" aria-modal="true">
         <div class="eyebrow">Battle Report</div>
-        <h2 data-testid="battle-modal-title">${state.modal.title}</h2>
-        <p data-testid="battle-modal-body">${state.modal.body}</p>
+        ${renderBattleModalTitle(state.modal.title)}
+        ${renderBattleModalBody(state.modal.body)}
         <button class="modal-button" data-testid="battle-modal-close" data-close-modal="true">关闭</button>
       </div>
     </div>
@@ -5064,7 +5071,7 @@ function render(): void {
         </div>
         <div class="log-panel">
           <h3>事件流</h3>
-          <div class="log-list" data-testid="event-log">${state.log.map((line) => `<div class="log-line">${line}</div>`).join("")}</div>
+          <div class="log-list" data-testid="event-log">${renderEventLogLines(state.log)}</div>
         </div>
         ${renderDiagnosticPanel()}
       </section>
