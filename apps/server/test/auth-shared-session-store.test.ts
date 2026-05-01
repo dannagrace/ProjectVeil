@@ -182,6 +182,59 @@ test("account registration and password recovery Redis fallback failures are obs
   }
 });
 
+test("account registration and password recovery Redis consume delete failures are observable", async () => {
+  resetGuestAuthSessions();
+  resetRuntimeObservability();
+  const redis = new Redis();
+  setGuestSessionClusterClientForTest(redis as never);
+  const originalError = console.error;
+  const errors: string[] = [];
+  const originalDel = redis.del.bind(redis);
+  console.error = (message?: unknown) => {
+    errors.push(String(message));
+  };
+
+  try {
+    await __authStateInternals.storeAccountRegistrationState("consume-register", "Consume Register", "register-token");
+    await __authStateInternals.storePasswordRecoveryState("player-consume", "consume-recovery", "recovery-token");
+
+    redis.del = (async (...keys: string[]) => {
+      if (
+        keys.some(
+          (key) =>
+            key.startsWith("veil:auth-account-registration:") || key.startsWith("veil:auth-password-recovery:")
+        )
+      ) {
+        throw new Error("redis delete unavailable");
+      }
+      return originalDel(...keys);
+    }) as typeof redis.del;
+
+    assert.equal(
+      (await __authStateInternals.consumeAccountRegistrationState("consume-register", "register-token"))?.loginId,
+      "consume-register"
+    );
+    assert.equal(
+      (await __authStateInternals.consumePasswordRecoveryState("consume-recovery", "recovery-token"))?.loginId,
+      "consume-recovery"
+    );
+
+    const metrics = buildPrometheusMetricsDocument();
+    assert.match(metrics, /^veil_auth_account_registration_state_redis_delete_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_password_recovery_state_redis_delete_failures_total 1$/m);
+    assert.deepEqual(errors, [
+      "[auth] account-registration state delete failed after local consume",
+      "[auth] password-recovery state delete failed after local consume"
+    ]);
+  } finally {
+    console.error = originalError;
+    setGuestSessionClusterClientForTest(undefined);
+    await redis.quit();
+    resetGuestAuthSessions();
+    resetRuntimeObservability();
+  }
+});
+
 test("shared Redis guest session order enforces the global guest-session limit across resets", async () => {
   const redis = new Redis();
   const previousMaxGuestSessions = process.env.VEIL_MAX_GUEST_SESSIONS;

@@ -59,8 +59,10 @@ interface AuthObservabilityCounters {
   tokenDeliveryFencedWriteRejectedTotal: number;
   accountRegistrationStateRedisReadFailuresTotal: number;
   accountRegistrationStateRedisWriteFailuresTotal: number;
+  accountRegistrationStateRedisDeleteFailuresTotal: number;
   passwordRecoveryStateRedisReadFailuresTotal: number;
   passwordRecoveryStateRedisWriteFailuresTotal: number;
+  passwordRecoveryStateRedisDeleteFailuresTotal: number;
   wechatSessionKeyCacheRedisReadFailuresTotal: number;
   wechatSessionKeyCacheRedisWriteFailuresTotal: number;
 }
@@ -556,8 +558,10 @@ const runtimeObservability: RuntimeObservabilityState = {
       tokenDeliveryFencedWriteRejectedTotal: 0,
       accountRegistrationStateRedisReadFailuresTotal: 0,
       accountRegistrationStateRedisWriteFailuresTotal: 0,
+      accountRegistrationStateRedisDeleteFailuresTotal: 0,
       passwordRecoveryStateRedisReadFailuresTotal: 0,
       passwordRecoveryStateRedisWriteFailuresTotal: 0,
+      passwordRecoveryStateRedisDeleteFailuresTotal: 0,
       wechatSessionKeyCacheRedisReadFailuresTotal: 0,
       wechatSessionKeyCacheRedisWriteFailuresTotal: 0
     },
@@ -1725,12 +1729,18 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_account_registration_state_redis_write_failures_total Total account-registration state Redis write failures that fell back locally.",
     "# TYPE veil_auth_account_registration_state_redis_write_failures_total counter",
     `veil_auth_account_registration_state_redis_write_failures_total ${health.runtime.auth.counters.accountRegistrationStateRedisWriteFailuresTotal}`,
+    "# HELP veil_auth_account_registration_state_redis_delete_failures_total Total account-registration state Redis delete failures after local consume.",
+    "# TYPE veil_auth_account_registration_state_redis_delete_failures_total counter",
+    `veil_auth_account_registration_state_redis_delete_failures_total ${health.runtime.auth.counters.accountRegistrationStateRedisDeleteFailuresTotal}`,
     "# HELP veil_auth_password_recovery_state_redis_read_failures_total Total password-recovery state Redis read failures that fell back locally.",
     "# TYPE veil_auth_password_recovery_state_redis_read_failures_total counter",
     `veil_auth_password_recovery_state_redis_read_failures_total ${health.runtime.auth.counters.passwordRecoveryStateRedisReadFailuresTotal}`,
     "# HELP veil_auth_password_recovery_state_redis_write_failures_total Total password-recovery state Redis write failures that fell back locally.",
     "# TYPE veil_auth_password_recovery_state_redis_write_failures_total counter",
     `veil_auth_password_recovery_state_redis_write_failures_total ${health.runtime.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal}`,
+    "# HELP veil_auth_password_recovery_state_redis_delete_failures_total Total password-recovery state Redis delete failures after local consume.",
+    "# TYPE veil_auth_password_recovery_state_redis_delete_failures_total counter",
+    `veil_auth_password_recovery_state_redis_delete_failures_total ${health.runtime.auth.counters.passwordRecoveryStateRedisDeleteFailuresTotal}`,
     "# HELP veil_wechat_session_key_cache_redis_read_failures_total Total WeChat session key Redis cache read failures.",
     "# TYPE veil_wechat_session_key_cache_redis_read_failures_total counter",
     `veil_wechat_session_key_cache_redis_read_failures_total ${health.runtime.auth.counters.wechatSessionKeyCacheRedisReadFailuresTotal}`,
@@ -2559,12 +2569,20 @@ export function recordAccountRegistrationStateRedisWriteFailure(): void {
   runtimeObservability.auth.counters.accountRegistrationStateRedisWriteFailuresTotal += 1;
 }
 
+export function recordAccountRegistrationStateRedisDeleteFailure(): void {
+  runtimeObservability.auth.counters.accountRegistrationStateRedisDeleteFailuresTotal += 1;
+}
+
 export function recordPasswordRecoveryStateRedisReadFailure(): void {
   runtimeObservability.auth.counters.passwordRecoveryStateRedisReadFailuresTotal += 1;
 }
 
 export function recordPasswordRecoveryStateRedisWriteFailure(): void {
   runtimeObservability.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal += 1;
+}
+
+export function recordPasswordRecoveryStateRedisDeleteFailure(): void {
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisDeleteFailuresTotal += 1;
 }
 
 export function recordWechatSessionKeyCacheRedisReadFailure(): void {
@@ -2703,8 +2721,10 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.tokenDeliveryFencedWriteRejectedTotal = 0;
   runtimeObservability.auth.counters.accountRegistrationStateRedisReadFailuresTotal = 0;
   runtimeObservability.auth.counters.accountRegistrationStateRedisWriteFailuresTotal = 0;
+  runtimeObservability.auth.counters.accountRegistrationStateRedisDeleteFailuresTotal = 0;
   runtimeObservability.auth.counters.passwordRecoveryStateRedisReadFailuresTotal = 0;
   runtimeObservability.auth.counters.passwordRecoveryStateRedisWriteFailuresTotal = 0;
+  runtimeObservability.auth.counters.passwordRecoveryStateRedisDeleteFailuresTotal = 0;
   runtimeObservability.auth.counters.wechatSessionKeyCacheRedisReadFailuresTotal = 0;
   runtimeObservability.auth.counters.wechatSessionKeyCacheRedisWriteFailuresTotal = 0;
   runtimeObservability.auth.activeGuestSessionCount = 0;

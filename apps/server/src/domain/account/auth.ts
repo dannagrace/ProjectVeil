@@ -14,6 +14,7 @@ import {
   recordAuthAccountBinding,
   recordAuthAccountLogin,
   recordAuthAccountRegistration,
+  recordAccountRegistrationStateRedisDeleteFailure,
   recordAccountRegistrationStateRedisReadFailure,
   recordAccountRegistrationStateRedisWriteFailure,
   recordAuthCredentialStuffingBlocked,
@@ -22,6 +23,7 @@ import {
   recordAuthLogout,
   recordAuthRateLimited,
   recordAuthTokenDeliveryFailure,
+  recordPasswordRecoveryStateRedisDeleteFailure,
   recordPasswordRecoveryStateRedisReadFailure,
   recordPasswordRecoveryStateRedisWriteFailure,
   recordAuthRefresh,
@@ -1119,8 +1121,12 @@ async function consumeAccountRegistrationState(loginId: string, token: string): 
   if (redisClient) {
     try {
       await redisClient.del(buildAccountRegistrationClusterKey(loginId));
-    } catch {
-      // Local deletion below still prevents reuse on this pod.
+    } catch (error) {
+      recordAccountRegistrationStateRedisDeleteFailure();
+      console.error("[auth] account-registration state delete failed after local consume", {
+        loginId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   await clearAccountTokenDeliveryState("account-registration", loginId);
@@ -1258,8 +1264,12 @@ async function consumePasswordRecoveryState(loginId: string, token: string): Pro
   if (redisClient) {
     try {
       await redisClient.del(buildPasswordRecoveryClusterKey(loginId));
-    } catch {
-      // Local deletion below still prevents reuse on this pod.
+    } catch (error) {
+      recordPasswordRecoveryStateRedisDeleteFailure();
+      console.error("[auth] password-recovery state delete failed after local consume", {
+        loginId,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   await clearAccountTokenDeliveryState("password-recovery", loginId);
@@ -2929,6 +2939,8 @@ export const __authRateLimitInternals = {
 };
 
 export const __authStateInternals = {
+  consumeAccountRegistrationState,
+  consumePasswordRecoveryState,
   getAccountRegistrationState,
   storeAccountRegistrationState,
   getPasswordRecoveryState,
