@@ -153,6 +153,7 @@ test("guild routes create, list, fetch, and expose rosters", async (t) => {
   const port = 44000 + Math.floor(Math.random() * 1000);
   const server = await startGuildRouteServer(store, port);
   const session = issueGuestAuthSession({ playerId: "founder-1", displayName: "Founder" });
+  const outsiderSession = issueGuestAuthSession({ playerId: "guild-outsider-1", displayName: "Guild Outsider" });
 
   t.after(async () => {
     resetGuestAuthSessions();
@@ -202,12 +203,44 @@ test("guild routes create, list, fetch, and expose rosters", async (t) => {
   assert.equal(detail.status, 200);
   assert.equal(detailPayload.guild.ownerPlayerId, "founder-1");
 
-  const roster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`);
+  const unauthenticatedRoster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`);
+  const unauthenticatedRosterPayload = (await unauthenticatedRoster.json()) as { error: { code: string } };
+  assert.equal(unauthenticatedRoster.status, 401);
+  assert.equal(unauthenticatedRosterPayload.error.code, "unauthorized");
+
+  const outsiderRoster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`, {
+    headers: {
+      Authorization: `Bearer ${outsiderSession.token}`
+    }
+  });
+  const outsiderRosterPayload = (await outsiderRoster.json()) as {
+    roster: {
+      members: Array<{ playerId: string; displayName: string; roleLabel: string; joinedAt?: string }>;
+      pendingJoinRequests: Array<{ playerId: string }>;
+    };
+  };
+  assert.equal(outsiderRoster.status, 200);
+  assert.deepEqual(outsiderRosterPayload.roster.members, [
+    {
+      playerId: "founder-1",
+      displayName: "Founder",
+      roleLabel: "Owner"
+    }
+  ]);
+  assert.deepEqual(outsiderRosterPayload.roster.pendingJoinRequests, []);
+
+  const roster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`, {
+    headers: {
+      Authorization: `Bearer ${session.token}`
+    }
+  });
   const rosterPayload = (await roster.json()) as {
-    roster: { members: Array<{ playerId: string }> };
+    roster: { members: Array<{ playerId: string; joinedAt?: string }>; pendingJoinRequests: Array<{ playerId: string }> };
   };
   assert.equal(roster.status, 200);
   assert.deepEqual(rosterPayload.roster.members.map((member) => member.playerId), ["founder-1"]);
+  assert.equal(typeof rosterPayload.roster.members[0]?.joinedAt, "string");
+  assert.deepEqual(rosterPayload.roster.pendingJoinRequests, []);
 });
 
 test("guild routes keep the guild alive and surface owner transfer events when the owner leaves", async (t) => {
@@ -498,7 +531,11 @@ test("guild routes reject joins when the guild is at its member limit", async (t
   assert.equal(detailPayload.guild.memberLimit, 2);
   assert.equal(detailPayload.guild.availableSeats, 0);
 
-  const roster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`);
+  const roster = await fetch(`http://127.0.0.1:${port}/api/guilds/${createdPayload.guild.guildId}/roster`, {
+    headers: {
+      Authorization: `Bearer ${founderSession.token}`
+    }
+  });
   const rosterPayload = (await roster.json()) as {
     roster: { memberCount: number; memberLimit: number; availableSeats: number };
   };

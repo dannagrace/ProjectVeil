@@ -291,6 +291,30 @@ function parseLimit(request: IncomingMessage): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function createGuildRosterViewForAuthSession(
+  guild: Parameters<typeof createGuildRosterView>[0],
+  authSession: { playerId: string }
+) {
+  const roster = createGuildRosterView(guild);
+  const actor = guild.members.find((member) => member.playerId === authSession.playerId);
+  if (!actor) {
+    return {
+      ...roster,
+      members: roster.members.map((member) => ({
+        playerId: member.playerId,
+        displayName: member.displayName,
+        roleLabel: member.roleLabel
+      })),
+      pendingJoinRequests: []
+    };
+  }
+
+  return {
+    ...roster,
+    pendingJoinRequests: actor.role === "owner" || actor.role === "officer" ? roster.pendingJoinRequests : []
+  };
+}
+
 async function requireAuthSession(
   request: IncomingMessage,
   response: ServerResponse,
@@ -821,11 +845,16 @@ export function registerGuildRoutes(
   });
 
   app.get("/api/guilds/:guildId/roster", async (request, response) => {
+    const authSession = await requireAuthSession(request, response, store);
+    if (!authSession) {
+      return;
+    }
+
     try {
       const guildId = request.params.guildId ?? "";
       const guild = await service.getGuild(guildId);
       sendJson(response, 200, {
-        roster: createGuildRosterView(guild)
+        roster: createGuildRosterViewForAuthSession(guild, authSession)
       });
     } catch (error) {
       const mapped = mapGuildError(error);
