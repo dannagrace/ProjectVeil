@@ -1356,7 +1356,7 @@ test("player account loader reuses rotated session from profile response for rep
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
     const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
-    requests.push({ url, authorization });
+    requests.push({ url, ...(authorization ? { authorization } : {}) });
 
     if (url.endsWith("/api/player-accounts/me")) {
       assert.equal(authorization, "Bearer old-token");
