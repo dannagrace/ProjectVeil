@@ -45,6 +45,10 @@ interface AuthObservabilityCounters {
   logoutsTotal: number;
   rateLimitedTotal: number;
   credentialStuffingBlockedTotal: number;
+  accountLockoutStateRedisReadFailuresTotal: number;
+  accountLockoutStateRedisWriteFailuresTotal: number;
+  credentialStuffingStateRedisReadFailuresTotal: number;
+  credentialStuffingStateRedisWriteFailuresTotal: number;
   invalidCredentialsTotal: number;
   tokenDeliveryRequestsTotal: number;
   tokenDeliverySuccessesTotal: number;
@@ -544,6 +548,10 @@ const runtimeObservability: RuntimeObservabilityState = {
       logoutsTotal: 0,
       rateLimitedTotal: 0,
       credentialStuffingBlockedTotal: 0,
+      accountLockoutStateRedisReadFailuresTotal: 0,
+      accountLockoutStateRedisWriteFailuresTotal: 0,
+      credentialStuffingStateRedisReadFailuresTotal: 0,
+      credentialStuffingStateRedisWriteFailuresTotal: 0,
       invalidCredentialsTotal: 0,
       tokenDeliveryRequestsTotal: 0,
       tokenDeliverySuccessesTotal: 0,
@@ -1609,6 +1617,18 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_auth_credential_stuffing_blocked_total Total auth requests rejected by credential-stuffing source blocks.",
     "# TYPE veil_auth_credential_stuffing_blocked_total counter",
     `veil_auth_credential_stuffing_blocked_total ${health.runtime.auth.counters.credentialStuffingBlockedTotal}`,
+    "# HELP veil_auth_account_lockout_state_redis_read_failures_total Total account-lockout state Redis read failures that fell back locally.",
+    "# TYPE veil_auth_account_lockout_state_redis_read_failures_total counter",
+    `veil_auth_account_lockout_state_redis_read_failures_total ${health.runtime.auth.counters.accountLockoutStateRedisReadFailuresTotal}`,
+    "# HELP veil_auth_account_lockout_state_redis_write_failures_total Total account-lockout state Redis write failures that fell back locally.",
+    "# TYPE veil_auth_account_lockout_state_redis_write_failures_total counter",
+    `veil_auth_account_lockout_state_redis_write_failures_total ${health.runtime.auth.counters.accountLockoutStateRedisWriteFailuresTotal}`,
+    "# HELP veil_auth_credential_stuffing_state_redis_read_failures_total Total credential-stuffing state Redis read failures that fell back locally.",
+    "# TYPE veil_auth_credential_stuffing_state_redis_read_failures_total counter",
+    `veil_auth_credential_stuffing_state_redis_read_failures_total ${health.runtime.auth.counters.credentialStuffingStateRedisReadFailuresTotal}`,
+    "# HELP veil_auth_credential_stuffing_state_redis_write_failures_total Total credential-stuffing state Redis write failures that fell back locally.",
+    "# TYPE veil_auth_credential_stuffing_state_redis_write_failures_total counter",
+    `veil_auth_credential_stuffing_state_redis_write_failures_total ${health.runtime.auth.counters.credentialStuffingStateRedisWriteFailuresTotal}`,
     "# HELP veil_matchmaking_rate_limited_total Total matchmaking requests rejected by rate limiting.",
     "# TYPE veil_matchmaking_rate_limited_total counter",
     `veil_matchmaking_rate_limited_total ${health.runtime.matchmaking.counters.rateLimitedTotal}`,
@@ -2381,6 +2401,22 @@ export function recordAuthCredentialStuffingBlocked(): void {
   runtimeObservability.auth.counters.credentialStuffingBlockedTotal += 1;
 }
 
+export function recordAccountLockoutStateRedisReadFailure(): void {
+  runtimeObservability.auth.counters.accountLockoutStateRedisReadFailuresTotal += 1;
+}
+
+export function recordAccountLockoutStateRedisWriteFailure(): void {
+  runtimeObservability.auth.counters.accountLockoutStateRedisWriteFailuresTotal += 1;
+}
+
+export function recordCredentialStuffingStateRedisReadFailure(): void {
+  runtimeObservability.auth.counters.credentialStuffingStateRedisReadFailuresTotal += 1;
+}
+
+export function recordCredentialStuffingStateRedisWriteFailure(): void {
+  runtimeObservability.auth.counters.credentialStuffingStateRedisWriteFailuresTotal += 1;
+}
+
 export function recordMatchmakingRateLimited(): void {
   runtimeObservability.matchmaking.counters.rateLimitedTotal += 1;
 }
@@ -2707,6 +2743,10 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.auth.counters.logoutsTotal = 0;
   runtimeObservability.auth.counters.rateLimitedTotal = 0;
   runtimeObservability.auth.counters.credentialStuffingBlockedTotal = 0;
+  runtimeObservability.auth.counters.accountLockoutStateRedisReadFailuresTotal = 0;
+  runtimeObservability.auth.counters.accountLockoutStateRedisWriteFailuresTotal = 0;
+  runtimeObservability.auth.counters.credentialStuffingStateRedisReadFailuresTotal = 0;
+  runtimeObservability.auth.counters.credentialStuffingStateRedisWriteFailuresTotal = 0;
   runtimeObservability.auth.counters.invalidCredentialsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliveryRequestsTotal = 0;
   runtimeObservability.auth.counters.tokenDeliverySuccessesTotal = 0;

@@ -11,6 +11,8 @@ import {
   readPasswordRecoveryDeliveryMode
 } from "@server/adapters/account-token-delivery";
 import {
+  recordAccountLockoutStateRedisReadFailure,
+  recordAccountLockoutStateRedisWriteFailure,
   recordAuthAccountBinding,
   recordAuthAccountLogin,
   recordAuthAccountRegistration,
@@ -23,6 +25,8 @@ import {
   recordAuthLogout,
   recordAuthRateLimited,
   recordAuthTokenDeliveryFailure,
+  recordCredentialStuffingStateRedisReadFailure,
+  recordCredentialStuffingStateRedisWriteFailure,
   recordPasswordRecoveryStateRedisDeleteFailure,
   recordPasswordRecoveryStateRedisReadFailure,
   recordPasswordRecoveryStateRedisWriteFailure,
@@ -2636,7 +2640,12 @@ async function loadAccountLockoutState(loginId: string, config = readAuthRuntime
       await redisClient.del(buildAccountLockoutClusterKey(loginId));
     }
     return nextState;
-  } catch {
+  } catch (error) {
+    recordAccountLockoutStateRedisReadFailure();
+    console.error("[auth] account-lockout state read fallback to local", {
+      loginId,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return pruneAccountLockoutState(loginId, config);
   }
 }
@@ -2668,7 +2677,12 @@ async function saveAccountLockoutState(
       "PX",
       getAccountLockoutTtlMs(state, config)
     );
-  } catch {
+  } catch (error) {
+    recordAccountLockoutStateRedisWriteFailure();
+    console.error("[auth] account-lockout state write fallback to local", {
+      loginId,
+      error: error instanceof Error ? error.message : String(error)
+    });
     accountLockoutStateByLoginId.set(loginId, state);
     syncAuthStateTelemetry();
   }
@@ -2788,7 +2802,12 @@ async function loadCredentialStuffingState(
       await redisClient.del(buildCredentialStuffingClusterKey(ip));
     }
     return nextState;
-  } catch {
+  } catch (error) {
+    recordCredentialStuffingStateRedisReadFailure();
+    console.error("[auth] credential-stuffing state read fallback to local", {
+      ip,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return pruneCredentialStuffingState(ip, config);
   }
 }
@@ -2815,7 +2834,12 @@ async function saveCredentialStuffingState(
       "PX",
       getCredentialStuffingTtlMs(state, config)
     );
-  } catch {
+  } catch (error) {
+    recordCredentialStuffingStateRedisWriteFailure();
+    console.error("[auth] credential-stuffing state write fallback to local", {
+      ip,
+      error: error instanceof Error ? error.message : String(error)
+    });
     saveLocalCredentialStuffingState(ip, state);
   }
 }
@@ -2935,6 +2959,8 @@ export function setGuestSessionClusterClientForTest(client: RedisClientLike | nu
 export const __authRateLimitInternals = {
   consumeAuthRateLimit,
   consumeSlidingWindowRateLimit,
+  recordAccountLoginFailure,
+  recordCredentialStuffingFailure,
   AUTH_RATE_LIMIT_REDIS_SCRIPT
 };
 

@@ -235,6 +235,63 @@ test("account registration and password recovery Redis consume delete failures a
   }
 });
 
+test("account lockout and credential stuffing Redis fallback failures are observable", async () => {
+  resetGuestAuthSessions();
+  resetRuntimeObservability();
+  const redis = {
+    async get() {
+      throw new Error("redis read unavailable");
+    },
+    async set() {
+      throw new Error("redis write unavailable");
+    },
+    async del() {
+      throw new Error("redis delete unavailable");
+    }
+  };
+  const rateLimitConfig = {
+    rateLimitWindowMs: 60_000,
+    rateLimitMax: 10,
+    lockoutThreshold: 10,
+    lockoutDurationMs: 15 * 60_000,
+    credentialStuffingWindowMs: 5 * 60_000,
+    credentialStuffingDistinctLoginIdThreshold: 5,
+    credentialStuffingBlockDurationMs: 15 * 60_000,
+    maxGuestSessions: 100,
+    accessTtlSeconds: 900,
+    refreshTtlSeconds: 86_400,
+    guestTokenTtlSeconds: 900
+  };
+  const originalError = console.error;
+  const errors: string[] = [];
+  console.error = (message?: unknown) => {
+    errors.push(String(message));
+  };
+  setGuestSessionClusterClientForTest(redis as never);
+
+  try {
+    await __authRateLimitInternals.recordAccountLoginFailure("lockout-fallback", rateLimitConfig);
+    await __authRateLimitInternals.recordCredentialStuffingFailure("203.0.113.10", "lockout-fallback", rateLimitConfig);
+
+    const metrics = buildPrometheusMetricsDocument();
+    assert.match(metrics, /^veil_auth_account_lockout_state_redis_read_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_account_lockout_state_redis_write_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_credential_stuffing_state_redis_read_failures_total 1$/m);
+    assert.match(metrics, /^veil_auth_credential_stuffing_state_redis_write_failures_total 1$/m);
+    assert.deepEqual(errors, [
+      "[auth] account-lockout state read fallback to local",
+      "[auth] account-lockout state write fallback to local",
+      "[auth] credential-stuffing state read fallback to local",
+      "[auth] credential-stuffing state write fallback to local"
+    ]);
+  } finally {
+    console.error = originalError;
+    setGuestSessionClusterClientForTest(undefined);
+    resetGuestAuthSessions();
+    resetRuntimeObservability();
+  }
+});
+
 test("shared Redis guest session order enforces the global guest-session limit across resets", async () => {
   const redis = new Redis();
   const previousMaxGuestSessions = process.env.VEIL_MAX_GUEST_SESSIONS;
