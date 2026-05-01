@@ -9,6 +9,24 @@ test("readRedisUrl returns the trimmed URL when REDIS_URL is set", () => {
   assert.equal(result, "redis://localhost:6379");
 });
 
+test("readRedisUrl injects REDIS_PASSWORD when the URL has no credentials", () => {
+  const result = readRedisUrl({
+    REDIS_URL: "redis://project-veil-redis:6379/0",
+    REDIS_PASSWORD: "redis-secret"
+  });
+
+  assert.equal(result, "redis://default:redis-secret@project-veil-redis:6379/0");
+});
+
+test("readRedisUrl preserves credentials already present in REDIS_URL", () => {
+  const result = readRedisUrl({
+    REDIS_URL: "redis://secure-user:embedded-secret@project-veil-redis:6379/0",
+    REDIS_PASSWORD: "ignored-secret"
+  });
+
+  assert.equal(result, "redis://secure-user:embedded-secret@project-veil-redis:6379/0");
+});
+
 test("readRedisUrl trims leading and trailing whitespace from REDIS_URL", () => {
   const result = readRedisUrl({ REDIS_URL: "  redis://localhost:6379  " });
   assert.equal(result, "redis://localhost:6379");

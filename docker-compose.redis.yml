@@ -4,7 +4,9 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set for local Redis}
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
     volumes:
       - redis-data:/data
 

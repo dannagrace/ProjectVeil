@@ -34,8 +34,8 @@ Before widening traffic after a deploy, check [`docs/ops/capacity-planning.md`](
 8. Run `npm run validate -- production-env -- --env-file ops/env/production.env`.
 9. Confirm MySQL resolves from the deploy host:
    `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm migrate`
-10. Confirm Redis resolves from the deploy host:
-   `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm server node --input-type=module -e "const Redis=(await import('ioredis')).default; const url=process.env.REDIS_URL||'redis://redis:6379/0'; const client=new Redis(url); console.log(await client.ping(), url); await client.quit();"`
+10. Confirm Redis resolves from the deploy host with AUTH enabled:
+   `docker compose -f docker-compose.prod.yml --env-file ops/env/production.env run --rm server node --input-type=module -e "const Redis=(await import('ioredis')).default; const url=process.env.REDIS_URL; if(!url) throw new Error('REDIS_URL required'); const client=new Redis(url); console.log(await client.ping(), url.replace(/:[^:@]+@/, ':***@')); await client.quit();"`
 11. Review disk headroom for the persistent volumes used by MySQL and Redis.
 12. Confirm you have the previous image tag and previous git SHA available for rollback.
 13. Schedule the deploy in a low-traffic window and verify no active incident or schema-restore work is in progress.
@@ -48,13 +48,13 @@ The deploy validator expects these 33 variables in `ops/env/production.env`:
 
 Notes:
 
-- `REDIS_URL` is optional in the env file because `docker-compose.prod.yml` defaults it to `redis://redis:6379/0`.
+- `REDIS_URL` must be supplied by the deploy secret workflow and should either embed Redis credentials or be paired with `REDIS_PASSWORD`.
 - `VEIL_SECRET_PROVIDER` must be `aws-secrets-manager` in production. The server aborts startup if the AWS secret cannot be fetched or if the managed bundle is missing required keys.
 - `SENTRY_DSN` should always be set for production deploys. Startup does not hard-fail without it, but it now emits a prominent warning because runtime errors will stay local-only.
 - `ANALYTICS_ENDPOINT` is required by the validator even if the runtime secret currently leaves `ANALYTICS_SINK=stdout`; use the production ingest URL so switching delivery back on does not require an emergency env-file edit.
 - Keep credentials out of `ops/env/production.env`; place them in the AWS secret JSON documented in [`docs/ops/secrets-inventory.md`](./secrets-inventory.md).
 - `MYSQL_ROOT_PASSWORD` is the one Compose-only exception: it is required for the local MySQL service in `docker-compose.prod.yml` and must be pre-supplied via the deploy host environment or env-file workflow before Compose starts.
-- If you use managed MySQL or Redis, point `VEIL_MYSQL_HOST` and `REDIS_URL` at those services and leave the local `mysql` / `redis` services disabled by policy or removed in an override file.
+- If you use managed MySQL or Redis, point `VEIL_MYSQL_HOST` and secret-managed `REDIS_URL` at those services and leave the local `mysql` / `redis` services disabled by policy or removed in an override file.
 
 ## 4. First-Time Host Bootstrap
 

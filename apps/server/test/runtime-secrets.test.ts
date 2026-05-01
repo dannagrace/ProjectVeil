@@ -169,3 +169,34 @@ test("loadRuntimeSecrets rejects development admin tokens in production", { conc
 
   resetRuntimeSecretsForTest();
 });
+
+test("loadRuntimeSecrets rejects production Redis URLs without credentials or REDIS_PASSWORD", { concurrency: false }, async () => {
+  resetRuntimeSecretsForTest();
+
+  await assert.rejects(
+    loadRuntimeSecrets({
+      ...process.env,
+      NODE_ENV: "production",
+      VEIL_SECRET_PROVIDER: "env",
+      VEIL_AUTH_SECRET: "production-auth-secret",
+      VEIL_ADMIN_TOKEN: "production-admin-token",
+      REDIS_URL: "redis://project-veil-redis:6379/0",
+      REDIS_PASSWORD: undefined
+    }),
+    /REDIS_PASSWORD/
+  );
+
+  await assert.doesNotReject(() =>
+    loadRuntimeSecrets({
+      ...process.env,
+      NODE_ENV: "production",
+      VEIL_SECRET_PROVIDER: "env",
+      VEIL_AUTH_SECRET: "production-auth-secret",
+      VEIL_ADMIN_TOKEN: "production-admin-token",
+      REDIS_URL: "redis://project-veil-redis:6379/0",
+      REDIS_PASSWORD: "production-redis-password"
+    })
+  );
+
+  resetRuntimeSecretsForTest();
+});

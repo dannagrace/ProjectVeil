@@ -6,7 +6,6 @@ data:
   NODE_ENV: production
   HOST: 0.0.0.0
   PORT: "2567"
-  REDIS_URL: redis://project-veil-redis:6379/0
   VEIL_MYSQL_HOST: project-veil-prod.cluster-abcdefghijkl.us-east-1.rds.amazonaws.com
   VEIL_MYSQL_PORT: "3306"
   VEIL_MYSQL_USER: project_veil

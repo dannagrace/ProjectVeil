@@ -3,6 +3,7 @@ import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-sec
 
 export const RUNTIME_SECRET_KEYS = [
   "ADMIN_SECRET",
+  "REDIS_PASSWORD",
   "SUPPORT_MODERATOR_SECRET",
   "SUPPORT_SUPERVISOR_SECRET",
   "VEIL_ADMIN_TOKEN",
@@ -39,6 +40,14 @@ function isProductionEnvironment(env: NodeJS.ProcessEnv): boolean {
 function isUnsafeProductionAdminToken(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === "dev-admin-token" || normalized === "veil-admin-2026" || /^dev[-_]/.test(normalized);
+}
+
+function redisUrlIncludesPassword(value: string): boolean {
+  try {
+    return Boolean(new URL(value).password);
+  } catch {
+    return false;
+  }
 }
 
 function readRequiredEnvValue(env: NodeJS.ProcessEnv, key: string): string {
@@ -159,12 +168,15 @@ function validateAwsManagedSecrets(env: NodeJS.ProcessEnv): void {
   const usesSmtpDelivery = deliveryModeValues.includes("smtp");
   const hasWebhookBearerToken = Boolean(env.VEIL_AUTH_TOKEN_DELIVERY_WEBHOOK_URL?.trim());
   const hasSmtpUsername = Boolean(env.VEIL_AUTH_TOKEN_DELIVERY_SMTP_USERNAME?.trim());
+  const redisUrl = env.REDIS_URL?.trim();
+  const redisNeedsPassword = Boolean(redisUrl && !redisUrlIncludesPassword(redisUrl));
 
   maybeRequireSecret(env, "VEIL_AUTH_SECRET", [true], missing);
   maybeRequireSecret(env, "ADMIN_SECRET", [true], missing);
   maybeRequireSecret(env, "SUPPORT_MODERATOR_SECRET", [true], missing);
   maybeRequireSecret(env, "SUPPORT_SUPERVISOR_SECRET", [true], missing);
   maybeRequireSecret(env, "VEIL_ADMIN_TOKEN", [true], missing);
+  maybeRequireSecret(env, "REDIS_PASSWORD", [redisNeedsPassword], missing);
   maybeRequireSecret(env, "VEIL_MYSQL_PASSWORD", [mysqlEnabled], missing);
   maybeRequireSecret(env, "WECHAT_APP_SECRET", [requiresWechatSecret], missing);
   maybeRequireSecret(env, "VEIL_WECHAT_GROUP_CHALLENGE_SECRET", [requiresWechatSecret], missing);
@@ -199,6 +211,11 @@ function validateProductionRuntimeSecrets(env: NodeJS.ProcessEnv): void {
 
   if (adminToken && isUnsafeProductionAdminToken(adminToken)) {
     throw new Error("VEIL_ADMIN_TOKEN must be a non-development secret for production startup");
+  }
+
+  const redisUrl = env.REDIS_URL?.trim();
+  if (redisUrl && !redisUrlIncludesPassword(redisUrl) && !readRuntimeSecret("REDIS_PASSWORD", env)) {
+    throw new Error("REDIS_PASSWORD must be configured when production REDIS_URL does not include credentials");
   }
 }
 

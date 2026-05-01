@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { RedisDriver } from "@colyseus/redis-driver";
 import { RedisPresence } from "@colyseus/redis-presence";
 import Redis from "ioredis";
+import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 
 export interface ClosableRedisResource {
@@ -67,7 +68,26 @@ export interface CreateRedisClientDependencies {
 
 export function readRedisUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   const redisUrl = env.REDIS_URL?.trim();
-  return redisUrl ? redisUrl : null;
+  if (!redisUrl) {
+    return null;
+  }
+
+  const redisPassword = readRuntimeSecret("REDIS_PASSWORD", env);
+  if (!redisPassword) {
+    return redisUrl;
+  }
+
+  try {
+    const url = new URL(redisUrl);
+    if (url.password) {
+      return redisUrl;
+    }
+    url.username = url.username || "default";
+    url.password = redisPassword;
+    return url.toString();
+  } catch {
+    return redisUrl;
+  }
 }
 
 export function createRedisPresence(redisUrl: string): RedisPresence {

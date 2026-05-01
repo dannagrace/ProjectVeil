@@ -18,6 +18,7 @@ Required JSON keys:
 | `SUPPORT_SUPERVISOR_SECRET` | `apps/server/src/admin-console.ts` | Supervisor-scoped support actions | Quarterly |
 | `VEIL_ADMIN_TOKEN` | `player-accounts`, `minor-protection`, `seasons`, `wechat-pay` admin routes | Service-to-service admin API access | Quarterly |
 | `VEIL_MYSQL_PASSWORD` | `apps/server/src/persistence.ts` | MySQL password for room persistence and migrations | Quarterly |
+| `REDIS_PASSWORD` | `apps/server/src/infra/redis.ts` | Redis AUTH password when `REDIS_URL` does not embed credentials | Quarterly |
 | `WECHAT_APP_SECRET` | `auth`, `wechat-subscribe`, auth readiness checks | WeChat `code2session` and subscribe-message API secret | On compromise or WeChat app credential reissue |
 | `VEIL_WECHAT_GROUP_CHALLENGE_SECRET` | `apps/server/src/player-accounts.ts` | HMAC secret for group challenge tokens | Quarterly |
 | `VEIL_WECHAT_PAY_API_V3_KEY` | `apps/server/src/wechat-pay.ts` | WeChat Pay API v3 callback/resource decryption key | On compromise |
@@ -27,7 +28,7 @@ Required JSON keys:
 
 Non-sensitive values stay in env vars:
 
-- Network and infra coordinates such as `VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_BACKUP_S3_*`, `REDIS_URL`
+- Network and infra coordinates such as `VEIL_MYSQL_HOST`, `VEIL_MYSQL_PORT`, `VEIL_BACKUP_S3_*`
 - Runtime tuning such as TTLs, rate limits, and feature toggles
 - Public identifiers such as `WECHAT_APP_ID`, `VEIL_WECHAT_PAY_APP_ID`, merchant ids, notify URLs, certificate serials, `VEIL_APNS_KEY_ID`, `VEIL_APNS_TEAM_ID`, `VEIL_APNS_TOPIC`, `VEIL_APNS_HOST`
 - Mobile push routing knobs such as `VEIL_APNS_USE_SANDBOX` and `VEIL_FCM_SEND_URL`
@@ -35,6 +36,7 @@ Non-sensitive values stay in env vars:
 Compose-only local secret:
 
 - `MYSQL_ROOT_PASSWORD` is required by `docker-compose.prod.yml` whenever the in-stack MySQL service is used. Do not commit it to the repo; provide it through the deploy host environment or a host-local env file before running the production Compose stack.
+- `REDIS_URL` should be treated as secret-bearing in Kubernetes because it may embed credentials. If the URL omits credentials, provide `REDIS_PASSWORD` separately and the server will inject it into the Redis connection URL.
 
 Additional sensitive mobile-push secrets belong in the same secret bundle:
 

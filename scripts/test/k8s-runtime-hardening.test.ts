@@ -50,6 +50,17 @@ function assertProbeAndResources(manifest: string): void {
   assert.doesNotMatch(manifest, /path:\s*\/api\/runtime\/health/);
 }
 
+function assertRedisSecrets(manifest: string): void {
+  assert.match(
+    manifest,
+    /-\s*name:\s*REDIS_URL\s*\n\s*valueFrom:\s*\n\s*secretKeyRef:\s*\n\s*name:\s*project-veil-server-secrets\s*\n\s*key:\s*REDIS_URL/
+  );
+  assert.match(
+    manifest,
+    /-\s*name:\s*REDIS_PASSWORD\s*\n\s*valueFrom:\s*\n\s*secretKeyRef:\s*\n\s*name:\s*project-veil-server-secrets\s*\n\s*key:\s*REDIS_PASSWORD/
+  );
+}
+
 test("runtime Dockerfile runs as a non-root veil user", async () => {
   const dockerfile = await readRepoFile("Dockerfile.server");
 
@@ -92,6 +103,9 @@ test("deployments apply runtime hardening controls", async () => {
   assertProbeAndResources(primary);
   assertProbeAndResources(canary);
   assertProbeAndResources(stable);
+  assertRedisSecrets(primary);
+  assertRedisSecrets(canary);
+  assertRedisSecrets(stable);
 });
 
 test("namespace and kustomizations include restricted pod security, PDB, and NetworkPolicy", async () => {
@@ -121,13 +135,23 @@ test("network policy restricts ingress to ingress-nginx and narrows egress", asy
     assert.match(policy, /port:\s*2567/);
     assert.match(policy, /kubernetes\.io\/metadata\.name:\s*kube-system/);
     assert.match(policy, /port:\s*6379/);
+    assert.match(policy, /app\.kubernetes\.io\/name:\s*project-veil-redis/);
     assert.match(policy, /cidr:\s*10\.0\.0\.0\/16\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*3306/);
     assert.match(policy, /port:\s*3306/);
     assert.doesNotMatch(policy, /cidr:\s*0\.0\.0\.0\/0\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*3306/);
+    assert.doesNotMatch(policy, /cidr:\s*0\.0\.0\.0\/0\s*\n\s*ports:\s*\n\s*-\s*protocol:\s*TCP\s*\n\s*port:\s*443/);
+    assert.match(policy, /app\.kubernetes\.io\/name:\s*project-veil-egress-proxy/);
     assert.match(policy, /port:\s*443/);
     assert.match(policy, /port:\s*465/);
     assert.match(policy, /port:\s*587/);
   }
+});
+
+test("k8s configmap does not publish Redis credentials", async () => {
+  const configmap = await readRepoFile("k8s/configmap.yaml");
+
+  assert.doesNotMatch(configmap, /REDIS_URL/);
+  assert.doesNotMatch(configmap, /REDIS_PASSWORD/);
 });
 
 test("ingresses inject baseline browser security response headers", async () => {

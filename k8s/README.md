@@ -29,7 +29,8 @@ These manifests assume managed backing services instead of in-cluster MySQL:
 
 - `VEIL_MYSQL_HOST` points at an external RDS endpoint
 - `VEIL_MYSQL_SSL_MODE` should stay at `verify-ca` for managed MySQL so pod-to-RDS traffic is encrypted and certificate-validated
-- `REDIS_URL` points at an external Redis endpoint or dedicated Redis service
+- `REDIS_URL` is supplied from `project-veil-server-secrets`; if it omits inline credentials, `REDIS_PASSWORD` from the same Secret is injected at runtime
+- HTTPS egress on port 443 is expected to flow through a pod labelled `app.kubernetes.io/name: project-veil-egress-proxy`; do not re-open direct `0.0.0.0/0:443` egress in the server policy
 - no MySQL `PersistentVolumeClaim` is included because the database is expected to live outside the cluster
 
 If you decide to run MySQL in-cluster instead, add a StatefulSet and PVC, then replace `VEIL_MYSQL_HOST` with the MySQL Service DNS name.
@@ -46,9 +47,11 @@ Create a `Secret` named `project-veil-server-secrets` with the sensitive keys do
 - `SUPPORT_SUPERVISOR_SECRET`
 - `VEIL_ADMIN_TOKEN`
 - `VEIL_MYSQL_PASSWORD`
+- `REDIS_URL`
+- `REDIS_PASSWORD`
 - `SENTRY_DSN`
 
-The deployment uses `envFrom` so the secret keys should match the runtime env var names exactly.
+The deployment explicitly requires `SENTRY_DSN`, `REDIS_URL`, and `REDIS_PASSWORD`, then also uses `envFrom` so the remaining secret keys should match the runtime env var names exactly.
 
 ## HPA assumptions
 
