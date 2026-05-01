@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AdminAuditLogCreateInput, AdminAuditLogRecord, RoomSnapshotStore } from "@server/persistence";
+import type { RoomSnapshotStore } from "@server/persistence";
+import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 
@@ -14,22 +15,6 @@ function toErrorPayload(error: unknown): { code: string; message: string } {
     code: error instanceof Error ? error.name || "error" : "error",
     message: error instanceof Error ? error.message : String(error)
   };
-}
-
-function hasAdminAuditStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
-  return Boolean(store?.appendAdminAuditLog);
-}
-
-async function appendAdminAuditLogIfAvailable(
-  store: RoomSnapshotStore | null,
-  input: AdminAuditLogCreateInput
-): Promise<AdminAuditLogRecord | null> {
-  if (!hasAdminAuditStore(store)) {
-    return null;
-  }
-  return store.appendAdminAuditLog(input);
 }
 
 function safeSerialize(value: unknown): string {

@@ -24,7 +24,8 @@ import {
   unsupportedPaymentGatewayOperation
 } from "@server/domain/payment/PaymentGateway";
 import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
-import type { AdminAuditLogCreateInput, AdminAuditLogRecord, PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
+import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
+import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
@@ -462,22 +463,6 @@ function isPaymentStoreReady(store: RoomSnapshotStore | null) {
 
 function isPaymentOpsStoreReady(store: RoomSnapshotStore | null) {
   return isPaymentRetryOpsStoreReady(store);
-}
-
-function hasAdminAuditStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
-  return Boolean(store?.appendAdminAuditLog);
-}
-
-async function appendAdminAuditLogIfAvailable(
-  store: RoomSnapshotStore | null,
-  input: AdminAuditLogCreateInput
-): Promise<AdminAuditLogRecord | null> {
-  if (!hasAdminAuditStore(store)) {
-    return null;
-  }
-  return store.appendAdminAuditLog(input);
 }
 
 function readRequestIp(request: IncomingMessage): string | undefined {

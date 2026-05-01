@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AdminAuditLogCreateInput, AdminAuditLogRecord, RoomSnapshotStore } from "@server/persistence";
+import type { RoomSnapshotStore } from "@server/persistence";
+import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { loadReengagementPolicies, previewReengagementCandidates, runReengagementSweep } from "@server/domain/ops/reengagement";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
@@ -24,22 +25,6 @@ function readAdminSecret(): string | null {
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
   return timingSafeCompareAdminToken(request.headers["x-veil-admin-secret"], adminSecret);
-}
-
-function hasAdminAuditStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
-  return Boolean(store?.appendAdminAuditLog);
-}
-
-async function appendAdminAuditLogIfAvailable(
-  store: RoomSnapshotStore | null,
-  input: AdminAuditLogCreateInput
-): Promise<AdminAuditLogRecord | null> {
-  if (!hasAdminAuditStore(store)) {
-    return null;
-  }
-  return store.appendAdminAuditLog(input);
 }
 
 function readRequestIp(request: IncomingMessage): string | undefined {

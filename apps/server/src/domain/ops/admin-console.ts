@@ -17,7 +17,6 @@ import type {
   AdminAuditAction,
   AdminAuditLogCreateInput,
   AdminAuditLogListOptions,
-  AdminAuditLogRecord,
   PlayerCompensationCreateInput,
   PlayerCompensationRecord,
   PlayerPurchaseHistorySnapshot,
@@ -38,6 +37,7 @@ import {
   type LaunchMaintenanceModeRecord
 } from "@server/domain/ops/launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "@server/domain/ops/observability";
+import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
@@ -268,13 +268,6 @@ function hasBattleSnapshotHistoryStore(
   store: RoomSnapshotStore | null
 ): store is RoomSnapshotStore & Required<Pick<RoomSnapshotStore, "listBattleSnapshotsForPlayer">> {
   return Boolean(store?.listBattleSnapshotsForPlayer);
-}
-
-function hasAdminAuditStore(
-  store: RoomSnapshotStore | null
-): store is RoomSnapshotStore &
-  Required<Pick<RoomSnapshotStore, "appendAdminAuditLog">> {
-  return Boolean(store?.appendAdminAuditLog);
 }
 
 function hasAdminAuditListStore(
@@ -781,16 +774,6 @@ function readRequestIp(request: IncomingMessage): string | undefined {
 
 function describeAuditActor(role: AdminRole): string {
   return `${role}:admin-console`;
-}
-
-async function appendAdminAuditLogIfAvailable(
-  store: RoomSnapshotStore | null,
-  input: AdminAuditLogCreateInput
-): Promise<AdminAuditLogRecord | null> {
-  if (!hasAdminAuditStore(store)) {
-    return null;
-  }
-  return store.appendAdminAuditLog(input);
 }
 
 function parseBroadcastBody(value: unknown): { message: string; type: string } {
@@ -2463,6 +2446,14 @@ export function registerAdminRoutes(
       const guildId = readRequiredParam(request, "id");
       const input = parseGuildModerationBody(await readJsonBody(request));
       const guild = await guildService.hideGuild(guildId, `${role}:admin-console`, input.reason);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "guild_hidden",
+        targetScope: "guild-moderation",
+        summary: `Hid guild ${guildId}`,
+        afterJson: safeSerialize({ guildId, reason: input.reason ?? null })
+      });
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -2490,6 +2481,14 @@ export function registerAdminRoutes(
       const guildId = readRequiredParam(request, "id");
       const input = parseGuildModerationBody(await readJsonBody(request));
       const guild = await guildService.unhideGuild(guildId, `${role}:admin-console`, input.reason);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "guild_unhidden",
+        targetScope: "guild-moderation",
+        summary: `Unhid guild ${guildId}`,
+        afterJson: safeSerialize({ guildId, reason: input.reason ?? null })
+      });
       sendJson(response, 200, { ok: true, guild });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -2517,6 +2516,14 @@ export function registerAdminRoutes(
       const guildId = readRequiredParam(request, "id");
       const input = parseGuildModerationBody(await readJsonBody(request));
       await guildService.deleteGuildAsAdmin(guildId, `${role}:admin-console`, input.reason);
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: describeAuditActor(role),
+        actorRole: role,
+        action: "guild_deleted",
+        targetScope: "guild-moderation",
+        summary: `Deleted guild ${guildId}`,
+        afterJson: safeSerialize({ guildId, reason: input.reason ?? null })
+      });
       sendJson(response, 200, { ok: true, guildId });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {

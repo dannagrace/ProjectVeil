@@ -1204,9 +1204,15 @@ export type AdminAuditAction =
   | "leaderboard_player_frozen"
   | "leaderboard_player_unfrozen"
   | "leaderboard_player_removed"
+  | "guild_hidden"
+  | "guild_unhidden"
+  | "guild_deleted"
   | "season_created"
   | "season_closed"
   | "season_rolled_over"
+  | "seasonal_event_patched"
+  | "seasonal_event_force_ended"
+  | "seasonal_event_player_progress_reset"
   | "live_ops_calendar_upsert"
   | "live_ops_calendar_deleted"
   | "live_ops_calendar_started"
@@ -1680,9 +1686,15 @@ function normalizeAdminAuditAction(value: string): AdminAuditAction {
     case "leaderboard_player_frozen":
     case "leaderboard_player_unfrozen":
     case "leaderboard_player_removed":
+    case "guild_hidden":
+    case "guild_unhidden":
+    case "guild_deleted":
     case "season_created":
     case "season_closed":
     case "season_rolled_over":
+    case "seasonal_event_patched":
+    case "seasonal_event_force_ended":
+    case "seasonal_event_player_progress_reset":
     case "live_ops_calendar_upsert":
     case "live_ops_calendar_deleted":
     case "live_ops_calendar_started":

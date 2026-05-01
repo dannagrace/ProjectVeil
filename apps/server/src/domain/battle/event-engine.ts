@@ -9,6 +9,7 @@ import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQues
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import {
   recordSeasonalEventOpsAuditLocalFallbackWrite,
   recordSeasonalEventOpsAuditMySqlPersistFailure,
@@ -1935,6 +1936,14 @@ export function registerEventRoutes(
         seasonalEventOpsAuditRedisClient,
         store as SeasonalEventOpsAuditArchiveStore | null
       );
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin-runtime",
+        actorRole: "admin",
+        action: "seasonal_event_patched",
+        targetScope: "seasonal-event",
+        summary: `Patched seasonal event ${eventId}`,
+        afterJson: JSON.stringify({ eventId, patch })
+      });
       sendJson(response, 200, {
         event: nextEvent,
         audit: audit.entry,
@@ -2030,6 +2039,14 @@ export function registerEventRoutes(
         seasonalEventOpsAuditRedisClient,
         store as SeasonalEventOpsAuditArchiveStore | null
       );
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin-runtime",
+        actorRole: "admin",
+        action: "seasonal_event_force_ended",
+        targetScope: "seasonal-event",
+        summary: `Force-ended seasonal event ${eventId}`,
+        afterJson: JSON.stringify({ eventId, distribution })
+      });
       sendJson(response, 200, {
         event: endedEvent,
         distribution,
@@ -2106,6 +2123,15 @@ export function registerEventRoutes(
         seasonalEventOpsAuditRedisClient,
         store as SeasonalEventOpsAuditArchiveStore | null
       );
+      await appendAdminAuditLogIfAvailable(store, {
+        actorPlayerId: "admin-runtime",
+        actorRole: "admin",
+        action: "seasonal_event_player_progress_reset",
+        targetPlayerId: playerId,
+        targetScope: "seasonal-event",
+        summary: `Reset seasonal event ${eventId} progress for ${playerId}`,
+        afterJson: JSON.stringify({ eventId, playerId, previousPoints: existingState.points })
+      });
       sendJson(response, 200, {
         reset: true,
         playerId,

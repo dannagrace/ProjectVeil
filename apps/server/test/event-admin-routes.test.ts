@@ -250,9 +250,11 @@ function createStore() {
     ]
   ]);
   const mailboxByPlayerId = new Map<string, string[]>();
+  const adminAuditLogs: any[] = [];
 
   return {
     mailboxByPlayerId,
+    adminAuditLogs,
     async listPlayerAccounts() {
       return Array.from(accounts.values()).map((account) => structuredClone(account));
     },
@@ -304,6 +306,15 @@ function createStore() {
         skippedPlayerIds,
         message: input.message
       };
+    },
+    async appendAdminAuditLog(input: any) {
+      const record = {
+        auditId: `admin-audit-${adminAuditLogs.length + 1}`,
+        occurredAt: "2026-04-04T12:00:00.000Z",
+        ...input
+      };
+      adminAuditLogs.unshift(record);
+      return record;
     }
   };
 }
@@ -402,6 +413,9 @@ test("PATCH /api/admin/seasonal-events/:id updates runtime dates, activation sta
   assert.equal(payload.event.isActive, true);
   assert.equal(payload.event.rewards[0]?.resources.gold, 200);
   assert.equal(payload.audit.action, "patched");
+  assert.equal(store.adminAuditLogs[0]?.action, "seasonal_event_patched");
+  assert.equal(store.adminAuditLogs[0]?.targetScope, "seasonal-event");
+  assert.match(store.adminAuditLogs[0]?.afterJson ?? "", /defend-the-bridge/);
 
   const listHandler = gets.get("/api/admin/seasonal-events");
   assert.ok(listHandler);
@@ -815,6 +829,8 @@ test("POST /api/admin/seasonal-events/:id/end force-ends an active event and dis
   assert.equal(payload.distribution.deliveredThresholdRewards, 2);
   assert.equal(payload.distribution.deliveredLeaderboardRewards, 2);
   assert.equal(payload.audit.action, "force_ended");
+  assert.equal(store.adminAuditLogs[0]?.action, "seasonal_event_force_ended");
+  assert.equal(store.adminAuditLogs[0]?.targetScope, "seasonal-event");
   assert.deepEqual(
     store.mailboxByPlayerId.get("player-1")?.sort(),
     [
@@ -965,4 +981,6 @@ test("DELETE /api/admin/seasonal-events/:eventId/players/:playerId resets a sing
   assert.equal(payload.playerId, "player-1");
   assert.equal(payload.account.seasonalEventStates, null);
   assert.equal(payload.audit.action, "player_progress_reset");
+  assert.equal(store.adminAuditLogs[0]?.action, "seasonal_event_player_progress_reset");
+  assert.equal(store.adminAuditLogs[0]?.targetPlayerId, "player-1");
 });

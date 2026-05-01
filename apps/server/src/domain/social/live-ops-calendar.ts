@@ -18,9 +18,9 @@ import {
   type LaunchRuntimeStateStorage,
   type LaunchMaintenanceModeRecord
 } from "@server/domain/ops/launch-runtime-state";
+import { appendAdminAuditLogIfAvailable, type AdminAuditWritableStore } from "@server/domain/ops/admin-audit-log";
 import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import type { AdminAuditLogCreateInput, AdminAuditLogRecord } from "@server/persistence";
 
 type CalendarRequest = IncomingMessage & { params?: Record<string, string | undefined> };
 type CalendarRouteHandler = (request: CalendarRequest, response: ServerResponse) => void | Promise<void>;
@@ -90,9 +90,7 @@ interface LiveOpsCalendarRouteOptions {
   auditStore?: LiveOpsCalendarAuditStore | null;
 }
 
-interface LiveOpsCalendarAuditStore {
-  appendAdminAuditLog?(input: AdminAuditLogCreateInput): Promise<AdminAuditLogRecord>;
-}
+type LiveOpsCalendarAuditStore = AdminAuditWritableStore;
 
 interface LiveOpsCalendarSchedulerOptions {
   logger?: Pick<Console, "log" | "warn" | "error">;
@@ -659,22 +657,6 @@ function readHeaderSecret(request: IncomingMessage): string | null {
 function isAuthorized(request: IncomingMessage): boolean {
   const adminSecret = readAdminSecret();
   return timingSafeCompareAdminToken(readHeaderSecret(request), adminSecret);
-}
-
-function hasAdminAuditStore(
-  store: LiveOpsCalendarAuditStore | null | undefined
-): store is Required<LiveOpsCalendarAuditStore> {
-  return Boolean(store?.appendAdminAuditLog);
-}
-
-async function appendAdminAuditLogIfAvailable(
-  store: LiveOpsCalendarAuditStore | null | undefined,
-  input: AdminAuditLogCreateInput
-): Promise<AdminAuditLogRecord | null> {
-  if (!hasAdminAuditStore(store)) {
-    return null;
-  }
-  return store.appendAdminAuditLog(input);
 }
 
 function readRequestIp(request: IncomingMessage): string | undefined {

@@ -3245,6 +3245,10 @@ test("support moderators can hide and inspect guild moderation audit", async (t)
   assert.equal(audit[0]?.action, "hidden");
   assert.equal(audit[1]?.action, "created");
   assert.equal(audit[1]?.actorPlayerId, "founder-1");
+  const adminAudit = await store.listAdminAuditLogs({ action: "guild_hidden", targetScope: "guild-moderation", limit: 1 });
+  assert.equal(adminAudit.length, 1);
+  assert.equal(adminAudit[0]?.actorRole, "support-moderator");
+  assert.match(adminAudit[0]?.afterJson ?? "", /guild-admin-1/);
 });
 
 test("support moderators can delete guilds without removing audit history", async (t) => {
@@ -3313,6 +3317,10 @@ test("support moderators can delete guilds without removing audit history", asyn
   assert.equal(audit[0]?.action, "deleted");
   assert.equal(audit[0]?.reason, "spam cleanup");
   assert.equal(audit[1]?.action, "created");
+  const adminAudit = await store.listAdminAuditLogs({ action: "guild_deleted", targetScope: "guild-moderation", limit: 1 });
+  assert.equal(adminAudit.length, 1);
+  assert.equal(adminAudit[0]?.actorRole, "support-moderator");
+  assert.match(adminAudit[0]?.afterJson ?? "", /guild-admin-delete/);
 });
 
 test("POST /api/admin/players/:id/resources returns 413 when content-length declares a 2 MB body", async (t) => {
