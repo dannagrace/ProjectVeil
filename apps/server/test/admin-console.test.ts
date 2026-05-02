@@ -1809,12 +1809,17 @@ test("GET /api/admin/audit-log returns filtered GM audit entries", async (t) => 
 });
 
 test("admin console html includes compensation form and history table", async () => {
-  const adminHtmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin.html");
+  const clientDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client");
+  const adminHtmlPath = path.join(clientDir, "admin.html");
+  const adminScriptPath = path.join(clientDir, "admin-assets/admin-console.js");
   const html = await readFile(adminHtmlPath, "utf8");
+  const script = await readFile(adminScriptPath, "utf8");
+
   assert.match(html, /玩家补偿 \/ 退款/);
   assert.match(html, /compensationHistoryBody/);
-  assert.match(html, /submitCompensation/);
-  assert.match(html, /fetchCompensationHistory/);
+  assert.match(html, /submitCompensationButton/);
+  assert.match(script, /submitCompensation/);
+  assert.match(script, /fetchCompensationHistory/);
 });
 
 test("admin console html does not prefill credentials and escapes dynamic content", async () => {
@@ -1823,31 +1828,41 @@ test("admin console html does not prefill credentials and escapes dynamic conten
 
   assert.doesNotMatch(html, /id="adminSecret"[^>]*\bvalue=/);
   assert.doesNotMatch(html, /veil-admin-2026|dev-admin-token/);
-  assert.match(html, /function escapeHtml/);
-  assert.match(html, /escapeHtml\(data\.account\.displayName/);
-  assert.match(html, /escapeHtml\(item\.reason/);
-  assert.match(html, /escapeHtml\(report\.description/);
+  assert.match(html, /\/admin\/assets\/admin-escape-html\.js/);
+  assert.match(html, /\/admin\/assets\/admin-console\.js/);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/);
+  assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
 });
 
 test("admin kill-switch html exposes the matrix view", async () => {
-  const htmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/admin-kill-switches.html");
+  const clientDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client");
+  const htmlPath = path.join(clientDir, "admin-kill-switches.html");
+  const scriptPath = path.join(clientDir, "admin-assets/admin-kill-switches.js");
   const html = await readFile(htmlPath, "utf8");
+  const script = await readFile(scriptPath, "utf8");
+
   assert.match(html, /Kill Switch Matrix/);
-  assert.match(html, /clientMinVersion/i);
-  assert.match(html, /api\/admin\/runtime\/kill-switches/);
+  assert.match(html, /\/admin\/assets\/admin-kill-switches\.js/);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/);
+  assert.match(script, /clientMinVersion/i);
+  assert.match(script, /api\/admin\/runtime\/kill-switches/);
 });
 
-test("admin calendar and kill-switch html escape dynamic rows", async () => {
+test("admin html pages load shared external scripts without inline script or duplicated escaping helpers", async () => {
   const clientDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client");
+  const adminHtml = await readFile(path.join(clientDir, "admin.html"), "utf8");
   const calendarHtml = await readFile(path.join(clientDir, "admin-calendar.html"), "utf8");
   const killSwitchHtml = await readFile(path.join(clientDir, "admin-kill-switches.html"), "utf8");
 
-  assert.match(calendarHtml, /function escapeHtml/);
-  assert.match(calendarHtml, /escapeHtml\(entry\.description/);
-  assert.match(calendarHtml, /escapeHtml\(JSON\.stringify/);
-  assert.match(killSwitchHtml, /function escapeHtml/);
-  assert.match(killSwitchHtml, /escapeHtml\(item\.label/);
-  assert.match(killSwitchHtml, /escapeHtml\(item\.summary/);
+  for (const html of [adminHtml, calendarHtml, killSwitchHtml]) {
+    assert.match(html, /\/admin\/assets\/admin-escape-html\.js/);
+    assert.doesNotMatch(html, /function escapeHtml/);
+    assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/);
+    assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
+  }
+  assert.match(adminHtml, /\/admin\/assets\/admin-console\.js/);
+  assert.match(calendarHtml, /\/admin\/assets\/admin-calendar\.js/);
+  assert.match(killSwitchHtml, /\/admin\/assets\/admin-kill-switches\.js/);
 });
 
 test("POST /api/admin/broadcast returns 401 without a valid admin secret", async (t) => {
@@ -2468,7 +2483,26 @@ test("GET /admin serves admin.html with text/html content-type", async (t) => {
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["Content-Type"] ?? "", /text\/html/);
+  assert.match(response.headers["Cache-Control"] ?? "", /no-store/);
   assert.ok(response.body.length > 0, "admin.html body should be non-empty");
+});
+
+test("GET /admin assets serves external scripts with no-store cache headers", async (t) => {
+  withAdminSecret(t);
+  const { gets } = registerRoutes();
+  const helperHandler = gets.get("/admin/assets/admin-escape-html.js");
+  const consoleHandler = gets.get("/admin/assets/admin-console.js");
+  const killSwitchHandler = gets.get("/admin/assets/admin-kill-switches.js");
+  assert.ok(helperHandler && consoleHandler && killSwitchHandler);
+
+  for (const handler of [helperHandler, consoleHandler, killSwitchHandler]) {
+    const response = createResponse();
+    await handler(createRequest(), response);
+    assert.equal(response.statusCode, 200);
+    assert.match(response.headers["Content-Type"] ?? "", /javascript/);
+    assert.match(response.headers["Cache-Control"] ?? "", /no-store/);
+    assert.ok(response.body.length > 0, "script body should be non-empty");
+  }
 });
 
 test("POST /api/admin/players/:id/unban returns 401 without a valid admin secret", async (t) => {

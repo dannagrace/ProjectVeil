@@ -12,7 +12,15 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 function sendHtml(response: ServerResponse, html: string): void {
   response.statusCode = 200;
   response.setHeader("Content-Type", "text/html; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store, no-cache, private");
   response.end(html);
+}
+
+function sendScript(response: ServerResponse, source: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store, no-cache, private");
+  response.end(source);
 }
 
 function sendNotFound(response: ServerResponse): void {
@@ -49,6 +57,47 @@ function normalizeSummaryItem(item: ConfigDocumentSummary) {
   };
 }
 
+const CONFIG_VIEWER_COOKIE_NAME = "veil_config_viewer_admin_token";
+
+function readCookieValue(request: IncomingMessage, name: string): string | null {
+  const cookieHeader = request.headers.cookie;
+  if (!cookieHeader) {
+    return null;
+  }
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValueParts] = part.trim().split("=");
+    if (rawKey !== name) {
+      continue;
+    }
+    const rawValue = rawValueParts.join("=");
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return null;
+}
+
+function readHeaderValue(request: IncomingMessage, name: string): string | null {
+  const value = request.headers[name];
+  return Array.isArray(value) ? value[0]?.trim() ?? null : value?.trim() ?? null;
+}
+
+function readConfigViewerRequestToken(request: IncomingMessage): string | null {
+  return readHeaderValue(request, "x-veil-admin-token") ?? readCookieValue(request, CONFIG_VIEWER_COOKIE_NAME);
+}
+
+function setConfigViewerAdminCookie(response: ServerResponse, token: string): void {
+  const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  response.setHeader(
+    "Set-Cookie",
+    `${CONFIG_VIEWER_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800${secureFlag}`
+  );
+}
+
 function requireConfigViewerAdminToken(request: IncomingMessage, response: ServerResponse): string | null {
   const adminToken = readRuntimeSecret("VEIL_ADMIN_TOKEN");
   if (!adminToken) {
@@ -61,8 +110,7 @@ function requireConfigViewerAdminToken(request: IncomingMessage, response: Serve
     return null;
   }
 
-  const headerValue = request.headers["x-veil-admin-token"];
-  const requestToken = Array.isArray(headerValue) ? headerValue[0]?.trim() ?? null : headerValue?.trim() ?? null;
+  const requestToken = readConfigViewerRequestToken(request);
   if (!timingSafeCompareAdminToken(requestToken, adminToken)) {
     sendJson(response, 403, {
       error: {
@@ -73,10 +121,10 @@ function requireConfigViewerAdminToken(request: IncomingMessage, response: Serve
     return null;
   }
 
-  return requestToken;
+  return requestToken ?? null;
 }
 
-function buildViewerHtml(adminToken?: string): string {
+function buildViewerHtml(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -293,11 +341,14 @@ function buildViewerHtml(adminToken?: string): string {
       </section>
       <section id="list" class="list" aria-label="Config documents"></section>
     </main>
-    <script>
-      const statusNode = document.getElementById("status");
-      const listNode = document.getElementById("list");
-      const adminToken = ${JSON.stringify(adminToken ?? "")};
+    <script src="/config-viewer.js" defer></script>
+  </body>
+</html>`;
+}
 
+function buildViewerScript(): string {
+  return `      const statusNode = document.getElementById("status");
+      const listNode = document.getElementById("list");
       function setStatus(message, isError) {
         statusNode.textContent = message;
         statusNode.className = isError ? "status error" : "status";
@@ -329,7 +380,7 @@ function buildViewerHtml(adminToken?: string): string {
 
         try {
           const response = await fetch("/api/config/" + encodeURIComponent(item.id), {
-            headers: adminToken ? { "x-veil-admin-token": adminToken } : {}
+            credentials: "same-origin"
           });
           const payload = await response.json();
           if (!response.ok) {
@@ -417,7 +468,7 @@ function buildViewerHtml(adminToken?: string): string {
       async function load() {
         try {
           const response = await fetch("/api/config", {
-            headers: adminToken ? { "x-veil-admin-token": adminToken } : {}
+            credentials: "same-origin"
           });
           const payload = await response.json();
           if (!response.ok) {
@@ -434,10 +485,7 @@ function buildViewerHtml(adminToken?: string): string {
         }
       }
 
-      void load();
-    </script>
-  </body>
-</html>`;
+      void load();`;
 }
 
 export function registerConfigViewerRoutes(
@@ -452,7 +500,12 @@ export function registerConfigViewerRoutes(
       return;
     }
 
-    sendHtml(response, buildViewerHtml(adminToken));
+    setConfigViewerAdminCookie(response, adminToken);
+    sendHtml(response, buildViewerHtml());
+  });
+
+  app.get("/config-viewer.js", (_request, response) => {
+    sendScript(response, buildViewerScript());
   });
 
   app.get("/api/config", async (request, response) => {

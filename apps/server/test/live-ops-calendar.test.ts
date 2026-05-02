@@ -331,6 +331,40 @@ test("admin live ops calendar routes upsert, list, start, end, and delete entrie
   assert.match(auditLogs[0]?.metadataJson ?? "", /calendar-entry-1/);
 });
 
+test("admin live ops calendar page serves CSP-compatible external script assets", async () => {
+  const { app, gets } = createTestApp();
+  registerLiveOpsCalendarRoutes(app);
+
+  const pageHandler = gets.get("/admin/calendar");
+  const sharedScriptHandler = gets.get("/admin/assets/admin-escape-html.js");
+  const scriptHandler = gets.get("/admin/assets/admin-calendar.js");
+  assert.ok(pageHandler && sharedScriptHandler && scriptHandler);
+
+  const pageResponse = createResponse();
+  await pageHandler(createRequest(), pageResponse);
+
+  assert.equal(pageResponse.statusCode, 200);
+  assert.match(pageResponse.headers["Content-Type"] ?? "", /text\/html/);
+  assert.match(pageResponse.headers["Cache-Control"] ?? "", /no-store/);
+  assert.match(pageResponse.body, /\/admin\/assets\/admin-escape-html\.js/);
+  assert.match(pageResponse.body, /\/admin\/assets\/admin-calendar\.js/);
+  assert.doesNotMatch(pageResponse.body, /<script(?![^>]*\bsrc=)[^>]*>/);
+
+  const scriptResponse = createResponse();
+  await sharedScriptHandler(createRequest(), scriptResponse);
+
+  assert.equal(scriptResponse.statusCode, 200);
+  assert.match(scriptResponse.headers["Content-Type"] ?? "", /javascript/);
+  assert.match(scriptResponse.body, /escapeHtml/);
+
+  const calendarScriptResponse = createResponse();
+  await scriptHandler(createRequest(), calendarScriptResponse);
+
+  assert.equal(calendarScriptResponse.statusCode, 200);
+  assert.match(calendarScriptResponse.headers["Content-Type"] ?? "", /javascript/);
+  assert.match(calendarScriptResponse.body, /api\/admin\/live-ops-calendar/);
+});
+
 test("admin live ops calendar routes reject invalid admin secret", async (t) => {
   const secret = withAdminSecret(t);
   const { app, gets } = createTestApp();

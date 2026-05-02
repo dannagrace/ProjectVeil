@@ -161,13 +161,13 @@ function withAdminToken(t: import("node:test").TestContext, token = "config-view
   return token;
 }
 
-test("config viewer page includes plain fetch-driven shell", () => {
+test("config viewer page includes a CSP-compatible external script shell", () => {
   const html = buildConfigViewerPageForTest();
 
   assert.match(html, /Config Viewer/);
-  assert.match(html, /const adminToken = "";/);
-  assert.match(html, /fetch\("\/api\/config", \{\s*headers: adminToken \? \{ "x-veil-admin-token": adminToken \} : \{\}\s*\}\)/s);
-  assert.match(html, /fetch\("\/api\/config\/" \+ encodeURIComponent\(item.id\), \{\s*headers: adminToken \? \{ "x-veil-admin-token": adminToken \} : \{\}\s*\}\)/s);
+  assert.match(html, /<script src="\/config-viewer\.js" defer><\/script>/);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/);
+  assert.doesNotMatch(html, /adminToken|config-viewer-admin-token|x-veil-admin-token/);
 });
 
 test("config viewer exposes list and detail aliases plus html page", async (t) => {
@@ -189,10 +189,22 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   const pageHtml = await pageResponse.text();
   assert.equal(pageResponse.status, 200);
   assert.match(pageResponse.headers.get("content-type") ?? "", /text\/html/);
+  assert.match(pageResponse.headers.get("cache-control") ?? "", /no-store/);
+  assert.match(pageResponse.headers.get("set-cookie") ?? "", /veil_config_viewer_admin_token=/);
+  assert.doesNotMatch(pageHtml, /config-viewer-admin-token|x-veil-admin-token/);
   assert.match(pageHtml, /Loading config documents/);
 
+  const scriptResponse = await fetch(`http://127.0.0.1:${port}/config-viewer.js`, {
+    headers: { cookie: pageResponse.headers.get("set-cookie") ?? "" }
+  });
+  const scriptBody = await scriptResponse.text();
+  assert.equal(scriptResponse.status, 200);
+  assert.match(scriptResponse.headers.get("content-type") ?? "", /javascript/);
+  assert.match(scriptBody, /fetch\("\/api\/config", \{\s*credentials: "same-origin"\s*\}\)/s);
+  assert.doesNotMatch(scriptBody, /config-viewer-admin-token/);
+
   const listResponse = await fetch(`http://127.0.0.1:${port}/api/config`, {
-    headers: { "x-veil-admin-token": token }
+    headers: { cookie: pageResponse.headers.get("set-cookie") ?? "" }
   });
   const listPayload = (await listResponse.json()) as {
     items: Array<{
@@ -222,7 +234,7 @@ test("config viewer exposes list and detail aliases plus html page", async (t) =
   assert.ok(listPayload.items.every((item) => item.updatedAt && item.summary && item.storage && item.version >= 1));
 
   const detailResponse = await fetch(`http://127.0.0.1:${port}/api/config/world`, {
-    headers: { "x-veil-admin-token": token }
+    headers: { cookie: pageResponse.headers.get("set-cookie") ?? "" }
   });
   const detailPayload = (await detailResponse.json()) as {
     document: {

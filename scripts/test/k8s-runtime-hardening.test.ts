@@ -88,6 +88,8 @@ test("runtime Dockerfile packages all admin HTML pages", async () => {
       `Dockerfile.server must copy ${pagePath} into the runtime image`
     );
   }
+
+  assert.match(dockerfile, /COPY\s+--from=build\s+\/app\/apps\/client\/admin-assets\s+\.\/apps\/client\/admin-assets/);
 });
 
 test("deployments apply runtime hardening controls", async () => {

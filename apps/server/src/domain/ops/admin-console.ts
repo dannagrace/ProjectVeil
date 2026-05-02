@@ -136,6 +136,31 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.end(JSON.stringify(payload));
 }
 
+const ADMIN_CLIENT_NO_STORE = "no-store, no-cache, private";
+
+function sendClientHtml(response: ServerResponse, html: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/html; charset=utf-8");
+  response.setHeader("Cache-Control", ADMIN_CLIENT_NO_STORE);
+  response.end(html);
+}
+
+function sendClientScript(response: ServerResponse, source: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  response.setHeader("Cache-Control", ADMIN_CLIENT_NO_STORE);
+  response.end(source);
+}
+
+async function sendAdminClientFile(response: ServerResponse, fileName: string, kind: "html" | "script"): Promise<void> {
+  const content = await readFile(join(process.cwd(), "apps/client", fileName), "utf8");
+  if (kind === "script") {
+    sendClientScript(response, content);
+    return;
+  }
+  sendClientHtml(response, content);
+}
+
 function sendUnauthorized(response: ServerResponse): void {
   sendJson(response, 401, { error: "Unauthorized: Invalid Admin Secret" });
 }
@@ -1158,27 +1183,48 @@ export function registerAdminRoutes(
     next();
   });
 
-  app.get("/admin", async (request, response) => {
+  app.get("/admin", async (_request, response) => {
     try {
-      const html = await readFile(join(process.cwd(), "apps/client/admin.html"), "utf8");
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/html; charset=utf-8");
-      response.end(html);
+      await sendAdminClientFile(response, "admin.html", "html");
     } catch (error) {
       response.statusCode = 500;
       response.end("Failed to load admin.html");
     }
   });
 
+  app.get("/admin/assets/admin-escape-html.js", async (_request, response) => {
+    try {
+      await sendAdminClientFile(response, "admin-assets/admin-escape-html.js", "script");
+    } catch {
+      response.statusCode = 500;
+      response.end("Failed to load admin-escape-html.js");
+    }
+  });
+
+  app.get("/admin/assets/admin-console.js", async (_request, response) => {
+    try {
+      await sendAdminClientFile(response, "admin-assets/admin-console.js", "script");
+    } catch {
+      response.statusCode = 500;
+      response.end("Failed to load admin-console.js");
+    }
+  });
+
   app.get("/admin/kill-switches", async (_request, response) => {
     try {
-      const html = await readFile(join(process.cwd(), "apps/client/admin-kill-switches.html"), "utf8");
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/html; charset=utf-8");
-      response.end(html);
+      await sendAdminClientFile(response, "admin-kill-switches.html", "html");
     } catch (error) {
       response.statusCode = 500;
       response.end("Failed to load admin-kill-switches.html");
+    }
+  });
+
+  app.get("/admin/assets/admin-kill-switches.js", async (_request, response) => {
+    try {
+      await sendAdminClientFile(response, "admin-assets/admin-kill-switches.js", "script");
+    } catch {
+      response.statusCode = 500;
+      response.end("Failed to load admin-kill-switches.js");
     }
   });
 

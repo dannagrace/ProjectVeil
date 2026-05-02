@@ -30,6 +30,22 @@ type CalendarApp = {
   delete?(path: string, handler: CalendarRouteHandler): void;
 };
 
+const ADMIN_CLIENT_NO_STORE = "no-store, no-cache, private";
+
+function sendClientHtml(response: ServerResponse, html: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/html; charset=utf-8");
+  response.setHeader("Cache-Control", ADMIN_CLIENT_NO_STORE);
+  response.end(html);
+}
+
+function sendClientScript(response: ServerResponse, source: string): void {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  response.setHeader("Cache-Control", ADMIN_CLIENT_NO_STORE);
+  response.end(source);
+}
+
 export type LiveOpsCalendarAction =
   | {
       type: "announcement_upsert";
@@ -733,12 +749,30 @@ export function registerLiveOpsCalendarRoutes(
   app.get("/admin/calendar", async (_request, response) => {
     try {
       const html = await readFile(join(process.cwd(), "apps/client/admin-calendar.html"), "utf8");
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/html; charset=utf-8");
-      response.end(html);
+      sendClientHtml(response, html);
     } catch {
       response.statusCode = 500;
       response.end("Failed to load admin-calendar.html");
+    }
+  });
+
+  app.get("/admin/assets/admin-escape-html.js", async (_request, response) => {
+    try {
+      const source = await readFile(join(process.cwd(), "apps/client/admin-assets/admin-escape-html.js"), "utf8");
+      sendClientScript(response, source);
+    } catch {
+      response.statusCode = 500;
+      response.end("Failed to load admin-escape-html.js");
+    }
+  });
+
+  app.get("/admin/assets/admin-calendar.js", async (_request, response) => {
+    try {
+      const source = await readFile(join(process.cwd(), "apps/client/admin-assets/admin-calendar.js"), "utf8");
+      sendClientScript(response, source);
+    } catch {
+      response.statusCode = 500;
+      response.end("Failed to load admin-calendar.js");
     }
   });
 
