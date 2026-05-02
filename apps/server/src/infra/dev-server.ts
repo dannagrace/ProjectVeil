@@ -86,6 +86,7 @@ import {
 import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
 import { loadRuntimeSecrets } from "@server/domain/ops/runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "@server/infra/schema-migrations";
+import { registerAdminForensicsMiddleware } from "@server/domain/ops/admin-forensics";
 import { registerAdminRoutes } from "@server/domain/ops/admin-console";
 import { registerSeasonRoutes } from "@server/domain/social/seasons";
 import { registerShopRoutes } from "@server/domain/economy/shop";
@@ -619,6 +620,9 @@ export async function startDevServer(
   deps.registerPrometheusMetricsMiddleware(expressApp);
   deps.registerHttpRateLimitMiddleware(expressApp);
   deps.registerPrometheusMetricsRoute(expressApp);
+  if ("use" in (expressApp as object)) {
+    registerAdminForensicsMiddleware(expressApp as never, effectiveSnapshotStore);
+  }
   deps.registerAuthRoutes(expressApp, effectiveSnapshotStore);
   deps.registerAnalyticsRoutes(expressApp, {
     enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1",

@@ -1179,6 +1179,8 @@ export interface PlayerCompensationListOptions {
 
 export type AdminAuditActorRole = "admin" | "support-moderator" | "support-supervisor";
 export type AdminAuditAction =
+  | "admin_read_access"
+  | "admin_auth_failed"
   | "player_overview_viewed"
   | "compensation_granted"
   | "compensation_batch_previewed"
@@ -1219,6 +1221,8 @@ export type AdminAuditAction =
   | "live_ops_calendar_ended"
   | "reengagement_run"
   | "auth_token_delivery_dlq_requeue"
+  | "admin_auth_failed"
+  | "admin_read_accessed"
   | "reengagement_sent"
   | "reengagement_opened"
   | "reengagement_returned";
@@ -1661,6 +1665,8 @@ function normalizeAdminAuditActorRole(value: string): AdminAuditActorRole {
 
 function normalizeAdminAuditAction(value: string): AdminAuditAction {
   switch (value) {
+    case "admin_read_access":
+    case "admin_auth_failed":
     case "player_overview_viewed":
     case "compensation_granted":
     case "compensation_batch_previewed":
@@ -1701,6 +1707,8 @@ function normalizeAdminAuditAction(value: string): AdminAuditAction {
     case "live_ops_calendar_ended":
     case "reengagement_run":
     case "auth_token_delivery_dlq_requeue":
+    case "admin_auth_failed":
+    case "admin_read_accessed":
     case "reengagement_sent":
     case "reengagement_opened":
     case "reengagement_returned":
