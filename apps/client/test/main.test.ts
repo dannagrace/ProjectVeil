@@ -75,7 +75,7 @@ function createState() {
   };
 }
 
-function installFakeBrowser(): void {
+function installFakeBrowser(options: { search?: string; appendedElements?: Array<{ id?: string; textContent?: string }> } = {}): void {
   const storage = {
     getItem: () => null,
     setItem: () => undefined,
@@ -83,10 +83,10 @@ function installFakeBrowser(): void {
   };
   const fakeWindow = {
     location: {
-      search: "",
+      search: options.search ?? "",
       protocol: "http:",
       hostname: "127.0.0.1",
-      href: "http://127.0.0.1:4173/"
+      href: `http://127.0.0.1:4173/${options.search ?? ""}`
     },
     localStorage: storage,
     setTimeout,
@@ -111,7 +111,9 @@ function installFakeBrowser(): void {
     document: {
       createElement: fakeElement,
       body: {
-        appendChild: () => undefined
+        appendChild: (element: { id?: string; textContent?: string }) => {
+          options.appendedElements?.push(element);
+        }
       },
       querySelector: () => null,
       addEventListener: () => undefined
@@ -124,6 +126,16 @@ async function loadMainModule(): Promise<typeof import("../src/main")> {
   installFakeBrowser();
   return import("../src/main");
 }
+
+test("main module does not inject the H5 debug bar by default", async () => {
+  const appendedElements: Array<{ id?: string; textContent?: string }> = [];
+  globalThis.__PROJECT_VEIL_MAIN_SKIP_AUTO_BOOT__ = true;
+  installFakeBrowser({ appendedElements });
+
+  await import("../src/main");
+
+  assert.equal(appendedElements.some((element) => element.id === "veil-debug-bar"), false);
+});
 
 test("startMainH5Boot covers cached-session boot and exposes automation hooks before boot settles", async () => {
   const { startMainH5Boot } = await loadMainModule();

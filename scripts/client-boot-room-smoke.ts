@@ -117,6 +117,7 @@ function spawnManagedProcess(label: string, args: readonly string[]): RunningPro
   const child = spawn(npmCommand(), [...args], {
     cwd: process.cwd(),
     env: { ...process.env, VEIL_ADMIN_TOKEN: ADMIN_TOKEN },
+    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"]
   });
   const logTail: string[] = [];
@@ -125,15 +126,46 @@ function spawnManagedProcess(label: string, args: readonly string[]): RunningPro
   return { child, label, logTail };
 }
 
+export function resolveManagedProcessSignalTarget(
+  pid: number,
+  platform: NodeJS.Platform = process.platform
+): number {
+  return platform === "win32" ? pid : -pid;
+}
+
+function signalManagedProcess(processRef: RunningProcess, signal: NodeJS.Signals): void {
+  const pid = processRef.child.pid;
+  if (pid == null) {
+    processRef.child.kill(signal);
+    return;
+  }
+
+  const target = resolveManagedProcessSignalTarget(pid);
+  try {
+    process.kill(target, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+      processRef.child.kill(signal);
+    }
+  }
+}
+
 async function stopManagedProcess(processRef: RunningProcess): Promise<void> {
   if (processRef.child.exitCode != null || processRef.child.signalCode != null) {
     return;
   }
-  processRef.child.kill("SIGTERM");
-  await Promise.race([
+  signalManagedProcess(processRef, "SIGTERM");
+  const exited = await Promise.race([
     new Promise<void>((resolve) => processRef.child.once("exit", () => resolve())),
-    delay(5_000).then(() => undefined)
+    delay(5_000).then(() => "timeout" as const)
   ]);
+  if (exited === "timeout") {
+    signalManagedProcess(processRef, "SIGKILL");
+    await Promise.race([
+      new Promise<void>((resolve) => processRef.child.once("exit", () => resolve())),
+      delay(1_000).then(() => undefined)
+    ]);
+  }
 }
 
 async function fetchText(url: string): Promise<string> {

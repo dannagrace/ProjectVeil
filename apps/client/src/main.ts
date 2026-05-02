@@ -109,20 +109,30 @@ import {
 } from "./main/formatters";
 
 const runtimeServerHttpUrl = resolveRuntimeServerHttpUrl();
+const params = new URLSearchParams(window.location.search);
 
-// 注入全局调试条
-const debugBar = document.createElement("div");
-debugBar.style.cssText = "position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,0.8);color:#0f0;padding:4px 10px;z-index:9999;font-size:12px;pointer-events:none;font-family:monospace;";
-debugBar.id = "veil-debug-bar";
-debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | Status: Initializing...`;
-document.body.appendChild(debugBar);
+function shouldShowH5DebugBar(): boolean {
+  return params.get("debugBar") === "1" || params.get("debug") === "1";
+}
+
+let debugBar: HTMLDivElement | null = null;
+
+if (shouldShowH5DebugBar()) {
+  debugBar = document.createElement("div");
+  debugBar.style.cssText = "position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,0.8);color:#0f0;padding:4px 10px;z-index:9999;font-size:12px;pointer-events:none;font-family:monospace;";
+  debugBar.id = "veil-debug-bar";
+  debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | Status: Initializing...`;
+  document.body.appendChild(debugBar);
+}
 
 function updateDebugStatus(msg: string, color = "#0f0") {
+    if (!debugBar) {
+        return;
+    }
     debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | ${msg}`;
     debugBar.style.color = color;
 }
 
-const params = new URLSearchParams(window.location.search);
 const queryRoomId = params.get("roomId")?.trim() ?? "";
 const queryPlayerId = params.get("playerId")?.trim() ?? "";
 const storedAuthSession = readStoredAuthSession();

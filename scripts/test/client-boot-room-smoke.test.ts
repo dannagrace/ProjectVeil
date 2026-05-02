@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createSmokeGuestAuthContext, createSmokeGuestAuthHeaders, resolveSmokeRuntimeTargets } from "../client-boot-room-smoke";
+import {
+  createSmokeGuestAuthContext,
+  createSmokeGuestAuthHeaders,
+  resolveManagedProcessSignalTarget,
+  resolveSmokeRuntimeTargets
+} from "../client-boot-room-smoke";
 
 test("resolveSmokeRuntimeTargets honors explicit playwright runtime target env", () => {
   const targets = resolveSmokeRuntimeTargets({
@@ -25,6 +30,12 @@ test("resolveSmokeRuntimeTargets falls back to localhost defaults", () => {
     clientUrl: "http://127.0.0.1:4173",
     serverWsUrl: "ws://127.0.0.1:2567"
   });
+});
+
+test("managed smoke processes target the process group on POSIX so Vite grandchildren are stopped", () => {
+  assert.equal(resolveManagedProcessSignalTarget(1234, "darwin"), -1234);
+  assert.equal(resolveManagedProcessSignalTarget(1234, "linux"), -1234);
+  assert.equal(resolveManagedProcessSignalTarget(1234, "win32"), 1234);
 });
 
 test("createSmokeGuestAuthHeaders issues a real guest token for protected lobby probes", async () => {
