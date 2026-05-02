@@ -81,6 +81,8 @@ npm run validate -- quickstart
 - 按需检查可选流的工具与配置，例如 `npm run doctor -- --flow e2e --flow redis --flow mysql --flow release`
 - 输出下一步 remediation，而不是只报错退出
 
+`npm run dev -- ...`、`npm run smoke -- ...`、`npm test -- ...` 和 `npm run release -- ...` 会在执行长链路前复用同一套 runtime preflight。若当前 Node 不满足 `package.json` 的 `>=22 <25` 或 npm 不满足仓库约束，命令会先退出并打印非产品 blocker 与修复步骤；先运行 `nvm use && npm ci --no-audit --no-fund`，再重试对应命令。
+
 `npm run validate -- quickstart` 会做两件事：
 
 - 构建 H5 调试壳

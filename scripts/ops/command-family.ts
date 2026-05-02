@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 
+import { assertSupportedRuntime } from "../runtime-preflight.mjs";
 import registryData from "./command-registry.json" with { type: "json" };
 
 export type CommandFamilyName = keyof typeof registryData;
@@ -211,15 +212,42 @@ function runCommand(command: string, args: string[]): number {
 
 type RunFamilyCliOptions = {
   argv: string[];
+  assertSupportedRuntimeImpl?: RuntimePreflightAssert;
   family: CommandFamilyName;
 };
 
-export function runFamilyCli({ argv, family }: RunFamilyCliOptions): number {
+type RuntimePreflightAssert = (options: { commandName: string }) => unknown;
+
+const RUNTIME_PREFLIGHT_FAMILIES = new Set<CommandFamilyName>(["dev", "release", "smoke", "test"]);
+
+function runRuntimePreflight(
+  family: CommandFamilyName,
+  commandName: string,
+  assertSupportedRuntimeImpl: RuntimePreflightAssert = assertSupportedRuntime
+): number {
+  if (!RUNTIME_PREFLIGHT_FAMILIES.has(family)) {
+    return 0;
+  }
+
+  try {
+    assertSupportedRuntimeImpl({ commandName });
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+export function runFamilyCli({ argv, assertSupportedRuntimeImpl, family }: RunFamilyCliOptions): number {
   const defaultRunner = FAMILY_CONFIG[family].defaultRunner;
   const [commandName, ...rest] = argv;
 
   if (!commandName) {
     if (defaultRunner) {
+      const preflightExitCode = runRuntimePreflight(family, getFamilyUsage(family), assertSupportedRuntimeImpl);
+      if (preflightExitCode !== 0) {
+        return preflightExitCode;
+      }
       return runCommand(defaultRunner, []);
     }
 
@@ -237,6 +265,11 @@ export function runFamilyCli({ argv, family }: RunFamilyCliOptions): number {
     console.error(`Unknown ${family} command: ${commandName}\n`);
     process.stderr.write(renderFamilyHelp(family));
     return 1;
+  }
+
+  const preflightExitCode = runRuntimePreflight(family, cliInvocationForCommand(family, commandName), assertSupportedRuntimeImpl);
+  if (preflightExitCode !== 0) {
+    return preflightExitCode;
   }
 
   return runCommand(entry.runner, rest);

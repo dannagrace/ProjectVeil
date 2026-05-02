@@ -17,3 +17,15 @@ test("runFamilyCli shell-quotes forwarded args to avoid command substitution", (
 
   assert.equal(existsSync(markerPath), false);
 });
+
+test("runFamilyCli stops long-running smoke commands when runtime preflight fails", () => {
+  const exitCode = runFamilyCli({
+    family: "smoke",
+    argv: ["client:boot-room"],
+    assertSupportedRuntimeImpl: () => {
+      throw new Error("unsupported runtime");
+    }
+  });
+
+  assert.equal(exitCode, 1);
+});
