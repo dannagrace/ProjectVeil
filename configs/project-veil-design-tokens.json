@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": {
+    "tokens": "configs/project-veil-design-tokens.json",
+    "h5Css": "apps/client/src/styles.css",
+    "h5AdminCss": "apps/client/src/config-center.css",
+    "cocosPresentation": "configs/cocos-presentation.json"
+  },
+  "color": {
+    "surfaceBase": "#111827",
+    "surfacePanel": "#1F2937",
+    "surfaceRaised": "#374151",
+    "primary": "#38BDF8",
+    "primaryStrong": "#0284C7",
+    "success": "#22C55E",
+    "warning": "#F59E0B",
+    "danger": "#EF4444",
+    "textPrimary": "#F9FAFB",
+    "textSecondary": "#CBD5E1",
+    "borderSubtle": "rgba(148, 163, 184, 0.32)"
+  },
+  "typography": {
+    "fontFamily": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "hudLabelPx": 12,
+    "bodyPx": 14,
+    "panelTitlePx": 16,
+    "lineHeight": 1.45
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24
+  },
+  "radius": {
+    "chip": 6,
+    "panel": 8,
+    "modal": 8
+  },
+  "componentRoles": {
+    "primaryAction": {
+      "background": "primary",
+      "foreground": "surfaceBase",
+      "focusRing": "primaryStrong"
+    },
+    "dangerAction": {
+      "background": "danger",
+      "foreground": "textPrimary",
+      "focusRing": "danger"
+    },
+    "hudStatus": {
+      "idle": "textSecondary",
+      "active": "success",
+      "blocked": "warning",
+      "error": "danger"
+    },
+    "assetStageChip": {
+      "production": "success",
+      "prototype": "warning",
+      "placeholder": "danger"
+    }
+  }
+}
