@@ -4487,6 +4487,18 @@ function renderLobby(): string {
             `
           )
           .join("");
+  const accountLoginOpen = Boolean(
+    state.lobby.authSession?.authMode === "account" ||
+      state.lobby.loginId.trim() ||
+      state.lobby.password.trim()
+  );
+  const accountLifecycleOpen = Boolean(
+    state.lobby.registrationDisplayName.trim() ||
+      state.lobby.registrationToken.trim() ||
+      state.lobby.registrationPassword.trim() ||
+      state.lobby.recoveryToken.trim() ||
+      state.lobby.recoveryPassword.trim()
+  );
 
   return `
     <main class="lobby-shell">
@@ -4519,9 +4531,9 @@ function renderLobby(): string {
           <div class="hint">可选已有房间，也可手动输入创建新实例</div>
         </div>
         <div class="lobby-form info-card">
-          ${roomFieldMarkup}
-          <div class="lobby-auth-grid">
-            <section class="lobby-auth-card">
+          <div class="lobby-primary-flow" data-lobby-primary-flow="true">
+            ${roomFieldMarkup}
+            <section class="lobby-auth-card lobby-auth-card-primary" data-lobby-primary-entry="true">
               <div class="lobby-auth-head">
                 <strong>游客进入</strong>
                 <span>创建或继续一个游客档</span>
@@ -4552,145 +4564,157 @@ function renderLobby(): string {
                 ${state.lobby.entering ? "进入中..." : "游客进入房间"}
               </button>
             </section>
-            <section class="lobby-auth-card">
-              <div class="lobby-auth-head">
-                <strong>账号登录</strong>
-                <span>使用已绑定的登录 ID + 口令</span>
-              </div>
-              <label class="lobby-field">
-                <span>登录 ID</span>
+            <label class="lobby-field muted lobby-privacy-primary">
+              <span>
                 <input
-                  class="account-input"
-                  data-lobby-login-id="true"
-                  maxlength="40"
-                  value="${escapeHtml(state.lobby.loginId)}"
-                  placeholder="veil-ranger"
+                  data-privacy-consent="true"
+                  type="checkbox"
+                  ${state.lobby.privacyConsentAccepted ? "checked" : ""}
                   ${state.lobby.entering ? "disabled" : ""}
                 />
-              </label>
-              <label class="lobby-field">
-                <span>账号口令</span>
-                <input
-                  class="account-input"
-                  data-lobby-password="true"
-                  type="password"
-                  maxlength="80"
-                  value="${escapeHtml(state.lobby.password)}"
-                  placeholder="至少 6 位"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <button class="account-save" data-login-account="true" ${state.lobby.entering ? "disabled" : ""}>
-                ${state.lobby.entering ? "登录中..." : "账号登录并进房"}
+                我已阅读并同意隐私说明；首次登录、注册或绑定时会记录同意时间。
+              </span>
+            </label>
+            <div class="lobby-actions lobby-primary-actions">
+              <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
+                ${state.lobby.loading ? "刷新中..." : "刷新房间"}
               </button>
-            </section>
-            <section class="lobby-auth-card">
-              <div class="lobby-auth-head">
-                <strong>正式注册</strong>
-                <span>开发态 request / confirm 闭环</span>
-              </div>
-              <label class="lobby-field">
-                <span>注册昵称</span>
-                <input
-                  class="account-input"
-                  data-registration-display-name="true"
-                  maxlength="40"
-                  value="${escapeHtml(state.lobby.registrationDisplayName)}"
-                  placeholder="默认沿用登录 ID"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <label class="lobby-field">
-                <span>注册令牌</span>
-                <input
-                  class="account-input"
-                  data-registration-token="true"
-                  maxlength="120"
-                  value="${escapeHtml(state.lobby.registrationToken)}"
-                  placeholder="先申请，再粘贴 dev token"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <label class="lobby-field">
-                <span>注册口令</span>
-                <input
-                  class="account-input"
-                  data-registration-password="true"
-                  type="password"
-                  maxlength="80"
-                  value="${escapeHtml(state.lobby.registrationPassword)}"
-                  placeholder="至少 6 位"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <div class="lobby-actions">
-                <button class="account-save" data-request-registration="true" ${state.lobby.entering ? "disabled" : ""}>申请注册令牌</button>
-                <button class="account-save" data-confirm-registration="true" ${state.lobby.entering ? "disabled" : ""}>确认注册并进房</button>
-              </div>
-            </section>
-            <section class="lobby-auth-card">
-              <div class="lobby-auth-head">
-                <strong>密码找回</strong>
-                <span>开发态 request / confirm 闭环</span>
-              </div>
-              <label class="lobby-field">
-                <span>重置令牌</span>
-                <input
-                  class="account-input"
-                  data-recovery-token="true"
-                  maxlength="120"
-                  value="${escapeHtml(state.lobby.recoveryToken)}"
-                  placeholder="先申请，再粘贴 dev token"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <label class="lobby-field">
-                <span>新口令</span>
-                <input
-                  class="account-input"
-                  data-recovery-password="true"
-                  type="password"
-                  maxlength="80"
-                  value="${escapeHtml(state.lobby.recoveryPassword)}"
-                  placeholder="至少 6 位"
-                  ${state.lobby.entering ? "disabled" : ""}
-                />
-              </label>
-              <div class="lobby-actions">
-                <button class="account-save" data-request-recovery="true" ${state.lobby.entering ? "disabled" : ""}>申请找回令牌</button>
-                <button class="account-save" data-confirm-recovery="true" ${state.lobby.entering ? "disabled" : ""}>确认重置并进房</button>
-              </div>
-            </section>
-          </div>
-          <label class="lobby-field muted">
-            <span>
-              <input
-                data-privacy-consent="true"
-                type="checkbox"
-                ${state.lobby.privacyConsentAccepted ? "checked" : ""}
-                ${state.lobby.entering ? "disabled" : ""}
-              />
-              我已阅读并同意隐私说明；首次登录、注册或绑定时会记录同意时间。
-            </span>
-          </label>
-          <div class="lobby-actions">
-            <button class="account-save" data-refresh-lobby="true" ${state.lobby.loading || state.lobby.entering ? "disabled" : ""}>
-              ${state.lobby.loading ? "刷新中..." : "刷新房间"}
-            </button>
+              ${
+                state.lobby.authSession
+                  ? `<button class="session-link" data-logout-guest="true" ${state.lobby.entering ? "disabled" : ""}>退出当前会话</button>`
+                  : ""
+              }
+            </div>
             ${
               state.lobby.authSession
-                ? `<button class="session-link" data-logout-guest="true" ${state.lobby.entering ? "disabled" : ""}>退出当前会话</button>`
+                ? `<p class="account-meta">已缓存${state.lobby.authSession.source === "remote" ? "云端" : "本地"}会话：${escapeHtml(
+                    state.lobby.authSession.playerId
+                  )}${state.lobby.authSession.loginId ? ` / ${escapeHtml(state.lobby.authSession.loginId)}` : ""}</p>`
                 : ""
             }
+            <p class="muted account-status">${escapeHtml(state.lobby.status)}</p>
           </div>
-          ${
-            state.lobby.authSession
-              ? `<p class="account-meta">已缓存${state.lobby.authSession.source === "remote" ? "云端" : "本地"}会话：${escapeHtml(
-                  state.lobby.authSession.playerId
-                )}${state.lobby.authSession.loginId ? ` / ${escapeHtml(state.lobby.authSession.loginId)}` : ""}</p>`
-              : ""
-          }
-          <p class="muted account-status">${escapeHtml(state.lobby.status)}</p>
+          <div class="lobby-secondary-flow" data-lobby-secondary-auth="true">
+            <details class="lobby-auth-disclosure" ${accountLoginOpen ? "open" : ""}>
+              <summary>
+                <strong>账号登录</strong>
+                <span>使用已绑定的登录 ID + 口令</span>
+              </summary>
+              <section class="lobby-auth-card">
+                <label class="lobby-field">
+                  <span>登录 ID</span>
+                  <input
+                    class="account-input"
+                    data-lobby-login-id="true"
+                    maxlength="40"
+                    value="${escapeHtml(state.lobby.loginId)}"
+                    placeholder="veil-ranger"
+                    ${state.lobby.entering ? "disabled" : ""}
+                  />
+                </label>
+                <label class="lobby-field">
+                  <span>账号口令</span>
+                  <input
+                    class="account-input"
+                    data-lobby-password="true"
+                    type="password"
+                    maxlength="80"
+                    value="${escapeHtml(state.lobby.password)}"
+                    placeholder="至少 6 位"
+                    ${state.lobby.entering ? "disabled" : ""}
+                  />
+                </label>
+                <button class="account-save" data-login-account="true" ${state.lobby.entering ? "disabled" : ""}>
+                  ${state.lobby.entering ? "登录中..." : "账号登录并进房"}
+                </button>
+              </section>
+            </details>
+            <details class="lobby-auth-disclosure" ${accountLifecycleOpen ? "open" : ""}>
+              <summary>
+                <strong>正式注册 / 密码找回</strong>
+                <span>开发态 request / confirm 闭环</span>
+              </summary>
+              <div class="lobby-auth-grid">
+                <section class="lobby-auth-card">
+                  <div class="lobby-auth-head">
+                    <strong>正式注册</strong>
+                    <span>申请 token 后确认注册</span>
+                  </div>
+                  <label class="lobby-field">
+                    <span>注册昵称</span>
+                    <input
+                      class="account-input"
+                      data-registration-display-name="true"
+                      maxlength="40"
+                      value="${escapeHtml(state.lobby.registrationDisplayName)}"
+                      placeholder="默认沿用登录 ID"
+                      ${state.lobby.entering ? "disabled" : ""}
+                    />
+                  </label>
+                  <label class="lobby-field">
+                    <span>注册令牌</span>
+                    <input
+                      class="account-input"
+                      data-registration-token="true"
+                      maxlength="120"
+                      value="${escapeHtml(state.lobby.registrationToken)}"
+                      placeholder="先申请，再粘贴 dev token"
+                      ${state.lobby.entering ? "disabled" : ""}
+                    />
+                  </label>
+                  <label class="lobby-field">
+                    <span>注册口令</span>
+                    <input
+                      class="account-input"
+                      data-registration-password="true"
+                      type="password"
+                      maxlength="80"
+                      value="${escapeHtml(state.lobby.registrationPassword)}"
+                      placeholder="至少 6 位"
+                      ${state.lobby.entering ? "disabled" : ""}
+                    />
+                  </label>
+                  <div class="lobby-actions">
+                    <button class="account-save" data-request-registration="true" ${state.lobby.entering ? "disabled" : ""}>申请注册令牌</button>
+                    <button class="account-save" data-confirm-registration="true" ${state.lobby.entering ? "disabled" : ""}>确认注册并进房</button>
+                  </div>
+                </section>
+                <section class="lobby-auth-card">
+                  <div class="lobby-auth-head">
+                    <strong>密码找回</strong>
+                    <span>申请 token 后重置口令</span>
+                  </div>
+                  <label class="lobby-field">
+                    <span>重置令牌</span>
+                    <input
+                      class="account-input"
+                      data-recovery-token="true"
+                      maxlength="120"
+                      value="${escapeHtml(state.lobby.recoveryToken)}"
+                      placeholder="先申请，再粘贴 dev token"
+                      ${state.lobby.entering ? "disabled" : ""}
+                    />
+                  </label>
+                  <label class="lobby-field">
+                    <span>新口令</span>
+                    <input
+                      class="account-input"
+                      data-recovery-password="true"
+                      type="password"
+                      maxlength="80"
+                      value="${escapeHtml(state.lobby.recoveryPassword)}"
+                      placeholder="至少 6 位"
+                      ${state.lobby.entering ? "disabled" : ""}
+                    />
+                  </label>
+                  <div class="lobby-actions">
+                    <button class="account-save" data-request-recovery="true" ${state.lobby.entering ? "disabled" : ""}>申请找回令牌</button>
+                    <button class="account-save" data-confirm-recovery="true" ${state.lobby.entering ? "disabled" : ""}>确认重置并进房</button>
+                  </div>
+                </section>
+              </div>
+            </details>
+          </div>
         </div>
         <div class="panel-head">
           <h2>活跃房间</h2>
