@@ -18,8 +18,15 @@ test("presentation readiness summarizes production pixel, audio and sequence ani
   assert.match(readiness.audio.headline, /2 首 BGM \/ 6 组 SFX/);
   assert.match(readiness.audio.detail, /8 正式 \/ 0 占位/);
   assert.equal(readiness.animation.deliveryModes.fallback, 0);
-  assert.equal(readiness.animation.deliveryModes.sequence, 2);
+  assert.equal(readiness.animation.deliveryModes.sequence, 20);
   assert.equal(readiness.animation.deliveryModes.spine, 0);
+  assert.deepEqual(readiness.animation.unitTemplateCoverage, {
+    profiled: 20,
+    total: 20,
+    missing: []
+  });
+  assert.match(readiness.animation.headline, /20\/20 单位模板/);
+  assert.match(readiness.animation.detail, /shipped unit templates 全覆盖/);
   assert.equal(readiness.nextStep, "战斗流程与表现资源均已达到正式阶段");
   assert.doesNotMatch(readiness.nextStep, /动画回退交付/);
   assert.deepEqual(getCocosPresentationReleaseGate(readiness), {
@@ -29,5 +36,5 @@ test("presentation readiness summarizes production pixel, audio and sequence ani
 });
 
 test("presentation readiness summary stays concise for Lobby and HUD surfaces", () => {
-  assert.match(formatPresentationReadinessSummary(cocosPresentationReadiness), /^像素 正式 \d+\/\d+ · 音频 正式 8\/8 · 动画 序列 2\/2$/);
+  assert.match(formatPresentationReadinessSummary(cocosPresentationReadiness), /^像素 正式 \d+\/\d+ · 音频 正式 8\/8 · 动画 序列 20\/20$/);
 });

@@ -18,6 +18,11 @@ export interface CocosPresentationReadinessSection {
 
 export interface CocosAnimationReadinessSection extends CocosPresentationReadinessSection {
   deliveryModes: Record<CocosAnimationDeliveryMode, number>;
+  unitTemplateCoverage: {
+    profiled: number;
+    total: number;
+    missing: string[];
+  };
 }
 
 export interface CocosBattleJourneyReadinessSection extends CocosPresentationReadinessSection {
@@ -107,7 +112,20 @@ function buildAudioReadiness(): CocosPresentationReadinessSection {
 }
 
 function buildAnimationReadiness(): CocosAnimationReadinessSection {
-  const profiles = Object.values(cocosPresentationConfig.animationProfiles);
+  const shippedUnitTemplateIds = Array.from(new Set([
+    ...Object.keys(assetConfig.units),
+    ...Object.keys(assetConfig.showcaseUnits)
+  ])).sort((left, right) => left.localeCompare(right));
+  const profileEntries = Object.entries(cocosPresentationConfig.animationProfiles).filter(([templateId]) =>
+    shippedUnitTemplateIds.includes(templateId)
+  );
+  const profiles = profileEntries.map(([, profile]) => profile);
+  const missing = shippedUnitTemplateIds.filter((templateId) => !cocosPresentationConfig.animationProfiles[templateId]);
+  const unitTemplateCoverage = {
+    profiled: shippedUnitTemplateIds.length - missing.length,
+    total: shippedUnitTemplateIds.length,
+    missing
+  };
   const deliveryModes: Record<CocosAnimationDeliveryMode, number> = {
     fallback: 0,
     sequence: 0,
@@ -121,16 +139,17 @@ function buildAnimationReadiness(): CocosAnimationReadinessSection {
   return {
     label: "动画",
     stage: stageSummary.stage,
-    headline: `动画 ${profiles.length} 模板 · Spine ${deliveryModes.spine} / Clip ${deliveryModes.clip} / 序列 ${deliveryModes.sequence} / 回退 ${deliveryModes.fallback}`,
-    detail: `${stageSummary.production} 正式 / ${stageSummary.placeholder} 占位 · idle / attack / hit / victory / defeat 命名已收口`,
+    headline: `动画 ${unitTemplateCoverage.profiled}/${unitTemplateCoverage.total} 单位模板 · Spine ${deliveryModes.spine} / Clip ${deliveryModes.clip} / 序列 ${deliveryModes.sequence} / 回退 ${deliveryModes.fallback}`,
+    detail: `${stageSummary.production} 正式 / ${stageSummary.placeholder} 占位 · ${missing.length === 0 ? "shipped unit templates 全覆盖" : `缺少 ${missing.join(", ")}`} · idle / attack / hit / victory / defeat 命名已收口`,
     shortLabel: deliveryModes.spine > 0
-      ? `动画 Spine ${deliveryModes.spine}/${profiles.length}`
+      ? `动画 Spine ${deliveryModes.spine}/${unitTemplateCoverage.total}`
       : deliveryModes.clip > 0
-        ? `动画 Clip ${deliveryModes.clip}/${profiles.length}`
+        ? `动画 Clip ${deliveryModes.clip}/${unitTemplateCoverage.total}`
         : deliveryModes.sequence > 0
-          ? `动画 序列 ${deliveryModes.sequence}/${profiles.length}`
-          : `动画 回退 ${deliveryModes.fallback}/${profiles.length}`,
-    deliveryModes
+          ? `动画 序列 ${deliveryModes.sequence}/${unitTemplateCoverage.total}`
+          : `动画 回退 ${deliveryModes.fallback}/${unitTemplateCoverage.total}`,
+    deliveryModes,
+    unitTemplateCoverage
   };
 }
 
@@ -196,6 +215,9 @@ export function getCocosPresentationReleaseGate(
   }
   if (readiness.animation.deliveryModes.fallback > 0) {
     blockers.push("动画回退交付");
+  }
+  if (readiness.animation.unitTemplateCoverage.missing.length > 0) {
+    blockers.push("shipped unit 动画 profile 覆盖");
   }
 
   return {

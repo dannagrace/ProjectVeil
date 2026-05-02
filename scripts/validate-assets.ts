@@ -226,6 +226,14 @@ function validateCocosPresentationAnimationProfiles(errors: string[]): void {
   const animationProfiles = typeof cocosPresentationConfigJson.animationProfiles === "object" && cocosPresentationConfigJson.animationProfiles !== null
     ? cocosPresentationConfigJson.animationProfiles
     : {};
+  const shippedUnitTemplateIds = Array.from(new Set([
+    ...Object.keys(assetConfig.units),
+    ...Object.keys(assetConfig.showcaseUnits)
+  ])).sort((left, right) => left.localeCompare(right));
+  const missingProfiles = shippedUnitTemplateIds.filter((templateId) => !animationProfiles[templateId]);
+  if (missingProfiles.length > 0) {
+    errors.push(`cocos presentation animationProfiles must cover shipped unit templates: missing ${missingProfiles.join(", ")}`);
+  }
   for (const [templateId, entry] of Object.entries(animationProfiles)) {
     const deliveryMode = typeof entry?.deliveryMode === "string" ? entry.deliveryMode : "";
     if (!["fallback", "sequence", "clip", "spine"].includes(deliveryMode)) {

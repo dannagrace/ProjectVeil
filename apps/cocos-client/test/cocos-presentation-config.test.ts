@@ -9,6 +9,10 @@ test("presentation config exposes animation profiles and load budget", () => {
   assert.equal(guardProfile.deliveryMode, "sequence");
   assert.equal(guardProfile.assetStage, "production");
   assert.equal(guardProfile.returnTimings.attack, 0.42);
+  const chaplainProfile = resolveUnitAnimationProfile("crown_field_chaplain");
+  assert.equal(chaplainProfile.fallbackPrefix, "Crown Field Chaplain");
+  assert.equal(chaplainProfile.deliveryMode, "sequence");
+  assert.equal(chaplainProfile.assetStage, "production");
 
   assert.equal(cocosPresentationConfig.loadingBudget.targetMs, 1800);
   assert.equal(cocosPresentationConfig.loadingBudget.hardLimitMs, 3000);

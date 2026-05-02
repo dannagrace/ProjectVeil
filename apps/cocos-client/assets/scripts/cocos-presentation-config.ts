@@ -139,6 +139,14 @@ function normalizeAnimationProfile(value: unknown, fallbackPrefix: string): Coco
   };
 }
 
+function fallbackPrefixFromTemplateId(templateId: string): string {
+  return templateId
+    .split(/[_-]+/g)
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ") || "Unit";
+}
+
 function normalizeConfig(value: unknown): CocosPresentationConfig {
   const record = isRecord(value) ? value : {};
   const animationProfiles = isRecord(record.animationProfiles) ? record.animationProfiles : {};
@@ -148,11 +156,17 @@ function normalizeConfig(value: unknown): CocosPresentationConfig {
   const loadingBudget = isRecord(record.loadingBudget) ? record.loadingBudget : {};
   const preloadGroups = isRecord(loadingBudget.preloadGroups) ? loadingBudget.preloadGroups : {};
 
+  const normalizedAnimationProfiles = Object.fromEntries(
+    Object.entries(animationProfiles).map(([templateId, profile]) => [
+      templateId,
+      normalizeAnimationProfile(profile, fallbackPrefixFromTemplateId(templateId))
+    ])
+  ) as Record<string, CocosAnimationProfile>;
+  normalizedAnimationProfiles.hero_guard_basic ??= normalizeAnimationProfile(undefined, "Guard");
+  normalizedAnimationProfiles.wolf_pack ??= normalizeAnimationProfile(undefined, "Wolf");
+
   return {
-    animationProfiles: {
-      hero_guard_basic: normalizeAnimationProfile(animationProfiles.hero_guard_basic, "Guard"),
-      wolf_pack: normalizeAnimationProfile(animationProfiles.wolf_pack, "Wolf")
-    },
+    animationProfiles: normalizedAnimationProfiles,
     audio: {
       music: {
         explore: normalizeSequence(music.explore, {
