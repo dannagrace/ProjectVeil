@@ -128,9 +128,11 @@ export {
   configureRoomSnapshotStore,
   configureRoomRuntimeDependencies,
   createRedisLobbyRoomSummaryStore,
+  deleteSharedLobbyRoomSummary,
   resetRoomRuntimeDependencies,
   listSharedLobbyRooms,
   listLobbyRooms,
+  publishSharedLobbyRoomSummary,
   resetLobbyRoomRegistry,
   getActiveRoomInstances,
   runZombieRoomCleanup
@@ -2337,7 +2339,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
       updatedAt: new Date().toISOString()
     };
     lobbyRoomSummaries.set(this.metadata.logicalRoomId, summary);
-    void publishSharedLobbyRoomSummary(summary).catch(() => undefined);
+    void publishSharedLobbyRoomSummary(summary);
     recordRuntimeRoom(summary);
     flushPendingConfigUpdate();
   }
@@ -2401,7 +2403,7 @@ export class VeilColyseusRoom extends Room<VeilRoomOptions> {
     if (lobbyRoomOwnerTokens.get(this.metadata.logicalRoomId) === this.lobbyRoomOwnerToken) {
       lobbyRoomOwnerTokens.delete(this.metadata.logicalRoomId);
       lobbyRoomSummaries.delete(this.metadata.logicalRoomId);
-      void deleteSharedLobbyRoomSummary(this.metadata.logicalRoomId).catch(() => undefined);
+      void deleteSharedLobbyRoomSummary(this.metadata.logicalRoomId);
       removeRuntimeRoom(this.metadata.logicalRoomId);
     }
 

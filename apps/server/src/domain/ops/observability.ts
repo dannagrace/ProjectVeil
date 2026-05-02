@@ -203,6 +203,9 @@ interface RoomLifecycleObservabilityCounters {
   roomDisposalsTotal: number;
   battleCompletionsTotal: number;
   battleAbortsTotal: number;
+  sharedLobbyRoomSummaryRedisReadFailuresTotal: number;
+  sharedLobbyRoomSummaryRedisWriteFailuresTotal: number;
+  sharedLobbyRoomSummaryRedisDeleteFailuresTotal: number;
 }
 
 interface HttpObservabilityCounters {
@@ -618,7 +621,10 @@ const runtimeObservability: RuntimeObservabilityState = {
       roomCreatesTotal: 0,
       roomDisposalsTotal: 0,
       battleCompletionsTotal: 0,
-      battleAbortsTotal: 0
+      battleAbortsTotal: 0,
+      sharedLobbyRoomSummaryRedisReadFailuresTotal: 0,
+      sharedLobbyRoomSummaryRedisWriteFailuresTotal: 0,
+      sharedLobbyRoomSummaryRedisDeleteFailuresTotal: 0
     },
     recentEvents: []
   },
@@ -1566,6 +1572,15 @@ export function buildPrometheusMetricsDocument(): string {
     "# HELP veil_battle_aborts_total Total battles aborted because a room was retired before resolution.",
     "# TYPE veil_battle_aborts_total counter",
     `veil_battle_aborts_total ${health.runtime.roomLifecycle.counters.battleAbortsTotal}`,
+    "# HELP veil_lobby_room_summary_redis_read_failures_total Total shared lobby room summary Redis read failures that fell back locally.",
+    "# TYPE veil_lobby_room_summary_redis_read_failures_total counter",
+    `veil_lobby_room_summary_redis_read_failures_total ${health.runtime.roomLifecycle.counters.sharedLobbyRoomSummaryRedisReadFailuresTotal}`,
+    "# HELP veil_lobby_room_summary_redis_write_failures_total Total shared lobby room summary Redis write failures that kept only the local room summary.",
+    "# TYPE veil_lobby_room_summary_redis_write_failures_total counter",
+    `veil_lobby_room_summary_redis_write_failures_total ${health.runtime.roomLifecycle.counters.sharedLobbyRoomSummaryRedisWriteFailuresTotal}`,
+    "# HELP veil_lobby_room_summary_redis_delete_failures_total Total shared lobby room summary Redis delete failures that may leave stale remote room summaries until TTL expiry.",
+    "# TYPE veil_lobby_room_summary_redis_delete_failures_total counter",
+    `veil_lobby_room_summary_redis_delete_failures_total ${health.runtime.roomLifecycle.counters.sharedLobbyRoomSummaryRedisDeleteFailuresTotal}`,
     "# HELP veil_auth_guest_sessions Active guest auth sessions tracked by this process.",
     "# TYPE veil_auth_guest_sessions gauge",
     `veil_auth_guest_sessions ${health.runtime.auth.activeGuestSessionCount}`,
@@ -2266,6 +2281,18 @@ export function recordBattleLifecycleResolved(input: {
   });
 }
 
+export function recordSharedLobbyRoomSummaryRedisReadFailure(): void {
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisReadFailuresTotal += 1;
+}
+
+export function recordSharedLobbyRoomSummaryRedisWriteFailure(): void {
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisWriteFailuresTotal += 1;
+}
+
+export function recordSharedLobbyRoomSummaryRedisDeleteFailure(): void {
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisDeleteFailuresTotal += 1;
+}
+
 export function recordActionValidationFailure(scope: ActionValidationScope, reason: string): void {
   const normalizedReason = reason.trim() || "unknown";
   const key = `${scope}::${normalizedReason}`;
@@ -2801,6 +2828,9 @@ export function resetRuntimeObservability(): void {
   runtimeObservability.roomLifecycle.counters.roomDisposalsTotal = 0;
   runtimeObservability.roomLifecycle.counters.battleCompletionsTotal = 0;
   runtimeObservability.roomLifecycle.counters.battleAbortsTotal = 0;
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisReadFailuresTotal = 0;
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisWriteFailuresTotal = 0;
+  runtimeObservability.roomLifecycle.counters.sharedLobbyRoomSummaryRedisDeleteFailuresTotal = 0;
   runtimeObservability.roomLifecycle.recentEvents.length = 0;
   runtimeObservability.http.counters.rateLimitedTotal = 0;
   runtimeObservability.matchmaking.counters.rateLimitedTotal = 0;

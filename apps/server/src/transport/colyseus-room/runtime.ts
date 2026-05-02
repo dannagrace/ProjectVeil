@@ -228,17 +228,49 @@ export async function listSharedLobbyRooms(): Promise<LobbyRoomSummary[]> {
 
   try {
     return mergeLobbyRoomSummaries(await lobbyRoomSummaryStore.list(), listLobbyRooms());
-  } catch {
+  } catch (error) {
+    // fail-open: lobby listing is non-critical UX, so keep the local pod visible instead of returning 502.
+    console.error("[VeilRoom] Shared lobby room summary list failed; using local lobby summaries", { error });
+    const { recordSharedLobbyRoomSummaryRedisReadFailure } = await import("@server/domain/ops/observability");
+    recordSharedLobbyRoomSummaryRedisReadFailure();
     return listLobbyRooms();
   }
 }
 
 export async function publishSharedLobbyRoomSummary(summary: LobbyRoomSummary): Promise<void> {
-  await lobbyRoomSummaryStore?.upsert(summary);
+  if (!lobbyRoomSummaryStore) {
+    return;
+  }
+
+  try {
+    await lobbyRoomSummaryStore.upsert(summary);
+  } catch (error) {
+    // fail-open: a room should remain playable on this pod even if cross-pod lobby propagation is degraded.
+    console.error("[VeilRoom] Shared lobby room summary publish failed; keeping local summary only", {
+      roomId: summary.roomId,
+      error
+    });
+    const { recordSharedLobbyRoomSummaryRedisWriteFailure } = await import("@server/domain/ops/observability");
+    recordSharedLobbyRoomSummaryRedisWriteFailure();
+  }
 }
 
 export async function deleteSharedLobbyRoomSummary(roomId: string): Promise<void> {
-  await lobbyRoomSummaryStore?.delete(roomId);
+  if (!lobbyRoomSummaryStore) {
+    return;
+  }
+
+  try {
+    await lobbyRoomSummaryStore.delete(roomId);
+  } catch (error) {
+    // fail-open: stale remote lobby rows expire by TTL, and local cleanup must still complete.
+    console.error("[VeilRoom] Shared lobby room summary delete failed; stale remote summary may remain until TTL", {
+      roomId,
+      error
+    });
+    const { recordSharedLobbyRoomSummaryRedisDeleteFailure } = await import("@server/domain/ops/observability");
+    recordSharedLobbyRoomSummaryRedisDeleteFailure();
+  }
 }
 
 export function resetLobbyRoomRegistry(): void {

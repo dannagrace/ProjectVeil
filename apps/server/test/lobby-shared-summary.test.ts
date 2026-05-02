@@ -4,10 +4,16 @@ import Redis from "ioredis-mock";
 import {
   configureLobbyRoomSummaryStore,
   createRedisLobbyRoomSummaryStore,
+  deleteSharedLobbyRoomSummary,
   listSharedLobbyRooms,
+  publishSharedLobbyRoomSummary,
   resetLobbyRoomRegistry,
   type LobbyRoomSummary
 } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import {
+  buildPrometheusMetricsDocument,
+  resetRuntimeObservability
+} from "@server/domain/ops/observability";
 
 function makeSummary(roomId: string, connectedPlayers: number, updatedAt: string): LobbyRoomSummary {
   return {
@@ -20,6 +26,20 @@ function makeSummary(roomId: string, connectedPlayers: number, updatedAt: string
     activeBattles: 0,
     statusLabel: "探索中",
     updatedAt
+  };
+}
+
+function captureConsoleError(): { calls: unknown[][]; restore: () => void } {
+  const originalConsoleError = console.error;
+  const calls: unknown[][] = [];
+  console.error = (...args: unknown[]) => {
+    calls.push(args);
+  };
+  return {
+    calls,
+    restore: () => {
+      console.error = originalConsoleError;
+    }
   };
 }
 
@@ -120,4 +140,67 @@ test("redis lobby room summary index removes expired and malformed entries", asy
   assert.deepEqual(rooms.map((room) => room.roomId), ["room-valid"]);
   assert.equal(await redis.hget(summaryHashKey, "room-malformed"), null);
   assert.equal(await redis.hget(summaryHashKey, "room-expired"), null);
+});
+
+test("shared lobby room listing logs and counts Redis read failures before local fallback", async (t) => {
+  const consoleError = captureConsoleError();
+  configureLobbyRoomSummaryStore({
+    async upsert() {
+      throw new Error("unexpected upsert");
+    },
+    async delete() {
+      throw new Error("unexpected delete");
+    },
+    async list() {
+      throw new Error("redis hgetall failed");
+    }
+  });
+  resetRuntimeObservability();
+
+  t.after(() => {
+    consoleError.restore();
+    configureLobbyRoomSummaryStore(null);
+    resetLobbyRoomRegistry();
+    resetRuntimeObservability();
+  });
+
+  const rooms = await listSharedLobbyRooms();
+
+  assert.deepEqual(rooms, []);
+  assert.equal(consoleError.calls.length, 1);
+  assert.match(String(consoleError.calls[0]?.[0]), /Shared lobby room summary list failed/);
+  assert.match(buildPrometheusMetricsDocument(), /veil_lobby_room_summary_redis_read_failures_total 1/);
+});
+
+test("shared lobby room publish and delete log and count Redis write/delete failures", async (t) => {
+  const consoleError = captureConsoleError();
+  configureLobbyRoomSummaryStore({
+    async upsert() {
+      throw new Error("redis hset failed");
+    },
+    async delete() {
+      throw new Error("redis hdel failed");
+    },
+    async list() {
+      return [];
+    }
+  });
+  resetRuntimeObservability();
+
+  t.after(() => {
+    consoleError.restore();
+    configureLobbyRoomSummaryStore(null);
+    resetLobbyRoomRegistry();
+    resetRuntimeObservability();
+  });
+
+  await publishSharedLobbyRoomSummary(makeSummary("room-write-failure", 1, "2026-04-27T05:05:00.000Z"));
+  await deleteSharedLobbyRoomSummary("room-write-failure");
+
+  assert.equal(consoleError.calls.length, 2);
+  assert.match(String(consoleError.calls[0]?.[0]), /Shared lobby room summary publish failed/);
+  assert.match(String(consoleError.calls[1]?.[0]), /Shared lobby room summary delete failed/);
+  const metrics = buildPrometheusMetricsDocument();
+  assert.match(metrics, /veil_lobby_room_summary_redis_write_failures_total 1/);
+  assert.match(metrics, /veil_lobby_room_summary_redis_delete_failures_total 1/);
 });
