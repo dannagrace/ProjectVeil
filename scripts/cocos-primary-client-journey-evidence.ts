@@ -25,6 +25,8 @@ import {
 } from "../apps/cocos-client/test/helpers/cocos-session-fixtures.ts";
 
 type StepStatus = "pending" | "passed" | "failed";
+type VisualEvidenceStatus = "pending" | "captured" | "blocked";
+type VisualEvidenceSurface = "creator-preview" | "wechat-safe-area";
 type JourneyStepId =
   | "lobby-entry"
   | "room-join"
@@ -114,6 +116,25 @@ interface CheckpointLedgerEntry {
   telemetryCheckpoints: string[];
 }
 
+interface VisualEvidenceSlot {
+  id: string;
+  milestoneId: JourneyStepId;
+  milestoneTitle: string;
+  surface: VisualEvidenceSurface;
+  status: VisualEvidenceStatus;
+  artifactPath: string | null;
+  notes: string;
+}
+
+interface VisualEvidenceSummary {
+  mode: "manual-visual-capture-required";
+  status: "blocked";
+  artifactPath: string;
+  requiredSlots: number;
+  capturedSlots: number;
+  slots: VisualEvidenceSlot[];
+}
+
 interface PrimaryJourneyEvidenceArtifact {
   schemaVersion: 1;
   candidate: {
@@ -145,9 +166,11 @@ interface PrimaryJourneyEvidenceArtifact {
     outputDir: string;
     markdownSummary: string;
     milestoneDir: string;
+    visualEvidenceTemplate: string;
   };
   journey: JourneyStepSummary[];
   requiredEvidence: RequiredEvidenceField[];
+  visualEvidence: VisualEvidenceSummary;
   failureSummary: FailureSummary;
   checkpointLedger: {
     source: "primary-journey-evidence";
@@ -269,6 +292,29 @@ function writeJson(filePath: string, payload: unknown): void {
 function writeText(filePath: string, content: string): void {
   ensureParentDir(filePath);
   fs.writeFileSync(filePath, content, "utf8");
+}
+
+function buildVisualEvidenceSlots(): VisualEvidenceSlot[] {
+  return STEP_METADATA.flatMap((step) => [
+    {
+      id: `${step.id}:creator-preview`,
+      milestoneId: step.id,
+      milestoneTitle: step.title,
+      surface: "creator-preview" as const,
+      status: "pending" as const,
+      artifactPath: null,
+      notes: "Attach a Creator preview screenshot or short capture for this milestone."
+    },
+    {
+      id: `${step.id}:wechat-safe-area`,
+      milestoneId: step.id,
+      milestoneTitle: step.title,
+      surface: "wechat-safe-area" as const,
+      status: "pending" as const,
+      artifactPath: null,
+      notes: "Attach a WeChat DevTools/device safe-area screenshot or mark the capture blocked with a reason."
+    }
+  ]);
 }
 
 function toRepoRelative(filePath: string): string {
@@ -595,6 +641,40 @@ function defaultRequiredEvidence(): RequiredEvidenceField[] {
   ];
 }
 
+function writeVisualEvidenceTemplate(input: {
+  candidateName: string;
+  outputPath: string;
+  revision: GitRevision;
+}): VisualEvidenceSummary {
+  const slots = buildVisualEvidenceSlots();
+  const payload = {
+    schemaVersion: 1,
+    candidate: {
+      name: input.candidateName,
+      scope: "apps/cocos-client",
+      branch: input.revision.branch,
+      commit: input.revision.commit,
+      shortCommit: input.revision.shortCommit
+    },
+    mode: "manual-visual-capture-required",
+    status: "blocked",
+    requiredSlots: slots.length,
+    capturedSlots: 0,
+    instructions:
+      "Fill artifactPath and set status=captured for each Creator preview and WeChat safe-area milestone screenshot or short capture before RC sign-off.",
+    slots
+  };
+  writeJson(input.outputPath, payload);
+  return {
+    mode: "manual-visual-capture-required",
+    status: "blocked",
+    artifactPath: toRepoRelative(input.outputPath),
+    requiredSlots: slots.length,
+    capturedSlots: 0,
+    slots
+  };
+}
+
 function buildFailureSummary(
   journey: JourneyStepSummary[],
   requiredEvidence: RequiredEvidenceField[],
@@ -682,6 +762,25 @@ function renderMarkdown(artifact: PrimaryJourneyEvidenceArtifact): string {
     lines.push(`| \`${field.id}\` | \`${field.value}\` | ${field.evidence.map((entry) => `\`${entry}\``).join("<br>") || "_none_"} |`);
   }
   lines.push("");
+  lines.push("## Visual Evidence");
+  lines.push("");
+  lines.push(`- Status: \`${artifact.visualEvidence.status}\``);
+  lines.push(`- Mode: \`${artifact.visualEvidence.mode}\``);
+  lines.push(`- Template: \`${artifact.visualEvidence.artifactPath}\``);
+  lines.push(`- Captured: \`${artifact.visualEvidence.capturedSlots}/${artifact.visualEvidence.requiredSlots}\``);
+  lines.push("");
+  lines.push("Headless runtime diagnostics are not screenshot evidence. Creator preview and WeChat safe-area captures must be attached before visual sign-off.");
+  lines.push("");
+  lines.push("| Milestone | Creator preview | WeChat safe area |");
+  lines.push("| --- | --- | --- |");
+  for (const step of STEP_METADATA) {
+    const creator = artifact.visualEvidence.slots.find((slot) => slot.milestoneId === step.id && slot.surface === "creator-preview");
+    const wechat = artifact.visualEvidence.slots.find((slot) => slot.milestoneId === step.id && slot.surface === "wechat-safe-area");
+    lines.push(
+      `| ${step.title} | \`${creator?.status ?? "pending"}\` | \`${wechat?.status ?? "pending"}\` |`
+    );
+  }
+  lines.push("");
   lines.push("## Checkpoint Ledger");
   lines.push("");
   lines.push("| Step | Status | Phase | Artifact | Telemetry checkpoints |");
@@ -761,6 +860,12 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
   const markdownOutputPath = path.resolve(
     args.markdownOutputPath || path.join(outputDir, `cocos-primary-journey-evidence-${slug}-${revision.shortCommit}.md`)
   );
+  const visualEvidenceOutputPath = path.join(outputDir, `cocos-primary-visual-evidence-${slug}-${revision.shortCommit}.json`);
+  const visualEvidence = writeVisualEvidenceTemplate({
+    candidateName,
+    outputPath: visualEvidenceOutputPath,
+    revision
+  });
   const requiredEvidence = defaultRequiredEvidence();
   const joinedOptions: Array<{ logicalRoomId: string; playerId: string; seed: number }> = [];
   const stepArtifacts = new Map<JourneyStepId, string[]>();
@@ -1059,10 +1164,12 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
       artifacts: {
         outputDir: toRepoRelative(outputDir),
         markdownSummary: toRepoRelative(markdownOutputPath),
-        milestoneDir: toRepoRelative(milestoneDir)
+        milestoneDir: toRepoRelative(milestoneDir),
+        visualEvidenceTemplate: visualEvidence.artifactPath
       },
       journey,
       requiredEvidence,
+      visualEvidence,
       failureSummary: buildFailureSummary(journey, requiredEvidence, undefined),
       checkpointLedger
     };
@@ -1170,10 +1277,12 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
       artifacts: {
         outputDir: toRepoRelative(outputDir),
         markdownSummary: toRepoRelative(markdownOutputPath),
-        milestoneDir: toRepoRelative(milestoneDir)
+        milestoneDir: toRepoRelative(milestoneDir),
+        visualEvidenceTemplate: visualEvidence.artifactPath
       },
       journey,
       requiredEvidence,
+      visualEvidence,
       failureSummary: buildFailureSummary(journey, requiredEvidence, failure),
       checkpointLedger
     };

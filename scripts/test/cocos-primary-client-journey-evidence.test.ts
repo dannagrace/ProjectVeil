@@ -43,6 +43,14 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
       timing?: { startedAt: string; completedAt: string; durationMs: number };
     }>;
     requiredEvidence: Array<{ id: string; value: string; evidence: string[] }>;
+    visualEvidence: {
+      mode: string;
+      status: string;
+      artifactPath: string;
+      requiredSlots: number;
+      capturedSlots: number;
+      slots: Array<{ id: string; milestoneId: string; surface: string; status: string }>;
+    };
     failureSummary: {
       summary: string;
       regressedJourneySegments: Array<{ id: string }>;
@@ -63,6 +71,12 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   assert.match(artifact.execution.summary, /Headless primary-client journey evidence passed/);
   assert.ok(artifact.execution.durationMs >= 0);
   assert.equal(artifact.environment.evidenceMode, "headless-runtime-diagnostics");
+  assert.equal(artifact.visualEvidence.mode, "manual-visual-capture-required");
+  assert.equal(artifact.visualEvidence.status, "blocked");
+  assert.equal(artifact.visualEvidence.requiredSlots, 14);
+  assert.equal(artifact.visualEvidence.capturedSlots, 0);
+  assert.equal(artifact.visualEvidence.slots.some((slot) => slot.id === "lobby-entry:creator-preview"), true);
+  assert.equal(artifact.visualEvidence.slots.some((slot) => slot.id === "room-join:wechat-safe-area"), true);
   assert.deepEqual(
     artifact.journey.map((step) => step.id),
     ["lobby-entry", "room-join", "map-explore", "first-battle", "battle-settlement", "reconnect-restore", "return-to-world"]
@@ -90,6 +104,15 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   );
 
   const milestoneDir = path.resolve(path.resolve(__dirname, "../.."), artifact.artifacts.milestoneDir);
+  const visualEvidencePath = path.resolve(path.resolve(__dirname, "../.."), artifact.visualEvidence.artifactPath);
+  assert.equal(fs.existsSync(visualEvidencePath), true);
+  const visualEvidenceTemplate = JSON.parse(fs.readFileSync(visualEvidencePath, "utf8")) as {
+    status: string;
+    slots: Array<{ surface: string; status: string }>;
+  };
+  assert.equal(visualEvidenceTemplate.status, "blocked");
+  assert.equal(visualEvidenceTemplate.slots.filter((slot) => slot.surface === "creator-preview").length, 7);
+  assert.equal(visualEvidenceTemplate.slots.filter((slot) => slot.surface === "wechat-safe-area").length, 7);
   const milestoneFiles = fs.readdirSync(milestoneDir).sort();
   assert.deepEqual(milestoneFiles, [
     "01-lobby-entry.json",
@@ -108,6 +131,9 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   assert.match(markdown, /Timing/);
   assert.match(markdown, /headless-runtime-diagnostics/);
   assert.match(markdown, /## Checkpoint Ledger/);
+  assert.match(markdown, /## Visual Evidence/);
+  assert.match(markdown, /manual-visual-capture-required/);
+  assert.match(markdown, /Creator preview and WeChat safe-area captures/);
   assert.match(markdown, /## Blocker Drill-Down/);
   assert.match(markdown, /No open blocker or evidence gap recorded/);
 });
