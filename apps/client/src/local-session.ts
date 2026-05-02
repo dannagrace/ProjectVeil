@@ -1,7 +1,7 @@
 import { createRoom, type AuthoritativeWorldRoom } from "@server/index";
 import { Client as ColyseusClient, CloseCode, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { classifyReconnectFailure, normalizeFeatureFlags, type ReconnectFailureReason } from "@veil/shared/platform";
-import { decodePlayerWorldView, listReachableTiles, planHeroMovement, replaceRuntimeConfigs } from "@veil/shared/world";
+import { buildNextWorldState, decodePlayerWorldView, listReachableTiles, planHeroMovement, replaceRuntimeConfigs } from "@veil/shared/world";
 import type { ActionValidationFailure } from "@veil/shared/battle";
 import type { BattleAction, BattleState, EquipmentType, MovementPlan, PlayerWorldView, Vec2, WorldEvent } from "@veil/shared/models";
 import type { FeatureFlags } from "@veil/shared/platform";
@@ -295,7 +295,7 @@ class LocalGameSession implements GameSession {
   private readonly playerId: string;
 
   constructor(roomId: string, playerId: string, seed = 1001) {
-    this.room = createRoom(roomId, seed);
+    this.room = createPlayableLocalRoom(roomId, playerId, seed);
     this.playerId = playerId;
   }
 
@@ -509,6 +509,58 @@ class LocalGameSession implements GameSession {
   async listReachable(heroId: string): Promise<Vec2[]> {
     return listReachableTiles(this.room.getInternalState(), heroId);
   }
+}
+
+function createPlayableLocalRoom(roomId: string, playerId: string, seed: number): AuthoritativeWorldRoom {
+  const room = createRoom(roomId, seed);
+  const state = room.getInternalState();
+
+  if (state.heroes.some((hero) => hero.playerId === playerId)) {
+    return room;
+  }
+
+  const starterHero = state.heroes[0];
+  if (!starterHero) {
+    return room;
+  }
+
+  const starterResources = state.resources[starterHero.playerId] ?? state.resources[playerId];
+  const heroes = state.heroes.map((hero) =>
+    hero.id === starterHero.id
+      ? {
+          ...hero,
+          playerId
+        }
+      : hero
+  );
+  const buildings = Object.fromEntries(
+    Object.entries(state.buildings).map(([id, building]) => [
+      id,
+      building.ownerPlayerId === starterHero.playerId
+        ? {
+            ...building,
+            ownerPlayerId: playerId
+          }
+        : building
+    ])
+  );
+  const nextState = buildNextWorldState(
+    {
+      ...state,
+      resources: {
+        ...state.resources,
+        ...(starterResources ? { [playerId]: { ...starterResources } } : {})
+      }
+    },
+    heroes,
+    state.neutralArmies,
+    buildings
+  );
+
+  return createRoom(roomId, seed, {
+    state: nextState,
+    battles: room.getActiveBattles()
+  });
 }
 
 class RemoteGameSession implements GameSession {

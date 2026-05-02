@@ -678,6 +678,7 @@ function writeVisualEvidenceTemplate(input: {
 function buildFailureSummary(
   journey: JourneyStepSummary[],
   requiredEvidence: RequiredEvidenceField[],
+  visualEvidence: VisualEvidenceSummary,
   failure: PrimaryJourneyEvidenceArtifact["execution"]["failure"]
 ): FailureSummary {
   const regressedJourneySegments = journey
@@ -689,7 +690,30 @@ function buildFailureSummary(
       reason: step.summary || "Required journey segment regressed.",
       artifactPath: failure?.stepId === step.id ? failure.artifactPath : step.evidence.find((entry) => entry.endsWith(".json"))
     }));
-  const blockedJourneySegments: FailureSummary["blockedJourneySegments"] = [];
+  const blockedJourneySegments = STEP_METADATA.flatMap((step) => {
+    const blockedSurfaces = Array.from(
+      new Set(
+        visualEvidence.slots
+          .filter((slot) => slot.milestoneId === step.id)
+          .filter((slot) => slot.status !== "captured" || !slot.artifactPath)
+          .map((slot) => slot.surface)
+      )
+    );
+
+    if (blockedSurfaces.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        id: step.id,
+        title: step.title,
+        status: "failed" as const,
+        reason: `Required visual evidence blocked: ${blockedSurfaces.join(", ")}. Attach Creator preview and WeChat safe-area captures before release sign-off.`,
+        artifactPath: visualEvidence.artifactPath
+      }
+    ];
+  });
   const lackingJourneyEvidence = journey
     .filter((step) => step.status === "pending")
     .map((step) => ({
@@ -711,7 +735,19 @@ function buildFailureSummary(
     parts.push(`Regressed journey segments: ${regressedJourneySegments.map((step) => step.id).join(", ")}`);
   }
   if (blockedJourneySegments.length > 0) {
-    parts.push(`Blocked journey segments: ${blockedJourneySegments.map((step) => step.id).join(", ")}`);
+    const blockedSurfaces = Array.from(
+      new Set(
+        blockedJourneySegments.flatMap((step) => {
+          const matched = step.reason.match(/visual evidence blocked: ([^.]+)/);
+          return matched?.[1] ? matched[1].split(", ") : [];
+        })
+      )
+    );
+    parts.push(
+      `Blocked journey segments: ${blockedJourneySegments.map((step) => step.id).join(", ")}${
+        blockedSurfaces.length > 0 ? ` (visual evidence blocked: ${blockedSurfaces.join(", ")})` : ""
+      }`
+    );
   }
   if (lackingJourneyEvidence.length > 0) {
     parts.push(`Journey segments lacking evidence: ${lackingJourneyEvidence.map((step) => step.id).join(", ")}`);
@@ -1170,7 +1206,7 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
       journey,
       requiredEvidence,
       visualEvidence,
-      failureSummary: buildFailureSummary(journey, requiredEvidence, undefined),
+      failureSummary: buildFailureSummary(journey, requiredEvidence, visualEvidence, undefined),
       checkpointLedger
     };
 
@@ -1283,7 +1319,7 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
       journey,
       requiredEvidence,
       visualEvidence,
-      failureSummary: buildFailureSummary(journey, requiredEvidence, failure),
+      failureSummary: buildFailureSummary(journey, requiredEvidence, visualEvidence, failure),
       checkpointLedger
     };
 

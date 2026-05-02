@@ -332,8 +332,28 @@ test("createGameSession falls back to a local session when remote bootstrap is u
   assert.equal(update.reason, "local-fallback");
   assert.equal(update.world.meta.roomId, "room-alpha");
   assert.equal(update.world.playerId, "player-1");
+  assert.ok(update.world.ownHeroes.length > 0);
+  assert.ok(update.world.map.tiles.some((tile) => tile.terrain !== "unknown"));
+  assert.ok(update.reachableTiles.length > 0);
   assert.deepEqual(events, []);
   assert.deepEqual(pushed, []);
+});
+
+test("createGameSession local fallback remaps the starter hero to arbitrary browser player ids", { concurrency: false }, async () => {
+  const session = await localSessionTestHooks.createGameSessionWithRuntime("room-alpha", "guest-direct", 1001, undefined, {
+    async connectRemoteGameSession() {
+      throw new Error("connect_failed");
+    }
+  });
+
+  const update = await session.snapshot("local-fallback");
+  const hero = update.world.ownHeroes[0];
+
+  assert.equal(update.world.playerId, "guest-direct");
+  assert.equal(hero?.playerId, "guest-direct");
+  assert.ok(update.world.map.tiles.some((tile) => tile.occupant?.kind === "hero" && tile.occupant.refId === hero?.id));
+  assert.ok(update.world.map.tiles.some((tile) => tile.terrain !== "unknown"));
+  assert.ok(update.reachableTiles.length > 0);
 });
 
 test("createGameSession keeps the remote bootstrap session when the initial connection succeeds", { concurrency: false }, async () => {

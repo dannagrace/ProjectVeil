@@ -1,19 +1,44 @@
 :root {
-  color-scheme: light;
-  --bg: #e7e2d9;
-  --paper: rgba(248, 245, 239, 0.88);
-  --paper-strong: rgba(255, 251, 244, 0.94);
-  --ink: #2b3138;
-  --muted: #697583;
-  --accent: #b8784f;
-  --accent-soft: #d9b181;
-  --grid: #c0c9d3;
-  --fog: #34404d;
-  --hero: #4d8a78;
-  --neutral: #9b5955;
-  --panel-edge: rgba(77, 91, 108, 0.14);
-  --panel-shadow: 0 18px 36px rgba(34, 40, 49, 0.08);
-  font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+  /* Project Veil design token mapping: configs/project-veil-design-tokens.json */
+  color-scheme: dark;
+  --pv-color-surface-base: #111827;
+  --pv-color-surface-panel: #1F2937;
+  --pv-color-surface-raised: #374151;
+  --pv-color-primary: #38BDF8;
+  --pv-color-primary-strong: #0284C7;
+  --pv-color-success: #22C55E;
+  --pv-color-warning: #F59E0B;
+  --pv-color-danger: #EF4444;
+  --pv-color-text-primary: #F9FAFB;
+  --pv-color-text-secondary: #CBD5E1;
+  --pv-color-border-subtle: rgba(148, 163, 184, 0.32);
+  --pv-font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --pv-type-hud-label: 12px;
+  --pv-type-body: 14px;
+  --pv-type-panel-title: 16px;
+  --pv-line-height: 1.45;
+  --pv-space-xs: 4px;
+  --pv-space-sm: 8px;
+  --pv-space-md: 12px;
+  --pv-space-lg: 16px;
+  --pv-space-xl: 24px;
+  --pv-radius-chip: 6px;
+  --pv-radius-panel: 8px;
+  --pv-radius-modal: 8px;
+  --bg: var(--pv-color-surface-base);
+  --paper: var(--pv-color-surface-panel);
+  --paper-strong: var(--pv-color-surface-raised);
+  --ink: var(--pv-color-text-primary);
+  --muted: var(--pv-color-text-secondary);
+  --accent: var(--pv-color-primary);
+  --accent-soft: var(--pv-color-primary-strong);
+  --grid: var(--pv-color-border-subtle);
+  --fog: #0f172a;
+  --hero: var(--pv-color-success);
+  --neutral: var(--pv-color-danger);
+  --panel-edge: var(--pv-color-border-subtle);
+  --panel-shadow: 0 18px 36px rgba(0, 0, 0, 0.26);
+  font-family: var(--pv-font-family);
 }
 
 * {
@@ -24,14 +49,35 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  background:
-    radial-gradient(circle at top left, rgba(132, 160, 186, 0.18), transparent 24%),
-    radial-gradient(circle at top right, rgba(200, 160, 118, 0.16), transparent 28%),
-    linear-gradient(135deg, #ece7de 0%, #f6f1e8 40%, #ddd5c8 100%);
+  background: linear-gradient(135deg, var(--pv-color-surface-base) 0%, #182235 52%, #0f172a 100%);
 }
 
 button {
   font: inherit;
+}
+
+.h5-debug-bar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0);
+  z-index: 30;
+  width: 100%;
+  min-height: 24px;
+  padding: var(--pv-space-xs) var(--pv-space-md);
+  border-bottom: 1px solid var(--pv-color-border-subtle);
+  background: var(--pv-color-surface-base);
+  color: var(--pv-color-success);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--pv-type-hud-label);
+  line-height: var(--pv-line-height);
+  pointer-events: none;
+}
+
+.h5-debug-bar[data-tone="blocked"] {
+  color: var(--pv-color-warning);
+}
+
+.h5-debug-bar[data-tone="error"] {
+  color: var(--pv-color-danger);
 }
 
 .shell {
@@ -55,7 +101,7 @@ button {
 .lobby-hero-panel,
 .lobby-panel {
   border: 1px solid var(--panel-edge);
-  border-radius: 20px;
+  border-radius: var(--pv-radius-panel);
   background: var(--paper);
   backdrop-filter: blur(6px);
   box-shadow: var(--panel-shadow);
@@ -73,7 +119,7 @@ button {
 [data-tone] {
   padding: 8px 10px;
   border-left: 3px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--pv-radius-chip);
   background: rgba(255, 255, 255, 0.48);
 }
 
@@ -2467,6 +2513,18 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .map-panel {
+    order: -2;
+  }
+
+  .battle-panel {
+    order: -1;
+  }
+
+  .hero-panel {
+    order: 0;
+  }
+
   .lobby-shell {
     grid-template-columns: 1fr;
     min-height: auto;
@@ -2533,5 +2591,35 @@ h1 {
     position: static;
     width: 100%;
     padding: 0 20px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .tile.is-preview,
+  .tile.is-travel,
+  .tile.is-animated,
+  .battle-lane,
+  .battle-unit-card,
+  .battle-damage-float,
+  .achievement-toast,
+  .log-line {
+    transform: none !important;
+  }
+
+  .tile.is-reachable,
+  .tile.is-selected,
+  .tile.is-keyboard-cursor {
+    border-color: var(--pv-color-primary);
+    box-shadow: inset 0 0 0 2px rgba(56, 189, 248, 0.38);
   }
 }

@@ -363,8 +363,14 @@ export async function loginGuestAuthSession(
     if (error instanceof Error && error.message.startsWith("auth_request_failed:")) {
       throw error;
     }
-    console.error("[Auth] CRITICAL: Server connection failed. Local fallback DISABLED.", error);
-    throw new Error("server_connection_failed");
+    console.warn("[Auth] Server connection failed. Falling back to a local guest session.", error);
+    return storeAuthSession(
+      asStoredAuthSession(undefined, "local", {
+        playerId: normalizedPlayerId,
+        displayName: normalizedDisplayName,
+        authMode: "guest"
+      })
+    );
   }
 }
 

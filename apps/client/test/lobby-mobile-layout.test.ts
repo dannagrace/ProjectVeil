@@ -22,3 +22,15 @@ test("H5 lobby keeps mobile first viewport focused on the primary room-entry flo
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.lobby-panel \{[\s\S]*order: -1;/);
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.lobby-hero-copy \{[\s\S]*display: none;/);
 });
+
+test("H5 gameplay shell keeps mobile playfield ahead of diagnostics and supports reduced motion", () => {
+  const styles = fs.readFileSync(path.join(repoRoot, "apps/client/src/styles.css"), "utf8");
+
+  assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.map-panel \{[\s\S]*order: -2;/);
+  assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.battle-panel \{[\s\S]*order: -1;/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{/);
+  assert.match(styles, /animation: none !important;/);
+  assert.match(styles, /transition-duration: 0\.01ms !important;/);
+  assert.match(styles, /\.h5-debug-bar/);
+  assert.doesNotMatch(styles, /#veil-debug-bar\\s*\\{/);
+});

@@ -143,3 +143,55 @@ test("h5 auth helpers forward privacy consent and clear storage after deletion",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("guest auth falls back to a local session when the auth service is unavailable", async () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const values = new Map<string, string>();
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1"
+      },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem(key: string): string | null {
+          return values.get(key) ?? null;
+        },
+        setItem(key: string, value: string): void {
+          values.set(key, value);
+        },
+        removeItem(key: string): void {
+          values.delete(key);
+        }
+      }
+    }
+  });
+
+  globalThis.fetch = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as typeof fetch;
+
+  try {
+    const session = await loginGuestAuthSession("guest-offline", "离线旅人", {
+      privacyConsentAccepted: true
+    });
+
+    assert.equal(session.playerId, "guest-offline");
+    assert.equal(session.displayName, "离线旅人");
+    assert.equal(session.authMode, "guest");
+    assert.equal(session.source, "local");
+    assert.equal(session.token, undefined);
+    assert.match(values.get(getAuthSessionStorageKey()) ?? "", /"source":"local"/);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow
+    });
+    globalThis.fetch = originalFetch;
+  }
+});

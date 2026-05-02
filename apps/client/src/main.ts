@@ -119,18 +119,20 @@ let debugBar: HTMLDivElement | null = null;
 
 if (shouldShowH5DebugBar()) {
   debugBar = document.createElement("div");
-  debugBar.style.cssText = "position:fixed;top:0;left:0;right:0;background:rgba(0,0,0,0.8);color:#0f0;padding:4px 10px;z-index:9999;font-size:12px;pointer-events:none;font-family:monospace;";
   debugBar.id = "veil-debug-bar";
+  debugBar.className = "h5-debug-bar";
+  debugBar.dataset.testid = "veil-debug-bar";
+  debugBar.dataset.tone = "active";
   debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | Status: Initializing...`;
   document.body.appendChild(debugBar);
 }
 
 function updateDebugStatus(msg: string, color = "#0f0") {
-    if (!debugBar) {
-        return;
-    }
-    debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | ${msg}`;
-    debugBar.style.color = color;
+  if (!debugBar) {
+    return;
+  }
+  debugBar.textContent = `Target API: ${runtimeServerHttpUrl} | ${msg}`;
+  debugBar.dataset.tone = color === "#f00" ? "error" : color === "#ff0" ? "blocked" : "active";
 }
 
 const queryRoomId = params.get("roomId")?.trim() ?? "";
@@ -3759,6 +3761,59 @@ function validateLobbyPrivacyConsent(): boolean {
   return false;
 }
 
+type TileInteractionHint = "move" | "pickup" | "attack" | "inspect" | null;
+
+export function describeTileAccessibilityLabel(
+  tile: PlayerTileView,
+  options: {
+    reachable: boolean;
+    interaction: TileInteractionHint;
+    selected?: boolean;
+    hero?: boolean;
+  }
+): string {
+  const parts = [
+    `Tile ${tile.position.x},${tile.position.y}`,
+    `${tile.terrain} terrain`,
+    tile.fog,
+    options.reachable ? "reachable" : "not reachable"
+  ];
+
+  if (tile.resource) {
+    parts.push(`${tile.resource.kind} +${tile.resource.amount}`);
+  }
+
+  if (tile.building) {
+    parts.push(`building ${tile.building.label}`);
+  }
+
+  if (options.hero) {
+    parts.push("current hero");
+  } else if (tile.occupant?.kind === "hero") {
+    parts.push("visible hero");
+  } else if (tile.occupant?.kind === "neutral") {
+    parts.push("neutral army");
+  }
+
+  if (options.selected) {
+    parts.push("selected");
+  }
+
+  if (options.reachable && options.interaction) {
+    parts.push(
+      options.interaction === "attack"
+        ? "attack"
+        : options.interaction === "pickup"
+          ? "pick up"
+          : options.interaction === "inspect"
+            ? "inspect"
+            : "move here"
+    );
+  }
+
+  return parts.join(", ");
+}
+
 async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
   if (!validateLobbyPrivacyConsent()) {
     return;
@@ -4942,23 +4997,32 @@ function render(): void {
       const keyboardCursor =
         state.keyboardCursor?.x === tile.position.x && state.keyboardCursor?.y === tile.position.y;
       const isHero = hero && hero.position.x === tile.position.x && hero.position.y === tile.position.y;
-        const classes = [
-          "tile",
-          `fog-${tile.fog}`,
+      const reachable = isReachableTile(tile.position.x, tile.position.y);
+      const interaction: TileInteractionHint =
+        tile.occupant?.kind === "neutral" ? "attack" : tile.resource ? "pickup" : tile.building ? "inspect" : "move";
+      const ariaLabel = describeTileAccessibilityLabel(tile, {
+        reachable,
+        interaction,
+        selected,
+        hero: Boolean(isHero)
+      });
+      const classes = [
+        "tile",
+        `fog-${tile.fog}`,
         selected ? "is-selected" : "",
         hovered ? "is-hovered" : "",
         keyboardCursor ? "is-keyboard-cursor" : "",
         isHero ? "is-hero" : "",
-          tile.occupant?.kind === "neutral" ? "is-neutral" : "",
-          isReachableTile(tile.position.x, tile.position.y) ? "is-reachable" : "",
-          isPreviewNode(tile.position.x, tile.position.y) ? "is-preview" : "",
-          isTravelNode(tile.position.x, tile.position.y) ? "is-travel" : "",
-          isAnimatedNode(tile.position.x, tile.position.y) ? "is-animated" : ""
-        ]
+        tile.occupant?.kind === "neutral" ? "is-neutral" : "",
+        reachable ? "is-reachable" : "",
+        isPreviewNode(tile.position.x, tile.position.y) ? "is-preview" : "",
+        isTravelNode(tile.position.x, tile.position.y) ? "is-travel" : "",
+        isAnimatedNode(tile.position.x, tile.position.y) ? "is-animated" : ""
+      ]
         .filter(Boolean)
         .join(" ");
 
-      return `<button class="${classes}" data-x="${tile.position.x}" data-y="${tile.position.y}" aria-label="tile-${index}">
+      return `<button class="${classes}" data-x="${tile.position.x}" data-y="${tile.position.y}" aria-label="${escapeHtml(ariaLabel)}">
         <span class="tile-media">${renderTileMedia(tile)}</span>
         <span class="tile-label">${tileLabel(tile)}</span>
         <span class="tile-coord">${tile.position.x},${tile.position.y}</span>

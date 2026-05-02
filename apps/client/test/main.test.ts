@@ -94,6 +94,8 @@ function installFakeBrowser(options: { search?: string; appendedElements?: Array
   };
   const fakeElement = () => ({
     style: {},
+    dataset: {},
+    className: "",
     append: () => undefined,
     click: () => undefined,
     remove: () => undefined,
@@ -135,6 +137,61 @@ test("main module does not inject the H5 debug bar by default", async () => {
   await import("../src/main");
 
   assert.equal(appendedElements.some((element) => element.id === "veil-debug-bar"), false);
+});
+
+test("main module injects the debug bar through tokenized CSS hooks when requested", async () => {
+  const appendedElements: Array<{ id?: string; className?: string; textContent?: string; dataset?: Record<string, string> }> = [];
+  globalThis.__PROJECT_VEIL_MAIN_SKIP_AUTO_BOOT__ = true;
+  installFakeBrowser({ search: "?debug=1", appendedElements });
+
+  await import(`../src/main?debug-bar-${Date.now()}`);
+
+  const debugBar = appendedElements.find((element) => element.id === "veil-debug-bar");
+  assert.equal(debugBar?.className, "h5-debug-bar");
+  assert.equal(debugBar?.dataset?.testid, "veil-debug-bar");
+  assert.match(debugBar?.textContent ?? "", /Target API:/);
+});
+
+test("map tile accessibility labels include coordinates and action state", async () => {
+  const { describeTileAccessibilityLabel } = await loadMainModule();
+
+  assert.equal(
+    describeTileAccessibilityLabel(
+      {
+        position: { x: 2, y: 3 },
+        fog: "visible",
+        terrain: "grass",
+        walkable: true,
+        resource: undefined,
+        occupant: undefined,
+        building: undefined
+      },
+      {
+        reachable: true,
+        interaction: "move"
+      }
+    ),
+    "Tile 2,3, grass terrain, visible, reachable, move here"
+  );
+
+  assert.equal(
+    describeTileAccessibilityLabel(
+      {
+        position: { x: 0, y: 0 },
+        fog: "hidden",
+        terrain: "unknown",
+        walkable: false,
+        resource: undefined,
+        occupant: undefined,
+        building: undefined
+      },
+      {
+        reachable: false,
+        interaction: null
+      }
+    ),
+    "Tile 0,0, unknown terrain, hidden, not reachable"
+  );
 });
 
 test("startMainH5Boot covers cached-session boot and exposes automation hooks before boot settles", async () => {

@@ -12,6 +12,7 @@
 ## Token Mapping
 
 - Color roles map to CSS variables in H5 and to named presentation states in Cocos.
+- H5 gameplay CSS token aliases live at the top of `apps/client/src/styles.css` as `--pv-*` variables; legacy local roles such as `--paper`, `--ink`, and `--accent` must point through those aliases.
 - Typography keeps HUD labels, panel titles, and body text separate; do not scale type by viewport width.
 - Spacing and radius values are shared by intent. Cocos may round to whole-pixel node layout values when Creator requires it.
 - `componentRoles.assetStageChip` is the shared vocabulary for placeholder/prototype/production asset status in H5 diagnostics, Cocos readiness, and release summaries.

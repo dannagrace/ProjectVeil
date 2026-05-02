@@ -90,9 +90,10 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
     artifact.requiredEvidence.find((field) => field.id === "firstBattleResult")?.value,
     "attacker_victory; gold +12; experience +25"
   );
-  assert.equal(artifact.failureSummary.summary, "No regressions or evidence gaps recorded.");
+  assert.match(artifact.failureSummary.summary, /Blocked journey segments: lobby-entry, room-join/);
+  assert.match(artifact.failureSummary.summary, /visual evidence blocked: creator-preview, wechat-safe-area/);
   assert.equal(artifact.failureSummary.regressedJourneySegments.length, 0);
-  assert.equal(artifact.failureSummary.blockedJourneySegments.length, 0);
+  assert.equal(artifact.failureSummary.blockedJourneySegments.length, 7);
   assert.equal(artifact.failureSummary.lackingJourneyEvidence.length, 0);
   assert.equal(artifact.failureSummary.lackingRequiredEvidence.length, 0);
   assert.equal(artifact.checkpointLedger.source, "primary-journey-evidence");
@@ -135,5 +136,7 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
   assert.match(markdown, /manual-visual-capture-required/);
   assert.match(markdown, /Creator preview and WeChat safe-area captures/);
   assert.match(markdown, /## Blocker Drill-Down/);
-  assert.match(markdown, /No open blocker or evidence gap recorded/);
+  assert.match(markdown, /Blocked journey segments: lobby-entry, room-join/);
+  assert.match(markdown, /Blocked: `lobby-entry`/);
+  assert.doesNotMatch(markdown, /No open blocker or evidence gap recorded/);
 });
