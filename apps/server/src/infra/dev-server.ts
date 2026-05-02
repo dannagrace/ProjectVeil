@@ -86,6 +86,7 @@ import {
 import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
 import { loadRuntimeSecrets } from "@server/domain/ops/runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "@server/infra/schema-migrations";
+import type { AdminAuditWritableStore } from "@server/domain/ops/admin-audit-log";
 import { registerAdminForensicsMiddleware } from "@server/domain/ops/admin-forensics";
 import { registerAdminRoutes } from "@server/domain/ops/admin-console";
 import { registerSeasonRoutes } from "@server/domain/social/seasons";
@@ -222,7 +223,7 @@ interface DevServerConfigCenterStore extends UgcModerationConfigDocumentStore {
   readonly mode: "filesystem" | "mysql";
 }
 
-interface DevServerRoomSnapshotStore {
+interface DevServerRoomSnapshotStore extends AdminAuditWritableStore {
   close(): Promise<void>;
   clearAll?(): void;
 }
