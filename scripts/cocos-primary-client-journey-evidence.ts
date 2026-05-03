@@ -149,7 +149,7 @@ interface PrimaryJourneyEvidenceArtifact {
     startedAt: string;
     completedAt: string;
     durationMs: number;
-    overallStatus: "passed" | "failed";
+    overallStatus: "passed" | "partial" | "failed";
     summary: string;
     failure?: {
       stepId: JourneyStepId;
@@ -1175,6 +1175,8 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
         (entry): entry is CheckpointLedgerEntry => Boolean(entry)
       )
     };
+    const failureSummary = buildFailureSummary(journey, requiredEvidence, visualEvidence, undefined);
+    const hasBlockedVisualEvidence = failureSummary.blockedJourneySegments.length > 0;
     const artifact: PrimaryJourneyEvidenceArtifact = {
       schemaVersion: 1,
       candidate: {
@@ -1189,9 +1191,10 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
         startedAt,
         completedAt,
         durationMs,
-        overallStatus: "passed",
-        summary:
-          "Headless primary-client journey evidence passed for lobby entry, room join, world explore, first battle, settlement, reconnect recovery, and restored world state."
+        overallStatus: hasBlockedVisualEvidence ? "partial" : "passed",
+        summary: hasBlockedVisualEvidence
+          ? "Headless primary-client journey evidence captured with blocked visual evidence; attach required Creator preview and WeChat safe-area captures before release sign-off."
+          : "Headless primary-client journey evidence passed for lobby entry, room join, world explore, first battle, settlement, reconnect recovery, and restored world state."
       },
       environment: {
         server: args.server || "ws://127.0.0.1:2567",
@@ -1206,7 +1209,7 @@ export async function buildArtifact(args: Args): Promise<PrimaryJourneyEvidenceA
       journey,
       requiredEvidence,
       visualEvidence,
-      failureSummary: buildFailureSummary(journey, requiredEvidence, visualEvidence, undefined),
+      failureSummary,
       checkpointLedger
     };
 
