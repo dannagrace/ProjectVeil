@@ -1221,7 +1221,6 @@ export type AdminAuditAction =
   | "live_ops_calendar_ended"
   | "reengagement_run"
   | "auth_token_delivery_dlq_requeue"
-  | "admin_auth_failed"
   | "admin_read_accessed"
   | "reengagement_sent"
   | "reengagement_opened"
@@ -1707,7 +1706,6 @@ function normalizeAdminAuditAction(value: string): AdminAuditAction {
     case "live_ops_calendar_ended":
     case "reengagement_run":
     case "auth_token_delivery_dlq_requeue":
-    case "admin_auth_failed":
     case "admin_read_accessed":
     case "reengagement_sent":
     case "reengagement_opened":
