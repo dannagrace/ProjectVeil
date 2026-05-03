@@ -194,6 +194,23 @@ test("map tile accessibility labels include coordinates and action state", async
   );
 });
 
+test("hero secondary disclosures default closed on compact mobile viewports", async () => {
+  const { shouldOpenHeroSecondaryDisclosure } = await loadMainModule();
+
+  assert.equal(
+    shouldOpenHeroSecondaryDisclosure({
+      matchMedia: (query: string) => ({ matches: query === "(max-width: 1100px)" })
+    }),
+    false
+  );
+  assert.equal(
+    shouldOpenHeroSecondaryDisclosure({
+      matchMedia: () => ({ matches: false })
+    }),
+    true
+  );
+});
+
 test("startMainH5Boot covers cached-session boot and exposes automation hooks before boot settles", async () => {
   const { startMainH5Boot } = await loadMainModule();
   const replayed = createSessionUpdate("cached");

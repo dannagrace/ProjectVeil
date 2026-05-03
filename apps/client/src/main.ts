@@ -115,6 +115,10 @@ function shouldShowH5DebugBar(): boolean {
   return params.get("debugBar") === "1" || params.get("debug") === "1";
 }
 
+export function shouldOpenHeroSecondaryDisclosure(viewport: { matchMedia?: (query: string) => { matches: boolean } } = window): boolean {
+  return !viewport.matchMedia?.("(max-width: 1100px)").matches;
+}
+
 let debugBar: HTMLDivElement | null = null;
 
 if (shouldShowH5DebugBar()) {
@@ -4979,6 +4983,7 @@ function render(): void {
   const hoveredTile = hoveredTileData();
   const hoveredObject = describeTileObject(hoveredTile);
   const hoveredBadges = objectBadgeAssets(hoveredObject);
+  const heroSecondaryDisclosureOpen = shouldOpenHeroSecondaryDisclosure() ? " open" : "";
   const interactionLabel = (interactionType: string | null | undefined) => {
     if (interactionType === "battle") {
       return "战斗交互";
@@ -5043,87 +5048,95 @@ function render(): void {
           <button class="session-link" data-return-lobby="true">返回大厅</button>
           <button class="session-link" data-logout-guest="true">切换游客账号</button>
         </div>
-        <div class="account-card" data-testid="account-card">
-          <div class="account-card-head">
-            <div>
-              <span class="account-eyebrow">账号资料</span>
-              <strong>${escapeHtml(state.account.displayName)}</strong>
+        <details class="hero-secondary-disclosure account-secondary-disclosure" data-testid="account-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+          <summary>
+            <strong>账号和回放</strong>
+            <span>资料、任务、成就、战报回放和账号管理</span>
+          </summary>
+          <div class="hero-secondary-body">
+            <div class="account-card" data-testid="account-card">
+              <div class="account-card-head">
+                <div>
+                  <span class="account-eyebrow">账号资料</span>
+                  <strong>${escapeHtml(state.account.displayName)}</strong>
+                </div>
+                <span class="account-badge tone-${state.account.source}">${formatAccountSource(state.account)}</span>
+              </div>
+              <p class="account-meta">ID ${escapeHtml(state.account.playerId)}</p>
+              <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
+              <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
+              <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
+              ${formatExperimentAuditLabel(state.account)
+                ? `<p class="account-meta">${escapeHtml(formatExperimentAuditLabel(state.account) ?? "")}</p>`
+                : ""}
+              ${state.featureFlags.quest_system_enabled
+                ? renderDailyQuestBoard(state.account, {
+                    claimingQuestId: state.dailyQuestClaimingId
+                  })
+                : ""}
+              ${renderAchievementProgress(state.account)}
+              ${renderBattleReportReplayCenter({
+                account: state.account,
+                selectedReplayId: state.replayDetail.selectedReplayId,
+                replay: state.replayDetail.replay,
+                playback: state.replayDetail.playback,
+                loading: state.replayDetail.loading,
+                status: state.replayDetail.status
+              })}
+              ${renderRecentAccountEvents(state.account)}
+              <div class="account-editor">
+                <input
+                  class="account-input"
+                  data-account-name="true"
+                  maxlength="40"
+                  value="${escapeHtml(state.accountDraftName)}"
+                  placeholder="输入昵称"
+                  ${state.accountSaving ? "disabled" : ""}
+                />
+                <button
+                  class="account-save"
+                  data-save-account="true"
+                  ${state.accountSaving ? "disabled" : ""}
+                >${state.accountSaving ? "保存中..." : "保存昵称"}</button>
+              </div>
+              <div class="account-binding-card">
+                <div class="account-binding-head">
+                  <strong>${state.account.loginId ? "更新账号口令" : "绑定口令账号"}</strong>
+                  <span>${escapeHtml(formatAccountBindingCta(state.account))}</span>
+                </div>
+                <div class="account-binding-grid">
+                  <input
+                    class="account-input"
+                    data-account-login-id="true"
+                    maxlength="40"
+                    value="${escapeHtml(state.account.loginId ?? state.accountLoginId)}"
+                    placeholder="veil-ranger"
+                    ${state.accountSaving || state.accountBinding || state.account.source !== "remote" || Boolean(state.account.loginId) ? "disabled" : ""}
+                  />
+                  <input
+                    class="account-input"
+                    data-account-password="true"
+                    type="password"
+                    maxlength="80"
+                    value="${escapeHtml(state.accountPassword)}"
+                    placeholder="${state.account.loginId ? "输入新口令" : "至少 6 位"}"
+                    ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
+                  />
+                </div>
+                <button
+                  class="account-save"
+                  data-bind-account="true"
+                  ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
+                >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
+              </div>
+              <button class="session-link" data-delete-account="true" ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}>
+                删除当前账号
+              </button>
+              ${renderAccountSessionPanel()}
+              <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
             </div>
-            <span class="account-badge tone-${state.account.source}">${formatAccountSource(state.account)}</span>
           </div>
-          <p class="account-meta">ID ${escapeHtml(state.account.playerId)}</p>
-          <p class="account-meta">${escapeHtml(formatCredentialBinding(state.account))}</p>
-          <p class="account-meta">${escapeHtml(formatAccountLastSeen(state.account))}</p>
-          <p class="account-meta">${escapeHtml(formatGlobalVault(state.account))}</p>
-          ${formatExperimentAuditLabel(state.account)
-            ? `<p class="account-meta">${escapeHtml(formatExperimentAuditLabel(state.account) ?? "")}</p>`
-            : ""}
-          ${state.featureFlags.quest_system_enabled
-            ? renderDailyQuestBoard(state.account, {
-                claimingQuestId: state.dailyQuestClaimingId
-              })
-            : ""}
-          ${renderAchievementProgress(state.account)}
-          ${renderBattleReportReplayCenter({
-            account: state.account,
-            selectedReplayId: state.replayDetail.selectedReplayId,
-            replay: state.replayDetail.replay,
-            playback: state.replayDetail.playback,
-            loading: state.replayDetail.loading,
-            status: state.replayDetail.status
-          })}
-          ${renderRecentAccountEvents(state.account)}
-          <div class="account-editor">
-            <input
-              class="account-input"
-              data-account-name="true"
-              maxlength="40"
-              value="${escapeHtml(state.accountDraftName)}"
-              placeholder="输入昵称"
-              ${state.accountSaving ? "disabled" : ""}
-            />
-            <button
-              class="account-save"
-              data-save-account="true"
-              ${state.accountSaving ? "disabled" : ""}
-            >${state.accountSaving ? "保存中..." : "保存昵称"}</button>
-          </div>
-          <div class="account-binding-card">
-            <div class="account-binding-head">
-              <strong>${state.account.loginId ? "更新账号口令" : "绑定口令账号"}</strong>
-              <span>${escapeHtml(formatAccountBindingCta(state.account))}</span>
-            </div>
-            <div class="account-binding-grid">
-              <input
-                class="account-input"
-                data-account-login-id="true"
-                maxlength="40"
-                value="${escapeHtml(state.account.loginId ?? state.accountLoginId)}"
-                placeholder="veil-ranger"
-                ${state.accountSaving || state.accountBinding || state.account.source !== "remote" || Boolean(state.account.loginId) ? "disabled" : ""}
-              />
-              <input
-                class="account-input"
-                data-account-password="true"
-                type="password"
-                maxlength="80"
-                value="${escapeHtml(state.accountPassword)}"
-                placeholder="${state.account.loginId ? "输入新口令" : "至少 6 位"}"
-                ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
-              />
-            </div>
-            <button
-              class="account-save"
-              data-bind-account="true"
-              ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}
-            >${state.accountBinding ? "提交中..." : state.account.loginId ? "更新口令" : "绑定账号"}</button>
-          </div>
-          <button class="session-link" data-delete-account="true" ${state.accountSaving || state.accountBinding || state.account.source !== "remote" ? "disabled" : ""}>
-            删除当前账号
-          </button>
-          ${renderAccountSessionPanel()}
-          <p class="muted account-status">${escapeHtml(state.accountStatus)}</p>
-        </div>
+        </details>
         ${state.predictionStatus ? `<p class="muted" data-testid="prediction-status">${state.predictionStatus}</p>` : ""}
         <div class="stats">
           <div class="card" data-testid="stat-day"><span>Day</span><strong>${state.world.meta.day}</strong></div>
@@ -5158,20 +5171,36 @@ function render(): void {
           <p data-testid="hero-army">Army ${hero?.armyTemplateId ?? "-"} x ${hero?.armyCount ?? 0}</p>
           <p data-testid="hero-skill-points">Skill Points ${hero?.progression.skillPoints ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
-          ${renderHeroEquipmentPanel(hero)}
-          ${renderHeroAttributePanel(hero, state.world)}
           <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
-          ${renderHeroSkillTree(hero)}
+          <details class="hero-secondary-disclosure hero-build-secondary-disclosure" data-testid="hero-build-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+            <summary>
+              <strong>英雄养成</strong>
+              <span>装备、属性明细和技能树</span>
+            </summary>
+            <div class="hero-secondary-body">
+              ${renderHeroEquipmentPanel(hero)}
+              ${renderHeroAttributePanel(hero, state.world)}
+              ${renderHeroSkillTree(hero)}
+            </div>
+          </details>
         </div>
-        <div class="log-panel">
-          <h3>时间线</h3>
-          <div data-testid="timeline-panel">${renderTimeline()}</div>
-        </div>
-        <div class="log-panel">
-          <h3>事件流</h3>
-          <div class="log-list" data-testid="event-log">${renderEventLogLines(state.log)}</div>
-        </div>
-        ${renderDiagnosticPanel()}
+        <details class="hero-secondary-disclosure diagnostics-secondary-disclosure" data-testid="diagnostics-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+          <summary>
+            <strong>时间线和诊断</strong>
+            <span>事件流、调试快照和导出工具</span>
+          </summary>
+          <div class="hero-secondary-body">
+            <div class="log-panel">
+              <h3>时间线</h3>
+              <div data-testid="timeline-panel">${renderTimeline()}</div>
+            </div>
+            <div class="log-panel">
+              <h3>事件流</h3>
+              <div class="log-list" data-testid="event-log">${renderEventLogLines(state.log)}</div>
+            </div>
+            ${renderDiagnosticPanel()}
+          </div>
+        </details>
       </section>
       <section class="map-panel">
         <div class="panel-head">
@@ -5248,7 +5277,7 @@ function render(): void {
             <strong>${state.reachableTiles.length}</strong>
           </div>
         </div>
-        <div class="grid" style="grid-template-columns: repeat(${state.world.map.width}, minmax(0, 1fr));">${grid}</div>
+        <div class="grid" style="--map-columns: ${state.world.map.width};">${grid}</div>
       </section>
       <section class="battle-panel" data-testid="battle-panel">
         <div class="panel-head">

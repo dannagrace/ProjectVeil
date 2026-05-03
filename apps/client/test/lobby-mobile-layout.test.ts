@@ -24,10 +24,21 @@ test("H5 lobby keeps mobile first viewport focused on the primary room-entry flo
 });
 
 test("H5 gameplay shell keeps mobile playfield ahead of diagnostics and supports reduced motion", () => {
+  const mainSource = fs.readFileSync(path.join(repoRoot, "apps/client/src/main.ts"), "utf8");
   const styles = fs.readFileSync(path.join(repoRoot, "apps/client/src/styles.css"), "utf8");
 
+  assert.match(mainSource, /data-testid="hero-build-secondary-disclosure"/);
+  assert.match(mainSource, /data-testid="account-secondary-disclosure"/);
+  assert.match(mainSource, /data-testid="diagnostics-secondary-disclosure"/);
+  assert.match(styles, /\.shell \{[\s\S]*align-items: start;/);
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.map-panel \{[\s\S]*order: -2;/);
+  assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.map-panel \{[\s\S]*overflow-x: auto;/);
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.battle-panel \{[\s\S]*order: -1;/);
+  assert.match(styles, /\.grid \{[\s\S]*grid-template-columns: repeat\(var\(--map-columns\), minmax\(var\(--tile-min-size\), 1fr\)\);/);
+  assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.grid \{[\s\S]*--tile-min-size: 44px;/);
+  assert.match(styles, /\.tile \{[\s\S]*min-width: var\(--tile-min-size\);[\s\S]*min-height: var\(--tile-min-size\);/);
+  assert.match(styles, /\.hero-secondary-disclosure/);
+  assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.hero-secondary-disclosure summary \{[\s\S]*min-height: 44px;/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{/);
   assert.match(styles, /animation: none !important;/);
   assert.match(styles, /transition-duration: 0\.01ms !important;/);

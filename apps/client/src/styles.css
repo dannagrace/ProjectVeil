@@ -83,6 +83,7 @@ button {
 .shell {
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(320px, 1fr) minmax(260px, 340px);
+  align-items: start;
   gap: 18px;
   padding: 20px;
 }
@@ -594,6 +595,59 @@ h1 {
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.hero-secondary-disclosure {
+  margin-top: 14px;
+  border: 1px solid rgba(94, 109, 126, 0.12);
+  border-radius: var(--pv-radius-panel);
+  background: var(--paper-strong);
+  overflow: hidden;
+}
+
+.hero-secondary-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hero-secondary-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.hero-secondary-disclosure summary span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.hero-secondary-disclosure summary::after {
+  content: "展开";
+  flex: 0 0 auto;
+  border: 1px solid rgba(102, 118, 136, 0.16);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hero-secondary-disclosure[open] summary::after {
+  content: "收起";
+}
+
+.hero-secondary-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.hero-secondary-body .account-card,
+.hero-secondary-body .log-panel {
+  margin-top: 0;
 }
 
 .account-card {
@@ -1476,7 +1530,9 @@ h1 {
 }
 
 .grid {
+  --tile-min-size: 0px;
   display: grid;
+  grid-template-columns: repeat(var(--map-columns), minmax(var(--tile-min-size), 1fr));
   gap: 8px;
 }
 
@@ -1487,6 +1543,8 @@ h1 {
   flex-direction: column;
   justify-content: space-between;
   align-items: flex-start;
+  min-width: var(--tile-min-size);
+  min-height: var(--tile-min-size);
   padding: 10px;
   border-radius: 16px;
   border: 1px solid var(--grid);
@@ -2515,6 +2573,8 @@ h1 {
 
   .map-panel {
     order: -2;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
   }
 
   .battle-panel {
@@ -2523,6 +2583,14 @@ h1 {
 
   .hero-panel {
     order: 0;
+  }
+
+  .grid {
+    --tile-min-size: 44px;
+  }
+
+  .hero-secondary-disclosure summary {
+    min-height: 44px;
   }
 
   .lobby-shell {
