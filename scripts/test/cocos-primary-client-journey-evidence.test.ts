@@ -67,8 +67,8 @@ test("release:cocos:primary-journey-evidence exports candidate-scoped JSON, mark
 
   assert.equal(artifact.candidate.name, "rc-primary-journey");
   assert.equal(artifact.execution.owner, "codex");
-  assert.equal(artifact.execution.overallStatus, "passed");
-  assert.match(artifact.execution.summary, /Headless primary-client journey evidence passed/);
+  assert.equal(artifact.execution.overallStatus, "partial");
+  assert.match(artifact.execution.summary, /Headless primary-client journey evidence captured with blocked visual evidence/);
   assert.ok(artifact.execution.durationMs >= 0);
   assert.equal(artifact.environment.evidenceMode, "headless-runtime-diagnostics");
   assert.equal(artifact.visualEvidence.mode, "manual-visual-capture-required");
