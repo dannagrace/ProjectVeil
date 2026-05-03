@@ -47,7 +47,7 @@ import {
   resolveSeasonalEvents
 } from "@server/domain/battle/event-engine";
 import { resolveFeatureEntitlementsForPlayer, resolveFeatureFlagsForPlayer } from "@server/domain/battle/feature-flags";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/display-name-rules";
 import {
   buildCampaignMissionStates,

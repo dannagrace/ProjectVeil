@@ -60,7 +60,7 @@ test("buildRiskQueue and reviewRiskQueueEntry cover warn, clear, and ban", async
     actorPlayerId: "admin:risk-review",
     actorRole: "admin",
     banStatus: "temporary",
-    banExpiry: "2026-04-24T00:00:00.000Z"
+    banExpiry: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString()
   });
   assert.equal(banned.banStatus, "temporary");
 });

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConfigCenterStore, ConfigDocumentId, ConfigDocumentSummary } from "@server/config-center";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

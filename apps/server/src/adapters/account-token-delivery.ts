@@ -24,7 +24,7 @@ import {
   readRedisUrl,
   type RedisClientLike
 } from "@server/infra/redis";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 export type AccountTokenDeliveryKind = "account-registration" | "password-recovery";
 export type AccountTokenDeliveryMode = "disabled" | "dev-token" | "smtp" | "webhook";

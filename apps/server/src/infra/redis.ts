@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import { RedisDriver } from "@colyseus/redis-driver";
 import { RedisPresence } from "@colyseus/redis-presence";
 import Redis from "ioredis";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
-import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 export interface ClosableRedisResource {
   shutdown?(): Promise<void> | void;
@@ -60,10 +59,41 @@ interface RedisConstructorLike {
   ): RedisClientLike & RedisEventableClient;
 }
 
+interface RedisRuntimeErrorEvent {
+  id: string;
+  recordedAt: string;
+  source: "server";
+  surface: "redis-client";
+  candidateRevision: string;
+  featureArea: "runtime";
+  ownerArea: "infra";
+  severity: "error";
+  errorCode: "redis_client_error";
+  message: string;
+  context: {
+    roomId: null;
+    playerId: null;
+    requestId: null;
+    route: null;
+    action: "redis.connect";
+    statusCode: null;
+    crash: false;
+    detail: string;
+  };
+}
+
+type RedisRuntimeErrorRecorder = (event: RedisRuntimeErrorEvent) => void;
+
+let redisRuntimeErrorRecorder: RedisRuntimeErrorRecorder = () => undefined;
+
 export interface CreateRedisClientDependencies {
   RedisCtor?: RedisConstructorLike;
   logger?: Pick<Console, "warn">;
-  recordRuntimeErrorEvent?: typeof recordRuntimeErrorEvent;
+  recordRuntimeErrorEvent?: RedisRuntimeErrorRecorder;
+}
+
+export function configureRedisRuntimeErrorRecorder(recorder: RedisRuntimeErrorRecorder | null): void {
+  redisRuntimeErrorRecorder = recorder ?? (() => undefined);
 }
 
 export function readRedisUrl(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -112,7 +142,7 @@ function redactRedisUrl(redisUrl: string): string {
 export function createRedisClient(redisUrl: string, deps: CreateRedisClientDependencies = {}): RedisClientLike {
   const RedisCtor = deps.RedisCtor ?? (Redis as unknown as RedisConstructorLike);
   const logger = deps.logger ?? console;
-  const captureRuntimeError = deps.recordRuntimeErrorEvent ?? recordRuntimeErrorEvent;
+  const captureRuntimeError = deps.recordRuntimeErrorEvent ?? redisRuntimeErrorRecorder;
   const redactedRedisUrl = redactRedisUrl(redisUrl);
   const client = new RedisCtor(redisUrl, {
     maxRetriesPerRequest: 3,

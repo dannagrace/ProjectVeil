@@ -8,7 +8,7 @@ import type { DailyQuestConfigDefinition } from "@server/domain/economy/daily-qu
 import type { PlayerAccountSnapshot, PlayerQuestRotationHistoryEntry, PlayerQuestState, RoomSnapshotStore } from "@server/persistence";
 import { normalizePlayerMailboxMessage } from "@server/domain/account/player-mailbox";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import {
   recordSeasonalEventOpsAuditLocalFallbackWrite,

@@ -5,7 +5,7 @@ import {
   readRuntimeSecret,
   resetRuntimeSecretsForTest,
   setRuntimeSecretsForTest
-} from "@server/domain/ops/runtime-secrets";
+} from "@server/infra/runtime-secrets";
 
 test("readRuntimeSecret prefers the in-memory secret cache over env", () => {
   setRuntimeSecretsForTest({

@@ -53,7 +53,7 @@ import { isPlayerBanActive } from "@server/domain/player-ban";
 import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/display-name-rules";
 import { resolveFeatureEntitlementsForPlayer } from "@server/domain/battle/feature-flags";
 import { loadLaunchRuntimeState, resolveLaunchMaintenanceAccess } from "@server/domain/ops/launch-runtime-state";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import { cacheWechatSessionKey, readWechatSessionKeyTtlSeconds, resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
 

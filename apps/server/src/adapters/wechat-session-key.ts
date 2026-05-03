@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
 import {
   recordWechatSessionKeyCacheRedisReadFailure,

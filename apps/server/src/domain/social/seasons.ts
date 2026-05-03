@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
-import { resetRuntimeSecretsForTest, setRuntimeSecretsForTest } from "@server/domain/ops/runtime-secrets";
+import { resetRuntimeSecretsForTest, setRuntimeSecretsForTest } from "@server/infra/runtime-secrets";
 import type { RedisClientLike } from "@server/infra/redis";
 
 class MemoryWechatSessionRedis {

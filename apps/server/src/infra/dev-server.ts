@@ -28,7 +28,9 @@ import {
   configureLobbyRoomSummaryStore,
   configureRoomSnapshotStore,
   createRedisLobbyRoomSummaryStore,
+  getActiveRoomInstances,
   listSharedLobbyRooms,
+  resetLobbyRoomRegistry,
   VeilColyseusRoom
 } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import { registerConfigViewerRoutes } from "@server/transport/http/config-viewer";
@@ -84,7 +86,7 @@ import {
   type RedisClientLike
 } from "@server/infra/redis";
 import { registerRetentionSummaryRoute } from "@server/domain/ops/retention-summary";
-import { loadRuntimeSecrets } from "@server/domain/ops/runtime-secrets";
+import { loadRuntimeSecrets } from "@server/infra/runtime-secrets";
 import { formatSchemaMigrationWarning, getSchemaMigrationStatus } from "@server/infra/schema-migrations";
 import type { AdminAuditWritableStore } from "@server/domain/ops/admin-audit-log";
 import { registerAdminForensicsMiddleware } from "@server/domain/ops/admin-forensics";
@@ -96,7 +98,7 @@ import { captureServerError, isErrorMonitoringEnabled } from "@server/domain/ops
 import { recordRuntimeErrorEvent } from "@server/domain/ops/observability";
 import { readBattleReplayRetentionPolicy, type BattleReplayRetentionPolicy } from "@server/domain/battle/battle-replay-retention";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 loadEnv();
 
@@ -294,6 +296,7 @@ export interface DevServerBootstrapDependencies {
       configCenterStore?: DevServerConfigCenterStore;
       persistence?: RuntimePersistenceHealth;
       enableTestRoutes?: boolean;
+      resetActiveRooms?: () => Promise<void> | void;
     }
   ): void;
   validateBackupStorage(): Promise<BackupStorageValidationResult>;
@@ -665,7 +668,19 @@ export async function startDevServer(
     store: effectiveSnapshotStore,
     configCenterStore,
     persistence: persistenceHealth,
-    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1"
+    enableTestRoutes: process.env.VEIL_ENABLE_TEST_ENDPOINTS === "1",
+    async resetActiveRooms() {
+      const activeRooms = Array.from(getActiveRoomInstances().values());
+      for (const room of activeRooms) {
+        await room.disconnect().catch((error: unknown) => {
+          console.warn("[test-reset] failed to disconnect active room", {
+            roomId: room.roomId,
+            error
+          });
+        });
+      }
+      resetLobbyRoomRegistry();
+    }
   });
   if ("get" in (expressApp as object)) {
     deps.registerRetentionSummaryRoute(expressApp, effectiveSnapshotStore);

@@ -47,7 +47,7 @@ import {
   type BattlePassRewardGrant
 } from "@server/domain/economy/battle-pass";
 import { applySeasonSoftDecay, decayDivisionToRating, resolveCompetitiveProgression } from "@server/domain/social/competitive-season";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { computeSeasonReward, resolveSeasonRewardConfig } from "@server/domain/social/season-rewards";
 import {
   prunePlayerBattleReplaysForRetention,

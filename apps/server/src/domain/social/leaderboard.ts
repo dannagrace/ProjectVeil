@@ -12,7 +12,7 @@ import type { RoomSnapshotStore } from "@server/persistence";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { isLeaderboardFrozen, isLeaderboardHidden } from "@server/domain/social/leaderboard-anti-abuse";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;

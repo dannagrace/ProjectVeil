@@ -26,7 +26,7 @@ import {
 import type { PaymentGatewayRegistration, PaymentNotificationHandler } from "@server/domain/payment/PaymentGatewayRegistry";
 import type { PaymentOrderSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { resolveShopProducts, type RegisterShopRoutesOptions, type ShopProduct, type ShopProductGrant } from "@server/domain/economy/shop";
 
 interface HttpApp {

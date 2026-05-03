@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { buildMinorProtectionBlockDetails, getMinorProtectionDateKey, readMinorProtectionConfig } from "@server/domain/ops/minor-protection";
 import type { PlayerAccountSnapshot, RoomSnapshotStore } from "@server/persistence";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 interface MinorProtectionApp {
   use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void;

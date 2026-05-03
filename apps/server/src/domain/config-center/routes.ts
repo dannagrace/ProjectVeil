@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { MapObjectsConfig, WorldGenerationConfig } from "@veil/shared/models";
 import type { ConfigCenterStore, ConfigDocumentId, ConfigStageDocumentInput } from "@server/domain/config-center/types";
 import { CONFIG_DEFINITIONS } from "@server/domain/config-center/constants";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import {
   configDefinitionFor,

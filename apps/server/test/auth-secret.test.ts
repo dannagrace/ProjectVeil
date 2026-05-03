@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
-import { resetRuntimeSecretsForTest } from "@server/domain/ops/runtime-secrets";
+import { resetRuntimeSecretsForTest } from "@server/infra/runtime-secrets";
 
 test("issueGuestAuthSession rejects production signing when VEIL_AUTH_SECRET is missing", { concurrency: false }, () => {
   const previousNodeEnv = process.env.NODE_ENV;

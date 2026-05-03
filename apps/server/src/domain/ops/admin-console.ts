@@ -38,7 +38,7 @@ import {
 } from "@server/domain/ops/launch-runtime-state";
 import { recordLeaderboardAbuseAlert } from "@server/domain/ops/observability";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 class InvalidAdminJsonError extends Error {

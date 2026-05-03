@@ -3,6 +3,7 @@ import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
+import { issueGuestAuthSession, resetGuestAuthSessions } from "@server/domain/account/auth";
 import { clearCachedFeatureFlagConfig } from "@server/domain/battle/feature-flags";
 import { configureRoomSnapshotStore, resetLobbyRoomRegistry, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 
@@ -17,12 +18,13 @@ async function startServer(port: number): Promise<Server> {
   return server;
 }
 
-async function joinRoom(port: number, logicalRoomId: string, playerId: string): Promise<ColyseusRoom> {
+async function joinRoom(port: number, logicalRoomId: string, playerId: string, authToken?: string): Promise<ColyseusRoom> {
   const client = new Client(`http://127.0.0.1:${port}`);
   return client.joinOrCreate("veil", {
     logicalRoomId,
     playerId,
-    seed: 1001
+    seed: 1001,
+    ...(authToken ? { authToken } : {})
   });
 }
 
@@ -72,7 +74,8 @@ test("connect handshake rejects clients older than MIN_SUPPORTED_CLIENT_VERSION"
   process.env.MIN_SUPPORTED_CLIENT_VERSION = "1.0.3";
   const port = 42600 + Math.floor(Math.random() * 1000);
   const server = await startServer(port);
-  const room = await joinRoom(port, "room-version-gate", "player-1");
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Player One" });
+  const room = await joinRoom(port, "room-version-gate", "player-1", session.token);
 
   t.after(async () => {
     if (originalMinimumVersion === undefined) {
@@ -81,6 +84,7 @@ test("connect handshake rejects clients older than MIN_SUPPORTED_CLIENT_VERSION"
       process.env.MIN_SUPPORTED_CLIENT_VERSION = originalMinimumVersion;
     }
     await room.leave(true).catch(() => undefined);
+    resetGuestAuthSessions();
     resetLobbyRoomRegistry();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
@@ -94,6 +98,7 @@ test("connect handshake rejects clients older than MIN_SUPPORTED_CLIENT_VERSION"
           requestId: "connect-old-client",
           roomId: "room-version-gate",
           playerId: "player-1",
+          authToken: session.token,
           clientVersion: "1.0.2"
         },
         "session.state"
@@ -107,7 +112,8 @@ test("connect handshake accepts clients at or above MIN_SUPPORTED_CLIENT_VERSION
   process.env.MIN_SUPPORTED_CLIENT_VERSION = "1.0.3";
   const port = 42700 + Math.floor(Math.random() * 1000);
   const server = await startServer(port);
-  const room = await joinRoom(port, "room-version-supported", "player-1");
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Player One" });
+  const room = await joinRoom(port, "room-version-supported", "player-1", session.token);
 
   t.after(async () => {
     if (originalMinimumVersion === undefined) {
@@ -116,6 +122,7 @@ test("connect handshake accepts clients at or above MIN_SUPPORTED_CLIENT_VERSION
       process.env.MIN_SUPPORTED_CLIENT_VERSION = originalMinimumVersion;
     }
     await room.leave(true).catch(() => undefined);
+    resetGuestAuthSessions();
     resetLobbyRoomRegistry();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
@@ -127,6 +134,7 @@ test("connect handshake accepts clients at or above MIN_SUPPORTED_CLIENT_VERSION
       requestId: "connect-supported-client",
       roomId: "room-version-supported",
       playerId: "player-1",
+      authToken: session.token,
       clientVersion: "1.0.3"
     },
     "session.state"
@@ -168,7 +176,8 @@ test("connect handshake applies channel-specific minimum versions from feature-f
   delete process.env.MIN_SUPPORTED_CLIENT_VERSION;
   const port = 42800 + Math.floor(Math.random() * 1000);
   const server = await startServer(port);
-  const room = await joinRoom(port, "room-channel-version-gate", "player-1");
+  const session = issueGuestAuthSession({ playerId: "player-1", displayName: "Player One" });
+  const room = await joinRoom(port, "room-channel-version-gate", "player-1", session.token);
 
   t.after(async () => {
     const { rm } = await import("node:fs/promises");
@@ -184,6 +193,7 @@ test("connect handshake applies channel-specific minimum versions from feature-f
     }
     await rm(tempConfigPath, { force: true }).catch(() => undefined);
     await room.leave(true).catch(() => undefined);
+    resetGuestAuthSessions();
     resetLobbyRoomRegistry();
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
@@ -197,6 +207,7 @@ test("connect handshake applies channel-specific minimum versions from feature-f
           requestId: "connect-wechat-old-client",
           roomId: "room-channel-version-gate",
           playerId: "player-1",
+          authToken: session.token,
           clientVersion: "1.0.5",
           clientChannel: "wechat"
         },
@@ -212,6 +223,7 @@ test("connect handshake applies channel-specific minimum versions from feature-f
       requestId: "connect-h5-same-client",
       roomId: "room-channel-version-gate",
       playerId: "player-1",
+      authToken: session.token,
       clientVersion: "1.0.5",
       clientChannel: "h5"
     },

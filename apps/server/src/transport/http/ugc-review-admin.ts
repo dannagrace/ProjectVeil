@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import {
   buildUgcReviewQueue,
   getUgcModerationConfigMeta,

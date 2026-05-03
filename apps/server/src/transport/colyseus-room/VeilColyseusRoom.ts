@@ -72,7 +72,7 @@ import {
   FriendLeaderboardTooManyIdsError,
   loadAuthorizedFriendLeaderboardAccounts
 } from "@server/adapters/wechat-social";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 
 import {
   activeRoomInstances,

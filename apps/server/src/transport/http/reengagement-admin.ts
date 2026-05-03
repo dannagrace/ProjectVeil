@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RoomSnapshotStore } from "@server/persistence";
 import { appendAdminAuditLogIfAvailable } from "@server/domain/ops/admin-audit-log";
 import { loadReengagementPolicies, previewReengagementCandidates, runReengagementSweep } from "@server/domain/ops/reengagement";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 
 type AdminRouteHandler = (request: IncomingMessage & { params: Record<string, string> }, response: ServerResponse) => void | Promise<void>;

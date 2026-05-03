@@ -12,8 +12,8 @@ import { getMySqlPoolMetricsSnapshot, resetTrackedMySqlPools } from "@server/inf
 import { resetGuestAuthSessions } from "@server/domain/account/auth";
 import { configureAuthoritativeRoomTelemetry } from "@server/index";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
-import { getActiveRoomInstances, resetLobbyRoomRegistry } from "@server/transport/colyseus-room/runtime";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
+import { configureRedisRuntimeErrorRecorder } from "@server/infra/redis";
 
 export interface RuntimeRoomSnapshot {
   roomId: string;
@@ -2195,6 +2195,8 @@ export function recordRuntimeErrorEvent(
   );
 }
 
+configureRedisRuntimeErrorRecorder(recordRuntimeErrorEvent);
+
 export function countRuntimeErrorEventsSince(
   sinceMs: number,
   filters: Partial<Pick<RuntimeDiagnosticsErrorEvent, "featureArea" | "ownerArea" | "severity">> = {}
@@ -2935,6 +2937,7 @@ export function registerRuntimeObservabilityRoutes(
     configCenterStore?: FeatureFlagConfigCenterDocumentStore;
     persistence?: RuntimePersistenceHealth;
     enableTestRoutes?: boolean;
+    resetActiveRooms?: () => Promise<void> | void;
   }
 ): void {
   const serviceName = options?.serviceName ?? "project-veil-server";
@@ -3186,16 +3189,7 @@ export function registerRuntimeObservabilityRoutes(
 
       try {
         if (store?.clearAll) {
-          const activeRooms = Array.from(getActiveRoomInstances().values());
-          for (const room of activeRooms) {
-            await room.disconnect().catch((error: unknown) => {
-              console.warn("[test-reset] failed to disconnect active room", {
-                roomId: room.roomId,
-                error
-              });
-            });
-          }
-          resetLobbyRoomRegistry();
+          await options.resetActiveRooms?.();
           store.clearAll();
           resetCapturedAnalyticsEventsForTest();
           // Also reset guest auth sessions to clear cached tokens/sessions

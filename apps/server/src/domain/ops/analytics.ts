@@ -1,7 +1,7 @@
 import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName, createAnalyticsEvent } from "@veil/shared/platform";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { validateAuthSessionFromRequest } from "@server/domain/account/auth";
-import { readRuntimeSecret } from "@server/domain/ops/runtime-secrets";
+import { readRuntimeSecret } from "@server/infra/runtime-secrets";
 import { timingSafeCompareAdminToken } from "@server/infra/admin-token";
 import { consumeRedisBackedOrLocalRateLimit, createLocalRateLimitState } from "@server/infra/http-rate-limit";
 import { createRedisClient, readRedisUrl, type RedisClientLike } from "@server/infra/redis";
