@@ -73,7 +73,7 @@
     "ws": "^8.18.3"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1037.0",
+    "@aws-sdk/client-secrets-manager": "^3.1041.0",
     "@colyseus/redis-driver": "^0.17.7",
     "@colyseus/redis-presence": "^0.17.7",
     "@colyseus/sdk": "^0.17.42",
