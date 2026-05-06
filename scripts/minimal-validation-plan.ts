@@ -841,5 +841,11 @@ function main(): void {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[minimal-validation-plan] ${message}`);
+    process.exitCode = 1;
+  }
 }

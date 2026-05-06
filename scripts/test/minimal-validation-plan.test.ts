@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import test from "node:test";
 
 import { inferValidationPlan, renderValidationPlan } from "../minimal-validation-plan.ts";
+
+const repoRoot = process.cwd();
 
 test("maps a cocos client change to the Cocos delivery baseline", () => {
   const plan = inferValidationPlan(["apps/cocos-client/assets/scripts/VeilRoot.ts"]);
@@ -97,4 +101,21 @@ test("renders markdown output that is ready for PR comments", () => {
   assert.match(rendered, /- \[ \] `npm run typecheck -- server`/);
   assert.match(rendered, /Required because: Server runtime/);
   assert.match(rendered, /### Reviewer notes/);
+});
+
+test("CLI reports empty comparisons without a stack trace", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", path.join(repoRoot, "scripts/minimal-validation-plan.ts"), "--base", "HEAD", "--head", "HEAD~0"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8"
+    }
+  );
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /No changed paths detected/);
+  assert.doesNotMatch(result.stderr, /\n\s+at\s/);
+  assert.doesNotMatch(result.stderr, /Node\.js v/);
 });
