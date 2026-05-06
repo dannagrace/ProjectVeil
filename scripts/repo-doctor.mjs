@@ -103,7 +103,17 @@ function resolveLocalBin(rootDir, name) {
 }
 
 function resolvePackageInstalled(rootDir, name) {
-  return fs.existsSync(path.join(rootDir, "node_modules", name, "package.json"));
+  let currentDir = path.resolve(rootDir);
+  while (true) {
+    if (fs.existsSync(path.join(currentDir, "node_modules", name, "package.json"))) {
+      return true;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return false;
+    }
+    currentDir = parentDir;
+  }
 }
 
 function resolvePlaywrightCli(rootDir) {
@@ -163,7 +173,7 @@ function collectDependencyCheck(context) {
   const requiredPackages = ["tsx", "typescript", "vite", "@playwright/test"];
   const missingPackages = requiredPackages.filter((name) => !context.packageInstalled(name));
 
-  if (!fs.existsSync(nodeModulesDir)) {
+  if (missingPackages.length > 0 && !fs.existsSync(nodeModulesDir)) {
     checks.push(
       createCheck(
         "dependency-install",
@@ -196,7 +206,9 @@ function collectDependencyCheck(context) {
       "dependency-install",
       "Dependency install state",
       "pass",
-      "node_modules and the core local toolchain packages are present."
+      fs.existsSync(nodeModulesDir)
+        ? "node_modules and the core local toolchain packages are present."
+        : "Core local toolchain packages resolve from an ancestor node_modules directory."
     )
   );
   return checks;

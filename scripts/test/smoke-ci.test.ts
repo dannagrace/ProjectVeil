@@ -41,12 +41,12 @@ test("executeSmokeCi stops at the first failure and marks later stages skipped",
       nowIsoImpl: () => "2026-04-12T00:00:00.000Z",
       runStageCommandImpl: async (stage, logPath) => {
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
-        fs.writeFileSync(logPath, `${stage.script}\n`);
-        if (stage.script === "validate:quickstart") {
+        fs.writeFileSync(logPath, `${stage.command}\n`);
+        if (stage.id === "validate-quickstart") {
           return {
             status: "failed",
             durationMs: 25,
-            failureMessage: "validate:quickstart exited with code 1"
+            failureMessage: "npm run validate -- quickstart exited with code 1"
           };
         }
         return {
@@ -60,7 +60,9 @@ test("executeSmokeCi stops at the first failure and marks later stages skipped",
 
   assert.equal(report.summary.status, "failed");
   assert.equal(report.stages[0].status, "passed");
+  assert.equal(report.stages[1].command, "npm run validate -- quickstart");
   assert.equal(report.stages[1].status, "failed");
+  assert.equal(report.stages[2].command, "npm run smoke -- client:boot-room");
   assert.equal(report.stages[2].status, "skipped");
   assert.match(renderSmokeCiMarkdown(report), /Overall result: `FAILED`/);
   assert.equal(fs.existsSync(path.join(workspace, "smoke-ci.json")), true);

@@ -17,6 +17,10 @@ function writeFile(targetPath: string, content = "") {
   fs.writeFileSync(targetPath, content);
 }
 
+function writePackageMarker(rootDir: string, packageName: string) {
+  writeFile(path.join(rootDir, "node_modules", packageName, "package.json"), `{"name":${JSON.stringify(packageName)}}\n`);
+}
+
 function basePackageJson() {
   return {
     name: "project-veil",
@@ -95,6 +99,36 @@ test("doctor warns on Node and npm drift even when engines still pass", () => {
   assert.match(output, /differs from \.nvmrc/);
   assert.match(output, /differs from packageManager/);
   assert.match(output, /Doctor result: passed with warnings/);
+});
+
+test("doctor accepts dependencies resolved from an ancestor node_modules for nested worktrees", () => {
+  const parentRoot = fs.mkdtempSync(path.join(os.tmpdir(), "project-veil-doctor-parent-"));
+  const repoRoot = path.join(parentRoot, ".worktrees", "project-veil");
+  fs.mkdirSync(repoRoot, { recursive: true });
+  for (const packageName of ["tsx", "typescript", "vite", "@playwright/test"]) {
+    writePackageMarker(parentRoot, packageName);
+  }
+
+  const report = collectDoctorReport(
+    {
+      flows: ["baseline"]
+    },
+    {
+      repoRoot,
+      packageJson: basePackageJson(),
+      nvmrcValue: "22",
+      envFile: {},
+      env: { HOME: parentRoot },
+      nodeVersion: "v22.11.0",
+      npmVersion: "10.9.3",
+      commandExists: () => false,
+      runCommand: () => ({ status: 1, stdout: "", stderr: "", error: null })
+    }
+  );
+
+  assert.equal(report.counts.fail, 0);
+  assert.equal(report.overallStatus, "pass");
+  assert.match(renderDoctorReport(report), /ancestor node_modules/);
 });
 
 test("doctor fails with runtime remediation when Node/npm are unsupported", () => {

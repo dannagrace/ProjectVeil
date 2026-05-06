@@ -11,18 +11,24 @@ const defaultStages = [
   {
     id: "doctor",
     script: "doctor",
+    args: [],
+    command: "npm run doctor",
     label: "Repository doctor",
     remediation: "Inspect the doctor output and restore the documented Node/npm or optional prerequisite setup before retrying."
   },
   {
     id: "validate-quickstart",
-    script: "validate:quickstart",
+    script: "validate",
+    args: ["--", "quickstart"],
+    command: "npm run validate -- quickstart",
     label: "Contributor quickstart validation",
     remediation: "Inspect the quickstart validator output and repair the H5 build or local server boot path before retrying."
   },
   {
     id: "smoke-client-boot-room",
-    script: "smoke:client:boot-room",
+    script: "smoke",
+    args: ["--", "client:boot-room"],
+    command: "npm run smoke -- client:boot-room",
     label: "Client boot-room smoke",
     remediation: "Inspect the captured server/client logs and repair the lobby boot or room-join path before retrying."
   }
@@ -152,7 +158,8 @@ async function runStageCommand(stage, logPath, spawnImpl = spawn) {
 
   try {
     await new Promise((resolve, reject) => {
-      const child = spawnImpl(npmCommand(), ["run", stage.script], {
+      const command = stage.command ?? `npm run ${stage.script}`;
+      const child = spawnImpl(npmCommand(), ["run", stage.script, ...(stage.args ?? [])], {
         cwd: repoRoot,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"]
@@ -174,8 +181,8 @@ async function runStageCommand(stage, logPath, spawnImpl = spawn) {
           return;
         }
         const message = signal
-          ? `${stage.script} terminated with signal ${signal}`
-          : `${stage.script} exited with code ${code ?? 1}`;
+          ? `${command} terminated with signal ${signal}`
+          : `${command} exited with code ${code ?? 1}`;
         reject(new Error(message));
       });
     });
@@ -209,7 +216,7 @@ export async function executeSmokeCi(options = {}, deps = {}) {
 
   for (const [index, stage] of defaultStages.entries()) {
     const logPath = path.resolve(logDir, `${String(index + 1).padStart(2, "0")}-${stage.id}.log`);
-    const command = `npm run ${stage.script}`;
+    const command = stage.command ?? `npm run ${stage.script}`;
     if (encounteredFailure) {
       stages.push({
         id: stage.id,
