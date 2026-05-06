@@ -122,7 +122,7 @@ ${rows.join("\n")}
   );
 }
 
-function runAudit(args: string[], cwd: string): { stdout: string; status: number } {
+function runAudit(args: string[], cwd: string): { stdout: string; stderr: string; status: number } {
   const nextArgs = [...args];
   if (!nextArgs.includes("--wechat-artifacts-dir")) {
     const outputIndex = nextArgs.findIndex((arg) => arg === "--output");
@@ -139,11 +139,12 @@ function runAudit(args: string[], cwd: string): { stdout: string; status: number
       encoding: "utf8",
       stdio: "pipe"
     });
-    return { stdout, status: 0 };
+    return { stdout, stderr: "", status: 0 };
   } catch (error) {
-    const execError = error as NodeJS.ErrnoException & { stdout?: string; status?: number };
+    const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; status?: number };
     return {
       stdout: execError.stdout ?? "",
+      stderr: execError.stderr ?? "",
       status: execError.status ?? 1
     };
   }
@@ -163,6 +164,17 @@ function getOwnerReminderPaths(outputDir: string, candidate: string, revision: s
 function getFreshnessHistoryPath(outputDir: string, candidate: string): string {
   return path.join(outputDir, `candidate-evidence-freshness-history-${candidate}.json`);
 }
+
+test("same-candidate evidence audit reports CLI argument errors without a stack trace", () => {
+  const result = runAudit(["--help"], REPO_ROOT);
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 1);
+  assert.match(output, /Candidate evidence audit failed: Unknown argument: --help/);
+  assert.doesNotMatch(output, /same-candidate-evidence-audit\.ts:\d+/);
+  assert.doesNotMatch(output, /\bat parseArgs\b/);
+  assert.doesNotMatch(output, /\bat main\b/);
+});
 
 test("same-candidate evidence audit passes when required artifact families align to the same candidate revision", () => {
   const workspace = createTempWorkspace();

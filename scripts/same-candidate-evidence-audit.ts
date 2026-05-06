@@ -2318,7 +2318,13 @@ export function runSameCandidateEvidenceAuditCli(
 }
 
 function main(): void {
-  runSameCandidateEvidenceAuditCli();
+  try {
+    runSameCandidateEvidenceAuditCli();
+  } catch (error) {
+    process.exitCode = 1;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Candidate evidence audit failed: ${message}`);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
