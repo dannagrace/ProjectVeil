@@ -161,6 +161,11 @@ async function verifyEndpoints() {
 }
 
 export async function main() {
+  const [unknownArg] = process.argv.slice(2);
+  if (unknownArg) {
+    throw new Error(`Unknown argument: ${unknownArg}`);
+  }
+
   assertSupportedRuntime({
     commandName: "npm run validate -- quickstart",
     repoRoot: rootDirPath

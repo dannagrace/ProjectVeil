@@ -9,13 +9,26 @@ import { runFamilyCli } from "../ops/command-family.ts";
 test("runFamilyCli shell-quotes forwarded args to avoid command substitution", () => {
   const markerPath = resolve(tmpdir(), `project-veil-command-family-${process.pid}-${Date.now()}`);
   rmSync(markerPath, { force: true });
+  let stderr = "";
+  const originalStderrWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr += chunk.toString();
+    return true;
+  }) as typeof process.stderr.write;
 
-  runFamilyCli({
-    family: "validate",
-    argv: ["assets", "--", `$(touch ${markerPath})`],
-  });
+  try {
+    const exitCode = runFamilyCli({
+      family: "validate",
+      argv: ["assets", "--", `$(touch ${markerPath})`],
+    });
 
-  assert.equal(existsSync(markerPath), false);
+    assert.equal(exitCode, 1);
+    assert.equal(existsSync(markerPath), false);
+    assert.match(stderr, /Unknown argument/);
+    assert.doesNotMatch(stderr, /\n\s+at\s|Node\.js v\d+/);
+  } finally {
+    process.stderr.write = originalStderrWrite;
+  }
 });
 
 test("runFamilyCli stops long-running smoke commands when runtime preflight fails", () => {

@@ -118,6 +118,8 @@ function parseArgs(argv: string[]): {
         extraMapPacks.push(definition);
       }
       index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
     }
   }
 

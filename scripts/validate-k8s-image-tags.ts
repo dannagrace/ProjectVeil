@@ -17,6 +17,8 @@ function parseArgs(argv: string[]): { manifestPath: string } {
     if (arg === "--manifest") {
       manifestPath = resolve(argv[index + 1] ?? manifestPath);
       index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
     }
   }
 

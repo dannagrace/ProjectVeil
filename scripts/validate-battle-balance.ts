@@ -46,7 +46,7 @@ function parseArgs(argv: string[]): CliOptions {
 
   for (const argument of argv) {
     if (!argument.startsWith("--")) {
-      continue;
+      throw new Error(`Unknown argument: ${argument}`);
     }
 
     const [key, rawValue] = argument.slice(2).split("=", 2);
@@ -64,6 +64,8 @@ function parseArgs(argv: string[]): CliOptions {
       options.maxActions = Math.max(1, Math.floor(Number(value) || options.maxActions));
     } else if (key === "top-skills" && value) {
       options.topSkills = Math.max(1, Math.floor(Number(value) || options.topSkills));
+    } else {
+      throw new Error(`Unknown argument: ${argument}`);
     }
   }
 

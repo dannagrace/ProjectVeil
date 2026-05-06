@@ -190,16 +190,39 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function stripNodeStackTrace(stderr: string): string {
+  if (!/\n\s+at\s|\.ts:\d+:\d+|Node\.js v\d+/.test(stderr)) {
+    return stderr;
+  }
+
+  const lines = stderr.split(/\r?\n/);
+  const errorLine = lines.find((line) => /^(?:Error|TypeError|SyntaxError|RangeError):\s/.test(line.trim()));
+  if (errorLine) {
+    return `${errorLine.trim()}\n`;
+  }
+
+  return stderr
+    .split(/\r?\n\s+at\s/)[0]
+    .replace(/\n?\s*\^+\s*$/m, "")
+    .trimEnd() + "\n";
+}
+
 function runCommand(command: string, args: string[]): number {
   const forwardedArgs = args[0] === "--" ? args.slice(1) : args;
   const commandLine = [command, ...forwardedArgs.map((arg) => shellQuote(arg))].join(" ");
   const result = spawnSync(commandLine, {
+    encoding: "utf8",
     env: process.env,
+    maxBuffer: 1024 * 1024 * 50,
     shell: true,
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "pipe"],
   });
+  const stderr = typeof result.stderr === "string" ? result.stderr : result.stderr?.toString() ?? "";
 
   if (typeof result.status === "number") {
+    if (stderr) {
+      process.stderr.write(result.status === 0 ? stderr : stripNodeStackTrace(stderr));
+    }
     return result.status;
   }
 

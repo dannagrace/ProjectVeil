@@ -698,6 +698,28 @@ async function startAuthServer(port: number, store: RoomSnapshotStore | null = n
   return server;
 }
 
+async function allocateTestPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createNetServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error("Failed to allocate test port."));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 async function withAnnouncementConfig(
   payload: unknown
 ): Promise<() => void> {
@@ -983,7 +1005,7 @@ async function startTokenDeliverySmtpServer(): Promise<{
 }
 
 test("guest auth route issues a signed server-generated session token", async (t) => {
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1016,7 +1038,7 @@ test("guest auth route issues a signed server-generated session token", async (t
 });
 
 test("guest-login ignores a registered account playerId", async (t) => {
-  const port = 47100 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("registered-player", {
     loginId: "registered-ranger",
@@ -1050,7 +1072,7 @@ test("guest-login ignores a registered account playerId", async (t) => {
 });
 
 test("guest-login ignores WeChat-style playerIds", async (t) => {
-  const port = 47200 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const wechatPlayerId = createWechatMiniGamePlayerId("wx-openid-reserved");
@@ -1079,7 +1101,7 @@ test("guest-login ignores WeChat-style playerIds", async (t) => {
 });
 
 test("guest-login ignores a WeChat-bound account playerId", async (t) => {
-  const port = 47300 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountWechatMiniGameIdentity("wechat-bound-player", {
     openId: "wx-openid-bound"
@@ -1110,7 +1132,7 @@ test("guest-login ignores a WeChat-bound account playerId", async (t) => {
 });
 
 test("guest-login without a playerId still creates a guest session", async (t) => {
-  const port = 47400 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1137,7 +1159,7 @@ test("guest-login without a playerId still creates a guest session", async (t) =
 });
 
 test("auth session rejects a stale guest token after the player becomes a registered account", async (t) => {
-  const port = 47500 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1187,7 +1209,7 @@ test("guest auth route does not trust client playerId for maintenance whitelist 
     },
     updatedAt: "2026-04-17T08:00:00.000Z"
   });
-  const port = 43100 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
 
   t.after(async () => {
@@ -1236,7 +1258,7 @@ test("guest auth route does not trust client playerId for maintenance whitelist 
 });
 
 test("auth session route resolves a bearer token into the current guest session", async (t) => {
-  const port = 43500 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
   const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
     method: "POST",
@@ -1286,7 +1308,7 @@ test("auth session route resolves a bearer token into the current guest session"
 });
 
 test("auth session route keeps a guest token valid for concurrent account reads", async (t) => {
-  const port = 43550 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1337,7 +1359,7 @@ test("auth session route keeps a guest token valid for concurrent account reads"
 });
 
 test("connect message prefers auth token identity over a spoofed playerId", async (t) => {
-  const port = 44000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
   const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
     method: "POST",
@@ -1375,7 +1397,7 @@ test("connect message prefers auth token identity over a spoofed playerId", asyn
 });
 
 test("remote room join ignores a spoofed playerId when an authenticated join token is provided", async (t) => {
-  const port = 44100 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
   const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
     method: "POST",
@@ -1409,7 +1431,7 @@ test("remote room join ignores a spoofed playerId when an authenticated join tok
 });
 
 test("guest auth connect claims a default hero slot for non-template player ids", async (t) => {
-  const port = 44250 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
@@ -1453,7 +1475,7 @@ test("guest auth connect claims a default hero slot for non-template player ids"
 });
 
 test("guest-login issues the daily first-login reward for server-generated guests and emits analytics", async (t) => {
-  const port = 44490 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const analyticsLogs: string[] = [];
   configureAnalyticsRuntimeDependencies({
@@ -1530,7 +1552,7 @@ test("guest-login issues the daily first-login reward for server-generated guest
 });
 
 test("account bind upgrades a guest session into password login and account-login restores it", async (t) => {
-  const port = 44500 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1610,7 +1632,7 @@ test("account bind upgrades a guest session into password login and account-logi
 });
 
 test("account-login rejects debug-bypass without creating an account or session", async (t) => {
-  const port = 47000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1642,7 +1664,7 @@ test("account-login rejects debug-bypass without creating an account or session"
 });
 
 test("account-login rejects debug-bypass for an existing account", async (t) => {
-  const port = 47050 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("debug-existing-player", {
     loginId: "debug-existing",
@@ -1677,7 +1699,7 @@ test("account-login rejects debug-bypass for an existing account", async (t) => 
 });
 
 test("account password policy rejects common and overlong passwords before hashing", async (t) => {
-  const port = 45580 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -1735,7 +1757,7 @@ test("account password policy rejects common and overlong passwords before hashi
 });
 
 test("account-login carries the streak from yesterday and returns the issued reward", async (t) => {
-  const port = 44505 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const today = getDailyRewardDateKey();
@@ -1795,7 +1817,7 @@ test("account-login carries the streak from yesterday and returns the issued rew
 });
 
 test("account bind emits experiment conversion analytics for the assigned variant", async (t) => {
-  const port = 44510 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const analyticsLogs: string[] = [];
   process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
@@ -1871,7 +1893,7 @@ test("account access tokens expire with token_expired and can be rotated through
     cleanup
   );
 
-  const port = 44540 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("expiry-player", {
     loginId: "expiry-ranger",
@@ -1929,7 +1951,7 @@ test("account access tokens expire with token_expired and can be rotated through
 });
 
 test("refresh rotation invalidates the previous refresh token and logout revokes the active one", async (t) => {
-  const port = 44580 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("rotate-player", {
     loginId: "rotate-ranger",
@@ -1997,7 +2019,7 @@ test("refresh rotation invalidates the previous refresh token and logout revokes
 });
 
 test("auth readiness and metrics summarize auth posture for dashboards", async (t) => {
-  const port = 44590 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("metrics-player", {
     loginId: "metrics-ranger",
@@ -2145,7 +2167,7 @@ test("auth readiness and metrics summarize auth posture for dashboards", async (
 });
 
 test("revoking one device session leaves other account sessions active and blocks further refreshes for the revoked device", async (t) => {
-  const port = 44600 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("device-player", {
     loginId: "device-ranger",
@@ -2223,7 +2245,7 @@ test("revoking one device session leaves other account sessions active and block
 });
 
 test("password changes revoke the current account session family", async (t) => {
-  const port = 44610 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.bindPlayerAccountCredentials("password-player", {
     loginId: "password-ranger",
@@ -2295,7 +2317,7 @@ test("guest auth route returns 429 after the per-IP rate limit is exceeded", { c
     cleanup
   );
 
-  const port = 44625 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
 
   t.after(async () => {
@@ -2348,7 +2370,7 @@ test(
     cleanup
   );
 
-  const port = 44650 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2414,7 +2436,7 @@ test("account login lockout expires after the configured duration", { concurrenc
     cleanup
   );
 
-  const port = 44675 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2483,7 +2505,7 @@ test(
     cleanup
   );
 
-  const port = 44710 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2628,7 +2650,7 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
     cleanup
   );
 
-  const port = 44700 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
 
   t.after(async () => {
@@ -2671,7 +2693,7 @@ test("guest auth session LRU eviction invalidates the oldest idle guest token", 
 test("account registration request and confirm create a new formal account, session, and audit trail", {
   concurrency: false
 }, async (t) => {
-  const port = 44710 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2748,7 +2770,7 @@ test("account registration request and confirm create a new formal account, sess
 
 test("account registration confirm accepts a token restored from shared Redis state", { concurrency: false }, async (t) => {
   const redis = new Redis();
-  const port = 44711 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   setGuestSessionClusterClientForTest(redis as never);
@@ -2800,7 +2822,7 @@ test("account registration confirm accepts a token restored from shared Redis st
 });
 
 test("account registration request rejects already-bound login IDs", { concurrency: false }, async (t) => {
-  const port = 44715 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2835,7 +2857,7 @@ test("account registration request rejects already-bound login IDs", { concurren
 });
 
 test("account registration confirm rejects invalid tokens", { concurrency: false }, async (t) => {
-  const port = 44720 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2875,7 +2897,7 @@ test("account registration confirm rejects invalid tokens", { concurrency: false
 });
 
 test("account registration request reuses the active token for the same loginId until it is consumed", { concurrency: false }, async (t) => {
-  const port = 44721 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2949,7 +2971,7 @@ test("account registration request returns 429 after the per-IP rate limit is ex
     cleanup
   );
 
-  const port = 44722 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -2991,7 +3013,7 @@ test("account registration request returns 429 after the per-IP rate limit is ex
 test("password recovery request and confirm reset the password, revoke old sessions, and append account audit events", {
   concurrency: false
 }, async (t) => {
-  const port = 44725 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3102,7 +3124,7 @@ test("password recovery request and confirm reset the password, revoke old sessi
 });
 
 test("password recovery confirm rejects invalid tokens", { concurrency: false }, async (t) => {
-  const port = 44735 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3149,7 +3171,7 @@ test("password recovery confirm rejects invalid tokens", { concurrency: false },
 });
 
 test("password recovery request reuses the active token and avoids duplicate audit entries", { concurrency: false }, async (t) => {
-  const port = 44740 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3224,7 +3246,7 @@ test("password recovery request reuses the active token and avoids duplicate aud
 
 test("password recovery confirm accepts a token restored from shared Redis state", { concurrency: false }, async (t) => {
   const redis = new Redis();
-  const port = 44741 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   setGuestSessionClusterClientForTest(redis as never);
@@ -3292,7 +3314,7 @@ test("password recovery request returns 429 after the per-IP rate limit is excee
     cleanup
   );
 
-  const port = 44745 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3351,7 +3373,7 @@ test("account registration request uses webhook delivery without leaking the tok
     cleanup
   );
 
-  const port = 44746 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3441,7 +3463,7 @@ test("account registration request uses smtp delivery without leaking the token"
     cleanup
   );
 
-  const port = 44756 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3507,7 +3529,7 @@ test("account registration request returns 503 when webhook delivery is misconfi
     cleanup
   );
 
-  const port = 44747 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3545,7 +3567,7 @@ test("production startup rejects a missing account registration delivery mode", 
     cleanup
   );
 
-  const port = 44750 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
 
   try {
@@ -3571,7 +3593,7 @@ test("production startup rejects dev-token password recovery delivery mode", { c
     cleanup
   );
 
-  const port = 44751 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
 
   try {
@@ -3598,7 +3620,7 @@ test("password recovery request uses webhook delivery without leaking the token"
     cleanup
   );
 
-  const port = 44748 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3695,7 +3717,7 @@ test("password recovery request schedules retry for retryable webhook failures a
     cleanup
   );
 
-  const port = 44749 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3818,7 +3840,7 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
     cleanup
   );
 
-  const port = 44759 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -3892,7 +3914,7 @@ test("password recovery request returns 502 and dead-letters non-retryable webho
 });
 
 test("wechat login defaults to mock mode in NODE_ENV=test", { concurrency: false }, async (t) => {
-  const port = 44750 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port);
   const previousNodeEnv = process.env.NODE_ENV;
 
@@ -3927,7 +3949,7 @@ test("wechat login defaults to mock mode in NODE_ENV=test", { concurrency: false
 });
 
 test("wechat login route can be explicitly disabled", { concurrency: false }, async (t) => {
-  const port = 44850 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port, new MemoryAuthStore());
 
   t.after(async () => {
@@ -3957,7 +3979,7 @@ test("wechat login route can be explicitly disabled", { concurrency: false }, as
 });
 
 test("legacy wechat mini game route remains available as an alias", { concurrency: false }, async (t) => {
-  const port = 44855 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port, new MemoryAuthStore());
   const previousNodeEnv = process.env.NODE_ENV;
 
@@ -3994,7 +4016,7 @@ test("legacy wechat mini game route remains available as an alias", { concurrenc
 });
 
 test("unauthenticated wechat login cannot bind a registered account from body playerId", { concurrency: false }, async (t) => {
-  const port = 44860 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4060,7 +4082,7 @@ test("unauthenticated wechat login cannot bind a registered account from body pl
 });
 
 test("unauthenticated wechat login cannot bind an existing guest account from body playerId", { concurrency: false }, async (t) => {
-  const port = 44865 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4121,7 +4143,7 @@ test("unauthenticated wechat login cannot bind an existing guest account from bo
 });
 
 test("wechat mini game production exchange binds code2Session identity onto an authenticated account", { concurrency: false }, async (t) => {
-  const port = 44950 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4215,7 +4237,7 @@ test("wechat mini game production exchange binds code2Session identity onto an a
 });
 
 test("wechat mini game login migrates guest progression to a new WeChat account and revokes the guest session", { concurrency: false }, async (t) => {
-  const port = 44965 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4347,7 +4369,7 @@ test("wechat mini game login migrates guest progression to a new WeChat account 
 });
 
 test("wechat guest upgrade returns a conflict when the bound account already has progression", { concurrency: false }, async (t) => {
-  const port = 44970 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4440,7 +4462,7 @@ test("wechat guest upgrade returns a conflict when the bound account already has
 });
 
 test("wechat guest upgrade can keep the registered progression when explicitly chosen", { concurrency: false }, async (t) => {
-  const port = 44975 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4535,7 +4557,7 @@ test("wechat guest upgrade can keep the registered progression when explicitly c
 });
 
 test("wechat mini game login ignores client adult claims for minor protection", { concurrency: false }, async (t) => {
-  const port = 44980 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4591,7 +4613,7 @@ test("wechat mini game login ignores client adult claims for minor protection", 
 });
 
 test("wechat mini game login ignores self-declared adult birthdate for minor protection", { concurrency: false }, async (t) => {
-  const port = 45010 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4645,7 +4667,7 @@ test("wechat mini game login ignores self-declared adult birthdate for minor pro
 });
 
 test("wechat mini game login reuses the bound player even when later requests spoof another playerId", { concurrency: false }, async (t) => {
-  const port = 45050 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
   const originalFetch = globalThis.fetch;
@@ -4723,7 +4745,7 @@ test("wechat mini game login reuses the bound player even when later requests sp
 });
 
 test("wechat session key refresh restores phone binding after cached session expiry", { concurrency: false }, async (t) => {
-  const port = 45070 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const previousAppId = process.env.WECHAT_APP_ID;
   const previousTtl = process.env.VEIL_WECHAT_SESSION_KEY_TTL_SECONDS;
   const store = new MemoryAuthStore();
@@ -4836,7 +4858,7 @@ test("wechat session key refresh restores phone binding after cached session exp
 });
 
 test("wechat mock mode stays disabled outside NODE_ENV=test", { concurrency: false }, async (t) => {
-  const port = 45080 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAuthServer(port, new MemoryAuthStore());
   const previousNodeEnv = process.env.NODE_ENV;
 
@@ -4870,7 +4892,7 @@ test("wechat mock mode stays disabled outside NODE_ENV=test", { concurrency: fal
 });
 
 test("banned accounts are blocked on account-login and subsequent session checks with reason and expiry", async (t) => {
-  const port = 45120 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   await store.ensurePlayerAccount({
     playerId: "banned-player",
@@ -4941,7 +4963,7 @@ test("banned accounts are blocked on account-login and subsequent session checks
 });
 
 test("guest login requires privacy consent before issuing the first session", async (t) => {
-  const port = 45160 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -4981,7 +5003,7 @@ test("guest login requires privacy consent before issuing the first session", as
 });
 
 test("guest login rejects moderated display names with a clear 400 error", async (t) => {
-  const port = 45170 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryAuthStore();
   const server = await startAuthServer(port, store);
 
@@ -5009,7 +5031,7 @@ test("guest login rejects moderated display names with a clear 400 error", async
 });
 
 test("account registration confirmation requires privacy consent", async (t) => {
-  const port = 45180 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const cleanup: Array<() => void> = [];
   withEnvOverrides({ VEIL_ACCOUNT_REGISTRATION_DELIVERY_MODE: "dev-token" }, cleanup);
   const store = new MemoryAuthStore();

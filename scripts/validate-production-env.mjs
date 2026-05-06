@@ -45,6 +45,8 @@ function parseArgs(argv) {
     if (value === "--env-file") {
       envFile = argv[index + 1];
       index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${value}`);
     }
   }
   return { envFile };
@@ -124,5 +126,10 @@ function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    console.error(`Production env validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 }

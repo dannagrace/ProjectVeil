@@ -454,6 +454,11 @@ async function verifyRoomJoin(authContext: SmokeGuestAuthContext): Promise<void>
 }
 
 async function main(): Promise<void> {
+  const [unknownArg] = process.argv.slice(2);
+  if (unknownArg) {
+    throw new Error(`Unknown argument: ${unknownArg}`);
+  }
+
   const startedAt = Date.now();
   runBlockingStep("validating e2e fixtures", FIXTURE_COMMAND);
   logStep(`using server=${SERVER_URL} client=${CLIENT_URL}`);

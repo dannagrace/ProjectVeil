@@ -24,6 +24,8 @@ function parseArgs(argv: string[]): { configPath: string } {
     if (arg === "--config") {
       configPath = resolve(argv[index + 1] ?? configPath);
       index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
     }
   }
 

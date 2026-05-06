@@ -21,6 +21,11 @@ function validateAdditionalMapPackFixtures(): void {
 }
 
 function main(): void {
+  const [unknownArg] = process.argv.slice(2);
+  if (unknownArg) {
+    throw new Error(`Unknown argument: ${unknownArg}`);
+  }
+
   validateE2EConfigFixtures();
   validateAdditionalMapPackFixtures();
 
@@ -38,4 +43,9 @@ function main(): void {
   );
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(`E2E config fixture validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}

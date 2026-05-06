@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createHash } from "node:crypto";
+import { createServer as createTcpServer } from "node:net";
 import test from "node:test";
 import { Server, WebSocketTransport } from "colyseus";
 import { issueAccountAuthSession, issueGuestAuthSession, issueWechatMiniGameAuthSession, hashAccountPassword } from "@server/domain/account/auth";
@@ -1116,6 +1117,28 @@ async function startAccountRouteServer(port: number, store: RoomSnapshotStore | 
   return server;
 }
 
+async function allocateTestPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createTcpServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error("Failed to allocate test port."));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 function createWechatProfileSignature(rawData: string, sessionKey: string): string {
   return createHash("sha1").update(`${rawData}${sessionKey}`, "utf8").digest("hex");
 }
@@ -1334,7 +1357,7 @@ function createReplaySummary(
 }
 
 test("player account list route requires auth, scopes players to self, and clamps admin limits", async (t) => {
-  const port = 40000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const previousAdminToken = process.env.VEIL_ADMIN_TOKEN;
   process.env.VEIL_ADMIN_TOKEN = "player-account-admin-token";
@@ -1403,7 +1426,7 @@ test("player account list route requires auth, scopes players to self, and clamp
 });
 
 test("player account detail requires auth, returns owners fully, and redacts stranger profiles", async (t) => {
-  const port = 40012 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "player-bound",
@@ -1536,7 +1559,7 @@ test("player account detail requires auth, returns owners fully, and redacts str
 });
 
 test("player account routes degrade to local-mode responses when persistence is unavailable", async (t) => {
-  const port = 40025 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAccountRouteServer(port, null);
   const session = issueAccountAuthSession({
     playerId: "player-local",
@@ -1650,7 +1673,7 @@ test("player account routes degrade to local-mode responses when persistence is 
 });
 
 test("player account profile exposes experiment assignments with stable buckets", async (t) => {
-  const port = 40029 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   process.env.VEIL_FEATURE_FLAGS_JSON = JSON.stringify({
     schemaVersion: 1,
@@ -1722,7 +1745,7 @@ test("player account profile exposes experiment assignments with stable buckets"
 });
 
 test("public guest player routes keep only intended public payloads exposed", async (t) => {
-  const port = 40045 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const server = await startAccountRouteServer(port, store);
 
@@ -1749,7 +1772,7 @@ test("public guest player routes keep only intended public payloads exposed", as
 });
 
 test("player account battle replay routes return normalized replay summaries with optional limit and offset", async (t) => {
-  const port = 40050 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-1",
@@ -1803,7 +1826,7 @@ test("player account battle replay routes return normalized replay summaries wit
 });
 
 test("player account battle replay routes filter replay summaries by battle metadata", async (t) => {
-  const port = 42040 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-filtered",
@@ -1870,7 +1893,7 @@ test("player account battle replay routes filter replay summaries by battle meta
 });
 
 test("player account battle report routes expose normalized report summaries with replay filters", async (t) => {
-  const port = 42045 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-report",
@@ -1956,7 +1979,7 @@ test("player account battle report routes expose normalized report summaries wit
 });
 
 test("player account me battle replay route resolves the current authenticated account", async (t) => {
-  const port = 42050 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-me",
@@ -1993,7 +2016,7 @@ test("player account me battle replay route resolves the current authenticated a
 });
 
 test("player account event-log routes filter recent entries without loading progression payloads", async (t) => {
-  const port = 42065 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-events",
@@ -2091,7 +2114,7 @@ test("player account event-log routes filter recent entries without loading prog
 });
 
 test("player account event-history routes page dedicated history entries beyond the recent snapshot", async (t) => {
-  const port = 42069 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-history",
@@ -2237,7 +2260,7 @@ test("player account event-history routes page dedicated history entries beyond 
 });
 
 test("player account event-history routes do not fall back to the recent snapshot when dedicated history is empty", async (t) => {
-  const port = 42071 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-history-empty",
@@ -2305,7 +2328,7 @@ test("player account event-history routes do not fall back to the recent snapsho
 });
 
 test("player account achievement routes filter normalized progress without loading event history", async (t) => {
-  const port = 42072 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-achievements",
@@ -2385,7 +2408,7 @@ test("player account achievement routes filter normalized progress without loadi
 });
 
 test("player account progression routes return a compact achievement and event read model", async (t) => {
-  const port = 42080 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-progress",
@@ -2493,7 +2516,7 @@ test("player account progression routes return a compact achievement and event r
 });
 
 test("season progress and claim-tier routes expose battle pass state for the authenticated player", async (t) => {
-  const port = 40029 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "player-season",
@@ -2756,7 +2779,7 @@ test("player achievement tracker syncs full map exploration progress from world 
 });
 
 test("player account profile updates by player id require auth and allow self-service only", async (t) => {
-  const port = 41000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const server = await startAccountRouteServer(port, store);
 
@@ -2839,7 +2862,7 @@ test("player account profile updates by player id require auth and allow self-se
 });
 
 test("player account profile updates reject banned display names with a 400 error", async (t) => {
-  const port = 41020 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const server = await startAccountRouteServer(port, store);
   const session = issueGuestAuthSession({
@@ -2871,7 +2894,7 @@ test("player account profile updates reject banned display names with a 400 erro
 });
 
 test("player account profile updates reject names reserved from banned accounts", async (t) => {
-  const port = 41025 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "banned-player",
@@ -2915,7 +2938,7 @@ test("player account profile updates reject names reserved from banned accounts"
 });
 
 test("player account update routes echo local-mode payloads when persistence is unavailable", async (t) => {
-  const port = 41030 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startAccountRouteServer(port, null);
   const session = issueAccountAuthSession({
     playerId: "player-local",
@@ -2990,7 +3013,7 @@ test("player account update routes echo local-mode payloads when persistence is 
 });
 
 test("player account me routes resolve and update the current authenticated account", async (t) => {
-  const port = 42000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-me",
@@ -3054,7 +3077,7 @@ test("player account me routes resolve and update the current authenticated acco
 });
 
 test("wechat account profile updates require a valid cached session-key signature", async (t) => {
-  const port = 42040 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "wechat-profile",
@@ -3118,7 +3141,7 @@ test("wechat account profile updates require a valid cached session-key signatur
 });
 
 test("wechat phone binding returns 403 for invalid payloads and succeeds after validation", async (t) => {
-  const port = 42080 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const previousAppId = process.env.WECHAT_APP_ID;
   process.env.WECHAT_APP_ID = "wx-phone-test-app";
   const store = new MemoryPlayerAccountStore();
@@ -3183,7 +3206,7 @@ test("wechat phone binding returns 403 for invalid payloads and succeeds after v
 });
 
 test("player account me route preserves account-mode sessions and returns the global vault", async (t) => {
-  const port = 42100 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "account-player",
@@ -3234,7 +3257,7 @@ test("player account me route preserves account-mode sessions and returns the gl
 });
 
 test("player account me route upgrades a legacy account session fallback to the stored session version", async (t) => {
-  const port = 42112 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "legacy-account-player",
@@ -3281,7 +3304,7 @@ test("player account me route upgrades a legacy account session fallback to the 
 });
 
 test("player account session routes list active devices and revoke a selected non-current session", async (t) => {
-  const port = 42125 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "account-player",
@@ -3385,7 +3408,7 @@ test("player account session routes list active devices and revoke a selected no
 });
 
 test("player account password changes revoke the current access session family", async (t) => {
-  const port = 42140 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "password-player",
@@ -3450,7 +3473,7 @@ test("player account password changes revoke the current access session family",
 });
 
 test("player account update routes reject oversized JSON bodies with 413", async (t) => {
-  const port = 42150 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "player-oversized",
@@ -3515,7 +3538,7 @@ test("player account update routes reject oversized JSON bodies with 413", async
 });
 
 test("player deletion anonymizes personal data, clears wechat bindings, and revokes the current token", async (t) => {
-  const port = 44740 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "player-delete",
@@ -3599,7 +3622,7 @@ test("player deletion anonymizes personal data, clears wechat bindings, and revo
 });
 
 test("delete route returns a 500 payload when cascade verification fails", async (t) => {
-  const port = 44860 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "player-delete-fail",
@@ -3644,7 +3667,7 @@ test("delete route returns a 500 payload when cascade verification fails", async
 });
 
 test("daily claim increments streak and grants the configured consecutive-day reward", async (t) => {
-  const port = 44860 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   const yesterday = getPreviousDailyRewardDateKey(today);
@@ -3696,7 +3719,7 @@ test("daily claim increments streak and grants the configured consecutive-day re
 });
 
 test("daily claim resets the streak after a gap", async (t) => {
-  const port = 44880 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   const twoDaysAgo = getRelativeDailyRewardDateKey(today, -2);
@@ -3743,7 +3766,7 @@ test("daily claim resets the streak after a gap", async (t) => {
 });
 
 test("daily claim cycles reward tiers after day seven", async (t) => {
-  const port = 44900 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const yesterday = getPreviousDailyRewardDateKey(getDailyRewardDateKey());
   await store.ensurePlayerAccount({
@@ -3784,7 +3807,7 @@ test("daily claim cycles reward tiers after day seven", async (t) => {
 });
 
 test("daily claim rejects duplicate claims on the same day", async (t) => {
-  const port = 44920 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   await store.ensurePlayerAccount({
@@ -3831,7 +3854,7 @@ test("daily claim rejects duplicate claims on the same day", async (t) => {
 });
 
 test("daily quest board derives same-day progress and ignores prior-day events", async (t) => {
-  const port = 44930 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   const yesterday = getPreviousDailyRewardDateKey(today);
@@ -3953,7 +3976,7 @@ test("daily quest board derives same-day progress and ignores prior-day events",
 });
 
 test("tutorial progress gates daily quests until the player completes or skips onboarding", async (t) => {
-  const port = 44931 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
   t.after(() => {
@@ -4041,7 +4064,7 @@ test("tutorial progress gates daily quests until the player completes or skips o
 });
 
 test("daily quest claim grants rewards once and returns already_claimed on repeat", async (t) => {
-  const port = 44932 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
@@ -4186,7 +4209,7 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
 });
 
 test("daily quests are enabled by default and complete the rotation, progress, and reward flow end-to-end", async (t) => {
-  const port = 44933 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const today = getDailyRewardDateKey();
   const nextDay = getRelativeDailyRewardDateKey(today, 1);
@@ -4401,7 +4424,7 @@ test("daily quest board preserves tracked completion and claim state when recent
 });
 
 test("mailbox routes list delivered compensation and repeated claims stay idempotent", async (t) => {
-  const port = 44940 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "mailbox-player",
@@ -4494,7 +4517,7 @@ test("admin mailbox delivery route skips duplicate message ids for the same play
     resetRuntimeObservability();
   });
 
-  const port = 44940 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "ops-player",
@@ -4557,7 +4580,7 @@ test("admin mailbox delivery route skips duplicate message ids for the same play
 });
 
 test("support ticket routes accept authenticated player submissions and list the created ticket", async (t) => {
-  const port = 44980 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "support-player",
@@ -4618,7 +4641,7 @@ test("admin player name-history routes expose rename traces and active reservati
     delete process.env.VEIL_ADMIN_TOKEN;
   });
 
-  const port = 44960 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "ops-name-player",
@@ -4670,7 +4693,7 @@ test("admin player name-history routes expose rename traces and active reservati
 });
 
 test("referral endpoint rejects double-claiming for the same referrer and new player", async (t) => {
-  const port = 44940 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "referrer-1",
@@ -4721,7 +4744,7 @@ test("referral endpoint rejects double-claiming for the same referrer and new pl
 });
 
 test("referral endpoint credits both accounts exactly once", async (t) => {
-  const port = 44960 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.savePlayerAccountProgress("referrer-2", {
     gems: 11
@@ -4771,7 +4794,7 @@ test("referral endpoint credits both accounts exactly once", async (t) => {
 });
 
 test("referral endpoint caps same-referrer reward farming", async (t) => {
-  const port = 44970 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   await store.ensurePlayerAccount({
     playerId: "referrer-limit",
@@ -4833,7 +4856,7 @@ test("referral endpoint caps same-referrer reward farming", async (t) => {
 });
 
 test("campaign mission completion unlocks the next chapter 1 mission and grants rewards", async (t) => {
-  const port = 44980 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const seededCampaignAccount = await store.ensurePlayerAccount({
     playerId: "campaign-player",
@@ -4918,7 +4941,7 @@ test("campaign mission completion unlocks the next chapter 1 mission and grants 
 });
 
 test("campaign mission start returns 403 unlock requirements until chapter gates are satisfied", async (t) => {
-  const port = 44990 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "gated-campaign-player",
@@ -5012,7 +5035,7 @@ test("campaign mission start returns 403 unlock requirements until chapter gates
 });
 
 test("completed campaign mission returns 409 for both restart and re-completion attempts", async (t) => {
-  const port = 44992 + Math.floor(Math.random() * 100);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   store.seedAccount({
     playerId: "completed-mission-player",
@@ -5065,7 +5088,7 @@ test("completed campaign mission returns 409 for both restart and re-completion 
 });
 
 test("daily dungeon attempts are capped per day and rewards can only be claimed once per run", async (t) => {
-  const port = 45000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
   const testNow = "2026-04-07T12:00:00.000Z";
   await store.ensurePlayerAccount({

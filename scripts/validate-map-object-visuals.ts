@@ -70,6 +70,8 @@ function parseArgs(argv: string[]): {
     } else if (arg === "--report-path") {
       reportPath = resolve(argv[index + 1] ?? "");
       index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
     }
   }
 
