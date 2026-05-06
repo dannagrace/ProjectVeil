@@ -82,6 +82,46 @@ function readRgbLightness(value: string): number {
   return channels.reduce((total, channel) => total + channel, 0) / (channels.length * 255);
 }
 
+test("h5 lobby light cards keep secondary text readable", async ({ page }, testInfo) => {
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+    await page.locator(".lobby-auth-disclosure").evaluateAll((disclosures) => {
+      disclosures.forEach((disclosure) => disclosure.setAttribute("open", ""));
+    });
+
+    const lightSurfaceTextColors = await page
+      .locator(
+        [
+          ".lobby-form.info-card .lobby-field > span",
+          ".lobby-form.info-card .lobby-auth-head > span",
+          ".lobby-form.info-card .lobby-auth-disclosure summary span",
+          ".lobby-room-list .info-card > span",
+          ".lobby-room-list .lobby-room-meta"
+        ].join(", ")
+      )
+      .evaluateAll((elements) =>
+        elements
+          .filter((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          })
+          .map((element) => getComputedStyle(element).color)
+      );
+    expect(lightSurfaceTextColors.length).toBeGreaterThan(0);
+    for (const color of lightSurfaceTextColors) {
+      expect(readRgbLightness(color)).toBeLessThan(0.42);
+    }
+
+    const disclosureToggleColors = await page
+      .locator(".lobby-form.info-card .lobby-auth-disclosure summary")
+      .evaluateAll((summaries) => summaries.map((summary) => getComputedStyle(summary, "::after").color));
+    expect(disclosureToggleColors.length).toBeGreaterThan(0);
+    for (const color of disclosureToggleColors) {
+      expect(readRgbLightness(color)).toBeLessThan(0.42);
+    }
+  });
+});
+
 test("h5 smoke reaches lobby http path and room websocket path", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-h5-connectivity");
   const playerId = "player-1";

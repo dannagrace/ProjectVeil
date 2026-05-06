@@ -218,6 +218,15 @@ h1 {
   color: var(--muted);
 }
 
+.info-card .lobby-field > span,
+.info-card .lobby-auth-head span,
+.info-card .account-binding-head span,
+.info-card .lobby-auth-disclosure summary span,
+.info-card .lobby-room-meta,
+.info-card.lobby-room-empty > span {
+  color: var(--muted-on-light);
+}
+
 .lobby-form {
   display: grid;
   gap: 12px;
@@ -284,6 +293,10 @@ h1 {
   padding: 4px 8px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.info-card .lobby-auth-disclosure summary::after {
+  color: var(--muted-on-light);
 }
 
 .lobby-auth-disclosure[open] summary::after {
