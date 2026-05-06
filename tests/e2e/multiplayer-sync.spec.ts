@@ -1,10 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   buildRoomId,
-  expectHeroMoveSpent,
-  followTilePath,
-  fullMoveTextPattern,
-  openRoom,
+  expectHeroMoveSpentForSession,
+  followTilePathForSession,
+  openAuthenticatedMultiplayerRoomPair,
   pressTile,
   reloadAndExpectRecoveredSession,
   withSmokeDiagnostics
@@ -23,7 +22,10 @@ async function hoverTile(page: Page, x: number, y: number): Promise<void> {
   );
 }
 
-test("second player receives room push updates without leaking another player's move details", async ({ browser }, testInfo) => {
+test("second player receives room push updates without leaking another player's move details", async ({
+  browser,
+  request
+}, testInfo) => {
   const roomId = buildRoomId("e2e-multi");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
@@ -32,30 +34,17 @@ test("second player receives room push updates without leaking another player's 
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await test.step("setup: both players join the sync room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
-      });
+      await openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId);
 
       await pressTile(playerOnePage, 0, 1);
 
-      await expectHeroMoveSpent(playerOnePage, 1, "player-1");
+      await expectHeroMoveSpentForSession(playerOnePage, 1);
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
       await expect(playerTwoPage.getByTestId("room-connection-summary")).toContainText("已连接");
       await expect(playerTwoPage.getByTestId("event-log")).not.toContainText("Moved 1 steps");
       await expect(playerTwoPage.getByTestId("event-log")).not.toContainText("Path:");
       await expect(playerTwoPage.getByTestId("timeline-panel")).not.toContainText("英雄完成移动");
-      await expectHeroMoveSpent(playerTwoPage, 0, "player-2");
+      await expectHeroMoveSpentForSession(playerTwoPage, 0);
     });
   } finally {
     await playerOneContext.close();
@@ -63,7 +52,10 @@ test("second player receives room push updates without leaking another player's 
   }
 });
 
-test("building ownership changes are pushed to other clients with the same visible state", async ({ browser }, testInfo) => {
+test("building ownership changes are pushed to other clients with the same visible state", async ({
+  browser,
+  request
+}, testInfo) => {
   const roomId = buildRoomId("e2e-building-sync");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
@@ -72,43 +64,29 @@ test("building ownership changes are pushed to other clients with the same visib
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await test.step("setup: both players join the ownership sync room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
-      });
+      const { playerOne } = await openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId);
 
-      await followTilePath(
+      await followTilePathForSession(
         playerTwoPage,
         [
           { x: 6, y: 4, spent: 2 },
           { x: 6, y: 2, spent: 4 },
           { x: 5, y: 1, spent: 6 }
-        ],
-        "player-2"
+        ]
       );
 
       await hoverTile(playerTwoPage, 3, 1);
       await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前无人占领");
 
       await pressTile(playerOnePage, 3, 1);
-      await expectHeroMoveSpent(playerOnePage, 2, "player-1");
+      await expectHeroMoveSpentForSession(playerOnePage, 2);
       await pressTile(playerOnePage, 3, 1);
 
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
       await expect(playerTwoPage.getByTestId("room-connection-summary")).toContainText("已连接");
 
       await hoverTile(playerTwoPage, 3, 1);
-      await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前归属 player-1");
+      await expect(playerTwoPage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
     });
   } finally {
     await playerOneContext.close();
@@ -116,7 +94,10 @@ test("building ownership changes are pushed to other clients with the same visib
   }
 });
 
-test("reloading a peer after ownership sync restores the claimed building state from the authority snapshot", async ({ browser }, testInfo) => {
+test("reloading a peer after ownership sync restores the claimed building state from the authority snapshot", async ({
+  browser,
+  request
+}, testInfo) => {
   const roomId = buildRoomId("e2e-building-recovery");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
@@ -125,47 +106,38 @@ test("reloading a peer after ownership sync restores the claimed building state 
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await test.step("setup: both players join the ownership recovery room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
-      });
+      const { playerOne, playerTwo } = await openAuthenticatedMultiplayerRoomPair(
+        request,
+        playerOnePage,
+        playerTwoPage,
+        roomId
+      );
 
-      await followTilePath(
+      await followTilePathForSession(
         playerTwoPage,
         [
           { x: 6, y: 4, spent: 2 },
           { x: 6, y: 2, spent: 4 },
           { x: 5, y: 1, spent: 6 }
-        ],
-        "player-2"
+        ]
       );
       await pressTile(playerOnePage, 3, 1);
-      await expectHeroMoveSpent(playerOnePage, 2, "player-1");
+      await expectHeroMoveSpentForSession(playerOnePage, 2);
       await pressTile(playerOnePage, 3, 1);
 
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
       await hoverTile(playerTwoPage, 3, 1);
-      await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前归属 player-1");
+      await expect(playerTwoPage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
 
       await reloadAndExpectRecoveredSession(playerTwoPage, {
         roomId,
-        playerId: "player-2",
+        playerId: playerTwo.playerId,
         expectedMoveText: null
       });
 
       await hoverTile(playerTwoPage, 3, 1);
-      await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前归属 player-1");
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await expect(playerTwoPage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
+      await expectHeroMoveSpentForSession(playerTwoPage, 6);
     });
   } finally {
     await playerOneContext.close();

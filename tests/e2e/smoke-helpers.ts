@@ -1,6 +1,6 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { getHeroMoveTotal } from "./config-fixtures";
-import { ADMIN_TOKEN, CLIENT_BASE_URL, RESET_ENDPOINT, SERVER_DIAGNOSTICS_URL } from "./runtime-targets";
+import { ADMIN_TOKEN, CLIENT_BASE_URL, RESET_ENDPOINT, SERVER_BASE_URL, SERVER_DIAGNOSTICS_URL } from "./runtime-targets";
 
 interface RoomSessionOptions {
   roomId: string;
@@ -34,7 +34,28 @@ interface LobbyRoomsPayload {
 interface GuestLoginPayload {
   session?: {
     token?: string;
+    refreshToken?: string;
+    playerId?: string;
+    displayName?: string;
+    authMode?: "guest" | "account";
+    loginId?: string;
+    sessionId?: string;
+    expiresAt?: string;
+    refreshExpiresAt?: string;
   };
+}
+
+export interface SmokeGuestAuthSession {
+  playerId: string;
+  displayName: string;
+  authMode: "guest";
+  source: "remote";
+  token: string;
+  refreshToken?: string;
+  loginId?: string;
+  sessionId?: string;
+  expiresAt?: string;
+  refreshExpiresAt?: string;
 }
 
 export interface StoredAuthSessionSnippet {
@@ -43,12 +64,47 @@ export interface StoredAuthSessionSnippet {
   loginId?: string;
   playerId?: string;
   source?: string;
+  token?: string;
 }
 
 interface AutomationStateHeroLike {
+  id?: string;
   playerId?: string;
   x: number;
   y: number;
+  move?: {
+    total: number;
+    remaining: number;
+  };
+}
+
+interface AutomationStateRoomLike {
+  playerId?: string;
+}
+
+interface AutomationStateLike {
+  room?: AutomationStateRoomLike;
+  hero?: AutomationStateHeroLike | null;
+  ownHeroes?: AutomationStateHeroLike[];
+  visibleHeroes?: AutomationStateHeroLike[];
+}
+
+export interface AuthenticatedRoomSession {
+  page: Page;
+  session: SmokeGuestAuthSession;
+  requestedPlayerId: string;
+  playerId: string;
+  hero: AutomationStateHeroLike & {
+    move: {
+      total: number;
+      remaining: number;
+    };
+  };
+}
+
+export interface AuthenticatedMultiplayerRoomPair {
+  playerOne: AuthenticatedRoomSession;
+  playerTwo: AuthenticatedRoomSession;
 }
 
 function encodeRoomQuery(roomId: string, playerId: string): string {
@@ -238,6 +294,58 @@ export async function waitForLobbyReady(page: Page): Promise<Record<string, stri
   });
 }
 
+export async function createSmokeGuestAuthSession(
+  request: APIRequestContext,
+  displayName: string
+): Promise<SmokeGuestAuthSession> {
+  const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
+    data: {
+      displayName,
+      privacyConsentAccepted: true
+    }
+  });
+  expect(response.status()).toBe(200);
+
+  const payload = (await response.json()) as GuestLoginPayload;
+  const session = payload.session;
+  const playerId = session?.playerId?.trim();
+  const token = session?.token?.trim();
+  if (!playerId || !token) {
+    throw new Error("guest_auth_session_missing_identity");
+  }
+
+  return {
+    playerId,
+    displayName: session?.displayName?.trim() || displayName,
+    authMode: "guest",
+    source: "remote",
+    token,
+    ...(session?.refreshToken?.trim() ? { refreshToken: session.refreshToken.trim() } : {}),
+    ...(session?.loginId?.trim() ? { loginId: session.loginId.trim() } : {}),
+    ...(session?.sessionId?.trim() ? { sessionId: session.sessionId.trim() } : {}),
+    ...(session?.expiresAt?.trim() ? { expiresAt: session.expiresAt.trim() } : {}),
+    ...(session?.refreshExpiresAt?.trim() ? { refreshExpiresAt: session.refreshExpiresAt.trim() } : {})
+  };
+}
+
+export async function seedStoredAuthSession(page: Page, session: SmokeGuestAuthSession): Promise<void> {
+  await page.addInitScript((authSession) => {
+    const storageKey = "project-veil:auth-session";
+    const existingRaw = window.localStorage.getItem(storageKey);
+    if (existingRaw) {
+      try {
+        const existing = JSON.parse(existingRaw) as { playerId?: unknown; token?: unknown };
+        if (existing.playerId === authSession.playerId && typeof existing.token === "string" && existing.token.trim()) {
+          return;
+        }
+      } catch {
+        // Fall through and replace malformed auth state.
+      }
+    }
+    window.localStorage.setItem(storageKey, JSON.stringify(authSession));
+  }, session);
+}
+
 export async function acceptLobbyPrivacyConsent(page: Page): Promise<void> {
   await test.step("setup: accept lobby privacy consent", async () => {
     const consentCheckbox = page.locator("[data-privacy-consent]").first();
@@ -254,6 +362,20 @@ export async function expectHeroMove(page: Page, remaining: number, playerId = "
 
 export async function expectHeroMoveSpent(page: Page, spent: number, playerId = "player-1"): Promise<void> {
   await expectHeroMove(page, moveRemainingAfterSpend(spent, playerId), playerId);
+}
+
+export async function expectHeroMoveSpentForSession(page: Page, spent: number): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const move = (await readAutomationState(page)).hero?.move;
+        return move ? move.total - move.remaining : null;
+      },
+      {
+        message: `waiting for active hero to spend ${spent} move`
+      }
+    )
+    .toBe(spent);
 }
 
 export async function pressTile(page: Page, x: number, y: number): Promise<void> {
@@ -305,11 +427,117 @@ export async function followTilePath(
   }
 }
 
-async function readAutomationState(page: Page): Promise<{
-  visibleHeroes?: AutomationStateHeroLike[];
-}> {
+export async function followTilePathForSession(
+  page: Page,
+  path: ReadonlyArray<{ x: number; y: number; spent?: number }>
+): Promise<void> {
+  for (const step of path) {
+    await pressTile(page, step.x, step.y);
+    if (typeof step.spent === "number") {
+      await expectHeroMoveSpentForSession(page, step.spent);
+    }
+  }
+}
+
+export async function readAutomationState(page: Page): Promise<AutomationStateLike> {
   const text = await page.evaluate(() => window.render_game_to_text?.() ?? "{}");
-  return JSON.parse(text) as { visibleHeroes?: AutomationStateHeroLike[] };
+  return JSON.parse(text) as AutomationStateLike;
+}
+
+export async function waitForCurrentRoomSession(
+  page: Page,
+  expectedPlayerId?: string
+): Promise<AuthenticatedRoomSession["hero"]> {
+  const readyValue = "__ready__";
+  await expect
+    .poll(
+      async () => {
+        const state = await readAutomationState(page);
+        if (!state.room?.playerId || !state.hero?.move) {
+          return null;
+        }
+        if (expectedPlayerId && state.room.playerId !== expectedPlayerId) {
+          return `unexpected:${state.room.playerId}`;
+        }
+        return expectedPlayerId ?? readyValue;
+      },
+      {
+        message: expectedPlayerId
+          ? `waiting for authoritative player ${expectedPlayerId}`
+          : "waiting for authoritative room session"
+      }
+    )
+    .toBe(expectedPlayerId ?? readyValue);
+
+  const state = await readAutomationState(page);
+  const hero = state.hero;
+  if (!hero?.move) {
+    throw new Error("current_room_session_missing_active_hero");
+  }
+  return {
+    ...hero,
+    move: hero.move
+  };
+}
+
+export async function openAuthenticatedRoom(
+  page: Page,
+  options: {
+    roomId: string;
+    session: SmokeGuestAuthSession;
+    expectedMoveText?: RegExp | null;
+    requireDiagnosticsPanel?: boolean;
+  }
+): Promise<AuthenticatedRoomSession> {
+  return await test.step(`setup: open ${options.session.playerId} in ${options.roomId}`, async () => {
+    await seedStoredAuthSession(page, options.session);
+    await page.goto(`${CLIENT_BASE_URL}/?roomId=${encodeURIComponent(options.roomId)}`);
+    await expectRoomReady(page, {
+      roomId: options.roomId,
+      playerId: options.session.playerId,
+      expectedMoveText: options.expectedMoveText ?? null,
+      requireDiagnosticsPanel: options.requireDiagnosticsPanel
+    });
+    const hero = await waitForCurrentRoomSession(page, options.session.playerId);
+    return {
+      page,
+      session: options.session,
+      requestedPlayerId: options.session.playerId,
+      playerId: options.session.playerId,
+      hero
+    };
+  });
+}
+
+export async function openAuthenticatedMultiplayerRoomPair(
+  request: APIRequestContext,
+  playerOnePage: Page,
+  playerTwoPage: Page,
+  roomId: string
+): Promise<AuthenticatedMultiplayerRoomPair> {
+  const playerOneAuth = await createSmokeGuestAuthSession(request, "Smoke Player One");
+  const playerOne = await openAuthenticatedRoom(playerOnePage, {
+    roomId,
+    session: playerOneAuth,
+    expectedMoveText: null
+  });
+  const playerTwoAuth = await createSmokeGuestAuthSession(request, "Smoke Player Two");
+  const playerTwo = await openAuthenticatedRoom(playerTwoPage, {
+    roomId,
+    session: playerTwoAuth,
+    expectedMoveText: null
+  });
+
+  if (playerOne.hero.x !== 1 || playerOne.hero.y !== 1 || playerTwo.hero.x !== 6 || playerTwo.hero.y !== 6) {
+    throw new Error(
+      `unexpected_default_multiplayer_slots:${playerOne.playerId}@${playerOne.hero.x},${playerOne.hero.y}:${playerTwo.playerId}@${playerTwo.hero.x},${playerTwo.hero.y}`
+    );
+  }
+
+  return {
+    playerOne,
+    playerTwo
+  };
 }
 
 async function waitForVisibleHero(page: Page, playerId: string, x: number, y: number): Promise<void> {
@@ -328,22 +556,22 @@ async function waitForVisibleHero(page: Page, playerId: string, x: number, y: nu
 
 export async function startDeterministicPvpBattle(playerOnePage: Page, playerTwoPage: Page): Promise<void> {
   await pressTile(playerOnePage, 3, 1);
-  await expectHeroMoveSpent(playerOnePage, 2, "player-1");
+  await expectHeroMoveSpentForSession(playerOnePage, 2);
 
-  await followTilePath(
+  await followTilePathForSession(
     playerTwoPage,
     [
       { x: 6, y: 4, spent: 2 },
       { x: 6, y: 2, spent: 4 },
       { x: 5, y: 1, spent: 6 }
-    ],
-    "player-2"
+    ]
   );
 
   await expect(playerOnePage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
-  await waitForVisibleHero(playerOnePage, "player-2", 5, 1);
+  const playerTwoId = (await readAutomationState(playerTwoPage)).room?.playerId ?? "player-2";
+  await waitForVisibleHero(playerOnePage, playerTwoId, 5, 1);
   await pressTile(playerOnePage, 5, 1);
-  await expectHeroMoveSpent(playerOnePage, 3, "player-1");
+  await expectHeroMoveSpentForSession(playerOnePage, 3);
 
   await expect(playerOnePage.getByTestId("battle-panel")).not.toContainText("No active battle");
   await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle");

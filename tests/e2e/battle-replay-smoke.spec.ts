@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import {
   buildRoomId,
-  followTilePath,
-  fullMoveTextPattern,
-  openRoom,
+  followTilePathForSession,
+  openAuthenticatedMultiplayerRoomPair,
   pressTile,
+  readStoredAuthSession,
   resolveBattleToSettlement,
   withSmokeDiagnostics
 } from "./smoke-helpers";
@@ -19,12 +19,6 @@ interface PlayerBattleReplaySummary {
 interface BattleReplayPlaybackState {
   currentStepIndex: number;
   totalSteps: number;
-}
-
-interface GuestLoginPayload {
-  session?: {
-    token?: string;
-  };
 }
 
 function extractBattleId(roomId: string, detail: string): string {
@@ -43,22 +37,6 @@ async function getJson<T>(
   const response = await request.get(`${SERVER_BASE_URL}${path}`, headers ? { headers } : undefined);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as T;
-}
-
-async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
-  const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
-    data: {
-      playerId,
-      displayName: playerId,
-      privacyConsentAccepted: true
-    }
-  });
-  expect(response.status()).toBe(200);
-
-  const payload = (await response.json()) as GuestLoginPayload;
-  const token = payload.session?.token?.trim();
-  expect(token).toBeTruthy();
-  return token ?? "";
 }
 
 test("battle replay center smoke persists a resolved PvP battle and supports account playback", async ({
@@ -80,35 +58,18 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await test.step("setup: both players enter the same room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
-      });
+      const { playerOne } = await openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId);
 
       let battleId = "";
-      const replayPlayerId = "player-1";
+      const replayPlayerId = playerOne.playerId;
 
       await test.step("gameplay: resolve the PvP battle to completion", async () => {
         await pressTile(playerOnePage, 3, 1);
-        await followTilePath(
-          playerTwoPage,
-          [
-            { x: 6, y: 4, spent: 2 },
-            { x: 6, y: 2, spent: 4 },
-            { x: 5, y: 1, spent: 6 }
-          ],
-          "player-2"
-        );
+        await followTilePathForSession(playerTwoPage, [
+          { x: 6, y: 4, spent: 2 },
+          { x: 6, y: 2, spent: 4 },
+          { x: 5, y: 1, spent: 6 }
+        ]);
         await pressTile(playerOnePage, 5, 1);
 
         await expect(playerOnePage.getByTestId("room-status-detail")).toContainText(`遭遇会话：${roomId}/battle-`);
@@ -123,7 +84,7 @@ test("battle replay center smoke persists a resolved PvP battle and supports acc
       await test.step("api: list, detail, and playback routes expose the saved replay", async () => {
         let replaySummary: PlayerBattleReplaySummary | null = null;
         let replayId: string | null = null;
-        const token = await createGuestSessionToken(request, replayPlayerId);
+        const token = (await readStoredAuthSession(playerOnePage))?.token ?? playerOne.session.token;
         const authHeaders = {
           Authorization: `Bearer ${token}`
         };
