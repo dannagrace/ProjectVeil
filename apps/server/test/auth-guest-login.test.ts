@@ -1285,6 +1285,57 @@ test("auth session route resolves a bearer token into the current guest session"
   assert.equal(connectPayload.payload.world.playerId, loginPayload.session.playerId);
 });
 
+test("auth session route keeps a guest token valid for concurrent account reads", async (t) => {
+  const port = 43550 + Math.floor(Math.random() * 1000);
+  const store = new MemoryAuthStore();
+  const server = await startAuthServer(port, store);
+
+  t.after(async () => {
+    resetGuestAuthSessions();
+    await server.gracefullyShutdown(false).catch(() => undefined);
+  });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/guest-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      displayName: "并发访客",
+      privacyConsentAccepted: true
+    })
+  });
+  const loginPayload = (await loginResponse.json()) as { session: GuestAuthSession };
+  assert.equal(loginResponse.status, 200);
+
+  const sessionResponse = await fetch(`http://127.0.0.1:${port}/api/auth/session`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const sessionPayload = (await sessionResponse.json()) as { session: GuestAuthSession };
+  assert.equal(sessionResponse.status, 200);
+  assert.equal(sessionPayload.session.token, loginPayload.session.token);
+
+  const accountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const accountPayload = (await accountResponse.json()) as { account?: PlayerAccountSnapshot };
+  assert.equal(accountResponse.status, 200);
+  assert.equal(accountPayload.account?.playerId, loginPayload.session.playerId);
+
+  const repeatedAccountResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me`, {
+    headers: {
+      Authorization: `Bearer ${loginPayload.session.token}`
+    }
+  });
+  const repeatedAccountPayload = (await repeatedAccountResponse.json()) as { account?: PlayerAccountSnapshot };
+  assert.equal(repeatedAccountResponse.status, 200);
+  assert.equal(repeatedAccountPayload.account?.playerId, loginPayload.session.playerId);
+});
+
 test("connect message prefers auth token identity over a spoofed playerId", async (t) => {
   const port = 44000 + Math.floor(Math.random() * 1000);
   const server = await startAuthServer(port);

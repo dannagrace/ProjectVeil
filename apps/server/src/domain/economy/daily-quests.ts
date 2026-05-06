@@ -3,6 +3,7 @@ import type { FeatureFlags } from "@veil/shared/platform";
 import { buildDailyQuestBoard, createEmptyDailyQuestReward, type DailyQuestBoard, type DailyQuestDefinition } from "@veil/shared/progression";
 import { emitAnalyticsEvent } from "@server/domain/ops/analytics";
 import { loadDailyQuestConfig, type DailyQuestConfigDefinition } from "@server/domain/economy/daily-quest-config";
+import { resolveDailyQuestRotation } from "@server/domain/economy/daily-quest-rotations";
 import { rotateDailyQuests } from "@server/domain/battle/event-engine";
 import type { PlayerAccountSnapshot, PlayerQuestState, RoomSnapshotStore } from "@server/persistence";
 
@@ -113,8 +114,17 @@ function mergeTrackedQuestState(board: DailyQuestBoard, state: PlayerQuestState 
 async function resolveDailyQuestDefinitions(
   store: RoomSnapshotStore,
   playerId: string,
-  cycleKey: string
+  cycleKey: string,
+  featureFlags?: Partial<FeatureFlags>
 ): Promise<DailyQuestConfigDefinition[]> {
+  const scheduledRotation = resolveDailyQuestRotation(new Date(`${cycleKey}T12:00:00.000Z`), featureFlags);
+  if (scheduledRotation) {
+    return scheduledRotation.quests.map((quest) => ({
+      ...quest,
+      tier: "common"
+    }));
+  }
+
   const rotation = rotateDailyQuests({
     playerId,
     dateKey: cycleKey,
@@ -166,7 +176,12 @@ export async function loadDailyQuestBoard(
   const history = await store.loadPlayerEventHistory(account.playerId, {
     since: `${cycleKey}T00:00:00.000Z`
   });
-  const definitions = await resolveDailyQuestDefinitions(store, account.playerId, cycleKey);
+  const definitions = await resolveDailyQuestDefinitions(
+    store,
+    account.playerId,
+    cycleKey,
+    typeof options === "boolean" ? undefined : options.featureFlags
+  );
   const questState = await store.loadPlayerQuestState?.(account.playerId);
   const board = mergeTrackedQuestState(
     buildDailyQuestBoard(history.items, {

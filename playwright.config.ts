@@ -125,7 +125,8 @@ const FULL_TEST_IGNORE =
 const ALL_PROJECTS: ProjectDefinition[] = [
   {
     name: FULL_PROJECT_NAME,
-    testIgnore: FULL_TEST_IGNORE
+    testIgnore: FULL_TEST_IGNORE,
+    workers: 1
   },
   {
     name: SMOKE_PROJECT_NAME,

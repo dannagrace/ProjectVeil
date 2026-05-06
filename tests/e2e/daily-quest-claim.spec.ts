@@ -177,9 +177,13 @@ interface BrowserApiResult<T> {
 async function fetchAuthedJson<T>(page: Page, path: string, body?: unknown): Promise<BrowserApiResult<T>> {
   return await page.evaluate(
     async ({ path, body }) => {
-      const raw = window.localStorage.getItem("project-veil:auth-session");
-      const session = raw ? (JSON.parse(raw) as AuthSessionSnapshot) : null;
+      const readSession = (): AuthSessionSnapshot | null => {
+        const raw = window.localStorage.getItem("project-veil:auth-session");
+        return raw ? (JSON.parse(raw) as AuthSessionSnapshot) : null;
+      };
+
       for (let attempt = 0; attempt < 5; attempt += 1) {
+        const session = readSession();
         const headers: Record<string, string> = {};
         if (session?.token) {
           headers.Authorization = `Bearer ${session.token}`;
@@ -194,8 +198,9 @@ async function fetchAuthedJson<T>(page: Page, path: string, body?: unknown): Pro
           ...(body !== undefined ? { body: JSON.stringify(body) } : {})
         });
 
-        if (response.status === 429 && attempt < 4) {
-          const retryAfterSeconds = Math.max(1, Number(response.headers.get("Retry-After") ?? "1"));
+        if ((response.status === 401 || response.status === 429) && attempt < 4) {
+          const retryAfterSeconds =
+            response.status === 429 ? Math.max(1, Number(response.headers.get("Retry-After") ?? "1")) : 0.25;
           await new Promise((resolve) => window.setTimeout(resolve, retryAfterSeconds * 1000));
           continue;
         }
@@ -263,9 +268,10 @@ async function completeTutorialForDailyQuests(page: Page): Promise<void> {
 
   for (const tutorialStep of tutorialSteps) {
     const result = await fetchAuthedJson(page, "/api/player-accounts/me/tutorial-progress", tutorialStep);
-    expect(result.status, `tutorial progress should succeed for ${tutorialStep.reason}:${tutorialStep.step ?? "null"}`).toBe(
-      200
-    );
+    expect(
+      result.status,
+      `tutorial progress should succeed for ${tutorialStep.reason}:${tutorialStep.step ?? "null"}: ${JSON.stringify(result.payload)}`
+    ).toBe(200);
   }
 }
 

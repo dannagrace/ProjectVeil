@@ -151,10 +151,7 @@ function resolveFirstClaimableOnboardingPlayerId(prefix = "onboarding-main-seed"
       dateKey,
       questPool
     });
-    const canReachFirstClaimOnMainPath = quests.some(
-      (quest) =>
-        (quest.metric === "hero_moves" && quest.target <= 4) || (quest.metric === "battle_wins" && quest.target <= 1)
-    );
+    const canReachFirstClaimOnMainPath = quests.some((quest) => quest.metric === "battle_wins" && quest.target <= 1);
     if (canReachFirstClaimOnMainPath) {
       return playerId;
     }
@@ -205,9 +202,13 @@ async function fetchAuthedJson<T>(
 ): Promise<BrowserApiResult<T>> {
   return await page.evaluate(
     async ({ path, init }) => {
-      const raw = window.localStorage.getItem("project-veil:auth-session");
-      const session = raw ? (JSON.parse(raw) as AuthSessionSnapshot) : null;
+      const readSession = (): AuthSessionSnapshot | null => {
+        const raw = window.localStorage.getItem("project-veil:auth-session");
+        return raw ? (JSON.parse(raw) as AuthSessionSnapshot) : null;
+      };
+
       for (let attempt = 0; attempt < 5; attempt += 1) {
+        const session = readSession();
         const headers: Record<string, string> = {};
         if (session?.token) {
           headers.Authorization = `Bearer ${session.token}`;
@@ -222,8 +223,9 @@ async function fetchAuthedJson<T>(
           ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {})
         });
 
-        if (response.status === 429 && attempt < 4) {
-          const retryAfterSeconds = Math.max(1, Number(response.headers.get("Retry-After") ?? "1"));
+        if ((response.status === 401 || response.status === 429) && attempt < 4) {
+          const retryAfterSeconds =
+            response.status === 429 ? Math.max(1, Number(response.headers.get("Retry-After") ?? "1")) : 0.25;
           await new Promise((resolve) => window.setTimeout(resolve, retryAfterSeconds * 1000));
           continue;
         }
@@ -261,7 +263,10 @@ async function fetchAuthedJson<T>(
 
 async function waitForStableAuthSession(
   page: Page,
-  expectedPlayerId?: string
+  expectedPlayerId?: string,
+  options?: {
+    expectedLastRoomId?: string;
+  }
 ): Promise<{
   session: Required<Pick<AuthSessionSnapshot, "playerId" | "token">>;
   account: NonNullable<PlayerAccountPayload["account"]>;
@@ -278,6 +283,10 @@ async function waitForStableAuthSession(
       await page.waitForTimeout(250);
       continue;
     }
+    if (options?.expectedLastRoomId && result.payload.account.lastRoomId !== options.expectedLastRoomId) {
+      await page.waitForTimeout(250);
+      continue;
+    }
 
     return {
       session: await readAuthSession(page),
@@ -285,7 +294,9 @@ async function waitForStableAuthSession(
     };
   }
 
-  throw new Error(`auth_session_never_became_usable:${expectedPlayerId ?? "<any>"}`);
+  throw new Error(
+    `auth_session_never_became_usable:${expectedPlayerId ?? "<any>"}:${options?.expectedLastRoomId ?? "<any-room>"}`
+  );
 }
 
 async function fetchPlayerProfile(page: Page): Promise<NonNullable<PlayerAccountPayload["account"]>> {
@@ -420,8 +431,15 @@ async function settleFirstBattle(page: Page): Promise<void> {
 async function fetchProfileWithClaimableDailyQuest(page: Page): Promise<NonNullable<PlayerAccountPayload["account"]>> {
   let profile = await fetchPlayerProfile(page);
 
-  for (let attempt = 0; attempt < 4 && (profile.dailyQuestBoard?.availableClaims ?? 0) < 1; attempt += 1) {
-    await moveToAnyReachableTile(page);
+  for (let attempt = 0; attempt < 20 && (profile.dailyQuestBoard?.availableClaims ?? 0) < 1; attempt += 1) {
+    const hasMovableReachableTile = await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".tile.is-reachable")).some(
+        (tile) => !tile.classList.contains("is-hero")
+      )
+    );
+    if (hasMovableReachableTile) {
+      await moveToAnyReachableTile(page);
+    }
     await page.waitForTimeout(250);
     profile = await fetchPlayerProfile(page);
   }
@@ -436,7 +454,7 @@ test("onboarding funnel: fresh session enters onboarding and keeps daily quests 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     const resolvedPlayerId = await enterRoomThroughLobby(page, roomId, playerId, "Onboarding Fresh Start");
 
-    const authSession = await waitForStableAuthSession(page, resolvedPlayerId);
+    const authSession = await waitForStableAuthSession(page, resolvedPlayerId, { expectedLastRoomId: roomId });
     expect(authSession.account.playerId).toBe(resolvedPlayerId);
     expect(authSession.account.lastRoomId).toBe(roomId);
     expect(authSession.account.tutorialStep).toBe(1);
@@ -619,7 +637,7 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
     await expect(page).toHaveURL(new RegExp(`roomId=${secondRoomId}`));
     await expect(page.getByTestId("account-card")).toContainText(displayName);
 
-    const returningSession = await waitForStableAuthSession(page, resolvedPlayerId);
+    const returningSession = await waitForStableAuthSession(page, resolvedPlayerId, { expectedLastRoomId: secondRoomId });
     const returningProfile = returningSession.account;
     expect(returningProfile.lastRoomId).toBe(secondRoomId);
     expect(returningProfile.tutorialStep ?? null).toBeNull();

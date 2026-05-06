@@ -4,6 +4,7 @@ import {
   createDailyQuestClaimEventLogEntry,
   getDailyQuestCycleKey,
   getDailyQuestResetAt,
+  loadDailyQuestBoard,
   readDailyQuestFeatureEnabled
 } from "@server/domain/economy/daily-quests";
 
@@ -119,4 +120,63 @@ test("createDailyQuestClaimEventLogEntry uses sequence in the generated id", () 
   );
 
   assert.ok(entry.id.includes(":3:"), "id should contain the sequence number");
+});
+
+test("loadDailyQuestBoard uses the active daily quest rotation override", async (t) => {
+  const originalRotationJson = process.env.VEIL_DAILY_QUEST_ROTATIONS_JSON;
+  process.env.VEIL_DAILY_QUEST_ROTATIONS_JSON = JSON.stringify({
+    schemaVersion: 1,
+    rotations: [
+      {
+        id: "test-override",
+        label: "Test Override",
+        schedule: {
+          startDate: "2026-05-01",
+          endDate: "2026-05-31",
+          weekdays: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+        },
+        quests: [
+          {
+            id: "override_first_battle",
+            title: "Override First Battle",
+            description: "Win one battle.",
+            metric: "battle_wins",
+            target: 1,
+            reward: {
+              gems: 1,
+              gold: 10
+            }
+          }
+        ]
+      }
+    ]
+  });
+  t.after(() => {
+    if (originalRotationJson === undefined) {
+      delete process.env.VEIL_DAILY_QUEST_ROTATIONS_JSON;
+    } else {
+      process.env.VEIL_DAILY_QUEST_ROTATIONS_JSON = originalRotationJson;
+    }
+  });
+
+  const board = await loadDailyQuestBoard(
+    {
+      loadPlayerEventHistory: async () => ({ items: [] }),
+      loadPlayerQuestState: async () => null,
+      savePlayerQuestState: async (_playerId: string, state: unknown) => state
+    } as never,
+    {
+      playerId: "rotation-player",
+      displayName: "Rotation Player"
+    } as never,
+    new Date("2026-05-06T12:00:00.000Z"),
+    {
+      enabled: true
+    }
+  );
+
+  assert.deepEqual(
+    board.quests.map((quest) => quest.id),
+    ["override_first_battle"]
+  );
 });

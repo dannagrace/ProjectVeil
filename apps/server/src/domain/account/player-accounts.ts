@@ -18,6 +18,7 @@ import {
   issueNextAuthSession,
   revokeGuestAuthSession,
   readGuestAuthTokenFromRequest,
+  type GuestAuthSession,
   validateAuthSessionFromRequest,
   verifyAccountPassword
 } from "@server/domain/account/auth";
@@ -997,6 +998,13 @@ async function requireAuthSession(
   return result.session;
 }
 
+function issuePlayerAccountResponseSession(
+  account: Parameters<typeof issueNextAuthSession>[0],
+  authSession: GuestAuthSession
+): GuestAuthSession {
+  return authSession.authMode === "account" ? issueNextAuthSession(account, authSession) : authSession;
+}
+
 async function requireAuthorizedPlayerScope(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1341,7 +1349,7 @@ export function registerPlayerAccountRoutes(
           ...withBattleReportCenter(account),
           experiments: entitlements.experiments
         },
-        session: issueNextAuthSession(account, authSession)
+        session: issuePlayerAccountResponseSession(account, authSession)
       });
       return;
     }
@@ -1368,7 +1376,7 @@ export function registerPlayerAccountRoutes(
           ...(await withDailyQuestBoard(withBattleReportCenter(hydratedAccount), store, featureFlags.quest_system_enabled)),
           experiments: entitlements.experiments
         },
-        session: issueNextAuthSession(hydratedAccount, authSession)
+        session: issuePlayerAccountResponseSession(hydratedAccount, authSession)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
@@ -4150,7 +4158,7 @@ export function registerPlayerAccountRoutes(
             ...(decrypted.payload.countryCode?.trim() ? { countryCode: decrypted.payload.countryCode.trim() } : {}),
             boundAt: phoneNumberBoundAt
           },
-          session: issueNextAuthSession(account, authSession)
+          session: issuePlayerAccountResponseSession(account, authSession)
         });
         return;
       }
@@ -4166,7 +4174,7 @@ export function registerPlayerAccountRoutes(
           ...(decrypted.payload.countryCode?.trim() ? { countryCode: decrypted.payload.countryCode.trim() } : {}),
           boundAt: phoneNumberBoundAt
         },
-        session: issueNextAuthSession(account, authSession)
+        session: issuePlayerAccountResponseSession(account, authSession)
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -4282,7 +4290,7 @@ export function registerPlayerAccountRoutes(
         });
         sendJson(response, 200, {
           account: withBattleReportCenter(account),
-          session: issueNextAuthSession(account, authSession)
+          session: issuePlayerAccountResponseSession(account, authSession)
         });
         return;
       }
@@ -4357,7 +4365,7 @@ export function registerPlayerAccountRoutes(
 
       sendJson(response, 200, {
         account: withBattleReportCenter(account),
-        session: issueNextAuthSession(account, authSession)
+        session: issuePlayerAccountResponseSession(account, authSession)
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {
@@ -4447,7 +4455,7 @@ export function registerPlayerAccountRoutes(
         });
         sendJson(response, 200, {
           account: withBattleReportCenter(account),
-          ...(authSession?.playerId === playerId ? { session: issueNextAuthSession(account, authSession) } : {})
+          ...(authSession?.playerId === playerId ? { session: issuePlayerAccountResponseSession(account, authSession) } : {})
         });
         return;
       }
@@ -4479,7 +4487,7 @@ export function registerPlayerAccountRoutes(
 
       sendJson(response, 200, {
         account: withBattleReportCenter(account),
-        session: issueNextAuthSession(account, authSession)
+        session: issuePlayerAccountResponseSession(account, authSession)
       });
     } catch (error) {
       if (error instanceof PayloadTooLargeError) {

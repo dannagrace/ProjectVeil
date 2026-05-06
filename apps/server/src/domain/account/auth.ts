@@ -3012,16 +3012,18 @@ export function registerAuthRoutes(
           playerId: authSession.playerId,
           displayName: authSession.displayName
         });
-        nextSession = issueNextAuthSession(
-          {
-            playerId: account.playerId,
-            displayName: account.displayName,
-            ...(account.loginId ? { loginId: account.loginId } : {}),
-            ...(account.refreshSessionId ? { sessionId: account.refreshSessionId } : {}),
-            ...(account.accountSessionVersion != null ? { sessionVersion: account.accountSessionVersion } : {})
-          },
-          authSession
-        );
+        if (authSession.authMode === "account") {
+          nextSession = issueNextAuthSession(
+            {
+              playerId: account.playerId,
+              displayName: account.displayName,
+              ...(account.loginId ? { loginId: account.loginId } : {}),
+              ...(account.refreshSessionId ? { sessionId: account.refreshSessionId } : {}),
+              ...(account.accountSessionVersion != null ? { sessionVersion: account.accountSessionVersion } : {})
+            },
+            authSession
+          );
+        }
       }
 
       sendJson(response, 200, {
