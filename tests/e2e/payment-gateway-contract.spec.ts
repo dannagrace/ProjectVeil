@@ -30,8 +30,8 @@ test("payment gateway registry exposes the three launch payment channels", async
     ["apple", "google", "wechat"]
   );
 
-  assert.deepEqual(registry.get("apple").gateway.supportedOperations, ["grantRewards"]);
-  assert.deepEqual(registry.get("google").gateway.supportedOperations, ["grantRewards"]);
+  assert.deepEqual(registry.get("apple").gateway.supportedOperations, ["verifyCallback", "grantRewards"]);
+  assert.deepEqual(registry.get("google").gateway.supportedOperations, ["verifyCallback", "grantRewards"]);
   assert.deepEqual(registry.get("wechat").gateway.supportedOperations, ["createOrder", "verifyCallback", "grantRewards"]);
 });
 
@@ -45,8 +45,13 @@ test("payment gateway registry wires route adapters for each channel", async () 
   assert.deepEqual(
     app.posts.sort(),
     [
+      "/api/payment/apple/notification",
+      "/api/payment/google/notification",
+      "/api/payment/wechat/notification",
       "/api/payments/apple/verify",
+      "/api/payments/apple/notifications",
       "/api/payments/google/verify",
+      "/api/payments/google/rtdn",
       "/api/admin/payments/wechat/retry",
       "/api/payments/wechat/callback",
       "/api/payments/wechat/create",

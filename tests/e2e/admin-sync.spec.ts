@@ -1,46 +1,38 @@
 import { test, expect } from './fixtures';
-import { ADMIN_BASE_URL, CLIENT_BASE_URL } from "./runtime-targets";
+import { ADMIN_BASE_URL, ADMIN_TOKEN } from "./runtime-targets";
+import { createSmokeGuestAuthSession, openAuthenticatedRoom } from "./smoke-helpers";
 
-test('Admin Console 联动测试: 修改资源并验证实时同步', async ({ browser }) => {
-  // 1. 创建玩家页面 (H5 Client)
+test('Admin Console 联动测试: 修改资源并验证实时同步', async ({ browser, request }) => {
   const playerContext = await browser.newContext();
-  const playerPage = await playerContext.newPage();
-  await playerPage.goto(CLIENT_BASE_URL);
-  
-  // 模拟登录 player-1
-  const nameInput = playerPage.locator('input[placeholder*="ID"], input[type="text"]').first();
-  await nameInput.fill('player-1');
-  await playerPage.keyboard.press('Enter');
-  
-  // 等待游戏加载 (根据日志，等待 [Veil] Joined room)
-  await playerPage.waitForTimeout(3000);
-  
-  // 2. 创建管理员页面 (Admin Console)
   const adminContext = await browser.newContext();
-  const adminPage = await adminContext.newPage();
-  await adminPage.goto(ADMIN_BASE_URL);
-  
-  // 输入 Player ID 并修改资源
-  await adminPage.fill('#targetPlayerId', 'player-1');
-  await adminPage.fill('#modGold', '9999');
-  
-  // 点击确认修改
-  await adminPage.click('button:has-text("确认修改")');
-  
-  // 等待同步
-  await adminPage.waitForTimeout(1000);
-  
-  // 3. 验证玩家端数据 (通过执行 JS 检查内存状态)
-  const goldValue = await playerPage.evaluate(() => {
-    // 假设游戏状态挂载在全局或可以通过 colyseus client 访问
-    // 这里我们直接检查 H5 端是否收到了新的 resources 数据
-    // 作为一个通用的验证，我们截取 H5 页面的图片，或者检查特定的 UI 元素
-    return document.body.innerText; 
-  });
 
-  // 4. 视觉确认：截屏
-  await playerPage.screenshot({ path: 'output/admin_sync_test_h5.png' });
-  await adminPage.screenshot({ path: 'output/admin_sync_test_admin.png' });
-  
-  console.log('测试完成：已生成截图至 output 目录。');
+  try {
+    const playerPage = await playerContext.newPage();
+    const roomId = `admin-sync-${Date.now()}`;
+    const session = await createSmokeGuestAuthSession(request, "Sync E2E");
+    await openAuthenticatedRoom(playerPage, {
+      roomId,
+      session,
+      expectedMoveText: null
+    });
+    const goldDelta = 9999;
+
+    const adminPage = await adminContext.newPage();
+    await adminPage.goto(ADMIN_BASE_URL);
+    await adminPage.fill("#adminSecret", ADMIN_TOKEN);
+    await adminPage.fill("#targetPlayerId", session.playerId);
+    await adminPage.fill("#modGold", String(goldDelta));
+    await adminPage.fill("#modWood", "0");
+    await adminPage.click("#modifyResourcesButton");
+
+    const status = adminPage.locator("#status");
+    await expect(status).toContainText("修改成功");
+    await expect(status).toContainText(/当前 Gold: \d+/);
+    const syncedGold = Number((await status.innerText()).match(/当前 Gold:\s*(\d+)/)?.[1] ?? "0");
+    expect(syncedGold).toBeGreaterThanOrEqual(goldDelta);
+    await expect(playerPage.getByTestId("stat-gold")).toHaveText(new RegExp(`Gold\\s*${syncedGold}`));
+  } finally {
+    await adminContext.close();
+    await playerContext.close();
+  }
 });

@@ -1050,10 +1050,11 @@ export type WorldEvent =
       heroId: string;
       attackerPlayerId: string;
       defenderHeroId?: string;
-      defenderPlayerId?: string;
-      battleId: string;
-      result: "attacker_victory" | "defender_victory";
-    };
+	      defenderPlayerId?: string;
+	      battleId: string;
+	      result: "attacker_victory" | "defender_victory";
+	      battleKind?: "neutral" | "hero";
+	    };
 
 export interface WorldActionOutcome {
   state: WorldState;

@@ -146,8 +146,12 @@ test("guild lifecycle E2E covers create, join, leave, and roster detail views", 
 
   await test.step("api: guild detail and roster view reflect the joined member", async () => {
     const [detailResponse, rosterResponse] = await Promise.all([
-      request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}`),
-      request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}/roster`)
+      request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}`, {
+        headers: buildAuthHeaders(founderToken)
+      }),
+      request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}/roster`, {
+        headers: buildAuthHeaders(founderToken)
+      })
     ]);
 
     expect(detailResponse.status()).toBe(200);
@@ -204,7 +208,9 @@ test("guild lifecycle E2E covers create, join, leave, and roster detail views", 
       })
     ]);
 
-    const rosterAfterLeaveResponse = await request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}/roster`);
+    const rosterAfterLeaveResponse = await request.get(`${SERVER_BASE_URL}/api/guilds/${encodeURIComponent(guildId)}/roster`, {
+      headers: buildAuthHeaders(founderToken)
+    });
     expect(rosterAfterLeaveResponse.status()).toBe(200);
     const rosterAfterLeavePayload = (await rosterAfterLeaveResponse.json()) as { roster?: GuildRosterPayload };
     expect(rosterAfterLeavePayload.roster?.members?.map((member) => member.displayName)).toEqual(["Guild Founder"]);

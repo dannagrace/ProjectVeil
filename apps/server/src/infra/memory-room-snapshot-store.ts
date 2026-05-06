@@ -2884,16 +2884,36 @@ export class MemoryRoomSnapshotStore implements RoomSnapshotStore {
   /** For testing: Clear all in-memory state */
   clearAll(): void {
     this.snapshots.clear();
+    this.battleSnapshots.clear();
     this.accounts.clear();
     this.playerEventHistory.clear();
+    this.guilds.clear();
+    this.guildIdByPlayerId.clear();
+    this.guildAuditLogs.length = 0;
+    this.guildMessages.clear();
+    this.nameHistoryByPlayerId.clear();
+    this.activeNameReservations.clear();
+    this.paymentOrders.clear();
+    this.paymentReceiptsByOrderId.clear();
+    this.paymentReceiptOrderIdByTransactionId.clear();
+    this.banHistoryByPlayerId.clear();
+    this.compensationHistoryByPlayerId.clear();
+    this.adminAuditLogs.length = 0;
     this.authByLoginId.clear();
     this.authSessionsByPlayerId.clear();
     this.playerIdByWechatOpenId.clear();
     this.heroArchives.clear();
+    this.playerQuestStates.clear();
     this.shopPurchases.clear();
+    this.reports.clear();
+    this.supportTickets.clear();
     this.seasons.clear();
     this.leaderboardSeasonArchives.clear();
     this.seasonRewardLog.clear();
+    this.referrals.clear();
+    this.nextReportId = 1;
+    this.nextPlayerNameHistoryId = 1;
+    this.nextPlayerNameReservationId = 1;
   }
 
   private selectSeasons(options: SeasonListOptions): SeasonSnapshot[] {

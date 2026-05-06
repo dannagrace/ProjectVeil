@@ -34,6 +34,12 @@ test("hero can clear a neutral battle and receive the reward", async ({ page, re
   await expectHeroMove(page, getHeroMoveTotal());
   await expect(page.getByTestId("battle-empty")).toHaveText(/No active battle/);
 
+  await pressTile(page, 3, 1);
+  await expectHeroMove(page, getHeroMoveTotal() - 2);
+  await pressTile(page, 5, 1);
+  await expectHeroMove(page, getHeroMoveTotal() - 4);
+  await pressTile(page, 5, 3);
+  await expectHeroMove(page, getHeroMoveTotal() - 6);
   await pressTile(page, 5, 4);
 
   await expect(page.getByTestId("battle-panel")).not.toContainText("No active battle");

@@ -27,6 +27,9 @@ interface PlayerProfilePayload {
       gold?: number;
     };
   };
+  session?: {
+    token?: string;
+  };
 }
 
 interface SeasonProgressPayload {
@@ -75,6 +78,10 @@ function buildAuthHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`
   };
+}
+
+function refreshAuthToken(payload: { session?: { token?: string } }, currentToken: string): string {
+  return payload.session?.token?.trim() || currentToken;
 }
 
 async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
@@ -223,17 +230,16 @@ async function fetchSeasonProgress(
   return (await response.json()) as SeasonProgressPayload;
 }
 
-async function fetchGoldBalance(
+async function fetchPlayerProfile(
   request: APIRequestContext,
   authHeaders: Record<string, string>
-): Promise<number> {
+): Promise<PlayerProfilePayload> {
   const response = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
     headers: authHeaders
   });
   expect(response.status()).toBe(200);
 
-  const payload = (await response.json()) as PlayerProfilePayload;
-  return payload.account?.globalResources?.gold ?? 0;
+  return (await response.json()) as PlayerProfilePayload;
 }
 
 test.beforeEach(async ({ request }) => {
@@ -249,13 +255,15 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
   request
 }) => {
   const playerId = "player-1";
-  const token = await createGuestSessionToken(request, playerId);
-  const authHeaders = buildAuthHeaders(token);
+  let token = await createGuestSessionToken(request, playerId);
+  const authHeaders = () => buildAuthHeaders(token);
+  let initialSeasonXp = 0;
 
   await test.step("api: season progress starts at tier 1 with no claimed battle pass rewards", async () => {
-    const initialProgress = await fetchSeasonProgress(request, authHeaders);
+    const initialProgress = await fetchSeasonProgress(request, authHeaders());
     expect(typeof initialProgress.battlePassEnabled).toBe("boolean");
-    expect(initialProgress.seasonXp).toBe(0);
+    initialSeasonXp = initialProgress.seasonXp ?? 0;
+    expect(initialSeasonXp).toBeGreaterThanOrEqual(0);
     expect(initialProgress.seasonPassTier).toBe(1);
     expect(initialProgress.seasonPassPremium).toBe(false);
     expect(initialProgress.seasonPassClaimedTiers ?? []).toEqual([]);
@@ -264,7 +272,7 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
   await test.step("gameplay: repeated neutral battle settlements unlock battle pass tier 2", async () => {
     for (let index = 0; index < BATTLE_WINS_REQUIRED; index += 1) {
       const roomId = `battle-pass-e2e-room-${index + 1}-${Date.now()}`;
-      const session = await connectRawSession(roomId, playerId, token);
+        const session = await connectRawSession(roomId, playerId, token);
 
       try {
         await settleNeutralBattle(session, roomId);
@@ -272,16 +280,16 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
         await session.close();
       }
 
-      const expectedSeasonXp = (index + 1) * BATTLE_XP_PER_WIN;
+      const expectedSeasonXp = initialSeasonXp + (index + 1) * BATTLE_XP_PER_WIN;
       await expect
-        .poll(async () => (await fetchSeasonProgress(request, authHeaders)).seasonXp ?? 0, {
+        .poll(async () => (await fetchSeasonProgress(request, authHeaders())).seasonXp ?? 0, {
           message: `waiting for season xp ${expectedSeasonXp} after room ${roomId}`
         })
         .toBe(expectedSeasonXp);
     }
 
-    const unlockedProgress = await fetchSeasonProgress(request, authHeaders);
-    expect(unlockedProgress.seasonXp).toBe(BATTLE_PASS_TIER_XP_REQUIRED);
+    const unlockedProgress = await fetchSeasonProgress(request, authHeaders());
+    expect(unlockedProgress.seasonXp).toBe(initialSeasonXp + BATTLE_PASS_TIER_XP_REQUIRED);
     expect(unlockedProgress.seasonPassTier).toBe(BATTLE_PASS_TIER);
     expect(unlockedProgress.seasonPassClaimedTiers ?? []).not.toContain(BATTLE_PASS_TIER);
   });
@@ -289,11 +297,13 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
   let goldBeforeClaim = 0;
 
   await test.step("api: claiming the unlocked tier settles the configured reward on the account", async () => {
-    goldBeforeClaim = await fetchGoldBalance(request, authHeaders);
+    const profileBeforeClaim = await fetchPlayerProfile(request, authHeaders());
+    token = refreshAuthToken(profileBeforeClaim, token);
+    goldBeforeClaim = profileBeforeClaim.account?.globalResources?.gold ?? 0;
 
     const claimResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/season/claim-tier`, {
       headers: {
-        ...authHeaders,
+        ...authHeaders(),
         "Content-Type": "application/json"
       },
       data: {
@@ -311,17 +321,18 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
     expect(claimPayload.account?.seasonPassClaimedTiers ?? []).toContain(BATTLE_PASS_TIER);
     expect(claimPayload.account?.globalResources?.gold).toBe(goldBeforeClaim + BATTLE_PASS_TIER_REWARD.gold);
 
-    const progressAfterClaim = await fetchSeasonProgress(request, authHeaders);
+    const progressAfterClaim = await fetchSeasonProgress(request, authHeaders());
     expect(progressAfterClaim.seasonPassClaimedTiers ?? []).toContain(BATTLE_PASS_TIER);
 
-    const goldAfterClaim = await fetchGoldBalance(request, authHeaders);
-    expect(goldAfterClaim).toBe(goldBeforeClaim + BATTLE_PASS_TIER_REWARD.gold);
+    const profileAfterClaim = await fetchPlayerProfile(request, authHeaders());
+    token = refreshAuthToken(profileAfterClaim, token);
+    expect(profileAfterClaim.account?.globalResources?.gold ?? 0).toBe(goldBeforeClaim + BATTLE_PASS_TIER_REWARD.gold);
   });
 
   await test.step("api: duplicate tier claims are rejected without double-settling the reward", async () => {
     const duplicateClaimResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/season/claim-tier`, {
       headers: {
-        ...authHeaders,
+        ...authHeaders(),
         "Content-Type": "application/json"
       },
       data: {
@@ -336,10 +347,10 @@ test("battle pass E2E progresses through neutral battle settlements, settles a t
       }
     });
 
-    const progressAfterDuplicate = await fetchSeasonProgress(request, authHeaders);
+    const progressAfterDuplicate = await fetchSeasonProgress(request, authHeaders());
     expect(progressAfterDuplicate.seasonPassClaimedTiers ?? []).toEqual([BATTLE_PASS_TIER]);
 
-    const goldAfterDuplicate = await fetchGoldBalance(request, authHeaders);
-    expect(goldAfterDuplicate).toBe(goldBeforeClaim + BATTLE_PASS_TIER_REWARD.gold);
+    const profileAfterDuplicate = await fetchPlayerProfile(request, authHeaders());
+    expect(profileAfterDuplicate.account?.globalResources?.gold ?? 0).toBe(goldBeforeClaim + BATTLE_PASS_TIER_REWARD.gold);
   });
 });

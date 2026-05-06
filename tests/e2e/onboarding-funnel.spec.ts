@@ -7,6 +7,7 @@ import {
   attackOnce,
   buildRoomId,
   dismissBattleModal,
+  moveToAnyReachableTile,
   pressTile,
   waitForLobbyReady,
   withSmokeDiagnostics
@@ -38,15 +39,18 @@ interface PlayerAccountPayload {
       wood?: number;
       ore?: number;
     };
-    dailyQuestBoard?: {
-      enabled?: boolean;
-      availableClaims?: number;
-      quests?: Array<{
-        id?: string;
-        completed?: boolean;
-        claimed?: boolean;
-      }>;
-    };
+      dailyQuestBoard?: {
+        enabled?: boolean;
+        availableClaims?: number;
+        quests?: Array<{
+          id?: string;
+          metric?: string;
+          current?: number;
+          target?: number;
+          completed?: boolean;
+          claimed?: boolean;
+        }>;
+      };
   };
   session?: AuthSessionSnapshot;
 }
@@ -413,6 +417,18 @@ async function settleFirstBattle(page: Page): Promise<void> {
   await dismissBattleModal(page);
 }
 
+async function fetchProfileWithClaimableDailyQuest(page: Page): Promise<NonNullable<PlayerAccountPayload["account"]>> {
+  let profile = await fetchPlayerProfile(page);
+
+  for (let attempt = 0; attempt < 4 && (profile.dailyQuestBoard?.availableClaims ?? 0) < 1; attempt += 1) {
+    await moveToAnyReachableTile(page);
+    await page.waitForTimeout(250);
+    profile = await fetchPlayerProfile(page);
+  }
+
+  return profile;
+}
+
 test("onboarding funnel: fresh session enters onboarding and keeps daily quests locked", async ({ page }, testInfo) => {
   const roomId = buildRoomId("onb-start");
   const playerId = `onboarding-start-${Date.now()}`;
@@ -535,7 +551,7 @@ test("onboarding funnel: tutorial completion hands off to chapter 1, settles the
 
     await settleFirstBattle(page);
 
-    const questProfile = await fetchPlayerProfile(page);
+    const questProfile = await fetchProfileWithClaimableDailyQuest(page);
     expect(questProfile.dailyQuestBoard?.availableClaims ?? 0).toBeGreaterThanOrEqual(1);
     const claimableQuest = questProfile.dailyQuestBoard?.quests?.find((quest) => quest?.id && quest.completed && !quest.claimed);
     const claimableQuestId = claimableQuest?.id ?? "";

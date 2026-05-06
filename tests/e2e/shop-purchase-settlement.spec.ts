@@ -7,6 +7,7 @@ const SEEDED_GEMS = 200;
 interface GuestLoginPayload {
   session?: {
     token?: string;
+    playerId?: string;
   };
 }
 
@@ -16,6 +17,9 @@ interface PlayerProfilePayload {
     cosmeticInventory?: {
       ownedIds?: string[];
     };
+  };
+  session?: {
+    token?: string;
   };
 }
 
@@ -64,7 +68,10 @@ function buildAuthHeaders(token: string): Record<string, string> {
   };
 }
 
-async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
+async function createGuestSession(
+  request: APIRequestContext,
+  playerId: string
+): Promise<{ playerId: string; token: string }> {
   const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
     data: {
       playerId,
@@ -76,7 +83,15 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
 
   const payload = (await response.json()) as GuestLoginPayload;
   expect(payload.session?.token).toBeTruthy();
-  return payload.session?.token ?? "";
+  expect(payload.session?.playerId).toBeTruthy();
+  return {
+    playerId: payload.session?.playerId ?? "",
+    token: payload.session?.token ?? ""
+  };
+}
+
+function refreshAuthToken(payload: { session?: { token?: string } }, currentToken: string): string {
+  return payload.session?.token?.trim() || currentToken;
 }
 
 async function deliverMailboxSeed(request: APIRequestContext, playerId: string): Promise<void> {
@@ -112,7 +127,7 @@ async function deliverMailboxSeed(request: APIRequestContext, playerId: string):
   );
 }
 
-async function fetchProfile(request: APIRequestContext, authHeaders: Record<string, string>): Promise<PlayerProfilePayload["account"]> {
+async function fetchProfile(request: APIRequestContext, authHeaders: Record<string, string>): Promise<PlayerProfilePayload> {
   const response = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
     headers: authHeaders
   });
@@ -120,7 +135,7 @@ async function fetchProfile(request: APIRequestContext, authHeaders: Record<stri
 
   const payload = (await response.json()) as PlayerProfilePayload;
   expect(payload.account).toBeTruthy();
-  return payload.account ?? {};
+  return payload;
 }
 
 test.beforeEach(async ({ request }) => {
@@ -135,15 +150,21 @@ test.beforeEach(async ({ request }) => {
 test("shop purchase E2E settles cosmetic ownership and account balance, then rejects an invalid SKU without mutating state", async ({
   request
 }) => {
-  const playerId = `shop-purchase-e2e-${Date.now()}`;
-  const token = await createGuestSessionToken(request, playerId);
-  const authHeaders = buildAuthHeaders(token);
+  const session = await createGuestSession(request, `shop-purchase-e2e-${Date.now()}`);
+  const playerId = session.playerId;
+  let token = session.token;
+  const authHeaders = () => buildAuthHeaders(token);
+  let seededGemBalance = 0;
 
   await test.step("api: seed the account with claimable mailbox gems for a real shop purchase", async () => {
+    const profileBeforeSeed = await fetchProfile(request, authHeaders());
+    token = refreshAuthToken(profileBeforeSeed, token);
+    const gemsBeforeSeed = profileBeforeSeed.account?.gems ?? 0;
+
     await deliverMailboxSeed(request, playerId);
 
     const claimResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/mailbox/${SEED_MESSAGE_ID}/claim`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(claimResponse.status()).toBe(200);
 
@@ -151,8 +172,10 @@ test("shop purchase E2E settles cosmetic ownership and account balance, then rej
     expect(claimPayload.claimed).toBe(true);
     expect(claimPayload.message?.claimedAt).toBeTruthy();
 
-    const seededProfile = await fetchProfile(request, authHeaders);
-    expect(seededProfile?.gems).toBe(SEEDED_GEMS);
+    const seededProfile = await fetchProfile(request, authHeaders());
+    token = refreshAuthToken(seededProfile, token);
+    seededGemBalance = gemsBeforeSeed + SEEDED_GEMS;
+    expect(seededProfile.account?.gems).toBe(seededGemBalance);
   });
 
   let cosmeticProduct: ShopProductPayload | undefined;
@@ -171,13 +194,14 @@ test("shop purchase E2E settles cosmetic ownership and account balance, then rej
     cosmeticId = cosmeticProduct?.grant?.cosmeticIds?.[0] ?? "";
     expect(cosmeticId).toBeTruthy();
 
-    const profileBeforePurchase = await fetchProfile(request, authHeaders);
-    expect(profileBeforePurchase?.cosmeticInventory?.ownedIds ?? []).not.toContain(cosmeticId);
+    const profileBeforePurchase = await fetchProfile(request, authHeaders());
+    token = refreshAuthToken(profileBeforePurchase, token);
+    expect(profileBeforePurchase.account?.cosmeticInventory?.ownedIds ?? []).not.toContain(cosmeticId);
 
     purchaseId = `shop-purchase-${playerId}`;
     const purchaseResponse = await request.post(`${SERVER_BASE_URL}/api/shop/purchase`, {
       headers: {
-        ...authHeaders,
+        ...authHeaders(),
         "Content-Type": "application/json"
       },
       data: {
@@ -194,15 +218,16 @@ test("shop purchase E2E settles cosmetic ownership and account balance, then rej
     expect(purchasePayload.quantity).toBe(1);
     expect(purchasePayload.totalPrice).toBe(cosmeticProduct?.price);
     expect(purchasePayload.granted?.cosmeticIds).toEqual([cosmeticId]);
-    expect(purchasePayload.gemsBalance).toBe(SEEDED_GEMS - (cosmeticProduct?.price ?? 0));
+    expect(purchasePayload.gemsBalance).toBe(seededGemBalance - (cosmeticProduct?.price ?? 0));
 
-    const profileAfterPurchase = await fetchProfile(request, authHeaders);
-    expect(profileAfterPurchase?.gems).toBe(SEEDED_GEMS - (cosmeticProduct?.price ?? 0));
-    expect(profileAfterPurchase?.cosmeticInventory?.ownedIds ?? []).toContain(cosmeticId);
-    expect((profileAfterPurchase?.cosmeticInventory?.ownedIds ?? []).filter((ownedId) => ownedId === cosmeticId)).toHaveLength(1);
+    const profileAfterPurchase = await fetchProfile(request, authHeaders());
+    token = refreshAuthToken(profileAfterPurchase, token);
+    expect(profileAfterPurchase.account?.gems).toBe(seededGemBalance - (cosmeticProduct?.price ?? 0));
+    expect(profileAfterPurchase.account?.cosmeticInventory?.ownedIds ?? []).toContain(cosmeticId);
+    expect((profileAfterPurchase.account?.cosmeticInventory?.ownedIds ?? []).filter((ownedId) => ownedId === cosmeticId)).toHaveLength(1);
 
     const eventLogResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/event-log?limit=20`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(eventLogResponse.ok()).toBeTruthy();
 
@@ -219,7 +244,7 @@ test("shop purchase E2E settles cosmetic ownership and account balance, then rej
   await test.step("api: invalid SKU requests are rejected and leave the settled account state untouched", async () => {
     const invalidPurchaseResponse = await request.post(`${SERVER_BASE_URL}/api/shop/purchase`, {
       headers: {
-        ...authHeaders,
+        ...authHeaders(),
         "Content-Type": "application/json"
       },
       data: {
@@ -236,9 +261,9 @@ test("shop purchase E2E settles cosmetic ownership and account balance, then rej
       }
     });
 
-    const profileAfterInvalidPurchase = await fetchProfile(request, authHeaders);
-    expect(profileAfterInvalidPurchase?.gems).toBe(SEEDED_GEMS - (cosmeticProduct?.price ?? 0));
-    expect(profileAfterInvalidPurchase?.cosmeticInventory?.ownedIds ?? []).toContain(cosmeticId);
-    expect((profileAfterInvalidPurchase?.cosmeticInventory?.ownedIds ?? []).filter((ownedId) => ownedId === cosmeticId)).toHaveLength(1);
+    const profileAfterInvalidPurchase = await fetchProfile(request, authHeaders());
+    expect(profileAfterInvalidPurchase.account?.gems).toBe(seededGemBalance - (cosmeticProduct?.price ?? 0));
+    expect(profileAfterInvalidPurchase.account?.cosmeticInventory?.ownedIds ?? []).toContain(cosmeticId);
+    expect((profileAfterInvalidPurchase.account?.cosmeticInventory?.ownedIds ?? []).filter((ownedId) => ownedId === cosmeticId)).toHaveLength(1);
   });
 });

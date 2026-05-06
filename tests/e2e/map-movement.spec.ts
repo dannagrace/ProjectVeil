@@ -87,6 +87,9 @@ test("hero can visit the shrine and gain a permanent attribute bonus", async ({ 
 
   await expect(page.getByTestId("hero-stats")).toHaveText(formatHeroStatsText(getHeroStats()), { timeout: 10_000 });
 
+  await pressTile(page, 3, 1);
+  await expectHeroMoveSpent(page, 2);
+
   await pressTile(page, 3, 2);
   await expectHeroMoveSpent(page, 3);
 

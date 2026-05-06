@@ -71,10 +71,11 @@ export function applyBattleOutcomeToWorld(
             type: "battle.resolved",
             heroId,
             attackerPlayerId: attackerHero.playerId,
-            battleId,
-            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
-            result: "defender_victory"
-          },
+	            battleId,
+	            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
+	            result: "defender_victory",
+	            battleKind: "hero"
+	          },
           {
             type: "hero.progressed",
             heroId: defenderId,
@@ -132,10 +133,11 @@ export function applyBattleOutcomeToWorld(
             type: "battle.resolved",
             heroId,
             attackerPlayerId: attackerHero.playerId,
-            battleId,
-            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
-            result: "attacker_victory"
-          },
+	            battleId,
+	            ...(defenderId ? { defenderHeroId: defenderId, defenderPlayerId: defenderHero.playerId } : {}),
+	            result: "attacker_victory",
+	            battleKind: "hero"
+	          },
           {
             type: "hero.progressed",
             heroId: attackerId,
@@ -183,11 +185,12 @@ export function applyBattleOutcomeToWorld(
       events: [
         {
           type: "battle.resolved",
-          heroId,
-          attackerPlayerId: attackerHero.playerId,
-          battleId,
-          result: "defender_victory"
-        }
+	          heroId,
+	          attackerPlayerId: attackerHero.playerId,
+	          battleId,
+	          result: "defender_victory",
+	          battleKind: "neutral"
+	        }
       ]
     };
   }
@@ -217,11 +220,12 @@ export function applyBattleOutcomeToWorld(
     events: [
       {
         type: "battle.resolved",
-        heroId,
-        attackerPlayerId: attackerHero.playerId,
-        battleId,
-        result: "attacker_victory"
-      },
+	        heroId,
+	        attackerPlayerId: attackerHero.playerId,
+	        battleId,
+	        result: "attacker_victory",
+	        battleKind: "neutral"
+	      },
       {
         type: "hero.progressed" as const,
         heroId,

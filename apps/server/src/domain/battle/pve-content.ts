@@ -592,7 +592,7 @@ export function getCurrentDailyDungeonState(state?: DailyDungeonState | null, no
     dateKey,
     attemptsUsed: Math.max(0, Math.floor(state.attemptsUsed ?? 0)),
     claimedRunIds: Array.from(new Set(state.claimedRunIds ?? [])),
-    runs: [...(state.runs ?? [])].sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.runId.localeCompare(right.runId))
+    runs: [...(state.runs ?? [])].sort((left, right) => right.startedAt.localeCompare(left.startedAt))
   };
 }
 

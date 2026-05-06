@@ -705,7 +705,7 @@ function normalizeDailyDungeonState(
         })
         .filter((entry): entry is readonly [string, DailyDungeonState["runs"][number]] => Boolean(entry))
     ).values()
-  ).sort((left, right) => right.startedAt.localeCompare(left.startedAt) || left.runId.localeCompare(right.runId));
+  ).sort((left, right) => right.startedAt.localeCompare(left.startedAt));
 
   const attemptsUsed = Math.max(
     0,

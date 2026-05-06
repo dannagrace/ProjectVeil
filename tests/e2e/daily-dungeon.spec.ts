@@ -16,6 +16,7 @@ const FINAL_FLOOR_REWARD = {
 interface GuestLoginPayload {
   session?: {
     token?: string;
+    playerId?: string;
   };
 }
 
@@ -50,6 +51,9 @@ interface PlayerProfilePayload {
       ore?: number;
     };
   };
+  session?: {
+    token?: string;
+  };
 }
 
 function buildAuthHeaders(token: string, now?: string): Record<string, string> {
@@ -74,6 +78,10 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
   return payload.session?.token ?? "";
 }
 
+function refreshAuthToken(payload: { session?: { token?: string } }, currentToken: string): string {
+  return payload.session?.token?.trim() || currentToken;
+}
+
 test.beforeEach(async ({ request }) => {
   const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
     headers: {
@@ -86,9 +94,9 @@ test.beforeEach(async ({ request }) => {
 test("daily dungeon E2E covers active-window access, floor progression, reward claim, and completed-run lockout", async ({
   request
 }) => {
-  const token = await createGuestSessionToken(request, `daily-dungeon-e2e-${Date.now()}`);
-  const activeHeaders = buildAuthHeaders(token, ACTIVE_WINDOW_NOW);
-  const inactiveHeaders = buildAuthHeaders(token, INACTIVE_WINDOW_NOW);
+  let token = await createGuestSessionToken(request, `daily-dungeon-e2e-${Date.now()}`);
+  const activeHeaders = () => buildAuthHeaders(token, ACTIVE_WINDOW_NOW);
+  const inactiveHeaders = () => buildAuthHeaders(token, INACTIVE_WINDOW_NOW);
 
   let gemsBeforeClaim = 0;
   let goldBeforeClaim = 0;
@@ -97,7 +105,7 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
 
   await test.step("api: dungeon is available during its active window and locked outside it", async () => {
     const activeResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/daily-dungeon`, {
-      headers: activeHeaders
+      headers: activeHeaders()
     });
     expect(activeResponse.status()).toBe(200);
 
@@ -111,7 +119,7 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
     });
 
     const inactiveResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/daily-dungeon`, {
-      headers: inactiveHeaders
+      headers: inactiveHeaders()
     });
     expect(inactiveResponse.status()).toBe(404);
     await expect(inactiveResponse.json()).resolves.toEqual({
@@ -124,11 +132,12 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
 
   await test.step("api: floor entry progresses from floor 1 through the final floor", async () => {
     const profileBeforeClaimResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
-      headers: activeHeaders
+      headers: activeHeaders()
     });
     expect(profileBeforeClaimResponse.ok()).toBeTruthy();
 
     const profileBeforeClaim = (await profileBeforeClaimResponse.json()) as PlayerProfilePayload;
+    token = refreshAuthToken(profileBeforeClaim, token);
     gemsBeforeClaim = profileBeforeClaim.account?.gems ?? 0;
     goldBeforeClaim = profileBeforeClaim.account?.globalResources?.gold ?? 0;
     woodBeforeClaim = profileBeforeClaim.account?.globalResources?.wood ?? 0;
@@ -136,7 +145,7 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
     for (const floor of [1, 2, FINAL_FLOOR]) {
       const attemptResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/daily-dungeon/attempt`, {
         headers: {
-          ...activeHeaders,
+          ...activeHeaders(),
           "Content-Type": "application/json"
         },
         data: { floor }
@@ -175,7 +184,7 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
     const claimResponse = await request.post(
       `${SERVER_BASE_URL}/api/player-accounts/me/daily-dungeon/runs/${encodeURIComponent(finalRunId)}/claim`,
       {
-        headers: activeHeaders
+        headers: activeHeaders()
       }
     );
     expect(claimResponse.status()).toBe(200);
@@ -193,11 +202,12 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
     expect(claimPayload.dailyDungeon?.runs?.find((run) => run.runId === finalRunId)?.rewardClaimedAt).toBeTruthy();
 
     const profileAfterClaimResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
-      headers: activeHeaders
+      headers: activeHeaders()
     });
     expect(profileAfterClaimResponse.ok()).toBeTruthy();
 
     const profileAfterClaim = (await profileAfterClaimResponse.json()) as PlayerProfilePayload;
+    token = refreshAuthToken(profileAfterClaim, token);
     expect(profileAfterClaim.account?.gems).toBe(gemsBeforeClaim + FINAL_FLOOR_REWARD.gems);
     expect(profileAfterClaim.account?.globalResources?.gold).toBe(goldBeforeClaim + FINAL_FLOOR_REWARD.resources.gold);
     expect(profileAfterClaim.account?.globalResources?.wood).toBe(woodBeforeClaim + FINAL_FLOOR_REWARD.resources.wood);
@@ -206,7 +216,7 @@ test("daily dungeon E2E covers active-window access, floor progression, reward c
   await test.step("api: a completed dungeon cannot be re-entered during the same active window", async () => {
     const repeatAttemptResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/daily-dungeon/attempt`, {
       headers: {
-        ...activeHeaders,
+        ...activeHeaders(),
         "Content-Type": "application/json"
       },
       data: { floor: 1 }

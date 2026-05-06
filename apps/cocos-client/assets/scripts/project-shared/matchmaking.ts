@@ -35,6 +35,22 @@ export interface MatchmakingPairSelection {
   ratingGap: number;
 }
 
+const LARGE_MATCHMAKING_QUEUE_THRESHOLD = 50;
+
+interface IndexedMatchmakingRequest {
+  request: MatchmakingRequest;
+  index: number;
+  rating: number;
+}
+
+interface MatchmakingPairSearchState {
+  selection: MatchmakingPairSelection;
+  totalWait: number;
+  oldestQueuedAt: number;
+  leftIndex: number;
+  rightIndex: number;
+}
+
 function normalizeFiniteInteger(value: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
@@ -108,6 +124,104 @@ function waitingMillisFor(request: MatchmakingRequest, referenceTimeMs: number):
   return Math.max(0, referenceTimeMs - enqueuedAt);
 }
 
+function createIndexedMatchmakingRequests(requests: MatchmakingRequest[]): IndexedMatchmakingRequest[] {
+  return requests.map((request, index) => ({
+    request,
+    index,
+    rating: normalizeEloRating(request.rating)
+  }));
+}
+
+function considerMatchmakingPair(
+  current: MatchmakingPairSearchState | null,
+  left: IndexedMatchmakingRequest,
+  right: IndexedMatchmakingRequest,
+  referenceTimeMs: number
+): MatchmakingPairSearchState | null {
+  const ratingGap = Math.abs(left.rating - right.rating);
+  if (
+    ratingGap > resolvePairRatingGapLimit(left.request, right.request) ||
+    pairsIntoTopTierWhileProtected(left.request, right.request)
+  ) {
+    return current;
+  }
+
+  const totalWait = waitingMillisFor(left.request, referenceTimeMs) + waitingMillisFor(right.request, referenceTimeMs);
+  const oldestQueuedAt = Math.min(
+    new Date(left.request.enqueuedAt).getTime(),
+    new Date(right.request.enqueuedAt).getTime()
+  );
+  const leftIndex = Math.min(left.index, right.index);
+  const rightIndex = Math.max(left.index, right.index);
+
+  if (
+    current &&
+    (ratingGap > current.selection.ratingGap ||
+      (ratingGap === current.selection.ratingGap && totalWait < current.totalWait) ||
+      (ratingGap === current.selection.ratingGap &&
+        totalWait === current.totalWait &&
+        oldestQueuedAt > current.oldestQueuedAt) ||
+      (ratingGap === current.selection.ratingGap &&
+        totalWait === current.totalWait &&
+        oldestQueuedAt === current.oldestQueuedAt &&
+        (leftIndex > current.leftIndex || (leftIndex === current.leftIndex && rightIndex >= current.rightIndex))))
+  ) {
+    return current;
+  }
+
+  const players =
+    left.index < right.index
+      ? ([left.request, right.request] as [MatchmakingRequest, MatchmakingRequest])
+      : ([right.request, left.request] as [MatchmakingRequest, MatchmakingRequest]);
+  return {
+    selection: {
+      players,
+      ratingGap
+    },
+    totalWait,
+    oldestQueuedAt,
+    leftIndex,
+    rightIndex
+  };
+}
+
+function selectBestMatchPairExhaustive(
+  requests: IndexedMatchmakingRequest[],
+  referenceTimeMs: number
+): MatchmakingPairSearchState | null {
+  let best: MatchmakingPairSearchState | null = null;
+
+  for (let leftIndex = 0; leftIndex < requests.length - 1; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < requests.length; rightIndex += 1) {
+      best = considerMatchmakingPair(best, requests[leftIndex]!, requests[rightIndex]!, referenceTimeMs);
+    }
+  }
+
+  return best;
+}
+
+function selectBestMatchPairFromRatingWindow(
+  requests: IndexedMatchmakingRequest[],
+  referenceTimeMs: number
+): MatchmakingPairSearchState | null {
+  const sortedRequests = [...requests].sort((left, right) => left.rating - right.rating || left.index - right.index);
+  let best: MatchmakingPairSearchState | null = null;
+
+  for (let leftIndex = 0; leftIndex < sortedRequests.length - 1; leftIndex += 1) {
+    const left = sortedRequests[leftIndex]!;
+    for (let rightIndex = leftIndex + 1; rightIndex < sortedRequests.length; rightIndex += 1) {
+      const right = sortedRequests[rightIndex]!;
+      const ratingGap = right.rating - left.rating;
+      if (ratingGap > PROTECTED_MATCHMAKING_MAX_RATING_GAP || (best && ratingGap > best.selection.ratingGap)) {
+        break;
+      }
+      best = considerMatchmakingPair(best, left, right, referenceTimeMs);
+    }
+  }
+
+  return best;
+}
+
 export function selectBestMatchPair(
   requests: MatchmakingRequest[],
   now = new Date()
@@ -117,38 +231,13 @@ export function selectBestMatchPair(
   }
 
   const referenceTimeMs = now.getTime();
-  let best: MatchmakingPairSelection | null = null;
-  let bestTotalWait = -1;
-  let bestOldestQueuedAt = Number.POSITIVE_INFINITY;
+  const indexedRequests = createIndexedMatchmakingRequests(requests);
+  const search =
+    requests.length > LARGE_MATCHMAKING_QUEUE_THRESHOLD
+      ? selectBestMatchPairFromRatingWindow(indexedRequests, referenceTimeMs)
+      : selectBestMatchPairExhaustive(indexedRequests, referenceTimeMs);
 
-  for (let leftIndex = 0; leftIndex < requests.length - 1; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < requests.length; rightIndex += 1) {
-      const left = requests[leftIndex]!;
-      const right = requests[rightIndex]!;
-      const ratingGap = Math.abs(normalizeEloRating(left.rating) - normalizeEloRating(right.rating));
-      if (ratingGap > resolvePairRatingGapLimit(left, right) || pairsIntoTopTierWhileProtected(left, right)) {
-        continue;
-      }
-      const totalWait = waitingMillisFor(left, referenceTimeMs) + waitingMillisFor(right, referenceTimeMs);
-      const oldestQueuedAt = Math.min(new Date(left.enqueuedAt).getTime(), new Date(right.enqueuedAt).getTime());
-
-      if (
-        !best ||
-        ratingGap < best.ratingGap ||
-        (ratingGap === best.ratingGap && totalWait > bestTotalWait) ||
-        (ratingGap === best.ratingGap && totalWait === bestTotalWait && oldestQueuedAt < bestOldestQueuedAt)
-      ) {
-        best = {
-          players: [left, right],
-          ratingGap
-        };
-        bestTotalWait = totalWait;
-        bestOldestQueuedAt = oldestQueuedAt;
-      }
-    }
-  }
-
-  return best;
+  return search?.selection ?? null;
 }
 
 export function estimateMatchmakingWaitSeconds(position: number): number {

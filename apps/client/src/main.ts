@@ -4071,8 +4071,11 @@ async function confirmLobbyPasswordRecovery(roomIdOverride?: string): Promise<vo
 }
 
 function returnToLobby(): void {
-  saveLobbyPreferences(playerId, roomId);
-  rememberPreferredPlayerDisplayName(playerId, state.accountDraftName);
+  const authSession = readStoredAuthSession();
+  const preferredPlayerId = authSession?.playerId ?? playerId;
+  const preferredDisplayName = authSession?.displayName ?? state.accountDraftName;
+  saveLobbyPreferences(preferredPlayerId, roomId);
+  rememberPreferredPlayerDisplayName(preferredPlayerId, preferredDisplayName);
   const nextUrl = new URL(window.location.href);
   nextUrl.search = "";
   window.location.assign(nextUrl.toString());

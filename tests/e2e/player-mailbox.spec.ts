@@ -13,6 +13,7 @@ const ACTIVE_REWARD = {
 interface GuestLoginPayload {
   session?: {
     token?: string;
+    playerId?: string;
   };
 }
 
@@ -22,6 +23,9 @@ interface PlayerProfilePayload {
     globalResources?: {
       gold?: number;
     };
+  };
+  session?: {
+    token?: string;
   };
 }
 
@@ -67,7 +71,10 @@ function buildAuthHeaders(token: string): Record<string, string> {
   };
 }
 
-async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
+async function createGuestSession(
+  request: APIRequestContext,
+  playerId: string
+): Promise<{ playerId: string; token: string }> {
   const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
     data: {
       playerId,
@@ -79,7 +86,15 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
 
   const payload = (await response.json()) as GuestLoginPayload;
   expect(payload.session?.token).toBeTruthy();
-  return payload.session?.token ?? "";
+  expect(payload.session?.playerId).toBeTruthy();
+  return {
+    playerId: payload.session?.playerId ?? "",
+    token: payload.session?.token ?? ""
+  };
+}
+
+function refreshAuthToken(payload: { session?: { token?: string } }, currentToken: string): string {
+  return payload.session?.token?.trim() || currentToken;
 }
 
 async function deliverMailboxMessage(
@@ -138,9 +153,10 @@ test.beforeEach(async ({ request }) => {
 });
 
 test("player mailbox E2E covers admin delivery, list/readback, claim settlement, and expired claim rejection", async ({ request }) => {
-  const playerId = `mailbox-e2e-${Date.now()}`;
-  const token = await createGuestSessionToken(request, playerId);
-  const authHeaders = buildAuthHeaders(token);
+  const session = await createGuestSession(request, `mailbox-e2e-${Date.now()}`);
+  const playerId = session.playerId;
+  let token = session.token;
+  const authHeaders = () => buildAuthHeaders(token);
 
   await test.step("api: admin delivers one claimable message and one expired message", async () => {
     await deliverMailboxMessage(request, playerId, {
@@ -169,16 +185,17 @@ test("player mailbox E2E covers admin delivery, list/readback, claim settlement,
 
   await test.step("api: mailbox list exposes delivered items and flags the expired entry in summary", async () => {
     const profileResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(profileResponse.ok()).toBeTruthy();
 
     const profilePayload = (await profileResponse.json()) as PlayerProfilePayload;
+    token = refreshAuthToken(profilePayload, token);
     gemsBeforeClaim = profilePayload.account?.gems ?? 0;
     goldBeforeClaim = profilePayload.account?.globalResources?.gold ?? 0;
 
     const listResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/mailbox`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(listResponse.status()).toBe(200);
 
@@ -196,7 +213,7 @@ test("player mailbox E2E covers admin delivery, list/readback, claim settlement,
 
   await test.step("api: claiming the active mailbox reward credits the account and records the claim", async () => {
     const claimResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/mailbox/${ACTIVE_MESSAGE_ID}/claim`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(claimResponse.status()).toBe(200);
 
@@ -213,16 +230,17 @@ test("player mailbox E2E covers admin delivery, list/readback, claim settlement,
     });
 
     const profileAfterClaimResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(profileAfterClaimResponse.ok()).toBeTruthy();
 
     const profileAfterClaim = (await profileAfterClaimResponse.json()) as PlayerProfilePayload;
+    token = refreshAuthToken(profileAfterClaim, token);
     expect(profileAfterClaim.account?.gems).toBe(gemsBeforeClaim + ACTIVE_REWARD.gems);
     expect(profileAfterClaim.account?.globalResources?.gold).toBe(goldBeforeClaim + ACTIVE_REWARD.resources.gold);
 
     const eventLogResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me/event-log?limit=20`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(eventLogResponse.ok()).toBeTruthy();
 
@@ -239,7 +257,7 @@ test("player mailbox E2E covers admin delivery, list/readback, claim settlement,
 
   await test.step("api: claiming an expired mailbox reward is rejected without settling it", async () => {
     const expiredClaimResponse = await request.post(`${SERVER_BASE_URL}/api/player-accounts/me/mailbox/${EXPIRED_MESSAGE_ID}/claim`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(expiredClaimResponse.status()).toBe(200);
 
@@ -256,7 +274,7 @@ test("player mailbox E2E covers admin delivery, list/readback, claim settlement,
     });
 
     const profileAfterExpiredClaimResponse = await request.get(`${SERVER_BASE_URL}/api/player-accounts/me`, {
-      headers: authHeaders
+      headers: authHeaders()
     });
     expect(profileAfterExpiredClaimResponse.ok()).toBeTruthy();
 

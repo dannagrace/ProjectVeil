@@ -90,6 +90,7 @@ const runId = process.env.VEIL_PLAYWRIGHT_RUN_ID?.trim() || `${path.basename(pro
 const playwrightOutputDir = process.env.PLAYWRIGHT_OUTPUT_DIR?.trim() || path.join("test-results", runId);
 const playwrightReportDir = process.env.PLAYWRIGHT_HTML_REPORT?.trim() || path.join("playwright-report", runId);
 const adminToken = process.env.VEIL_ADMIN_TOKEN?.trim() || "dev-admin-token";
+const adminSecret = process.env.ADMIN_SECRET?.trim() || adminToken;
 
 process.env.VEIL_PLAYWRIGHT_SERVER_PORT = String(serverPort);
 process.env.VEIL_PLAYWRIGHT_CLIENT_PORT = String(clientPort);
@@ -178,6 +179,7 @@ function createSharedWebServers(): WebServerPlugin[] {
         PORT: String(serverPort),
         ANALYTICS_ENDPOINT: `${serverOrigin}/api/test/analytics/events`,
         ANALYTICS_SINK: "http",
+        ADMIN_SECRET: adminSecret,
         VEIL_ADMIN_TOKEN: adminToken,
         VEIL_ENABLE_TEST_ENDPOINTS: "1",
         VEIL_DAILY_QUESTS_ENABLED: "1",
