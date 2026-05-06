@@ -2,9 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   buildRoomId,
   expectRecoveredBattleSettlement,
-  expectHeroMoveSpent,
-  fullMoveTextPattern,
-  openRoom,
+  expectHeroMoveSpentForSession,
+  openAuthenticatedMultiplayerRoomPair,
   resetSmokeStore,
   reloadAndExpectRecoveredSession,
   resolveBattleToSettlement,
@@ -12,7 +11,7 @@ import {
   withSmokeDiagnostics
 } from "./smoke-helpers";
 
-test("players can reload during PvP settlement and recover the settled world state", async ({ browser }, testInfo) => {
+test("players can reload during PvP settlement and recover the settled world state", async ({ browser, request }, testInfo) => {
   await resetSmokeStore();
   const roomId = buildRoomId("e2e-pvp-postbattle");
   const playerOneContext = await browser.newContext();
@@ -22,20 +21,9 @@ test("players can reload during PvP settlement and recover the settled world sta
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await test.step("setup: both players join the room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
-      });
+      const { playerOne, playerTwo } = await test.step("setup: both players join the room", async () =>
+        openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId)
+      );
 
       await test.step("gameplay: resolve the PvP battle to settlement", async () => {
         await startDeterministicPvpBattle(playerOnePage, playerTwoPage);
@@ -49,11 +37,11 @@ test("players can reload during PvP settlement and recover the settled world sta
         await Promise.all([
           reloadAndExpectRecoveredSession(playerOnePage, {
             roomId,
-            playerId: "player-1"
+            playerId: playerOne.playerId
           }),
           reloadAndExpectRecoveredSession(playerTwoPage, {
             roomId,
-            playerId: "player-2"
+            playerId: playerTwo.playerId
           })
         ]);
       });
@@ -75,8 +63,8 @@ test("players can reload during PvP settlement and recover the settled world sta
         hpPattern: /HP 15\/30/,
         resultSummaryIncludes: ["权威房间状态已恢复", "当前 PVP结算已同步回写"]
       });
-      await expectHeroMoveSpent(playerOnePage, 3, "player-1");
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await expectHeroMoveSpentForSession(playerOnePage, 3);
+      await expectHeroMoveSpentForSession(playerTwoPage, 6);
     });
   } finally {
     await playerOneContext.close();

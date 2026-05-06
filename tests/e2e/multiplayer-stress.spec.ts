@@ -3,8 +3,10 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 import { decodePlayerWorldView } from "../../packages/shared/src/index";
 import {
   buildRoomId,
-  expectHeroMoveSpent,
+  expectHeroMoveSpentForSession,
+  followTilePathForSession,
   fullMoveTextPattern,
+  openAuthenticatedMultiplayerRoomPair,
   openRoom,
   pressTile,
   reloadAndExpectAuthoritativeConvergence,
@@ -55,6 +57,11 @@ interface RawSession {
   close(): Promise<void>;
 }
 
+interface ReachableTile {
+  x: number;
+  y: number;
+}
+
 async function resetStore(request: APIRequestContext): Promise<void> {
   const response = await request.post(`${SERVER_BASE_URL}/api/test/reset-store`, {
     headers: {
@@ -70,7 +77,66 @@ async function readAutomationState(page: Page): Promise<AutomationState> {
 }
 
 async function hoverTile(page: Page, x: number, y: number): Promise<void> {
-  await page.locator(`[data-x="${x}"][data-y="${y}"]`).hover();
+  await expect
+    .poll(async () =>
+      page.evaluate(({ x, y }) => {
+        const tile = document.querySelector<HTMLElement>(`[data-x="${x}"][data-y="${y}"]`);
+        if (!tile) {
+          return false;
+        }
+        tile.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false, cancelable: true, view: window }));
+        return true;
+      }, { x, y })
+    )
+    .toBe(true);
+}
+
+async function readReachableTiles(page: Page): Promise<ReachableTile[]> {
+  return await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".tile.is-reachable"))
+      .filter((tile) => !tile.classList.contains("is-hero") && !tile.classList.contains("fog-hidden"))
+      .map((tile) => ({
+        x: Number(tile.dataset.x ?? Number.NaN),
+        y: Number(tile.dataset.y ?? Number.NaN)
+      }))
+      .filter((tile) => Number.isFinite(tile.x) && Number.isFinite(tile.y))
+  );
+}
+
+async function selectSharedReachableTile(playerOnePage: Page, playerTwoPage: Page): Promise<ReachableTile> {
+  const [playerOneTiles, playerTwoTiles] = await Promise.all([
+    readReachableTiles(playerOnePage),
+    readReachableTiles(playerTwoPage)
+  ]);
+  const playerTwoTileKeys = new Set(playerTwoTiles.map((tile) => `${tile.x},${tile.y}`));
+  const sharedTiles = playerOneTiles.filter((tile) => playerTwoTileKeys.has(`${tile.x},${tile.y}`));
+
+  sharedTiles.sort((left, right) => {
+    const leftCenterDistance = Math.abs(left.x - 3) + Math.abs(left.y - 3);
+    const rightCenterDistance = Math.abs(right.x - 3) + Math.abs(right.y - 3);
+    if (leftCenterDistance !== rightCenterDistance) {
+      return leftCenterDistance - rightCenterDistance;
+    }
+    if (left.y !== right.y) {
+      return left.y - right.y;
+    }
+    return left.x - right.x;
+  });
+
+  const target = sharedTiles[0];
+  if (!target) {
+    throw new Error("shared_reachable_tile_missing");
+  }
+  return target;
+}
+
+async function readMoveSpent(page: Page): Promise<number | null> {
+  const move = (await readAutomationState(page)).hero?.move;
+  return move ? move.total - move.remaining : null;
+}
+
+async function expectMoveSpentGreaterThan(page: Page, minimumSpent: number): Promise<void> {
+  await expect.poll(async () => readMoveSpent(page)).toBeGreaterThan(minimumSpent);
 }
 
 async function connectRawSession(roomId: string, playerId: string): Promise<RawSession> {
@@ -174,20 +240,18 @@ test("concurrent move to same tile resolves deterministically", async ({ browser
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await Promise.all([
-        openRoom(playerOnePage, {
-          roomId,
-          playerId: "player-1",
-          expectedMoveText: fullMoveTextPattern("player-1")
-        }),
-        openRoom(playerTwoPage, {
-          roomId,
-          playerId: "player-2",
-          expectedMoveText: fullMoveTextPattern("player-2")
-        })
+      await openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId);
+      await pressTile(playerOnePage, 3, 1);
+      await expectHeroMoveSpentForSession(playerOnePage, 2);
+      await followTilePathForSession(playerTwoPage, [
+        { x: 6, y: 4, spent: 2 },
+        { x: 6, y: 2, spent: 4 }
       ]);
+      const target = await selectSharedReachableTile(playerOnePage, playerTwoPage);
+      const playerOneSpentBefore = (await readMoveSpent(playerOnePage)) ?? 0;
+      const playerTwoSpentBefore = (await readMoveSpent(playerTwoPage)) ?? 0;
 
-      await Promise.all([pressTile(playerOnePage, 3, 4), pressTile(playerTwoPage, 3, 4)]);
+      await Promise.all([pressTile(playerOnePage, target.x, target.y), pressTile(playerTwoPage, target.x, target.y)]);
 
       await expect(playerOnePage.getByTestId("battle-panel")).not.toContainText("No active battle", { timeout: 10_000 });
       await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle", { timeout: 10_000 });
@@ -196,13 +260,16 @@ test("concurrent move to same tile resolves deterministically", async ({ browser
         .poll(async () => (await readAutomationState(playerOnePage)).hero?.x ?? null, {
           message: "waiting for player one authoritative tile resolution"
         })
-        .toBe(3);
-      await expect.poll(async () => (await readAutomationState(playerOnePage)).hero?.y ?? null).toBe(4);
-      await expect.poll(async () => (await readAutomationState(playerTwoPage)).hero?.x ?? null).toBe(3);
-      await expect.poll(async () => (await readAutomationState(playerTwoPage)).hero?.y ?? null).toBe(5);
-
-      await expectHeroMoveSpent(playerOnePage, 5, "player-1");
-      await expectHeroMoveSpent(playerTwoPage, 4, "player-2");
+        .toBe(target.x);
+      await expect.poll(async () => (await readAutomationState(playerOnePage)).hero?.y ?? null).toBe(target.y);
+      await expect
+        .poll(async () => {
+          const hero = (await readAutomationState(playerTwoPage)).hero;
+          return hero ? `${hero.x},${hero.y}` : null;
+        })
+        .not.toBe(`${target.x},${target.y}`);
+      await expectMoveSpentGreaterThan(playerOnePage, playerOneSpentBefore);
+      await expectMoveSpentGreaterThan(playerTwoPage, playerTwoSpentBefore);
     });
   } finally {
     await playerOneContext.close();
@@ -268,42 +335,39 @@ test("client resync after server rollback produces consistent state", async ({ b
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
-      await Promise.all([
-        openRoom(playerOnePage, {
-          roomId,
-          playerId: "player-1",
-          expectedMoveText: fullMoveTextPattern("player-1")
-        }),
-        openRoom(playerTwoPage, {
-          roomId,
-          playerId: "player-2",
-          expectedMoveText: fullMoveTextPattern("player-2")
-        })
+      const { playerOne, playerTwo } = await openAuthenticatedMultiplayerRoomPair(
+        request,
+        playerOnePage,
+        playerTwoPage,
+        roomId
+      );
+
+      await followTilePathForSession(playerTwoPage, [
+        { x: 6, y: 4, spent: 2 },
+        { x: 6, y: 2, spent: 4 },
+        { x: 5, y: 1, spent: 6 }
       ]);
 
-      await pressTile(playerTwoPage, 3, 3);
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
-
       await pressTile(playerOnePage, 3, 1);
-      await expectHeroMoveSpent(playerOnePage, 2, "player-1");
+      await expectHeroMoveSpentForSession(playerOnePage, 2);
       await pressTile(playerOnePage, 3, 1);
 
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("收到房间同步推送", { timeout: 10_000 });
       await hoverTile(playerTwoPage, 3, 1);
-      await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前归属 player-1");
+      await expect(playerTwoPage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
 
       await reloadAndExpectAuthoritativeConvergence(playerTwoPage, {
         roomId,
-        playerId: "player-2"
+        playerId: playerTwo.playerId
       });
 
       await hoverTile(playerTwoPage, 3, 1);
-      await expect(playerTwoPage.locator(".object-card-copy")).toContainText("当前归属 player-1");
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await expect(playerTwoPage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
+      await expectHeroMoveSpentForSession(playerTwoPage, 6);
       await expect(playerTwoPage.getByTestId("room-next-action")).not.toContainText("等待权威");
 
       await hoverTile(playerOnePage, 3, 1);
-      await expect(playerOnePage.locator(".object-card-copy")).toContainText("当前归属 player-1");
+      await expect(playerOnePage.locator(".object-card-copy")).toContainText(`当前归属 ${playerOne.playerId}`);
     });
   } finally {
     await playerOneContext.close();

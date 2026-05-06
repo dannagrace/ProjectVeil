@@ -1,19 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { applyEloMatchResult, type PlayerBattleReplaySummary } from "../../packages/shared/src/index";
 import {
   buildRoomId,
-  fullMoveTextPattern,
-  openRoom,
+  createSmokeGuestAuthSession,
+  openAuthenticatedRoom,
+  readStoredAuthSession,
   resolveBattleToSettlement,
-  startDeterministicPvpBattle
+  startDeterministicPvpBattle,
+  type AuthenticatedRoomSession,
+  type SmokeGuestAuthSession
 } from "./smoke-helpers";
 import { ADMIN_TOKEN, SERVER_BASE_URL } from "./runtime-targets";
-
-interface GuestLoginPayload {
-  session?: {
-    token?: string;
-  };
-}
 
 interface MatchmakingStatusPayload {
   status: string;
@@ -45,30 +42,6 @@ async function resetStore(): Promise<void> {
   }
 }
 
-async function loginGuest(playerId: string, displayName: string): Promise<string> {
-  const response = await fetch(`${SERVER_BASE_URL}/api/auth/guest-login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      playerId,
-      displayName,
-      privacyConsentAccepted: true
-    })
-  });
-  if (!response.ok) {
-    throw new Error(`guest_login_failed:${playerId}:${response.status}`);
-  }
-
-  const payload = (await response.json()) as GuestLoginPayload;
-  const token = payload.session?.token?.trim();
-  if (!token) {
-    throw new Error(`guest_login_missing_token:${playerId}`);
-  }
-  return token;
-}
-
 async function enqueuePlayer(token: string): Promise<void> {
   const response = await fetch(`${SERVER_BASE_URL}/api/matchmaking/enqueue`, {
     method: "POST",
@@ -93,8 +66,15 @@ async function fetchMatchmakingStatus(token: string): Promise<MatchmakingStatusP
   return (await response.json()) as MatchmakingStatusPayload;
 }
 
-async function fetchPlayerAccount(playerId: string): Promise<Required<PlayerAccountPayload>["account"]> {
-  const response = await fetch(`${SERVER_BASE_URL}/api/player-accounts/${encodeURIComponent(playerId)}`);
+async function fetchPlayerAccount(
+  playerId: string,
+  token: string
+): Promise<Required<PlayerAccountPayload>["account"]> {
+  const response = await fetch(`${SERVER_BASE_URL}/api/player-accounts/${encodeURIComponent(playerId)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
   if (!response.ok) {
     throw new Error(`player_account_failed:${playerId}:${response.status}`);
   }
@@ -105,9 +85,17 @@ async function fetchPlayerAccount(playerId: string): Promise<Required<PlayerAcco
   return payload.account;
 }
 
-async function fetchLatestReplay(playerId: string): Promise<Partial<PlayerBattleReplaySummary> | null> {
+async function fetchLatestReplay(
+  playerId: string,
+  token: string
+): Promise<Partial<PlayerBattleReplaySummary> | null> {
   const response = await fetch(
-    `${SERVER_BASE_URL}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays?limit=1`
+    `${SERVER_BASE_URL}/api/player-accounts/${encodeURIComponent(playerId)}/battle-replays?limit=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }
   );
   if (!response.ok) {
     throw new Error(`player_replays_failed:${playerId}:${response.status}`);
@@ -116,35 +104,69 @@ async function fetchLatestReplay(playerId: string): Promise<Partial<PlayerBattle
   return payload.items?.[0] ?? null;
 }
 
-test("ranked PvP matchmaking smoke covers enqueue, match found, room join, and elo settlement", async ({ browser }) => {
+async function readCurrentAuthToken(page: Page, session: SmokeGuestAuthSession): Promise<string> {
+  return (await readStoredAuthSession(page))?.token?.trim() || session.token;
+}
+
+function sortedPlayerIds(playerIds?: [string, string] | null): string[] | null {
+  return playerIds ? [...playerIds].sort() : null;
+}
+
+function resolveDeterministicBattleSlots(
+  first: AuthenticatedRoomSession,
+  second: AuthenticatedRoomSession
+): { winner: AuthenticatedRoomSession; loser: AuthenticatedRoomSession } {
+  if (first.hero.x === 1 && first.hero.y === 1 && second.hero.x === 6 && second.hero.y === 6) {
+    return { winner: first, loser: second };
+  }
+  if (second.hero.x === 1 && second.hero.y === 1 && first.hero.x === 6 && first.hero.y === 6) {
+    return { winner: second, loser: first };
+  }
+  throw new Error(
+    `unexpected_matched_room_slots:${first.playerId}@${first.hero.x},${first.hero.y}:${second.playerId}@${second.hero.x},${second.hero.y}`
+  );
+}
+
+test("ranked PvP matchmaking smoke covers enqueue, match found, room join, and elo settlement", async ({
+  browser,
+  request
+}) => {
   await resetStore();
 
-  const playerOneToken = await loginGuest("player-1", "One");
-  const playerTwoToken = await loginGuest("player-2", "Two");
+  const playerOneSession = await createSmokeGuestAuthSession(request, "One");
+  const playerTwoSession = await createSmokeGuestAuthSession(request, "Two");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
   const playerOnePage = await playerOneContext.newPage();
   const playerTwoPage = await playerTwoContext.newPage();
-  const seedRoomOne = buildRoomId("seed-player-1");
-  const seedRoomTwo = buildRoomId("seed-player-2");
+  const seedRoomOne = buildRoomId(`seed-${playerOneSession.playerId}`);
+  const seedRoomTwo = buildRoomId(`seed-${playerTwoSession.playerId}`);
   const expectedRatings = applyEloMatchResult(1000, 1000);
+  const expectedMatchPlayerIds = [playerOneSession.playerId, playerTwoSession.playerId].sort();
 
   try {
     await Promise.all([
-      openRoom(playerOnePage, {
+      openAuthenticatedRoom(playerOnePage, {
         roomId: seedRoomOne,
-        playerId: "player-1",
-        expectedMoveText: fullMoveTextPattern("player-1")
+        session: playerOneSession,
+        expectedMoveText: null
       }),
-      openRoom(playerTwoPage, {
+      openAuthenticatedRoom(playerTwoPage, {
         roomId: seedRoomTwo,
-        playerId: "player-2",
-        expectedMoveText: fullMoveTextPattern("player-2")
+        session: playerTwoSession,
+        expectedMoveText: null
       })
     ]);
 
-    await expect.poll(async () => (await fetchPlayerAccount("player-1")).lastRoomId).toBe(seedRoomOne);
-    await expect.poll(async () => (await fetchPlayerAccount("player-2")).lastRoomId).toBe(seedRoomTwo);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(playerOneSession.playerId, await readCurrentAuthToken(playerOnePage, playerOneSession))).lastRoomId)
+      .toBe(seedRoomOne);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(playerTwoSession.playerId, await readCurrentAuthToken(playerTwoPage, playerTwoSession))).lastRoomId)
+      .toBe(seedRoomTwo);
+
+    const playerOneToken = await readCurrentAuthToken(playerOnePage, playerOneSession);
+    const playerTwoToken = await readCurrentAuthToken(playerTwoPage, playerTwoSession);
 
     await enqueuePlayer(playerOneToken);
     await enqueuePlayer(playerTwoToken);
@@ -167,7 +189,7 @@ test("ranked PvP matchmaking smoke covers enqueue, match found, room join, and e
         }
         matchedStatus = {
           roomId: playerOneStatus.roomId ?? null,
-          playerIds: playerOneStatus.playerIds ?? null,
+          playerIds: sortedPlayerIds(playerOneStatus.playerIds),
           mirroredRoomId: playerTwoStatus.roomId ?? null
         };
         return matchedStatus;
@@ -175,7 +197,7 @@ test("ranked PvP matchmaking smoke covers enqueue, match found, room join, and e
       .toMatchObject({
         roomId: expect.stringMatching(/^pvp-match-/),
         mirroredRoomId: expect.stringMatching(/^pvp-match-/),
-        playerIds: ["player-1", "player-2"]
+        playerIds: expectedMatchPlayerIds
       });
 
     const matchedRoomId = matchedStatus?.roomId;
@@ -183,33 +205,46 @@ test("ranked PvP matchmaking smoke covers enqueue, match found, room join, and e
       throw new Error("matched_room_missing");
     }
 
-    await Promise.all([
-      openRoom(playerOnePage, {
+    const [playerOneMatchedRoom, playerTwoMatchedRoom] = await Promise.all([
+      openAuthenticatedRoom(playerOnePage, {
         roomId: matchedRoomId,
-        playerId: "player-1",
-        expectedMoveText: fullMoveTextPattern("player-1")
+        session: playerOneSession,
+        expectedMoveText: null
       }),
-      openRoom(playerTwoPage, {
+      openAuthenticatedRoom(playerTwoPage, {
         roomId: matchedRoomId,
-        playerId: "player-2",
-        expectedMoveText: fullMoveTextPattern("player-2")
+        session: playerTwoSession,
+        expectedMoveText: null
       })
     ]);
+    const { winner, loser } = resolveDeterministicBattleSlots(playerOneMatchedRoom, playerTwoMatchedRoom);
 
-    await expect.poll(async () => (await fetchPlayerAccount("player-1")).lastRoomId).toBe(matchedRoomId);
-    await expect.poll(async () => (await fetchPlayerAccount("player-2")).lastRoomId).toBe(matchedRoomId);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(winner.playerId, await readCurrentAuthToken(winner.page, winner.session))).lastRoomId)
+      .toBe(matchedRoomId);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(loser.playerId, await readCurrentAuthToken(loser.page, loser.session))).lastRoomId)
+      .toBe(matchedRoomId);
 
-    await startDeterministicPvpBattle(playerOnePage, playerTwoPage);
-    await resolveBattleToSettlement(playerOnePage, playerTwoPage);
+    await startDeterministicPvpBattle(winner.page, loser.page);
+    await resolveBattleToSettlement(winner.page, loser.page);
 
-    await expect(playerOnePage.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
-    await expect(playerTwoPage.getByTestId("battle-modal-title")).toHaveText("战斗失败");
+    await expect(winner.page.getByTestId("battle-modal-title")).toHaveText("战斗胜利");
+    await expect(loser.page.getByTestId("battle-modal-title")).toHaveText("战斗失败");
 
-    await expect.poll(async () => (await fetchPlayerAccount("player-1")).eloRating).toBe(expectedRatings.winnerRating);
-    await expect.poll(async () => (await fetchPlayerAccount("player-2")).eloRating).toBe(expectedRatings.loserRating);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(winner.playerId, await readCurrentAuthToken(winner.page, winner.session))).eloRating)
+      .toBe(expectedRatings.winnerRating);
+    await expect
+      .poll(async () => (await fetchPlayerAccount(loser.playerId, await readCurrentAuthToken(loser.page, loser.session))).eloRating)
+      .toBe(expectedRatings.loserRating);
 
-    await expect.poll(async () => (await fetchLatestReplay("player-1"))?.roomId ?? null).toBe(matchedRoomId);
-    await expect.poll(async () => (await fetchLatestReplay("player-2"))?.roomId ?? null).toBe(matchedRoomId);
+    await expect
+      .poll(async () => (await fetchLatestReplay(winner.playerId, await readCurrentAuthToken(winner.page, winner.session)))?.roomId ?? null)
+      .toBe(matchedRoomId);
+    await expect
+      .poll(async () => (await fetchLatestReplay(loser.playerId, await readCurrentAuthToken(loser.page, loser.session)))?.roomId ?? null)
+      .toBe(matchedRoomId);
   } finally {
     await playerOneContext.close();
     await playerTwoContext.close();
