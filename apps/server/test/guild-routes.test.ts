@@ -107,6 +107,22 @@ async function readSseEvent(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
+    let separatorIndex = buffer.indexOf("\n\n");
+    while (separatorIndex !== -1) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const lines = rawEvent.split("\n");
+      const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
+      const dataLine = lines.find((line) => line.startsWith("data:"))?.slice("data:".length).trim();
+      if (event && dataLine) {
+        return {
+          event,
+          data: JSON.parse(dataLine)
+        };
+      }
+      separatorIndex = buffer.indexOf("\n\n");
+    }
+
     const remainingMs = Math.max(1, deadline - Date.now());
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const chunk = await Promise.race([
@@ -124,24 +140,6 @@ async function readSseEvent(
     }
 
     buffer += decoder.decode(chunk.value, { stream: true });
-    const separatorIndex = buffer.indexOf("\n\n");
-    if (separatorIndex === -1) {
-      continue;
-    }
-
-    const rawEvent = buffer.slice(0, separatorIndex);
-    buffer = buffer.slice(separatorIndex + 2);
-    const lines = rawEvent.split("\n");
-    const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
-    const dataLine = lines.find((line) => line.startsWith("data:"))?.slice("data:".length).trim();
-    if (!event || !dataLine) {
-      continue;
-    }
-
-    return {
-      event,
-      data: JSON.parse(dataLine)
-    };
   }
 
   throw new Error("sse_timeout");
@@ -560,10 +558,11 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
   await store.ensurePlayerAccount({ playerId: "banned-founder", displayName: "Banned Founder" });
+  const banExpiry = new Date(Date.now() + 86_400_000).toISOString();
   await store.savePlayerBan("banned-founder", {
     banStatus: "temporary",
     banReason: "Chargeback abuse",
-    banExpiry: "2026-05-05T00:00:00.000Z"
+    banExpiry
   });
   const port = 44100 + Math.floor(Math.random() * 1000);
   const server = await startGuildRouteServer(store, port);
@@ -604,7 +603,7 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
   assert.equal(banned.status, 403);
   assert.equal(bannedPayload.error.code, "account_banned");
   assert.equal(bannedPayload.error.reason, "Chargeback abuse");
-  assert.equal(bannedPayload.error.expiry, "2026-05-05T00:00:00.000Z");
+  assert.equal(bannedPayload.error.expiry, banExpiry);
 });
 
 test("guild routes reject blocked guild names and tags", async (t) => {

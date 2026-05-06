@@ -2005,6 +2005,7 @@ test("POST /api/admin/broadcast returns 400 for invalid payload types", async (t
 test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it", async (t) => {
   withAdminSecret(t);
   const { moderator } = withSupportSecrets(t);
+  const banExpiry = new Date(Date.now() + 86_400_000).toISOString();
   const store = createStore({
     "player-7": { gold: 1, wood: 2, ore: 3 }
   });
@@ -2024,7 +2025,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
       },
       body: JSON.stringify({
         banStatus: "temporary",
-        banExpiry: "2026-05-05T00:00:00.000Z",
+        banExpiry,
         banReason: "Chargeback abuse"
       })
     }),
@@ -2039,7 +2040,7 @@ test("POST /api/admin/players/:id/ban bans the player and POST /unban clears it"
   };
   assert.equal(banPayload.ok, true);
   assert.equal(banPayload.account.banStatus, "temporary");
-  assert.equal(banPayload.account.banExpiry, "2026-05-05T00:00:00.000Z");
+  assert.equal(banPayload.account.banExpiry, banExpiry);
   assert.equal(banPayload.account.banReason, "Chargeback abuse");
   assert.equal(banPayload.disconnectedClients, 0);
 

@@ -525,24 +525,26 @@ const mainSessionRuntime = createMainSessionRuntime({
   render
 });
 
-let sessionPromise: ReturnType<typeof createGameSession> | null = shouldBootGame
-  ? createGameSession(roomId, playerId, 1001, {
-      getDisplayName: mainSessionRuntime.getDisplayName,
-      getAuthToken: mainSessionRuntime.getAuthToken,
-      onPushUpdate: (update) => {
+function createRuntimeSession(): ReturnType<typeof createGameSession> {
+  return createGameSession(roomId, playerId, 1001, {
+    getDisplayName: mainSessionRuntime.getDisplayName,
+    getAuthToken: mainSessionRuntime.getAuthToken,
+    onPushUpdate: (update) => {
       // 强制同步账号资源到 UI 左侧面板
       if (update.world && update.world.resources) {
-          state.account.globalResources = { ...update.world.resources };
-          console.log("[UI] Global resources synced from world state:", update.world.resources);
+        state.account.globalResources = { ...update.world.resources };
+        console.log("[UI] Global resources synced from world state:", update.world.resources);
       }
       mainSessionRuntime.onPushUpdate(update);
     },
-      onConfigUpdate: (bundle) => {
-        console.log("[Config] 服务端配置已更新，客户端运行时已同步");
-      },
-      onConnectionEvent: mainSessionRuntime.onConnectionEvent
-    })
-  : null;
+    onConfigUpdate: (bundle) => {
+      console.log("[Config] 服务端配置已更新，客户端运行时已同步");
+    },
+    onConnectionEvent: mainSessionRuntime.onConnectionEvent
+  });
+}
+
+let sessionPromise: ReturnType<typeof createGameSession> | null = null;
 
 function buildDiagnosticSnapshot() {
   const hero = activeHero();
@@ -826,6 +828,10 @@ function renderGameplayAchievementPanel(): string {
 }
 
 async function getSession() {
+  if (shouldBootGame && !sessionPromise) {
+    sessionPromise = createRuntimeSession();
+  }
+
   if (!sessionPromise) {
     throw new Error("session_not_ready");
   }

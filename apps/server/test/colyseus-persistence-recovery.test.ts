@@ -5,6 +5,7 @@ import { Server, WebSocketTransport } from "colyseus";
 import { queryEventLogEntries } from "@veil/shared/event-log";
 import type { ClientMessage, ServerMessage } from "@veil/shared/protocol";
 import { createWorldStateFromConfigs, decodePlayerWorldView, getDefaultMapObjectsConfig, getDefaultWorldConfig } from "@veil/shared/world";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
 import type { RoomPersistenceSnapshot } from "@server/index";
 import { configureRoomSnapshotStore, VeilColyseusRoom } from "@server/transport/colyseus-room/VeilColyseusRoom";
 import {
@@ -411,15 +412,22 @@ async function startServer(port: number, store: RoomSnapshotStore): Promise<Serv
   return server;
 }
 
-async function joinRoomWithRetry(port: number, roomId: string, playerId = "player-1"): Promise<ColyseusRoom> {
+async function joinRoomWithRetry(
+  port: number,
+  roomId: string,
+  playerId = "player-1",
+  displayName = playerId
+): Promise<ColyseusRoom> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       const client = new Client(`http://127.0.0.1:${port}`);
+      const authSession = issueGuestAuthSession({ playerId, displayName });
       return await client.joinOrCreate("veil", {
         logicalRoomId: roomId,
         playerId,
+        authToken: authSession.token,
         seed: 1001
       });
     } catch (error) {
@@ -928,7 +936,7 @@ test("colyseus room connect provisions player account metadata without overwriti
     await server.gracefullyShutdown(false).catch(() => undefined);
   });
 
-  room = await joinRoomWithRetry(port, roomId, "guest-42");
+  room = await joinRoomWithRetry(port, roomId, "guest-42", "自定义领主");
 
   const connected = await sendRequest(
     room,

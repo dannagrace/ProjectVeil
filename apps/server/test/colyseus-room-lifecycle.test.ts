@@ -7,6 +7,7 @@ import test from "node:test";
 import { ClientState, matchMaker } from "colyseus";
 import type { Client } from "colyseus";
 import { createNeutralBattleState } from "@veil/shared/battle";
+import { DEFAULT_FEATURE_FLAG_CONFIG } from "@veil/shared/platform";
 import { applyEloMatchResult } from "@veil/shared/social";
 import { decodePlayerWorldView, getBattleBalanceConfig, getDefaultBattleSkillCatalog, getDefaultWorldConfig, resetRuntimeConfigs, updateVisibilityByPlayer } from "@veil/shared/world";
 import type { BattleState, WorldEvent } from "@veil/shared/models";
@@ -246,6 +247,7 @@ async function seedConfigRootFromRuntime(rootDir: string): Promise<void> {
   await writeFile(join(rootDir, "units.json"), `${JSON.stringify(HOT_RELOAD_TEST_UNIT_CONFIG, null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-skills.json"), `${JSON.stringify(getDefaultBattleSkillCatalog(), null, 2)}\n`, "utf8");
   await writeFile(join(rootDir, "battle-balance.json"), `${JSON.stringify(getBattleBalanceConfig(), null, 2)}\n`, "utf8");
+  await writeFile(join(rootDir, "feature-flags.json"), `${JSON.stringify(DEFAULT_FEATURE_FLAG_CONFIG, null, 2)}\n`, "utf8");
 }
 
 async function createTestRoom(logicalRoomId: string, seed = 1001): Promise<VeilColyseusRoom> {

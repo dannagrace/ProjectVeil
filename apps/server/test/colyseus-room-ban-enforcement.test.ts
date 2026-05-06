@@ -137,7 +137,7 @@ test("room connect re-checks persisted ban state and rejects banned players", as
   configureRoomSnapshotStore(store);
   await store.savePlayerBan("player-banned", {
     banStatus: "temporary",
-    banExpiry: "2026-05-05T00:00:00.000Z",
+    banExpiry: new Date(Date.now() + 86_400_000).toISOString(),
     banReason: "Exploit abuse"
   });
   const room = await createTestRoom(`ban-enforcement-${Date.now()}`);

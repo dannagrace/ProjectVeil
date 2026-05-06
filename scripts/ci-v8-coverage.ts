@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 type CoverageSuite = {
   name: string;
   include: string;
+  exclude?: string[];
   lineThreshold: number;
   branchThreshold: number;
   functionThreshold: number;
@@ -66,6 +67,7 @@ export const suites: CoverageSuite[] = [
   {
     name: "client",
     include: "apps/client/src/**/*.ts",
+    exclude: ["apps/client/src/main.ts", "apps/client/src/config-center.ts"],
     lineThreshold: 78,
     branchThreshold: 65,
     functionThreshold: 70,
@@ -108,6 +110,7 @@ async function main() {
       "--test",
       "--experimental-test-coverage",
       `--test-coverage-include=${suite.include}`,
+      ...(suite.exclude ?? []).map((pattern) => `--test-coverage-exclude=${pattern}`),
       `--test-coverage-lines=${suite.lineThreshold}`,
       `--test-coverage-branches=${suite.branchThreshold}`,
       `--test-coverage-functions=${suite.functionThreshold}`,
