@@ -73,6 +73,15 @@ async function readRuntimeDiagnosticSnapshot(page: Page): Promise<RuntimeDiagnos
   });
 }
 
+function readRgbLightness(value: string): number {
+  const channels = value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+  if (channels.length !== 3 || channels.some((channel) => !Number.isFinite(channel))) {
+    throw new Error(`invalid_rgb_color:${value}`);
+  }
+
+  return channels.reduce((total, channel) => total + channel, 0) / (channels.length * 255);
+}
+
 test("h5 smoke reaches lobby http path and room websocket path", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-h5-connectivity");
   const playerId = "player-1";
@@ -114,6 +123,47 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
       connectionStatus: "connected",
       lastUpdateSource: "system"
     });
+  });
+});
+
+test("h5 mobile room keeps the map and light-surface panels readable", async ({ page }, testInfo) => {
+  const roomId = buildRoomId("e2e-h5-mobile-layout");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+    await page.locator("[data-lobby-room-id]").fill(roomId);
+    await page.locator("[data-lobby-player-id]").fill("player-1");
+    await page.locator("[data-lobby-display-name]").fill("Mobile Layout Smoke");
+    await acceptLobbyPrivacyConsent(page);
+    await page.locator("[data-enter-room]").click();
+
+    await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
+
+    const overflowingTiles = await page.locator(".grid .tile").evaluateAll((tiles) => {
+      const viewportWidth = window.innerWidth;
+      return tiles
+        .map((tile) => {
+          const rect = tile.getBoundingClientRect();
+          return {
+            text: tile.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            left: Math.round(rect.left),
+            right: Math.round(rect.right)
+          };
+        })
+        .filter((rect) => rect.left < -2 || rect.right > viewportWidth + 2);
+    });
+    expect(overflowingTiles).toEqual([]);
+
+    const lightSurfaceTextColors = await page.locator(".map-inspector, .battle-empty, .hero-equipment-item").evaluateAll(
+      (elements) => elements.map((element) => getComputedStyle(element).color)
+    );
+    expect(lightSurfaceTextColors.length).toBeGreaterThan(0);
+    for (const color of lightSurfaceTextColors) {
+      expect(readRgbLightness(color)).toBeLessThan(0.42);
+    }
   });
 });
 
