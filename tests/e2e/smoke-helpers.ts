@@ -173,18 +173,29 @@ async function fetchJsonFromBrowser<T>(
 }
 
 export async function readStoredAuthSession(page: Page): Promise<StoredAuthSessionSnippet | null> {
-  return await page.evaluate(() => {
-    const raw = window.localStorage.getItem("project-veil:auth-session");
-    return raw ? (JSON.parse(raw) as StoredAuthSessionSnippet) : null;
-  });
+  try {
+    return await page.evaluate(() => {
+      const raw = window.localStorage.getItem("project-veil:auth-session");
+      return raw ? (JSON.parse(raw) as StoredAuthSessionSnippet) : null;
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Execution context was destroyed")) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function waitForStoredAuthSession(
   page: Page,
   expected: Partial<StoredAuthSessionSnippet>
 ): Promise<StoredAuthSessionSnippet> {
-  await expect.poll(async () => readStoredAuthSession(page)).toMatchObject(expected);
-  const session = await readStoredAuthSession(page);
+  let session: StoredAuthSessionSnippet | null = null;
+  await expect.poll(async () => {
+    session = await readStoredAuthSession(page);
+    return session;
+  }).toMatchObject(expected);
   expect(session?.playerId).toBeTruthy();
   return session!;
 }
