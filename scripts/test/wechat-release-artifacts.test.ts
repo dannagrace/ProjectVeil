@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -876,6 +876,22 @@ test("smoke:wechat-release ingests automated runtime evidence into the existing 
   );
 
   assert.match(validationOutput, /Validated WeChat smoke report:/);
+});
+
+test("smoke:wechat-release reports missing release sidecar without a stack trace", () => {
+  const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "veil-wechat-smoke-empty-"));
+  const result = spawnSync(
+    "node",
+    ["--import", "tsx", "./scripts/smoke-wechat-minigame-release.ts", "--artifacts-dir", artifactsDir],
+    {
+      cwd: repoRoot,
+      encoding: "utf8"
+    }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Expected exactly one release sidecar/);
+  assert.doesNotMatch(result.stderr, /at main \(/);
 });
 
 test("smoke:wechat-release reports blocked automated evidence distinctly from failed evidence", () => {

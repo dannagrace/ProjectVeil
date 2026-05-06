@@ -196,6 +196,9 @@ function parseArgs(argv: string[]): Args {
       requireSmokeReport = true;
       continue;
     }
+    if (arg === "--expect-exported-runtime") {
+      continue;
+    }
     if (arg === "--candidate" && next) {
       candidate = next.trim() || undefined;
       index += 1;
@@ -866,4 +869,9 @@ function main(): void {
   }
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

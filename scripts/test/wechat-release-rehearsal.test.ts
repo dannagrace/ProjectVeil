@@ -193,6 +193,7 @@ test("release:wechat:rehearsal produces structured + markdown summaries", () => 
       defaultConfigPath,
       "--build-dir",
       buildDir,
+      "--expect-exported-runtime",
       "--artifacts-dir",
       artifactsDir,
       "--summary",

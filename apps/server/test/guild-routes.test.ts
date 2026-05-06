@@ -8,6 +8,7 @@ import type { RoomSnapshotStore } from "@server/persistence";
 import { createFakeRedisRateLimitClient } from "./fake-redis-rate-limit.ts";
 
 interface GuildRouteTestServer {
+  port: number;
   shutdown(): Promise<void>;
 }
 
@@ -47,7 +48,7 @@ function createSharedRealtimeTransport(): TestGuildChatRealtimeTransport {
 
 async function startGuildRouteServer(
   store: RoomSnapshotStore | null,
-  port: number,
+  port = 0,
   options: { chatRealtimeTransport?: TestGuildChatRealtimeTransport | null; rateLimitRedisClient?: unknown } = {}
 ): Promise<GuildRouteTestServer> {
   const transport = new WebSocketTransport();
@@ -62,8 +63,22 @@ async function startGuildRouteServer(
       resolve();
     });
   });
+  const address = transport.server.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => {
+      if (!transport.server.listening) {
+        resolve();
+        return;
+      }
+
+      transport.server.once("close", resolve);
+      transport.shutdown();
+    });
+    throw new Error("guild_route_test_server_port_unavailable");
+  }
 
   return {
+    port: address.port,
     async shutdown(): Promise<void> {
       await new Promise<void>((resolve) => {
         if (!transport.server.listening) {
@@ -148,8 +163,8 @@ async function readSseEvent(
 test("guild routes create, list, fetch, and expose rosters", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44000 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const session = issueGuestAuthSession({ playerId: "founder-1", displayName: "Founder" });
   const outsiderSession = issueGuestAuthSession({ playerId: "guild-outsider-1", displayName: "Guild Outsider" });
 
@@ -244,8 +259,8 @@ test("guild routes create, list, fetch, and expose rosters", async (t) => {
 test("guild routes keep the guild alive and surface owner transfer events when the owner leaves", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44900 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "owner-leave-a", displayName: "Owner Leave A" });
   const successorSession = issueGuestAuthSession({ playerId: "owner-leave-b", displayName: "Owner Leave B" });
 
@@ -329,8 +344,8 @@ test("guild routes keep the guild alive and surface owner transfer events when t
 test("guild routes support join and leave, including disband on last member leave", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45000 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "founder-2", displayName: "Founder Two" });
   const recruitSession = issueGuestAuthSession({ playerId: "recruit-1", displayName: "Recruit" });
 
@@ -404,8 +419,8 @@ test("guild routes support join and leave, including disband on last member leav
 test("guild routes transfer ownership when the owner leaves a guild with remaining members", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45100 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "founder-transfer", displayName: "Founder Transfer" });
   const recruitOneSession = issueGuestAuthSession({ playerId: "recruit-transfer-1", displayName: "Recruit One" });
   const recruitTwoSession = issueGuestAuthSession({ playerId: "recruit-transfer-2", displayName: "Recruit Two" });
@@ -479,8 +494,8 @@ test("guild routes transfer ownership when the owner leaves a guild with remaini
 test("guild routes reject joins when the guild is at its member limit", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45100 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "limit-founder", displayName: "Limit Founder" });
   const recruitOneSession = issueGuestAuthSession({ playerId: "limit-recruit-1", displayName: "Limit Recruit One" });
   const recruitTwoSession = issueGuestAuthSession({ playerId: "limit-recruit-2", displayName: "Limit Recruit Two" });
@@ -564,8 +579,8 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
     banReason: "Chargeback abuse",
     banExpiry
   });
-  const port = 44100 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const bannedSession = issueGuestAuthSession({ playerId: "banned-founder", displayName: "Banned Founder" });
 
   t.after(async () => {
@@ -609,8 +624,8 @@ test("guild routes reject unauthorized and banned create requests", async (t) =>
 test("guild routes reject blocked guild names and tags", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45200 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const session = issueGuestAuthSession({ playerId: "founder-moderation", displayName: "Founder Moderation" });
 
   t.after(async () => {
@@ -657,8 +672,8 @@ test("guild routes reject blocked guild names and tags", async (t) => {
 test("guild routes rate limit repeated guild creation per player over 24 hours", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45300 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const session = issueGuestAuthSession({ playerId: "guild-rate-founder", displayName: "Guild Rate Founder" });
 
   t.after(async () => {
@@ -708,8 +723,8 @@ test("guild routes rate limit repeated guild creation per player over 24 hours",
 test("hidden guilds disappear from public list/detail/join routes", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 45400 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "hidden-founder", displayName: "Hidden Founder" });
   const recruitSession = issueGuestAuthSession({ playerId: "hidden-recruit", displayName: "Hidden Recruit" });
 
@@ -762,12 +777,12 @@ test("hidden guilds disappear from public list/detail/join routes", async (t) =>
 test("guild routes map malformed payloads and store outages to actionable errors", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44200 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "founder-invalid", displayName: "Founder Invalid" });
 
-  const unavailablePort = 44300 + Math.floor(Math.random() * 1000);
-  const unavailableServer = await startGuildRouteServer(null, unavailablePort);
+  const unavailableServer = await startGuildRouteServer(null);
+  const unavailablePort = unavailableServer.port;
 
   t.after(async () => {
     resetGuestAuthSessions();
@@ -815,8 +830,8 @@ test("guild routes map malformed payloads and store outages to actionable errors
 test("guild routes reject duplicate tags, invalid joins, and invalid leaves", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44400 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "founder-dup", displayName: "Founder Dup" });
   const secondFounderSession = issueGuestAuthSession({ playerId: "founder-other", displayName: "Founder Other" });
   const recruitSession = issueGuestAuthSession({ playerId: "recruit-dup", displayName: "Recruit Dup" });
@@ -899,8 +914,8 @@ test("guild routes reject duplicate tags, invalid joins, and invalid leaves", as
 test("guild chat routes send messages, page history, and enforce delete authorization", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44500 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "chat-founder", displayName: "Chat Founder" });
   const recruitSession = issueGuestAuthSession({ playerId: "chat-recruit", displayName: "Chat Recruit" });
   const outsiderSession = issueGuestAuthSession({ playerId: "chat-outsider", displayName: "Chat Outsider" });
@@ -1042,8 +1057,8 @@ test("guild chat routes validate messages and rate limit bursts", async (t) => {
   const previousRateLimitMax = process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX;
   process.env.VEIL_GUILD_CHAT_RATE_LIMIT_MAX = "2";
   const store = createMemoryRoomSnapshotStore();
-  const port = 44600 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "chat-rate-founder", displayName: "Rate Founder" });
 
   t.after(async () => {
@@ -1136,9 +1151,8 @@ test("guild chat rate limits are shared through Redis across route instances", {
 
   const redis = createFakeRedisRateLimitClient();
   const store = createMemoryRoomSnapshotStore();
-  const firstPort = 44650 + Math.floor(Math.random() * 100);
-  const secondPort = firstPort + 1000;
-  let server = await startGuildRouteServer(store, firstPort, { rateLimitRedisClient: redis });
+  let server = await startGuildRouteServer(store, undefined, { rateLimitRedisClient: redis });
+  const firstPort = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "shared-chat-founder", displayName: "Shared Chat" });
 
   t.after(async () => {
@@ -1170,7 +1184,8 @@ test("guild chat rate limits are shared through Redis across route instances", {
   assert.equal(firstMessage.status, 201);
 
   await server.shutdown();
-  server = await startGuildRouteServer(store, secondPort, { rateLimitRedisClient: redis });
+  server = await startGuildRouteServer(store, undefined, { rateLimitRedisClient: redis });
+  const secondPort = server.port;
 
   const secondMessage = await fetch(`http://127.0.0.1:${secondPort}/api/guilds/${createdPayload.guild.guildId}/chat`, {
     method: "POST",
@@ -1190,8 +1205,8 @@ test("guild chat rate limits are shared through Redis across route instances", {
 test("guild chat stream pushes live message and delete events to online guild members", async (t) => {
   resetGuestAuthSessions();
   const store = createMemoryRoomSnapshotStore();
-  const port = 44700 + Math.floor(Math.random() * 1000);
-  const server = await startGuildRouteServer(store, port);
+  const server = await startGuildRouteServer(store);
+  const port = server.port;
   const founderSession = issueGuestAuthSession({ playerId: "chat-stream-founder", displayName: "Stream Founder" });
   const recruitSession = issueGuestAuthSession({ playerId: "chat-stream-recruit", displayName: "Stream Recruit" });
   const controller = new AbortController();
@@ -1285,10 +1300,10 @@ test("guild chat stream pushes live message and delete events to online guild me
 test("guild chat stream fans out through shared realtime transport without duplicating local delivery", async (t) => {
   const store = createMemoryRoomSnapshotStore();
   const chatRealtimeTransport = createSharedRealtimeTransport();
-  const firstPort = 45800 + Math.floor(Math.random() * 500);
-  const secondPort = firstPort + 1000;
-  const firstServer = await startGuildRouteServer(store, firstPort, { chatRealtimeTransport });
-  const secondServer = await startGuildRouteServer(store, secondPort, { chatRealtimeTransport });
+  const firstServer = await startGuildRouteServer(store, undefined, { chatRealtimeTransport });
+  const secondServer = await startGuildRouteServer(store, undefined, { chatRealtimeTransport });
+  const firstPort = firstServer.port;
+  const secondPort = secondServer.port;
   const founderSession = issueGuestAuthSession({ playerId: "chat-fanout-founder", displayName: "Fanout Founder" });
   const recruitSession = issueGuestAuthSession({ playerId: "chat-fanout-recruit", displayName: "Fanout Recruit" });
   const localController = new AbortController();

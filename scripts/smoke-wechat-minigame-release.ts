@@ -127,6 +127,11 @@ const REQUIRED_CASE_IDS: WechatMinigameSmokeCase["id"][] = [
   "key-assets"
 ];
 
+const USAGE = [
+  "Usage: npm run smoke -- wechat-release -- --artifacts-dir <release-artifacts-dir>",
+  "   or: npm run smoke -- wechat-release -- --metadata <package.json> [--report <report.json>]"
+].join("\n");
+
 function fail(message: string): never {
   throw new Error(message);
 }
@@ -202,7 +207,7 @@ function resolveMetadataPath(args: Args): string {
     return path.resolve(args.metadataPath);
   }
   if (!args.artifactsDir) {
-    fail("Pass either --artifacts-dir <dir> or --metadata <package.json>.");
+    fail(`Pass either --artifacts-dir <dir> or --metadata <package.json>.\n${USAGE}`);
   }
 
   const resolvedArtifactsDir = path.resolve(args.artifactsDir);
@@ -759,4 +764,9 @@ function main(): void {
   console.log(`Revision: ${metadata.sourceRevision ?? "<none>"}`);
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}
