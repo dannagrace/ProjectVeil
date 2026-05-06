@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer as createTcpServer } from "node:net";
 import test from "node:test";
 import { Client, type Room as ColyseusRoom } from "@colyseus/sdk";
 import { Server, WebSocketTransport } from "colyseus";
@@ -88,6 +89,28 @@ function createSnapshot(roomId: string, heroes: HeroState[]): { state: WorldStat
     },
     battles: []
   };
+}
+
+async function allocateTestPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createTcpServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error("Failed to allocate test port."));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
 }
 
 async function startMatchmakingServer(
@@ -280,7 +303,7 @@ test("matchmaking routes enqueue, match, report status, and dequeue cleanly", as
   await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-alpha" });
   await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Two", lastRoomId: "room-alpha" });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
   const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
@@ -395,7 +418,7 @@ test("matchmaking routes send match-found notifications when a match is created"
     }
   });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const sessionOne = issueAccountAuthSession({
     playerId: "player-1",
@@ -513,7 +536,7 @@ test("matchmaking routes log match-found notification failures without breaking 
     }
   });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const sessionOne = issueAccountAuthSession({
     playerId: "player-1",
@@ -581,7 +604,7 @@ test("matchmaking routes log match-found notification failures without breaking 
 
 test("matchmaking routes can carry matched players through room join and surrender-based elo settlement", async (t) => {
   const store = createMemoryRoomSnapshotStore();
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
   const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
@@ -715,7 +738,7 @@ test("matchmaking keeps protected new players out of top-tier opponents", async 
     ]
   });
 
-  const port = 43100 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const protectedSession = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
   const topTierSession = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
@@ -762,7 +785,7 @@ test("matchmaking enqueue prunes stale queue entries before adding new players",
     enqueuedAt: "2026-03-24T00:00:00.000Z"
   });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port, { service, queueTtlSeconds: 60 });
   const session = issueGuestAuthSession({ playerId: "player-new", displayName: "New" });
 
@@ -838,7 +861,7 @@ test("matchmaking routes return 429 with Retry-After after the per-IP rate limit
   await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-rate-limit" });
   await store.ensurePlayerAccount({ playerId: "player-2", displayName: "Two", lastRoomId: "room-rate-limit" });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const sessionOne = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
   const sessionTwo = issueGuestAuthSession({ playerId: "player-2", displayName: "Two" });
@@ -997,7 +1020,7 @@ test("matchmaking enqueue returns 429 with Retry-After after the per-IP rate lim
   await store.save("room-enqueue-limit", createSnapshot("room-enqueue-limit", [createHero("player-1", "hero-1")]));
   await store.ensurePlayerAccount({ playerId: "player-1", displayName: "One", lastRoomId: "room-enqueue-limit" });
 
-  const port = 43000 + Math.floor(Math.random() * 1000);
+  const port = await allocateTestPort();
   const server = await startMatchmakingServer(store, port);
   const session = issueGuestAuthSession({ playerId: "player-1", displayName: "One" });
 
