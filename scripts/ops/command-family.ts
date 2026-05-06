@@ -210,6 +210,11 @@ function runCommand(command: string, args: string[]): number {
   return 1;
 }
 
+function isForwardedHelpRequest(args: string[]): boolean {
+  const forwardedArgs = args[0] === "--" ? args.slice(1) : args;
+  return forwardedArgs.length === 1 && (forwardedArgs[0] === "--help" || forwardedArgs[0] === "-h" || forwardedArgs[0] === "help");
+}
+
 type RunFamilyCliOptions = {
   argv: string[];
   assertSupportedRuntimeImpl?: RuntimePreflightAssert;
@@ -265,6 +270,11 @@ export function runFamilyCli({ argv, assertSupportedRuntimeImpl, family }: RunFa
     console.error(`Unknown ${family} command: ${commandName}\n`);
     process.stderr.write(renderFamilyHelp(family));
     return 1;
+  }
+
+  if (isForwardedHelpRequest(rest)) {
+    process.stdout.write(renderFamilyHelp(family));
+    return 0;
   }
 
   const preflightExitCode = runRuntimePreflight(family, cliInvocationForCommand(family, commandName), assertSupportedRuntimeImpl);
