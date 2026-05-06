@@ -2710,16 +2710,48 @@ h1 {
   }
 
   .tile {
-    border-radius: 12px;
-    padding: 6px;
+    align-items: stretch;
+    border-radius: 10px;
+    padding: 3px;
   }
 
   .tile-label {
-    font-size: 16px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
   }
 
   .tile-coord {
-    font-size: 10px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 8px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .tile-resource {
+    right: 4px;
+    top: 4px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .tile-marker {
+    left: 4px;
+    top: 4px;
+    width: 22px;
+    height: 22px;
+  }
+
+  .tile-building-badge {
+    left: 4px;
+    bottom: 4px;
+    width: 18px;
+    height: 18px;
   }
 }
 

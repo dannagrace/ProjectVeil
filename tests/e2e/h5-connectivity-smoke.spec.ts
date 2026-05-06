@@ -157,6 +157,30 @@ test("h5 mobile room keeps the map and light-surface panels readable", async ({ 
     });
     expect(overflowingTiles).toEqual([]);
 
+    const overflowingTileBoxes = await page.locator(".grid .tile").evaluateAll((tiles) =>
+      tiles
+        .map((tile) => ({
+          text: tile.textContent?.replace(/\s+/g, " ").trim() ?? "",
+          scrollWidth: tile.scrollWidth,
+          clientWidth: tile.clientWidth
+        }))
+        .filter((tile) => tile.scrollWidth > tile.clientWidth + 1)
+    );
+    expect(overflowingTileBoxes).toEqual([]);
+
+    const overflowingTileText = await page.locator(".grid .tile").evaluateAll((tiles) =>
+      tiles
+        .flatMap((tile) => Array.from(tile.querySelectorAll<HTMLElement>(".tile-label, .tile-coord")))
+        .map((element) => ({
+          text: element.textContent?.replace(/\s+/g, " ").trim() ?? "",
+          className: element.className,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth
+        }))
+        .filter((element) => element.scrollWidth > element.clientWidth + 1)
+    );
+    expect(overflowingTileText).toEqual([]);
+
     const lightSurfaceTextColors = await page.locator(".map-inspector, .battle-empty, .hero-equipment-item").evaluateAll(
       (elements) => elements.map((element) => getComputedStyle(element).color)
     );
