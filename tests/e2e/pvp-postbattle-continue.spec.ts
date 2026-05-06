@@ -2,10 +2,9 @@ import { expect, test } from "@playwright/test";
 import {
   dismissBattleModal,
   expectRecoveredBattleSettlement,
-  expectHeroMoveSpent,
-  fullMoveTextPattern,
+  expectHeroMoveSpentForSession,
   moveToAnyReachableTile,
-  openRoom,
+  openAuthenticatedMultiplayerRoomPair,
   pressTile,
   resetSmokeStore,
   reloadAndExpectRecoveredSession,
@@ -15,29 +14,25 @@ import {
   withSmokeDiagnostics
 } from "./smoke-helpers";
 
-test("winner can recover immediately after PvP settlement while loser stays locked by zero movement", async ({ browser }, testInfo) => {
+test("winner can recover immediately after PvP settlement while loser stays locked by zero movement", async ({
+  browser,
+  request
+}, testInfo) => {
   await resetSmokeStore();
   const roomId = buildRoomId("e2e-pvp-postbattle-continue");
   const playerOneContext = await browser.newContext();
   const playerTwoContext = await browser.newContext();
   const playerOnePage = await playerOneContext.newPage();
   const playerTwoPage = await playerTwoContext.newPage();
+  let playerOneId = "";
+  let playerTwoId = "";
 
   try {
     await withSmokeDiagnostics(testInfo, [playerOnePage, playerTwoPage], async () => {
       await test.step("setup: both players join the room", async () => {
-        await Promise.all([
-          openRoom(playerOnePage, {
-            roomId,
-            playerId: "player-1",
-            expectedMoveText: fullMoveTextPattern("player-1")
-          }),
-          openRoom(playerTwoPage, {
-            roomId,
-            playerId: "player-2",
-            expectedMoveText: fullMoveTextPattern("player-2")
-          })
-        ]);
+        const pair = await openAuthenticatedMultiplayerRoomPair(request, playerOnePage, playerTwoPage, roomId);
+        playerOneId = pair.playerOne.playerId;
+        playerTwoId = pair.playerTwo.playerId;
       });
 
       await test.step("gameplay: resolve the battle before settlement reload", async () => {
@@ -72,11 +67,11 @@ test("winner can recover immediately after PvP settlement while loser stays lock
         await Promise.all([
           reloadAndExpectRecoveredSession(playerOnePage, {
             roomId,
-            playerId: "player-1"
+            playerId: playerOneId
           }),
           reloadAndExpectRecoveredSession(playerTwoPage, {
             roomId,
-            playerId: "player-2"
+            playerId: playerTwoId
           })
         ]);
       });
@@ -101,7 +96,7 @@ test("winner can recover immediately after PvP settlement while loser stays lock
       await moveToAnyReachableTile(playerOnePage);
 
       await pressTile(playerTwoPage, 2, 5);
-      await expectHeroMoveSpent(playerTwoPage, 6, "player-2");
+      await expectHeroMoveSpentForSession(playerTwoPage, 6);
       await expect(playerTwoPage.getByTestId("event-log")).toContainText("Action rejected:");
     });
   } finally {
