@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { Client, type Room } from "@colyseus/sdk";
@@ -7,9 +7,10 @@ import type { ClientMessage, ServerMessage, SessionStatePayload } from "../packa
 import { assertBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
 const FIXTURE_COMMAND = ["run", "validate", "--", "e2e:fixtures"] as const;
-const DEFAULT_SERVER_URL = "http://127.0.0.1:2567";
-const DEFAULT_CLIENT_URL = "http://127.0.0.1:4173";
-const DEFAULT_SERVER_WS_URL = "ws://127.0.0.1:2567";
+const DEFAULT_SERVER_HOST = "127.0.0.1";
+const DEFAULT_CLIENT_HOST = "127.0.0.1";
+const DEFAULT_SERVER_PORT = 2567;
+const DEFAULT_CLIENT_PORT = 4173;
 const STARTUP_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LIMIT = 80;
@@ -23,11 +24,44 @@ export interface SmokeRuntimeTargets {
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+function readPort(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const parsed = Number.parseInt(env[key] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function derivePort(env: NodeJS.ProcessEnv, base: number, span = 300): number {
+  const seed = env.VEIL_PLAYWRIGHT_WORKSPACE_SEED?.trim() || `${process.cwd()}:${process.pid}:client-boot-room-smoke`;
+  const hash = createHash("sha1").update(seed).digest();
+  const offset = ((hash[0] << 8) | hash[1]) % span;
+  return base + offset;
+}
+
+function normalizeOrigin(
+  value: string | undefined,
+  fallbackHost: string,
+  fallbackPort: number,
+  protocol: "http" | "ws"
+): string {
+  return value?.trim() || `${protocol}://${fallbackHost}:${fallbackPort}`;
+}
+
 export function resolveSmokeRuntimeTargets(env: NodeJS.ProcessEnv): SmokeRuntimeTargets {
+  const reuseDefaultPorts = env.VEIL_PLAYWRIGHT_REUSE_SERVER === "1";
+  const serverPort = readPort(
+    env,
+    "VEIL_PLAYWRIGHT_SERVER_PORT",
+    reuseDefaultPorts ? DEFAULT_SERVER_PORT : derivePort(env, DEFAULT_SERVER_PORT)
+  );
+  const clientPort = readPort(
+    env,
+    "VEIL_PLAYWRIGHT_CLIENT_PORT",
+    reuseDefaultPorts ? DEFAULT_CLIENT_PORT : derivePort(env, DEFAULT_CLIENT_PORT)
+  );
+
   return {
-    serverUrl: env.VEIL_PLAYWRIGHT_SERVER_ORIGIN?.trim() || DEFAULT_SERVER_URL,
-    clientUrl: env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN?.trim() || DEFAULT_CLIENT_URL,
-    serverWsUrl: env.VEIL_PLAYWRIGHT_SERVER_WS_URL?.trim() || DEFAULT_SERVER_WS_URL
+    serverUrl: normalizeOrigin(env.VEIL_PLAYWRIGHT_SERVER_ORIGIN, DEFAULT_SERVER_HOST, serverPort, "http"),
+    clientUrl: normalizeOrigin(env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN, DEFAULT_CLIENT_HOST, clientPort, "http"),
+    serverWsUrl: normalizeOrigin(env.VEIL_PLAYWRIGHT_SERVER_WS_URL, DEFAULT_SERVER_HOST, serverPort, "ws")
   };
 }
 
@@ -100,6 +134,34 @@ function formatLogTail(processes: RunningProcess[]): string {
   return sections ? `\n\nCaptured process output:\n${sections}` : "";
 }
 
+function readPortFromOrigin(origin: string, fallback: number): string {
+  try {
+    const parsed = new URL(origin);
+    return parsed.port || fallback.toString();
+  } catch {
+    return fallback.toString();
+  }
+}
+
+function createManagedProcessEnv(): NodeJS.ProcessEnv {
+  const serverPort = readPortFromOrigin(SERVER_URL, DEFAULT_SERVER_PORT);
+  const clientPort = readPortFromOrigin(CLIENT_URL, DEFAULT_CLIENT_PORT);
+  return {
+    ...process.env,
+    ADMIN_SECRET: process.env.ADMIN_SECRET?.trim() || ADMIN_TOKEN,
+    PORT: serverPort,
+    VEIL_ADMIN_TOKEN: ADMIN_TOKEN,
+    VEIL_PLAYWRIGHT_SERVER_PORT: serverPort,
+    VEIL_PLAYWRIGHT_CLIENT_PORT: clientPort,
+    VEIL_PLAYWRIGHT_SERVER_ORIGIN: SERVER_URL,
+    VEIL_PLAYWRIGHT_CLIENT_ORIGIN: CLIENT_URL,
+    VEIL_PLAYWRIGHT_SERVER_WS_URL: SERVER_WS_URL,
+    VEIL_DEV_SERVER_HTTP_URL: SERVER_URL,
+    VITE_VEIL_SERVER_HTTP_URL: SERVER_URL,
+    VITE_VEIL_SERVER_WS_URL: SERVER_WS_URL
+  };
+}
+
 function runBlockingStep(label: string, args: readonly string[]): void {
   logStep(label);
   const result = spawnSync(npmCommand(), [...args], {
@@ -116,7 +178,7 @@ function runBlockingStep(label: string, args: readonly string[]): void {
 function spawnManagedProcess(label: string, args: readonly string[]): RunningProcess {
   const child = spawn(npmCommand(), [...args], {
     cwd: process.cwd(),
-    env: { ...process.env, VEIL_ADMIN_TOKEN: ADMIN_TOKEN },
+    env: createManagedProcessEnv(),
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -394,6 +456,7 @@ async function verifyRoomJoin(authContext: SmokeGuestAuthContext): Promise<void>
 async function main(): Promise<void> {
   const startedAt = Date.now();
   runBlockingStep("validating e2e fixtures", FIXTURE_COMMAND);
+  logStep(`using server=${SERVER_URL} client=${CLIENT_URL}`);
 
   const processes = [
     spawnManagedProcess("dev -- server", ["run", "dev", "--", "server"]),

@@ -22,13 +22,27 @@ test("resolveSmokeRuntimeTargets honors explicit playwright runtime target env",
   });
 });
 
-test("resolveSmokeRuntimeTargets falls back to localhost defaults", () => {
-  const targets = resolveSmokeRuntimeTargets({});
+test("resolveSmokeRuntimeTargets reuses localhost defaults when requested", () => {
+  const targets = resolveSmokeRuntimeTargets({
+    VEIL_PLAYWRIGHT_REUSE_SERVER: "1"
+  });
 
   assert.deepEqual(targets, {
     serverUrl: "http://127.0.0.1:2567",
     clientUrl: "http://127.0.0.1:4173",
     serverWsUrl: "ws://127.0.0.1:2567"
+  });
+});
+
+test("resolveSmokeRuntimeTargets derives workspace-specific ports by default", () => {
+  const targets = resolveSmokeRuntimeTargets({
+    VEIL_PLAYWRIGHT_WORKSPACE_SEED: "client-boot-room-smoke-test"
+  });
+
+  assert.deepEqual(targets, {
+    serverUrl: "http://127.0.0.1:2601",
+    clientUrl: "http://127.0.0.1:4207",
+    serverWsUrl: "ws://127.0.0.1:2601"
   });
 });
 
