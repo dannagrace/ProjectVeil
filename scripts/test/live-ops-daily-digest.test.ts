@@ -39,7 +39,7 @@ test("live-ops daily digest renders retention and monetization headlines", () =>
     "node",
     [
       "--import",
-      path.join(repoRoot, "node_modules/tsx/dist/loader.mjs"),
+      "tsx",
       "./scripts/live-ops-daily-digest.ts",
       "--input",
       inputPath,

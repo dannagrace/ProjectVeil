@@ -97,6 +97,10 @@ const BATTLE_BALANCE_CONFIG = {
   afkStrikesBeforeForfeit: 2
 };
 
+const FEATURE_FLAGS_CONFIG = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "configs", "feature-flags.json"), "utf8")
+) as Record<string, unknown>;
+
 function writeJson(filePath: string, payload: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -109,6 +113,7 @@ function createConfigRoot(): string {
   writeJson(path.join(rootDir, "units.json"), UNIT_CONFIG);
   writeJson(path.join(rootDir, "battle-skills.json"), BATTLE_SKILL_CONFIG);
   writeJson(path.join(rootDir, "battle-balance.json"), BATTLE_BALANCE_CONFIG);
+  writeJson(path.join(rootDir, "feature-flags.json"), FEATURE_FLAGS_CONFIG);
   return rootDir;
 }
 

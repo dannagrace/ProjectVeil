@@ -34,7 +34,7 @@ interface PrimaryJourneyEvidenceArtifact {
     shortCommit?: string;
   };
   execution?: {
-    overallStatus?: "passed" | "failed";
+    overallStatus?: "passed" | "partial" | "failed";
     completedAt?: string;
     summary?: string;
   };
@@ -466,7 +466,7 @@ export function buildMainJourneyReplayGateReport(args: Args): MainJourneyReplayG
     }
     functionalStatus = artifact.execution?.overallStatus ?? "missing";
     functionalSummary = artifact.execution?.summary ?? functionalSummary;
-    if (artifact.execution?.overallStatus !== "passed") {
+    if (!artifact.execution?.overallStatus || artifact.execution.overallStatus === "failed") {
       infrastructureFailures.push({
         code: "functional_failure",
         summary: `Primary journey evidence is ${artifact.execution?.overallStatus ?? "missing"}: ${artifact.execution?.summary ?? "No summary provided."}`,

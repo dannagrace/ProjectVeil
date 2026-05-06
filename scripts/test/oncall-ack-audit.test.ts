@@ -48,7 +48,7 @@ test("oncall ack audit summarizes MTTA / MTTR and breach rows", () => {
     "node",
     [
       "--import",
-      path.join(repoRoot, "node_modules/tsx/dist/loader.mjs"),
+      "tsx",
       "./scripts/oncall-ack-audit.ts",
       "--input",
       inputPath,

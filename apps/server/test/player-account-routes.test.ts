@@ -13,9 +13,11 @@ import {
   normalizePlayerMailboxMessage
 } from "@server/domain/account/player-mailbox";
 import { loadDailyQuestBoard } from "@server/domain/economy/daily-quests";
+import { resolveDailyQuestRotation } from "@server/domain/economy/daily-quest-rotations";
 import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import { loadDailyQuestConfig } from "@server/domain/economy/daily-quest-config";
 import { assertDisplayNameAvailableOrThrow } from "@server/domain/account/display-name-rules";
+import { resolveFeatureFlagsForPlayer } from "@server/domain/battle/feature-flags";
 import { getActiveSeasonalEvents, resolveSeasonalEvents, rotateDailyQuests } from "@server/domain/battle/event-engine";
 import { resolveActiveDailyDungeon } from "@server/domain/battle/pve-content";
 import { cacheWechatSessionKey, resetWechatSessionKeyCache } from "@server/adapters/wechat-session-key";
@@ -56,8 +58,16 @@ function getRelativeDailyRewardDateKey(baseDateKey: string, deltaDays: number): 
 function createDailyQuestProgressEvents(
   playerId: string,
   dateKey: string,
-  quest: { metric: "hero_moves" | "battle_wins" | "resource_collections"; target: number }
+  quest: { metric?: "hero_moves" | "battle_wins" | "resource_collections"; target: number }
 ): PlayerAccountSnapshot["recentEventLog"] {
+  if (!quest.metric) {
+    return [
+      ...createDailyQuestProgressEvents(playerId, dateKey, { metric: "hero_moves", target: quest.target }),
+      ...createDailyQuestProgressEvents(playerId, dateKey, { metric: "battle_wins", target: quest.target }),
+      ...createDailyQuestProgressEvents(playerId, dateKey, { metric: "resource_collections", target: quest.target })
+    ];
+  }
+
   return Array.from({ length: quest.target }, (_, index) => {
     const minute = String(index).padStart(2, "0");
     if (quest.metric === "hero_moves") {
@@ -3827,9 +3837,16 @@ test("daily quest board derives same-day progress and ignores prior-day events",
   const yesterday = getPreviousDailyRewardDateKey(today);
   const todayStart = `${today}T09:00:00.000Z`;
   const yesterdayStart = `${yesterday}T09:00:00.000Z`;
+  const originalFeatureFlagOverride = process.env.VEIL_FEATURE_FLAGS_JSON;
   process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
+  delete process.env.VEIL_FEATURE_FLAGS_JSON;
   t.after(() => {
     delete process.env.VEIL_DAILY_QUESTS_ENABLED;
+    if (originalFeatureFlagOverride === undefined) {
+      delete process.env.VEIL_FEATURE_FLAGS_JSON;
+    } else {
+      process.env.VEIL_FEATURE_FLAGS_JSON = originalFeatureFlagOverride;
+    }
   });
   await store.ensurePlayerAccount({
     playerId: "daily-quest-player",
@@ -3906,12 +3923,20 @@ test("daily quest board derives same-day progress and ignores prior-day events",
 
   assert.equal(boardResponse.status, 200);
   assert.equal(boardPayload.dailyQuestBoard.enabled, true);
-  const expectedRotation = rotateDailyQuests({
-    playerId: "daily-quest-player",
-    dateKey: boardPayload.dailyQuestBoard.cycleKey,
-    questPool: loadDailyQuestConfig().quests
-  });
-  assert.equal(boardPayload.dailyQuestBoard.cycleKey, expectedRotation.state.currentDateKey);
+  const featureFlags = resolveFeatureFlagsForPlayer("daily-quest-player");
+  const scheduledRotation = resolveDailyQuestRotation(
+    new Date(`${boardPayload.dailyQuestBoard.cycleKey}T12:00:00.000Z`),
+    featureFlags
+  );
+  const fallbackRotation = scheduledRotation
+    ? null
+    : rotateDailyQuests({
+        playerId: "daily-quest-player",
+        dateKey: boardPayload.dailyQuestBoard.cycleKey,
+        questPool: loadDailyQuestConfig().quests
+      });
+  const expectedQuests = scheduledRotation?.quests ?? fallbackRotation?.quests ?? [];
+  assert.equal(boardPayload.dailyQuestBoard.cycleKey, fallbackRotation?.state.currentDateKey ?? today);
   const expectedProgressByMetric = {
     hero_moves: 2,
     battle_wins: 0,
@@ -3919,7 +3944,7 @@ test("daily quest board derives same-day progress and ignores prior-day events",
   } as const;
   assert.deepEqual(
     boardPayload.dailyQuestBoard.quests.map((quest) => ({ id: quest.id, current: quest.current, completed: quest.completed })),
-    expectedRotation.quests.map((quest) => ({
+    expectedQuests.map((quest) => ({
       id: quest.id,
       current: Math.min(quest.target, expectedProgressByMetric[quest.metric]),
       completed: expectedProgressByMetric[quest.metric] >= quest.target
@@ -4210,7 +4235,11 @@ test("daily quests are enabled by default and complete the rotation, progress, a
       dailyQuestBoard?: {
         enabled: boolean;
         cycleKey: string;
-        quests: Array<{ id: string }>;
+        quests: Array<{
+          id: string;
+          target: number;
+          reward: { gems: number; gold: number };
+        }>;
       };
     };
   };
@@ -4220,14 +4249,7 @@ test("daily quests are enabled by default and complete the rotation, progress, a
   assert.equal(profilePayload.account.dailyQuestBoard?.cycleKey, today);
   assert.equal(profilePayload.account.dailyQuestBoard?.quests.length, 3);
 
-  const dayOneQuestState = await store.loadPlayerQuestState("daily-quest-e2e");
-  const dayOneRotation = rotateDailyQuests({
-    playerId: "daily-quest-e2e",
-    dateKey: today,
-    questPool: loadDailyQuestConfig().quests,
-    questState: dayOneQuestState
-  });
-  const claimableDefinition = dayOneRotation.quests[0];
+  const claimableDefinition = profilePayload.account.dailyQuestBoard?.quests[0];
   assert.ok(claimableDefinition);
   store.seedEventHistory(
     "daily-quest-e2e",

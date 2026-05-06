@@ -526,19 +526,23 @@ function withBattleReportCenter(account: PlayerAccountSnapshot): PlayerAccountSn
 async function withDailyQuestBoard(
   account: PlayerAccountSnapshot,
   store: RoomSnapshotStore | null,
-  enabled = false
+  featureFlags?: ReturnType<typeof resolveFeatureFlagsForPlayer>
 ): Promise<PlayerAccountSnapshot> {
   if (!store) {
     return account;
   }
 
+  const enabled = featureFlags?.quest_system_enabled ?? false;
   return {
     ...account,
     dailyQuestBoard: await loadDailyQuestBoard(
       store,
       account,
       new Date(),
-      enabled && isTutorialComplete(account.tutorialStep)
+      {
+        enabled: enabled && isTutorialComplete(account.tutorialStep),
+        ...(featureFlags ? { featureFlags } : {})
+      }
     )
   };
 }
@@ -1002,7 +1006,12 @@ function issuePlayerAccountResponseSession(
   account: Parameters<typeof issueNextAuthSession>[0],
   authSession: GuestAuthSession
 ): GuestAuthSession {
-  return authSession.authMode === "account" ? issueNextAuthSession(account, authSession) : authSession;
+  return authSession.authMode === "account"
+    ? issueNextAuthSession(account, authSession)
+    : {
+        ...authSession,
+        displayName: account.displayName
+      };
 }
 
 async function requireAuthorizedPlayerScope(
@@ -1373,7 +1382,7 @@ export function registerPlayerAccountRoutes(
       );
       sendJson(response, 200, {
         account: {
-          ...(await withDailyQuestBoard(withBattleReportCenter(hydratedAccount), store, featureFlags.quest_system_enabled)),
+          ...(await withDailyQuestBoard(withBattleReportCenter(hydratedAccount), store, featureFlags)),
           experiments: entitlements.experiments
         },
         session: issuePlayerAccountResponseSession(hydratedAccount, authSession)
@@ -2367,7 +2376,10 @@ export function registerPlayerAccountRoutes(
           store,
           account,
           new Date(),
-          featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+          {
+            enabled: featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep),
+            featureFlags
+          }
         )
       });
     } catch (error) {
@@ -2418,7 +2430,7 @@ export function registerPlayerAccountRoutes(
 
       sendJson(response, 200, {
         action,
-        account: await withDailyQuestBoard(withBattleReportCenter(nextAccount), store, featureFlags.quest_system_enabled)
+        account: await withDailyQuestBoard(withBattleReportCenter(nextAccount), store, featureFlags)
       });
     } catch (error) {
       if (error instanceof Error && error.message === "tutorial_skip_locked") {
@@ -3549,7 +3561,10 @@ export function registerPlayerAccountRoutes(
           store,
           account,
           new Date(),
-          featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep)
+          {
+            enabled: featureFlags.quest_system_enabled && isTutorialComplete(account.tutorialStep),
+            featureFlags
+          }
         ),
         campaign: toCampaignResponse(account, accessContext),
         dailyDungeon: toDailyDungeonResponse(account)
