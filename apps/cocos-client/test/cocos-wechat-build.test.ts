@@ -13,11 +13,39 @@ import {
 } from "../tooling/cocos-wechat-build.ts";
 
 function resolveMainRepoTsxLoaderPath(): string {
-  const loaderPath = path.resolve(__dirname, "../../../node_modules/tsx/dist/loader.mjs");
-  if (!fs.existsSync(loaderPath)) {
-    throw new Error(`Unable to resolve tsx loader from current workspace: ${loaderPath}`);
+  const repoRoot = path.resolve(__dirname, "../../..");
+  const candidateRoots = [repoRoot, resolvePrimaryWorktreeRoot(repoRoot)].filter(
+    (candidate): candidate is string => Boolean(candidate)
+  );
+  const loaderCandidates = [...new Set(candidateRoots)].map((root) =>
+    path.join(root, "node_modules/tsx/dist/loader.mjs")
+  );
+
+  for (const loaderPath of loaderCandidates) {
+    if (fs.existsSync(loaderPath)) {
+      return loaderPath;
+    }
   }
-  return loaderPath;
+
+  throw new Error(`Unable to resolve tsx loader from candidate workspaces: ${loaderCandidates.join(", ")}`);
+}
+
+function resolvePrimaryWorktreeRoot(repoRoot: string): string | null {
+  const dotGitPath = path.join(repoRoot, ".git");
+  if (!fs.existsSync(dotGitPath) || fs.statSync(dotGitPath).isDirectory()) {
+    return null;
+  }
+
+  const gitFile = fs.readFileSync(dotGitPath, "utf8").trim();
+  const match = gitFile.match(/^gitdir:\s*(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const gitDir = path.resolve(repoRoot, match[1]);
+  const worktreeMarker = `${path.sep}.git${path.sep}worktrees${path.sep}`;
+  const markerIndex = gitDir.indexOf(worktreeMarker);
+  return markerIndex === -1 ? null : gitDir.slice(0, markerIndex);
 }
 
 function createPackagedWechatReleaseArtifact(): {
