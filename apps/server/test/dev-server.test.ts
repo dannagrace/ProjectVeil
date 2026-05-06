@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { listSharedLobbyRooms } from "@server/transport/colyseus-room/VeilColyseusRoom";
-import { applyDevServerSmokeDefaults, startDevServer, type DevServerBootstrapDependencies } from "@server/infra/dev-server";
+import {
+  applyDevServerSmokeDefaults,
+  createDevServerGameServerOptions,
+  startDevServer,
+  type DevServerBootstrapDependencies
+} from "@server/infra/dev-server";
 import { buildPrometheusMetricsDocument, resetRuntimeObservability, type RuntimePersistenceHealth } from "@server/domain/ops/observability";
 import type {
   MySqlPersistenceConfig,
@@ -24,6 +29,19 @@ test("dev-server smoke defaults do not inject admin credentials in production", 
 
   assert.equal(env.VEIL_ADMIN_TOKEN, undefined);
   assert.equal(env.VEIL_RATE_LIMIT_HTTP_ADMIN_MAX, undefined);
+});
+
+test("dev server leaves Colyseus signal handling to the bootstrap wrapper", () => {
+  const transport = { id: "transport" } as Parameters<typeof createDevServerGameServerOptions>[0];
+  const driver = { id: "driver" };
+  const presence = { id: "presence" };
+
+  const options = createDevServerGameServerOptions(transport, { driver, presence });
+
+  assert.equal(options?.transport, transport);
+  assert.equal(options?.driver, driver);
+  assert.equal(options?.presence, presence);
+  assert.equal(options?.gracefullyShutdown, false);
 });
 
 interface TestProcess {

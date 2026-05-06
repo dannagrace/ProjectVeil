@@ -325,6 +325,20 @@ export interface DevServerRuntimeHandle {
   gracefullyShutdown(exitProcess?: boolean): Promise<void>;
 }
 
+export function createDevServerGameServerOptions(
+  transport: DevServerTransport,
+  realtimeOptions?: DevServerRealtimeOptions
+): ConstructorParameters<typeof Server>[0] {
+  return {
+    transport: transport as WebSocketTransport,
+    driver: realtimeOptions?.driver as never,
+    presence: realtimeOptions?.presence as never,
+    // startDevServer owns process signal handling. Leaving Colyseus' handler on
+    // races shutdown and prints already_shutting_down on successful smoke runs.
+    gracefullyShutdown: false
+  };
+}
+
 export function registerPrometheusMetricsMiddleware(app: DevServerHttpApp): void {
   app.use((request, response, next) => {
     const startedAt = process.hrtime.bigint();
@@ -478,12 +492,7 @@ function createDefaultDevServerBootstrapDependencies(): DevServerBootstrapDepend
     registerRiskReviewAdminRoutes: (app, store) => registerRiskReviewAdminRoutes(app as never, store as RoomSnapshotStore | null),
     registerUgcReviewAdminRoutes: (app, store, options) =>
       registerUgcReviewAdminRoutes(app as never, store as RoomSnapshotStore | null, options),
-    createGameServer: (transport, realtimeOptions) =>
-      new Server({
-        transport: transport as WebSocketTransport,
-        driver: realtimeOptions?.driver as never,
-        presence: realtimeOptions?.presence as never
-      }),
+    createGameServer: (transport, realtimeOptions) => new Server(createDevServerGameServerOptions(transport, realtimeOptions)),
     logger: console,
     process,
     readBattleReplayRetentionPolicy,
