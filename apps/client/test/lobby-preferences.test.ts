@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   createGuestPlayerId,
   createLobbyPreferences,
-  getLobbyPreferencesStorageKey
+  getLobbyPreferencesStorageKey,
+  loadLobbyRooms
 } from "../src/lobby-preferences";
 
 test("lobby preferences use a stable storage key", () => {
@@ -20,4 +21,20 @@ test("lobby preferences honor explicit room and player overrides", () => {
     playerId: "scout-7",
     roomId: "room-bravo"
   });
+});
+
+test("loadLobbyRooms skips the protected room-list request until an auth token exists", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    throw new Error("unexpected lobby request");
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  assert.deepEqual(await loadLobbyRooms(12, "  "), []);
+  assert.equal(fetchCalled, false);
 });

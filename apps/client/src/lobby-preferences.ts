@@ -94,6 +94,10 @@ export function saveLobbyPreferences(playerId: string, roomId: string, randomVal
 }
 
 export async function loadLobbyRooms(limit = 12, authToken?: string | null): Promise<LobbyRoomSummary[]> {
+  if (!authToken?.trim()) {
+    return [];
+  }
+
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), LOBBY_REQUEST_TIMEOUT_MS);
 
