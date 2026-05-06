@@ -3832,14 +3832,22 @@ async function enterLobbyRoom(roomIdOverride?: string): Promise<void> {
   state.lobby.status = `正在登录游客账号并进入房间 ${preferences.roomId}...`;
   render();
 
-  const authSession = await loginGuestAuthSession(preferences.playerId, displayName, {
-    privacyConsentAccepted: state.lobby.privacyConsentAccepted
-  });
+  const cachedGuestSession =
+    state.lobby.authSession?.authMode === "guest" && state.lobby.authSession.playerId === preferences.playerId
+      ? state.lobby.authSession
+      : null;
+  const authSession =
+    cachedGuestSession ??
+    (await loginGuestAuthSession(preferences.playerId, displayName, {
+      privacyConsentAccepted: state.lobby.privacyConsentAccepted
+    }));
   state.lobby.authSession = authSession;
   state.lobby.playerId = authSession.playerId;
   state.lobby.displayName = authSession.displayName;
   state.lobby.status =
-    authSession.source === "remote"
+    cachedGuestSession
+      ? `已复用当前游客会话，正在进入房间 ${preferences.roomId}...`
+      : authSession.source === "remote"
       ? `游客登录成功，正在进入房间 ${preferences.roomId}...`
       : `登录服务暂不可达，正在以本地游客档进入房间 ${preferences.roomId}...`;
   saveLobbyPreferences(authSession.playerId, preferences.roomId);

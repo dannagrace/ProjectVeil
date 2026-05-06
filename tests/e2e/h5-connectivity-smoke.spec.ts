@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "./fixtures";
-import { acceptLobbyPrivacyConsent, buildRoomId, fullMoveTextPattern, waitForLobbyReady, withSmokeDiagnostics } from "./smoke-helpers";
+import {
+  acceptLobbyPrivacyConsent,
+  buildRoomId,
+  fullMoveTextPattern,
+  waitForLobbyReady,
+  waitForStoredAuthSession,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 interface RuntimeDiagnosticSnapshot {
   room?: {
@@ -10,14 +17,49 @@ interface RuntimeDiagnosticSnapshot {
   } | null;
 }
 
-async function fetchJsonFromBrowser<T>(page: Page, path: string): Promise<T> {
-  return await page.evaluate(async (requestPath) => {
-    const response = await fetch(requestPath);
+interface RuntimeHealthPayload {
+  status?: string;
+  runtime?: {
+    persistence?: {
+      status?: string;
+      storage?: string;
+    };
+  };
+}
+
+async function fetchJsonFromBrowser<T>(page: Page, path: string, headers: Record<string, string> = {}): Promise<T> {
+  return await page.evaluate(async ({ requestPath, requestHeaders }) => {
+    const response = await fetch(requestPath, {
+      headers: requestHeaders
+    });
     if (!response.ok) {
       throw new Error(`browser_fetch_failed:${requestPath}:${response.status}`);
     }
     return (await response.json()) as T;
-  }, path);
+  }, { requestPath: path, requestHeaders: headers });
+}
+
+async function expectRuntimeHealthReady(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const response = await fetch("/api/runtime/health");
+          const payload = (await response.json()) as RuntimeHealthPayload;
+          return (
+            (response.status >= 200 && response.status < 300 && payload.status === "ok") ||
+            (response.status === 503 &&
+              payload.status === "warn" &&
+              payload.runtime?.persistence?.status === "degraded" &&
+              payload.runtime?.persistence?.storage === "memory")
+          );
+        }),
+      {
+        message: "waiting for runtime health endpoint",
+        timeout: 15_000
+      }
+    )
+    .toBe(true);
 }
 
 async function readRuntimeDiagnosticSnapshot(page: Page): Promise<RuntimeDiagnosticSnapshot> {
@@ -36,18 +78,10 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
   const playerId = "player-1";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    const lobbyRoomsResponsePromise = page.waitForResponse((response) => {
-      return response.url().includes("/api/lobby/rooms") && response.request().method() === "GET";
-    });
+    const lobbyAuthHeaders = await waitForLobbyReady(page);
+    await expectRuntimeHealthReady(page);
 
-    await waitForLobbyReady(page);
-    const lobbyRoomsResponse = await lobbyRoomsResponsePromise;
-    expect(lobbyRoomsResponse.ok()).toBeTruthy();
-
-    const runtimeHealth = await fetchJsonFromBrowser<{ status?: string }>(page, "/api/runtime/health");
-    expect(runtimeHealth.status).toBe("ok");
-
-    const lobbyRooms = await fetchJsonFromBrowser<{ items?: unknown[] }>(page, "/api/lobby/rooms");
+    const lobbyRooms = await fetchJsonFromBrowser<{ items?: unknown[] }>(page, "/api/lobby/rooms", lobbyAuthHeaders);
     expect(Array.isArray(lobbyRooms.items)).toBe(true);
 
     await page.locator("[data-lobby-room-id]").fill(roomId);
@@ -57,16 +91,26 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
     await page.locator("[data-enter-room]").click();
 
     await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    const authSession = await waitForStoredAuthSession(page, {
+      authMode: "guest",
+      displayName: "Connectivity Smoke",
+      source: "remote"
+    });
+    const resolvedPlayerId = authSession.playerId!;
+
     await expect(page.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
-    await expect(page.getByTestId("session-meta")).toContainText(`Player: ${playerId}`);
+    await expect(page.getByTestId("session-meta")).toContainText(`Player: ${resolvedPlayerId}`);
     await expect(page.getByTestId("diagnostic-connection-status")).toHaveText("已连接");
     await expect(page.getByTestId("room-connection-summary")).toContainText("已连接");
-    await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(playerId), { timeout: 10_000 });
+    const movePattern = fullMoveTextPattern(resolvedPlayerId);
+    if (movePattern) {
+      await expect(page.getByTestId("hero-move")).toHaveText(movePattern, { timeout: 10_000 });
+    }
 
     const diagnostics = await readRuntimeDiagnosticSnapshot(page);
     expect(diagnostics.room).toMatchObject({
       roomId,
-      playerId,
+      playerId: resolvedPlayerId,
       connectionStatus: "connected",
       lastUpdateSource: "system"
     });

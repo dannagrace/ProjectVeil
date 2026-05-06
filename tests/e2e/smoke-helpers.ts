@@ -31,6 +31,20 @@ interface LobbyRoomsPayload {
   items?: unknown[];
 }
 
+interface GuestLoginPayload {
+  session?: {
+    token?: string;
+  };
+}
+
+export interface StoredAuthSessionSnippet {
+  authMode?: string;
+  displayName?: string;
+  loginId?: string;
+  playerId?: string;
+  source?: string;
+}
+
 interface AutomationStateHeroLike {
   playerId?: string;
   x: number;
@@ -98,12 +112,58 @@ async function fetchJsonFromBrowser<T>(
       }
       throw new Error(`browser_fetch_failed:${requestPath}:${response.status}`);
     }
-      throw new Error(`browser_fetch_failed:${requestPath}:unreachable`);
+    throw new Error(`browser_fetch_failed:${requestPath}:unreachable`);
   }, { requestPath: path, requestHeaders: headers });
 }
 
-export async function waitForLobbyReady(page: Page): Promise<void> {
-  await test.step("setup: wait for lobby smoke readiness", async () => {
+export async function readStoredAuthSession(page: Page): Promise<StoredAuthSessionSnippet | null> {
+  return await page.evaluate(() => {
+    const raw = window.localStorage.getItem("project-veil:auth-session");
+    return raw ? (JSON.parse(raw) as StoredAuthSessionSnippet) : null;
+  });
+}
+
+export async function waitForStoredAuthSession(
+  page: Page,
+  expected: Partial<StoredAuthSessionSnippet>
+): Promise<StoredAuthSessionSnippet> {
+  await expect.poll(async () => readStoredAuthSession(page)).toMatchObject(expected);
+  const session = await readStoredAuthSession(page);
+  expect(session?.playerId).toBeTruthy();
+  return session!;
+}
+
+export async function createLobbyReadinessAuthHeaders(page: Page): Promise<Record<string, string>> {
+  const token = await page.evaluate(async () => {
+    const response = await fetch("/api/auth/guest-login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        displayName: "Smoke Readiness Probe",
+        privacyConsentAccepted: true
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`readiness_guest_login_failed:${response.status}`);
+    }
+
+    const payload = (await response.json()) as GuestLoginPayload;
+    const sessionToken = payload.session?.token;
+    if (!sessionToken) {
+      throw new Error("readiness_guest_login_missing_token");
+    }
+    return sessionToken;
+  });
+
+  return {
+    Authorization: `Bearer ${token}`
+  };
+}
+
+export async function waitForLobbyReady(page: Page): Promise<Record<string, string>> {
+  return await test.step("setup: wait for lobby smoke readiness", async () => {
     // Reset the server's in-memory store before entering lobby
     // The fixture also resets server-side, but this ensures the browser
     // context is fresh after being reused across tests
@@ -133,6 +193,7 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
     await expect(page.getByText("活跃房间").first()).toBeVisible();
+    const lobbyReadinessHeaders = await createLobbyReadinessAuthHeaders(page);
     await expect
       .poll(
         async () =>
@@ -164,13 +225,16 @@ export async function waitForLobbyReady(page: Page): Promise<void> {
       .toBe("ok");
     await expect
       .poll(
-        async () => Array.isArray((await fetchJsonFromBrowser<LobbyRoomsPayload>(page, "/api/lobby/rooms")).items),
+        async () =>
+          Array.isArray((await fetchJsonFromBrowser<LobbyRoomsPayload>(page, "/api/lobby/rooms", lobbyReadinessHeaders)).items),
         {
           message: "waiting for lobby room listing",
           timeout: 15_000
         }
       )
       .toBe(true);
+
+    return lobbyReadinessHeaders;
   });
 }
 

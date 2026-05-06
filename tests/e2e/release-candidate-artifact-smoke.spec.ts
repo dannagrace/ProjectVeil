@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "./fixtures";
-import { acceptLobbyPrivacyConsent, buildRoomId, expectRoomReady, fullMoveTextPattern, withSmokeDiagnostics } from "./smoke-helpers";
+import {
+  acceptLobbyPrivacyConsent,
+  buildRoomId,
+  expectRoomReady,
+  fullMoveTextPattern,
+  waitForStoredAuthSession,
+  withSmokeDiagnostics
+} from "./smoke-helpers";
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -28,7 +35,12 @@ test("rc-artifact: guest login reaches lobby and room boot", async ({ page }, te
     await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
-    await expectEnteredRoom(page, roomId, playerId);
+    const authSession = await waitForStoredAuthSession(page, {
+      authMode: "guest",
+      displayName: "RC Smoke Guest",
+      source: "remote"
+    });
+    await expectEnteredRoom(page, roomId, authSession.playerId!);
     await expect(page.getByTestId("account-card")).toContainText("RC Smoke Guest");
   });
 });

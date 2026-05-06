@@ -16,6 +16,7 @@ const CHAPTER_ONE_MISSION_IDS = [
 
 interface GuestLoginPayload {
   session?: {
+    playerId?: string;
     token?: string;
   };
 }
@@ -108,7 +109,10 @@ function buildAuthHeaders(token: string): Record<string, string> {
   };
 }
 
-async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
+async function createGuestSession(
+  request: APIRequestContext,
+  playerId: string
+): Promise<{ playerId: string; token: string }> {
   const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
     data: {
       playerId,
@@ -120,7 +124,11 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
 
   const payload = (await response.json()) as GuestLoginPayload;
   expect(payload.session?.token).toBeTruthy();
-  return payload.session?.token ?? "";
+  expect(payload.session?.playerId).toBeTruthy();
+  return {
+    playerId: payload.session?.playerId ?? "",
+    token: payload.session?.token ?? ""
+  };
 }
 
 async function seedVerifiedMissionReplay(
@@ -172,8 +180,10 @@ test.beforeEach(async ({ request }) => {
 test("campaign mission smoke covers mission start, reward settlement, unlock progression, and completed replay guards", async ({
   request
 }) => {
-  const playerId = `campaign-mission-e2e-${Date.now()}`;
-  let token = await createGuestSessionToken(request, playerId);
+  const requestedPlayerId = `campaign-mission-e2e-${Date.now()}`;
+  const guestSession = await createGuestSession(request, requestedPlayerId);
+  const playerId = guestSession.playerId;
+  let token = guestSession.token;
   let authHeaders = buildAuthHeaders(token);
 
   let gemsBeforeCompletion = 0;

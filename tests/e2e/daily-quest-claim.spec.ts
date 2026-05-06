@@ -1,6 +1,4 @@
 import type { Page } from "@playwright/test";
-import { loadDailyQuestConfig } from "../../apps/server/src/domain/economy/daily-quest-config.ts";
-import { rotateDailyQuests } from "../../apps/server/src/domain/battle/event-engine.ts";
 import { expect, test } from "./fixtures";
 import {
   acceptLobbyPrivacyConsent,
@@ -83,30 +81,7 @@ interface EventLogPayload {
   }>;
 }
 
-function resolveClaimableDailyQuestPlayerId(prefix: string): string {
-  const dateKey = new Date().toISOString().slice(0, 10);
-  const questPool = loadDailyQuestConfig().quests;
-
-  for (let index = 0; index < 256; index += 1) {
-    const playerId = `${prefix}-${index}`;
-    const { quests } = rotateDailyQuests({
-      playerId,
-      dateKey,
-      questPool
-    });
-    const canReachFirstClaimOnMainPath = quests.some(
-      (quest) =>
-        (quest.metric === "hero_moves" && quest.target <= 4) || (quest.metric === "battle_wins" && quest.target <= 1)
-    );
-    if (canReachFirstClaimOnMainPath) {
-      return playerId;
-    }
-  }
-
-  throw new Error(`unable_to_find_claimable_daily_quest_player_id:${prefix}`);
-}
-
-async function enterRoomThroughLobby(page: Page, roomId: string, playerId: string, displayName: string): Promise<void> {
+async function enterRoomThroughLobby(page: Page, roomId: string, playerId: string, displayName: string): Promise<string> {
   await waitForLobbyReady(page);
   await page.locator("[data-lobby-room-id]").fill(roomId);
   await page.locator("[data-lobby-player-id]").fill(playerId);
@@ -116,6 +91,7 @@ async function enterRoomThroughLobby(page: Page, roomId: string, playerId: strin
 
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
   await expect(page.getByTestId("account-card")).toContainText(displayName);
+  return (await readAuthSession(page)).playerId;
 }
 
 async function readAuthSession(page: Page): Promise<Required<Pick<AuthSessionSnapshot, "playerId" | "token">>> {
@@ -180,6 +156,19 @@ async function settleFirstBattle(page: Page): Promise<void> {
   await dismissBattleModal(page);
 }
 
+async function enterCachedSessionRoom(page: Page, roomId: string): Promise<void> {
+  await page.locator("[data-return-lobby]").evaluate((button: HTMLButtonElement) => {
+    button.click();
+  });
+  await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
+  await page.locator("[data-lobby-room-id]").fill(roomId);
+  await acceptLobbyPrivacyConsent(page);
+  await page.locator("[data-enter-room]").click();
+
+  await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+  await expect(page.getByTestId("room-connection-summary")).toContainText("已连接");
+}
+
 interface BrowserApiResult<T> {
   status: number;
   payload: T;
@@ -242,10 +231,13 @@ async function fetchAuthedJson<T>(page: Page, path: string, body?: unknown): Pro
   );
 }
 
-async function waitForStableAuthSession(page: Page, expectedPlayerId: string): Promise<void> {
+async function waitForStableAuthSession(
+  page: Page,
+  expectedPlayerId?: string
+): Promise<Required<Pick<AuthSessionSnapshot, "playerId" | "token">>> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const session = await readAuthSession(page).catch(() => null);
-    if (!session || session.playerId !== expectedPlayerId) {
+    if (!session || (expectedPlayerId && session.playerId !== expectedPlayerId)) {
       await page.waitForTimeout(250);
       continue;
     }
@@ -256,10 +248,10 @@ async function waitForStableAuthSession(page: Page, expectedPlayerId: string): P
       continue;
     }
 
-    return;
+    return session;
   }
 
-  throw new Error(`auth_session_never_became_usable:${expectedPlayerId}`);
+  throw new Error(`auth_session_never_became_usable:${expectedPlayerId ?? "<any>"}`);
 }
 
 async function completeTutorialForDailyQuests(page: Page): Promise<void> {
@@ -283,9 +275,27 @@ function getQuest(board: DailyQuestBoard | undefined): DailyQuestProgress {
   return quest as DailyQuestProgress;
 }
 
+async function settleBattlesUntilDailyQuestClaimable(page: Page, roomIdPrefix: string, maxBattles = 8): Promise<void> {
+  for (let battleIndex = 0; battleIndex < maxBattles; battleIndex += 1) {
+    if (battleIndex > 0) {
+      await enterCachedSessionRoom(page, buildRoomId(`${roomIdPrefix}-${battleIndex}`));
+    }
+
+    await settleFirstBattle(page);
+
+    const profileResult = await fetchAuthedJson<PlayerProfilePayload>(page, "/api/player-accounts/me");
+    expect(profileResult.status).toBe(200);
+    if ((profileResult.payload.account?.dailyQuestBoard?.availableClaims ?? 0) >= 1) {
+      return;
+    }
+  }
+
+  throw new Error(`daily_quest_never_became_claimable:${roomIdPrefix}`);
+}
+
 test("daily quest claim smoke settles the reward and records the event log entry", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-daily-quest");
-  const playerId = resolveClaimableDailyQuestPlayerId(`daily-quest-player-${roomId.slice(-6)}`);
+  const requestedPlayerId = `daily-quest-player-${roomId.slice(-6)}`;
   let claimableQuestId = "";
   let claimableQuestReward: DailyQuestReward = { gems: 0, gold: 0 };
   let availableClaimsBeforeClaim = 0;
@@ -294,10 +304,10 @@ test("daily quest claim smoke settles the reward and records the event log entry
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await test.step("setup: enter the room, finish the tutorial, and clear the first battle", async () => {
-      await enterRoomThroughLobby(page, roomId, playerId, "Daily Quest Smoke");
+      const playerId = await enterRoomThroughLobby(page, roomId, requestedPlayerId, "Daily Quest Smoke");
       await waitForStableAuthSession(page, playerId);
       await completeTutorialForDailyQuests(page);
-      await settleFirstBattle(page);
+      await settleBattlesUntilDailyQuestClaimable(page, "dq-claim");
     });
 
     await test.step("api: profile exposes a claimable daily quest", async () => {
@@ -361,15 +371,15 @@ test("daily quest claim smoke settles the reward and records the event log entry
 
 test("daily quest re-claim guard does not double-credit the reward", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-daily-quest-reclaim");
-  const playerId = resolveClaimableDailyQuestPlayerId(`daily-quest-reclaim-player-${roomId.slice(-6)}`);
+  const requestedPlayerId = `daily-quest-reclaim-player-${roomId.slice(-6)}`;
   let claimableQuestId = "";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await test.step("setup: enter the room, finish the tutorial, and claim after the first battle", async () => {
-      await enterRoomThroughLobby(page, roomId, playerId, "Daily Quest Reclaim");
+      const playerId = await enterRoomThroughLobby(page, roomId, requestedPlayerId, "Daily Quest Reclaim");
       await waitForStableAuthSession(page, playerId);
       await completeTutorialForDailyQuests(page);
-      await settleFirstBattle(page);
+      await settleBattlesUntilDailyQuestClaimable(page, "dq-reclaim");
     });
 
     const claimableProfileResult = await fetchAuthedJson<PlayerProfilePayload>(page, "/api/player-accounts/me");

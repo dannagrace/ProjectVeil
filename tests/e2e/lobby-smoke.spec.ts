@@ -4,10 +4,19 @@ import {
   buildRoomId,
   expectRoomReady,
   fullMoveTextPattern,
+  waitForStoredAuthSession,
   waitForLobbyReady,
   withSmokeDiagnostics
 } from "./smoke-helpers";
 import { SERVER_BASE_URL } from "./runtime-targets";
+
+async function openLobbyDisclosure(page: Page, label: string): Promise<void> {
+  const disclosure = page.locator("details.lobby-auth-disclosure").filter({ hasText: label }).first();
+  await expect(disclosure).toBeVisible();
+  if (!(await disclosure.evaluate((element) => element.hasAttribute("open")))) {
+    await disclosure.locator("summary").click();
+  }
+}
 
 async function expectEnteredRoom(page: Page, roomId: string, playerId?: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
@@ -15,7 +24,7 @@ async function expectEnteredRoom(page: Page, roomId: string, playerId?: string):
     await expectRoomReady(page, {
       roomId,
       playerId,
-      expectedMoveText: fullMoveTextPattern()
+      expectedMoveText: fullMoveTextPattern(playerId)
     });
     return;
   }
@@ -41,7 +50,13 @@ test("lobby opens and a guest can enter a room", async ({ page }, testInfo) => {
     await acceptLobbyPrivacyConsent(page);
     await page.locator("[data-enter-room]").click();
 
-    await expectEnteredRoom(page, roomId, "player-1");
+    await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    const authSession = await waitForStoredAuthSession(page, {
+      authMode: "guest",
+      displayName: "Smoke Guest",
+      source: "remote"
+    });
+    await expectEnteredRoom(page, roomId, authSession.playerId);
     await expect(page.getByTestId("account-card")).toContainText("Smoke Guest");
   });
 });
@@ -82,6 +97,8 @@ test("lobby supports formal registration and enters the room with an account ses
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await waitForLobbyReady(page);
+    await openLobbyDisclosure(page, "账号登录");
+    await openLobbyDisclosure(page, "正式注册 / 密码找回");
     await page.locator("[data-lobby-room-id]").fill(roomId);
     await page.locator("[data-lobby-login-id]").fill(loginId);
     await page.locator("[data-registration-display-name]").fill(displayName);
@@ -98,17 +115,10 @@ test("lobby supports formal registration and enters the room with an account ses
     await expect(page.getByTestId("account-card")).toContainText(displayName);
     await expect(page.getByTestId("account-card")).toContainText(`已绑定登录 ID：${loginId}`);
 
-    await expect
-      .poll(async () =>
-        page.evaluate(() => {
-          const raw = window.localStorage.getItem("project-veil:auth-session");
-          return raw ? (JSON.parse(raw) as { authMode?: string; loginId?: string; playerId?: string }) : null;
-        })
-      )
-      .toMatchObject({
-        authMode: "account",
-        loginId
-      });
+    await waitForStoredAuthSession(page, {
+      authMode: "account",
+      loginId
+    });
   });
 });
 
@@ -125,6 +135,8 @@ test("lobby supports password recovery and rotates the account password before e
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
     await waitForLobbyReady(page);
+    await openLobbyDisclosure(page, "账号登录");
+    await openLobbyDisclosure(page, "正式注册 / 密码找回");
 
     const requestRegistrationResponse = await request.post(`${SERVER_BASE_URL}/api/auth/account-registration/request`, {
       data: {

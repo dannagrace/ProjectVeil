@@ -159,7 +159,7 @@ function resolveFirstClaimableOnboardingPlayerId(prefix = "onboarding-main-seed"
   throw new Error("unable_to_find_claimable_onboarding_player_id");
 }
 
-async function enterRoomThroughLobby(page: Page, roomId: string, playerId: string, displayName: string): Promise<void> {
+async function enterRoomThroughLobby(page: Page, roomId: string, playerId: string, displayName: string): Promise<string> {
   await waitForLobbyReady(page);
   await page.locator("[data-lobby-room-id]").fill(roomId);
   await page.locator("[data-lobby-player-id]").fill(playerId);
@@ -170,8 +170,10 @@ async function enterRoomThroughLobby(page: Page, roomId: string, playerId: strin
   await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
   await expect(page.getByTestId("account-card")).toContainText(displayName);
   await expect(page.getByTestId("session-meta")).toContainText(`Room: ${roomId}`);
-  await expect(page.getByTestId("session-meta")).toContainText(`Player: ${playerId}`);
+  const authSession = await readAuthSession(page);
+  await expect(page.getByTestId("session-meta")).toContainText(`Player: ${authSession.playerId}`);
   await expect(page.getByTestId("room-connection-summary")).toContainText("已连接");
+  return authSession.playerId;
 }
 
 async function readAuthSession(page: Page): Promise<Required<Pick<AuthSessionSnapshot, "playerId" | "token">>> {
@@ -255,14 +257,14 @@ async function fetchAuthedJson<T>(
 
 async function waitForStableAuthSession(
   page: Page,
-  expectedPlayerId: string
+  expectedPlayerId?: string
 ): Promise<{
   session: Required<Pick<AuthSessionSnapshot, "playerId" | "token">>;
   account: NonNullable<PlayerAccountPayload["account"]>;
 }> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const session = await readAuthSession(page).catch(() => null);
-    if (!session || session.playerId !== expectedPlayerId) {
+    if (!session || (expectedPlayerId && session.playerId !== expectedPlayerId)) {
       await page.waitForTimeout(250);
       continue;
     }
@@ -279,7 +281,7 @@ async function waitForStableAuthSession(
     };
   }
 
-  throw new Error(`auth_session_never_became_usable:${expectedPlayerId}`);
+  throw new Error(`auth_session_never_became_usable:${expectedPlayerId ?? "<any>"}`);
 }
 
 async function fetchPlayerProfile(page: Page): Promise<NonNullable<PlayerAccountPayload["account"]>> {
@@ -416,10 +418,10 @@ test("onboarding funnel: fresh session enters onboarding and keeps daily quests 
   const playerId = `onboarding-start-${Date.now()}`;
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await enterRoomThroughLobby(page, roomId, playerId, "Onboarding Fresh Start");
+    const resolvedPlayerId = await enterRoomThroughLobby(page, roomId, playerId, "Onboarding Fresh Start");
 
-    const authSession = await waitForStableAuthSession(page, playerId);
-    expect(authSession.account.playerId).toBe(playerId);
+    const authSession = await waitForStableAuthSession(page, resolvedPlayerId);
+    expect(authSession.account.playerId).toBe(resolvedPlayerId);
     expect(authSession.account.lastRoomId).toBe(roomId);
     expect(authSession.account.tutorialStep).toBe(1);
     expect(authSession.account.dailyQuestBoard?.enabled).toBe(false);
@@ -433,9 +435,9 @@ test("onboarding funnel: tutorial progression advances step 1 to step 3 in order
   const displayName = "Onboarding Stepper";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await enterRoomThroughLobby(page, roomId, playerId, displayName);
+    const resolvedPlayerId = await enterRoomThroughLobby(page, roomId, playerId, displayName);
 
-    const authSession = await waitForStableAuthSession(page, playerId);
+    const authSession = await waitForStableAuthSession(page, resolvedPlayerId);
     expect(authSession.account.tutorialStep).toBe(1);
 
     const stepTwoPayload = await advanceTutorial(page, 2, "advance");
@@ -466,13 +468,13 @@ test("onboarding funnel: tutorial completion hands off to chapter 1, settles the
 }, testInfo) => {
   test.setTimeout(60_000);
   const roomId = buildRoomId("onb-main");
-  const playerId = resolveFirstClaimableOnboardingPlayerId(`onboarding-main-seed-${roomId.slice(-6)}`);
+  const requestedPlayerId = resolveFirstClaimableOnboardingPlayerId(`onboarding-main-seed-${roomId.slice(-6)}`);
   const displayName = "Route Alpha";
   const campaignId = "chapter1";
   const firstMissionId = "chapter1-ember-watch";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await enterRoomThroughLobby(page, roomId, playerId, displayName);
+    const playerId = await enterRoomThroughLobby(page, roomId, requestedPlayerId, displayName);
 
     const authSession = await waitForStableAuthSession(page, playerId);
     expect(authSession.account.tutorialStep).toBe(1);
@@ -551,9 +553,9 @@ test("onboarding funnel: tutorial completion unlocks the normal account session"
   const playerId = `onboarding-complete-${Date.now()}`;
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await enterRoomThroughLobby(page, roomId, playerId, "Onboarding Complete");
+    const resolvedPlayerId = await enterRoomThroughLobby(page, roomId, playerId, "Onboarding Complete");
 
-    await waitForStableAuthSession(page, playerId);
+    await waitForStableAuthSession(page, resolvedPlayerId);
     await advanceTutorial(page, 2, "advance");
     await advanceTutorial(page, 3, "advance");
     const completionPayload = await advanceTutorial(page, null, "complete");
@@ -580,9 +582,9 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
   const displayName = "Onboarding Return";
 
   await withSmokeDiagnostics(testInfo, [page], async () => {
-    await enterRoomThroughLobby(page, roomId, playerId, displayName);
+    const resolvedPlayerId = await enterRoomThroughLobby(page, roomId, playerId, displayName);
 
-    await waitForStableAuthSession(page, playerId);
+    await waitForStableAuthSession(page, resolvedPlayerId);
     await advanceTutorial(page, 2, "advance");
     await advanceTutorial(page, 3, "advance");
     await advanceTutorial(page, null, "complete");
@@ -591,7 +593,7 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
       button.click();
     });
     await expect(page.getByRole("heading", { name: "大厅 / 登录入口" })).toBeVisible();
-    await expect(page.getByText(`已缓存云端会话：${playerId}`)).toBeVisible();
+    await expect(page.getByText(`已缓存云端会话：${resolvedPlayerId}`)).toBeVisible();
 
     const secondRoomId = buildRoomId("onb-return-second");
     await page.locator("[data-lobby-room-id]").fill(secondRoomId);
@@ -601,7 +603,7 @@ test("onboarding funnel: returning players do not re-enter the tutorial after co
     await expect(page).toHaveURL(new RegExp(`roomId=${secondRoomId}`));
     await expect(page.getByTestId("account-card")).toContainText(displayName);
 
-    const returningSession = await waitForStableAuthSession(page, playerId);
+    const returningSession = await waitForStableAuthSession(page, resolvedPlayerId);
     const returningProfile = returningSession.account;
     expect(returningProfile.lastRoomId).toBe(secondRoomId);
     expect(returningProfile.tutorialStep ?? null).toBeNull();

@@ -12,6 +12,7 @@ const GEMS_REWARD_AMOUNT = 35;
 
 interface GuestLoginPayload {
   session?: {
+    playerId?: string;
     token?: string;
   };
 }
@@ -73,7 +74,10 @@ function buildAuthHeaders(token: string): Record<string, string> {
   };
 }
 
-async function createGuestSessionToken(request: APIRequestContext, playerId: string): Promise<string> {
+async function createGuestSession(
+  request: APIRequestContext,
+  playerId: string
+): Promise<{ playerId: string; token: string }> {
   const response = await request.post(`${SERVER_BASE_URL}/api/auth/guest-login`, {
     data: {
       playerId,
@@ -85,7 +89,11 @@ async function createGuestSessionToken(request: APIRequestContext, playerId: str
 
   const payload = (await response.json()) as GuestLoginPayload;
   expect(payload.session?.token).toBeTruthy();
-  return payload.session?.token ?? "";
+  expect(payload.session?.playerId).toBeTruthy();
+  return {
+    playerId: payload.session?.playerId ?? "",
+    token: payload.session?.token ?? ""
+  };
 }
 
 async function patchEventActiveWindow(request: APIRequestContext): Promise<void> {
@@ -188,8 +196,10 @@ test.beforeEach(async ({ request }) => {
 });
 
 test("seasonal event smoke covers progress submission, reward claim settlement, and leaderboard visibility", async ({ request }) => {
-  const playerId = `seasonal-e2e-${Date.now()}`;
-  let token = await createGuestSessionToken(request, playerId);
+  const requestedPlayerId = `seasonal-e2e-${Date.now()}`;
+  const guestSession = await createGuestSession(request, requestedPlayerId);
+  const playerId = guestSession.playerId;
+  let token = guestSession.token;
   await patchEventActiveWindow(request);
 
   const profileBeforeClaim = await fetchProfile(request, token);

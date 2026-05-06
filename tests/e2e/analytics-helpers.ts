@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext } from "@playwright/test";
 import { ANALYTICS_EVENT_CATALOG, type AnalyticsEvent, type AnalyticsEventName } from "../../packages/shared/src/analytics-events";
-import { ANALYTICS_CAPTURE_ENDPOINT } from "./runtime-targets";
+import { ADMIN_TOKEN, ANALYTICS_CAPTURE_ENDPOINT } from "./runtime-targets";
 
 interface AnalyticsCapturePayload {
   events?: AnalyticsEvent[];
@@ -52,7 +52,11 @@ export async function pollForAnalyticsEvent<Name extends AnalyticsEventName>(
   await expect
     .poll(
       async () => {
-        const response = await request.get(ANALYTICS_CAPTURE_ENDPOINT);
+        const response = await request.get(ANALYTICS_CAPTURE_ENDPOINT, {
+          headers: {
+            "x-veil-admin-token": ADMIN_TOKEN
+          }
+        });
         expect(response.ok()).toBeTruthy();
 
         const payload = (await response.json()) as AnalyticsCapturePayload;
