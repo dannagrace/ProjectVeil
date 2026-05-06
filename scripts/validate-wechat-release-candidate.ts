@@ -302,6 +302,11 @@ const DEFAULT_MANUAL_CHECKS: ManualReviewCheck[] = [
   }
 ];
 
+const USAGE = [
+  "Usage: npm run validate -- wechat-rc -- --artifacts-dir <release-artifacts-dir>",
+  "   or: npm run validate -- wechat-rc -- --archive <tar.gz> --metadata <package.json>"
+].join("\n");
+
 function fail(message: string): never {
   throw new Error(message);
 }
@@ -464,7 +469,7 @@ function resolveArtifacts(args: Args): { artifactsDir?: string; archivePath: str
     return resolveArtifactsFromDirectory(args.artifactsDir);
   }
   if (!args.archivePath || !args.metadataPath) {
-    fail("Pass either --artifacts-dir <dir> or both --archive <tar.gz> and --metadata <package.json>.");
+    fail(`Pass either --artifacts-dir <dir> or both --archive <tar.gz> and --metadata <package.json>.\n${USAGE}`);
   }
 
   return {
@@ -1265,4 +1270,9 @@ function main(): void {
   }
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

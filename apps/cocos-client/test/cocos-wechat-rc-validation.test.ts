@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -154,6 +154,18 @@ function createPackagedWechatReleaseArtifact(): PackagedArtifact {
     uploadReceiptPath
   };
 }
+
+test("validate:wechat-rc reports missing artifact arguments without a stack trace", () => {
+  const result = spawnSync("node", ["--import", "tsx", "./scripts/validate-wechat-release-candidate.ts"], {
+    cwd: path.resolve(__dirname, "../../.."),
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Pass either --artifacts-dir <dir> or both --archive <tar\.gz> and --metadata <package\.json>\./);
+  assert.match(result.stderr, /Usage: npm run validate -- wechat-rc -- --artifacts-dir <release-artifacts-dir>/);
+  assert.doesNotMatch(result.stderr, /at main \(/);
+});
 
 test("validate:wechat-rc writes a stable aggregate report for a valid RC artifact bundle", () => {
   const { artifactsDir, reportPath } = createPackagedWechatReleaseArtifact();

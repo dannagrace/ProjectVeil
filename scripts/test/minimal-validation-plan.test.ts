@@ -55,7 +55,7 @@ test("flags release packaging and observability diagnostics without inventing ne
       "npm run check:wechat-build"
     ]
   );
-  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate -- wechat-rc"));
+  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release"));
   assert.ok(plan.optionalSteps.some((step) => step.command === "npm run release -- cocos-rc:bundle"));
   assert.ok(plan.optionalSteps.every((step) => step.command?.startsWith("npm run") ?? true));
 });
@@ -68,7 +68,7 @@ test("maps canonical cocos journey evidence scripts to the RC bundle validation 
 
   assert.deepEqual(plan.matchedSurfaces.map((surface) => surface.id), ["cocos-release-evidence"]);
   assert.deepEqual(plan.requiredSteps.map((step) => step.command), ["npm run release -- cocos-rc:bundle"]);
-  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate -- wechat-rc"));
+  assert.ok(plan.optionalSteps.some((step) => step.command === "npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release"));
   assert.deepEqual(plan.unmatchedPaths, []);
 });
 

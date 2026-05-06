@@ -176,7 +176,7 @@ const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "validate-wechat-rc",
     kind: "command",
-    command: "npm run validate -- wechat-rc",
+    command: "npm run validate -- wechat-rc -- --artifacts-dir artifacts/wechat-release",
     summary: "Validate WeChat release-candidate evidence when packaging or candidate assembly changed."
   },
   {
