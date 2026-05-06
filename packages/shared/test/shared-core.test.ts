@@ -3073,6 +3073,7 @@ test("applyBattleOutcomeToWorld grants neutral rewards and moves the hero onto t
       heroId: "hero-1",
       attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
+      battleKind: "neutral",
       result: "attacker_victory"
     },
     {
@@ -3147,6 +3148,7 @@ test("applyBattleOutcomeToWorld grants PvP experience to the winning hero", () =
       defenderHeroId: "hero-2",
       defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
+      battleKind: "hero",
       result: "defender_victory"
     },
     {
@@ -5318,6 +5320,7 @@ test("applyBattleOutcomeToWorld penalizes the hero on defeat and keeps the neutr
       heroId: "hero-1",
       attackerPlayerId: "player-1",
       battleId: "battle-neutral-1",
+      battleKind: "neutral",
       result: "defender_victory"
     }
   ]);
@@ -5367,6 +5370,7 @@ test("applyBattleOutcomeToWorld keeps defenderHeroId on hero-vs-hero resolution 
       defenderHeroId: "hero-2",
       defenderPlayerId: "player-2",
       battleId: "battle-hero-1-vs-hero-2",
+      battleKind: "hero",
       result: "attacker_victory"
     },
     {
