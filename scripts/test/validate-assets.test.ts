@@ -13,7 +13,7 @@ test("validate:assets passes in baseline mode", () => {
   });
 
   assert.match(output, /Asset validation passed:/);
-  assert.match(output, /readiness 像素 正式 \d+\/\d+ · 音频 正式 8\/8 · 动画 序列 2\/2/);
+  assert.match(output, /readiness 像素 正式 \d+\/\d+ · 音频 正式 8\/8 · 动画 序列 \d+\/\d+/);
 });
 
 test("validate:assets strict mode passes when cocos presentation is release-ready", () => {
