@@ -13,7 +13,7 @@ import {
   deliverPlayerMailboxMessage,
   normalizePlayerMailboxMessage
 } from "@server/domain/account/player-mailbox";
-import { loadDailyQuestBoard } from "@server/domain/economy/daily-quests";
+import { getDailyQuestCycleKey, loadDailyQuestBoard } from "@server/domain/economy/daily-quests";
 import { resolveDailyQuestRotation } from "@server/domain/economy/daily-quest-rotations";
 import { registerPlayerAccountRoutes } from "@server/domain/account/player-accounts";
 import { loadDailyQuestConfig } from "@server/domain/economy/daily-quest-config";
@@ -3856,7 +3856,7 @@ test("daily claim rejects duplicate claims on the same day", async (t) => {
 test("daily quest board derives same-day progress and ignores prior-day events", async (t) => {
   const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
-  const today = getDailyRewardDateKey();
+  const today = getDailyQuestCycleKey();
   const yesterday = getPreviousDailyRewardDateKey(today);
   const todayStart = `${today}T09:00:00.000Z`;
   const yesterdayStart = `${yesterday}T09:00:00.000Z`;
@@ -4066,7 +4066,7 @@ test("tutorial progress gates daily quests until the player completes or skips o
 test("daily quest claim grants rewards once and returns already_claimed on repeat", async (t) => {
   const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
-  const today = getDailyRewardDateKey();
+  const today = getDailyQuestCycleKey();
   process.env.VEIL_DAILY_QUESTS_ENABLED = "true";
   t.after(() => {
     delete process.env.VEIL_DAILY_QUESTS_ENABLED;
@@ -4211,7 +4211,7 @@ test("daily quest claim grants rewards once and returns already_claimed on repea
 test("daily quests are enabled by default and complete the rotation, progress, and reward flow end-to-end", async (t) => {
   const port = await allocateTestPort();
   const store = new MemoryPlayerAccountStore();
-  const today = getDailyRewardDateKey();
+  const today = getDailyQuestCycleKey();
   const nextDay = getRelativeDailyRewardDateKey(today, 1);
   const originalDailyQuestOverride = process.env.VEIL_DAILY_QUESTS_ENABLED;
   const originalFeatureFlagOverride = process.env.VEIL_FEATURE_FLAGS_JSON;
@@ -4378,7 +4378,7 @@ test("daily quests are enabled by default and complete the rotation, progress, a
 
 test("daily quest board preserves tracked completion and claim state when recent event history is truncated", async () => {
   const store = new MemoryPlayerAccountStore();
-  const today = getDailyRewardDateKey();
+  const today = getDailyQuestCycleKey();
   await store.ensurePlayerAccount({
     playerId: "daily-quest-tracked",
     displayName: "边境记录官"
