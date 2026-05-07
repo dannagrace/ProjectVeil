@@ -396,7 +396,7 @@ h1 {
   border-radius: 999px;
   padding: 8px 12px;
   background: linear-gradient(180deg, rgba(255, 251, 244, 0.92), rgba(233, 227, 216, 0.94));
-  color: var(--ink);
+  color: var(--ink-on-light);
   cursor: pointer;
   box-shadow: 0 6px 14px rgba(35, 40, 48, 0.06);
 }
@@ -536,23 +536,26 @@ h1 {
   border-radius: 14px;
   border: 1px solid rgba(94, 109, 126, 0.1);
   background: rgba(252, 249, 243, 0.8);
+  color: var(--ink-on-light);
 }
 
 .diagnostics-card span {
   display: block;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--muted-on-light);
 }
 
 .diagnostics-card strong {
   display: block;
   margin-top: 8px;
+  color: var(--ink-on-light);
   font-size: 18px;
 }
 
 .diagnostics-card p,
 .diagnostics-export-status {
   margin-top: 8px;
+  color: var(--muted-on-light);
 }
 
 .diagnostics-alert-list,
@@ -568,6 +571,7 @@ h1 {
 .diagnostics-alert {
   padding: 12px;
   border-radius: 14px;
+  color: var(--ink-on-light);
 }
 
 .diagnostics-alert strong,
@@ -577,6 +581,7 @@ h1 {
 
 .diagnostics-alert p {
   margin-top: 6px;
+  color: var(--muted-on-light);
 }
 
 .diagnostics-triage-grid {
@@ -589,6 +594,7 @@ h1 {
   border-radius: 14px;
   border: 1px solid rgba(78, 58, 42, 0.08);
   background: rgba(255, 255, 255, 0.66);
+  color: var(--ink-on-light);
 }
 
 .diagnostics-triage-head h4 {
@@ -607,16 +613,17 @@ h1 {
   padding: 8px 10px;
   border-radius: 12px;
   background: rgba(247, 239, 228, 0.68);
+  color: var(--ink-on-light);
 }
 
 .diagnostics-triage-row span {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--muted-on-light);
 }
 
 .diagnostics-summary-shell summary {
   cursor: pointer;
-  color: var(--ink);
+  color: var(--ink-on-light);
   font-weight: 600;
 }
 

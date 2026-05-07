@@ -305,6 +305,62 @@ test("h5 mobile room keeps the map and light-surface panels readable", async ({ 
   });
 });
 
+test("h5 diagnostics panel keeps light-surface text readable", async ({ page }, testInfo) => {
+  const roomId = buildRoomId("e2e-h5-diagnostics-light");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+    await page.locator("[data-lobby-room-id]").fill(roomId);
+    await page.locator("[data-lobby-player-id]").fill("player-1");
+    await page.locator("[data-lobby-display-name]").fill("Diagnostics Light Smoke");
+    await acceptLobbyPrivacyConsent(page);
+    await page.locator("[data-enter-room]").click();
+
+    await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
+    const diagnosticsDisclosure = page.getByTestId("diagnostics-secondary-disclosure");
+    await diagnosticsDisclosure.evaluate((disclosure) => {
+      (disclosure as HTMLDetailsElement).open = true;
+    });
+    await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
+
+    const diagnosticLightSurfaceColors = await page
+      .locator(
+        [
+          ".diagnostics-card span",
+          ".diagnostics-card strong",
+          ".diagnostics-card p",
+          ".diagnostics-actions .session-link",
+          ".diagnostics-alert strong",
+          ".diagnostics-alert p",
+          ".diagnostics-triage-section",
+          ".diagnostics-triage-row",
+          ".diagnostics-triage-row span",
+          ".diagnostics-summary-shell summary",
+          ".diagnostics-summary",
+          ".diagnostics-export-status"
+        ].join(", ")
+      )
+      .evaluateAll((elements) =>
+        elements
+          .filter((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          })
+          .map((element) => ({
+            text: element.textContent?.replace(/\s+/g, " ").trim().slice(0, 40) ?? "",
+            color: getComputedStyle(element).color
+          }))
+      );
+    expect(diagnosticLightSurfaceColors.length).toBeGreaterThan(0);
+    for (const { color, text } of diagnosticLightSurfaceColors) {
+      expect(readRgbLightness(color), `${text} uses ${color}`).toBeLessThan(0.42);
+    }
+  });
+});
+
 test("h5 smoke exposes the battle share stub when WeChat APIs are unavailable", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     let copiedText = "";
