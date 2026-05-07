@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import os from "node:os";
 import util from "node:util";
@@ -23,6 +24,7 @@ import {
   resetLobbyRoomRegistry,
   VeilColyseusRoom
 } from "@server/transport/colyseus-room/VeilColyseusRoom";
+import { issueGuestAuthSession } from "@server/domain/account/auth";
 import { createMemoryRoomSnapshotStore } from "@server/infra/memory-room-snapshot-store";
 import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@server/domain/ops/observability";
 import type { RoomSnapshotStore } from "@server/persistence";
@@ -55,6 +57,7 @@ interface RoomContext {
   index: number;
   roomId: string;
   playerId: string;
+  authToken: string;
   room: ColyseusRoom;
   payload: SessionStatePayload;
 }
@@ -167,12 +170,33 @@ interface StressArtifact {
   results: ScenarioResult[];
 }
 
+interface StressRoomJoinOptions {
+  logicalRoomId: string;
+  playerId: string;
+  seed: number;
+  authToken?: string;
+}
+
+interface StressClientLike {
+  joinOrCreate(roomName: string, options: StressRoomJoinOptions): Promise<ColyseusRoom>;
+}
+
+interface JoinRoomRetryOptions {
+  attempts?: number;
+  authToken?: string;
+  clientFactory?: (endpoint: string) => StressClientLike;
+  retryDelayBaseMs?: number;
+  timeoutMs?: number;
+}
+
 const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_ROOM_PLAYER_ID = "player-1";
+const WEBSOCKET_ACTION_RATE_LIMIT_SPACING_MS = 150;
 const STRESS_ROOM_VARIANTS = ["phase1", "frontier_basin", "contested_basin"] as const;
+const BATTLE_STRESS_ROOM_VARIANTS = ["frontier_basin", "contested_basin"] as const;
 const COLYSEUS_RECONNECT_MIN_UPTIME_LOG = "[Colyseus reconnection]: ❌ Room has not been up for long enough for automatic reconnection.";
 const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "colyseus-reconnect-soak-summary.json");
 const DEFAULT_STRESS_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "stress-rooms-runtime-metrics.json");
+export const DEFAULT_JOIN_ROOM_TIMEOUT_MS = 8_000;
 
 let requestCounter = 0;
 let activeLatencyCollector: RequestLatencyCollector | null = null;
@@ -505,20 +529,66 @@ async function startStressServer(port: number, host: string, store: RoomSnapshot
   return server;
 }
 
-async function joinRoomWithRetry(host: string, port: number, roomId: string, playerId: string): Promise<ColyseusRoom> {
-  let lastError: unknown;
+function createColyseusClient(endpoint: string): StressClientLike {
+  return new Client(endpoint);
+}
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+async function joinRoomWithTimeout(
+  client: StressClientLike,
+  roomId: string,
+  playerId: string,
+  authToken: string | undefined,
+  timeoutMs: number
+): Promise<ColyseusRoom> {
+  let timedOut = false;
+  let timeout: NodeJS.Timeout | undefined;
+  const joinPromise = client.joinOrCreate("veil", {
+    logicalRoomId: roomId,
+    playerId,
+    seed: 1001,
+    ...(authToken ? { authToken } : {})
+  });
+
+  try {
+    return await Promise.race([
+      joinPromise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`Timed out joining room ${roomId} after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (timedOut) {
+      void joinPromise.then((room) => closeRoom(room)).catch(() => undefined);
+    }
+  }
+}
+
+export async function joinRoomWithRetry(
+  host: string,
+  port: number,
+  roomId: string,
+  playerId: string,
+  options: JoinRoomRetryOptions = {}
+): Promise<ColyseusRoom> {
+  let lastError: unknown;
+  const attempts = options.attempts ?? 5;
+  const authToken = options.authToken;
+  const clientFactory = options.clientFactory ?? createColyseusClient;
+  const retryDelayBaseMs = options.retryDelayBaseMs ?? 100;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_JOIN_ROOM_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const client = new Client(`http://${host}:${port}`);
-      return await client.joinOrCreate("veil", {
-        logicalRoomId: roomId,
-        playerId,
-        seed: 1001
-      });
+      return await joinRoomWithTimeout(clientFactory(`http://${host}:${port}`), roomId, playerId, authToken, timeoutMs);
     } catch (error) {
       lastError = error;
-      await wait(100 + attempt * 100);
+      await wait(retryDelayBaseMs + attempt * retryDelayBaseMs);
     }
   }
 
@@ -571,6 +641,16 @@ async function sendRequest<T extends ServerMessage["type"]>(
   });
 }
 
+async function sendGameplayRequest<T extends ServerMessage["type"]>(
+  room: ColyseusRoom,
+  message: Extract<ClientMessage, { type: "world.action" | "battle.action" }>,
+  expectedType: T
+): Promise<Extract<ServerMessage, { type: T }>> {
+  const response = await sendRequest(room, message, expectedType);
+  await wait(WEBSOCKET_ACTION_RATE_LIMIT_SPACING_MS);
+  return response;
+}
+
 async function mapConcurrent<T, R>(
   items: T[],
   concurrency: number,
@@ -616,24 +696,35 @@ async function connectRooms(
 ): Promise<{ contexts: RoomContext[]; completedActions: number }> {
   const indexes = Array.from({ length: options.rooms }, (_, index) => index);
   const contexts = await mapConcurrent(indexes, options.connectConcurrency, async (index) => {
-    const variant = STRESS_ROOM_VARIANTS[index % STRESS_ROOM_VARIANTS.length] ?? "phase1";
+    const variants = scenario === "battle_settlement" ? BATTLE_STRESS_ROOM_VARIANTS : STRESS_ROOM_VARIANTS;
+    const variant = variants[index % variants.length] ?? "phase1";
     const roomId = `stress-${scenario}-${index}[map:${variant}]`;
-    const room = await joinRoomWithRetry(options.host, options.port, roomId, DEFAULT_ROOM_PLAYER_ID);
+    const playerId = `stress-${scenario}-${index}-player`;
+    const authSession = issueGuestAuthSession({
+      playerId,
+      displayName: `Stress ${scenario} ${index}`
+    });
+    const room = await joinRoomWithRetry(options.host, options.port, roomId, playerId, {
+      authToken: authSession.token
+    });
     const response = await sendRequest(
       room,
       {
         type: "connect",
         requestId: nextRequestId("connect"),
         roomId,
-        playerId: DEFAULT_ROOM_PLAYER_ID
+        playerId,
+        authToken: authSession.token
       },
       "session.state"
     );
+    const effectivePlayerId = response.payload.world.playerId?.trim() || playerId;
 
     return {
       index,
       roomId,
-      playerId: DEFAULT_ROOM_PLAYER_ID,
+      playerId: effectivePlayerId,
+      authToken: authSession.token,
       room,
       payload: response.payload
     } satisfies RoomContext;
@@ -677,6 +768,48 @@ function pickBattleDestination(payload: SessionStatePayload): Vec2 | null {
   );
 }
 
+function getTileAt(world: PlayerWorldView, position: Vec2): PlayerWorldView["map"]["tiles"][number] | undefined {
+  if (position.x < 0 || position.y < 0 || position.x >= world.map.width || position.y >= world.map.height) {
+    return undefined;
+  }
+
+  return world.map.tiles[position.y * world.map.width + position.x];
+}
+
+function countAdjacentHiddenTiles(world: PlayerWorldView, position: Vec2): number {
+  const adjacentPositions: Vec2[] = [
+    { x: position.x + 1, y: position.y },
+    { x: position.x - 1, y: position.y },
+    { x: position.x, y: position.y + 1 },
+    { x: position.x, y: position.y - 1 }
+  ];
+
+  return adjacentPositions.filter((tile) => getTileAt(world, tile)?.fog === "hidden").length;
+}
+
+function pickExplorationDestination(payload: SessionStatePayload): Vec2 | null {
+  const world = decodePlayerWorldView(payload.world);
+  const hero = world.ownHeroes[0];
+  if (!hero) {
+    return null;
+  }
+
+  const candidates = payload.reachableTiles.filter((tile) => tile.x !== hero.position.x || tile.y !== hero.position.y);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates
+    .slice()
+    .sort((left, right) => {
+      const leftHidden = countAdjacentHiddenTiles(world, left);
+      const rightHidden = countAdjacentHiddenTiles(world, right);
+      const leftDistance = Math.abs(left.x - hero.position.x) + Math.abs(left.y - hero.position.y);
+      const rightDistance = Math.abs(right.x - hero.position.x) + Math.abs(right.y - hero.position.y);
+      return rightHidden - leftHidden || rightDistance - leftDistance || right.y - left.y || right.x - left.x;
+    })[0]!;
+}
+
 function pickBattleApproachDestination(payload: SessionStatePayload): Vec2 | null {
   const world = decodePlayerWorldView(payload.world);
   const hero = world.ownHeroes[0];
@@ -688,7 +821,7 @@ function pickBattleApproachDestination(payload: SessionStatePayload): Vec2 | nul
     .filter((tile) => tile.occupant?.kind === "neutral")
     .map((tile) => tile.position);
   if (neutralPositions.length === 0) {
-    return null;
+    return pickExplorationDestination(payload);
   }
 
   const candidates = payload.reachableTiles.filter((tile) => tile.x !== hero.position.x || tile.y !== hero.position.y);
@@ -715,7 +848,7 @@ async function runWorldProgressionScenario(contexts: RoomContext[], options: Str
     let actions = 0;
     const destination = pickWorldProgressionDestination(context.payload);
     if (destination) {
-      const moved = await sendRequest(
+      const moved = await sendGameplayRequest(
         context.room,
         {
           type: "world.action",
@@ -732,7 +865,7 @@ async function runWorldProgressionScenario(contexts: RoomContext[], options: Str
       actions += 1;
     }
 
-    const advanced = await sendRequest(
+    const advanced = await sendGameplayRequest(
       context.room,
       {
         type: "world.action",
@@ -887,7 +1020,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
   }
 
   if (context.payload.battle) {
-    const advancedBattle = await sendRequest(
+    const advancedBattle = await sendGameplayRequest(
       context.room,
       {
         type: "battle.action",
@@ -906,7 +1039,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
   if (cycle % 2 === 0) {
     const destination = pickWorldProgressionDestination(context.payload);
     if (destination) {
-      const moved = await sendRequest(
+      const moved = await sendGameplayRequest(
         context.room,
         {
           type: "world.action",
@@ -929,7 +1062,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
 
   const battleDestination = pickBattleDestination(context.payload) ?? pickBattleApproachDestination(context.payload);
   if (!battleDestination) {
-    const advancedDay = await sendRequest(
+    const advancedDay = await sendGameplayRequest(
       context.room,
       {
         type: "world.action",
@@ -947,7 +1080,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
     };
   }
 
-  const movedToBattle = await sendRequest(
+  const movedToBattle = await sendGameplayRequest(
     context.room,
     {
       type: "world.action",
@@ -969,7 +1102,7 @@ async function prepareReconnectSoakCycle(context: RoomContext, cycle: number): P
     };
   }
 
-  const advancedDay = await sendRequest(
+  const advancedDay = await sendGameplayRequest(
     context.room,
     {
       type: "world.action",
@@ -1029,7 +1162,7 @@ async function runBattleSettlementScenario(contexts: RoomContext[], options: Str
     for (let attempt = 0; attempt < 8 && !context.payload.battle; attempt += 1) {
       const destination = pickBattleDestination(context.payload) ?? pickBattleApproachDestination(context.payload);
       if (destination) {
-        const moved = await sendRequest(
+        const moved = await sendGameplayRequest(
           context.room,
           {
             type: "world.action",
@@ -1050,7 +1183,7 @@ async function runBattleSettlementScenario(contexts: RoomContext[], options: Str
         break;
       }
 
-      const advancedDay = await sendRequest(
+      const advancedDay = await sendGameplayRequest(
         context.room,
         {
           type: "world.action",
@@ -1071,7 +1204,7 @@ async function runBattleSettlementScenario(contexts: RoomContext[], options: Str
 
     for (let turn = 0; turn < options.maxBattleTurns && context.payload.battle; turn += 1) {
       const action = selectPlayerBattleAction(context.payload);
-      const advancedBattle = await sendRequest(
+      const advancedBattle = await sendGameplayRequest(
         context.room,
         {
           type: "battle.action",
@@ -1104,7 +1237,7 @@ async function runReconnectScenario(contexts: RoomContext[], options: StressOpti
     let actions = 0;
     const destination = pickWorldProgressionDestination(context.payload);
     if (destination) {
-      const moved = await sendRequest(
+      const moved = await sendGameplayRequest(
         context.room,
         {
           type: "world.action",
@@ -1126,14 +1259,17 @@ async function runReconnectScenario(contexts: RoomContext[], options: StressOpti
     context.room.removeAllListeners();
     await wait(options.reconnectPauseMs);
 
-    context.room = await joinRoomWithRetry(options.host, options.port, context.roomId, context.playerId);
+    context.room = await joinRoomWithRetry(options.host, options.port, context.roomId, context.playerId, {
+      authToken: context.authToken
+    });
     const reconnected = await sendRequest(
       context.room,
       {
         type: "connect",
         requestId: nextRequestId("reconnect"),
         roomId: context.roomId,
-        playerId: context.playerId
+        playerId: context.playerId,
+        authToken: context.authToken
       },
       "session.state"
     );
@@ -1182,14 +1318,17 @@ async function runReconnectSoakScenario(
       context.room.removeAllListeners();
       await wait(options.reconnectPauseMs);
 
-      context.room = await joinRoomWithRetry(options.host, options.port, context.roomId, context.playerId);
+      context.room = await joinRoomWithRetry(options.host, options.port, context.roomId, context.playerId, {
+        authToken: context.authToken
+      });
       const reconnected = await sendRequest(
         context.room,
         {
           type: "connect",
           requestId: nextRequestId("reconnect-soak"),
           roomId: context.roomId,
-          playerId: context.playerId
+          playerId: context.playerId,
+          authToken: context.authToken
         },
         "session.state"
       );
@@ -1490,7 +1629,14 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error) => {
-  console.error("Concurrent room stress test failed", error);
-  process.exitCode = 1;
-});
+function isCliEntrypoint(): boolean {
+  const entrypoint = process.argv[1];
+  return Boolean(entrypoint && import.meta.url === pathToFileURL(entrypoint).href);
+}
+
+if (isCliEntrypoint()) {
+  void main().catch((error) => {
+    console.error("Concurrent room stress test failed", error);
+    process.exitCode = 1;
+  });
+}
