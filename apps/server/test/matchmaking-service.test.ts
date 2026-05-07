@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import Redis from "ioredis-mock";
@@ -15,6 +16,37 @@ test("redis matchmaking queue lifecycle does not remove players with full list s
     false,
     "Redis matchmaking queue lifecycle should not call lrem(this.queueKey, 0, ...)"
   );
+});
+
+test("matchmaking module import does not eagerly open Redis connections", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--eval",
+      [
+        "process.env.REDIS_URL = 'redis://127.0.0.1:6399/0';",
+        "await import('./apps/server/src/domain/social/matchmaking.ts');",
+        "console.log('imported');"
+      ].join("\n")
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, REDIS_URL: "redis://127.0.0.1:6399/0" },
+      timeout: 2_000
+    }
+  );
+
+  assert.notEqual(
+    (result.error as NodeJS.ErrnoException | undefined)?.code,
+    "ETIMEDOUT",
+    `matchmaking module import should not keep the process alive:\n${result.stdout}\n${result.stderr}`
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /imported/);
+  assert.doesNotMatch(result.stderr, /Redis client/);
 });
 
 function createHero(playerId: string, heroId: string): HeroState {

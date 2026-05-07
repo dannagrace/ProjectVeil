@@ -862,7 +862,7 @@ function getQueuedPlayerScore(request: MatchmakingRequest): number {
 }
 
 let configuredMatchmakingNotificationStore: RoomSnapshotStore | null = null;
-let configuredMatchmakingService: MatchmakingServiceController = createConfiguredMatchmakingService();
+let configuredMatchmakingService: MatchmakingServiceController | null = null;
 
 export function configureMatchmakingRuntimeDependencies(overrides: Partial<MatchmakingRuntimeDependencies>): void {
   matchmakingRuntimeDependencies = {
@@ -876,12 +876,17 @@ export function resetMatchmakingRuntimeDependencies(): void {
 }
 
 export function resetMatchmakingService(): void {
-  void configuredMatchmakingService.close?.();
+  void configuredMatchmakingService?.close?.();
   configuredMatchmakingNotificationStore = null;
-  configuredMatchmakingService = createConfiguredMatchmakingService();
+  configuredMatchmakingService = null;
   matchmakingRateLimitState.counters.clear();
   matchmakingRateLimitState.lastPrunedAtMs = 0;
   setMatchmakingQueueDepth(0);
+}
+
+function getConfiguredMatchmakingService(): MatchmakingServiceController {
+  configuredMatchmakingService ??= createConfiguredMatchmakingService();
+  return configuredMatchmakingService;
 }
 
 async function refreshMatchmakingQueueDepth(service: MatchmakingServiceController): Promise<void> {
@@ -997,7 +1002,7 @@ export function registerMatchmakingRoutes(
   } & MatchmakingRateLimitOptions
 ): void {
   configuredMatchmakingNotificationStore = options.store;
-  const service = options.service ?? configuredMatchmakingService;
+  const service = options.service ?? getConfiguredMatchmakingService();
   const queueTtlMs = resolveQueueTtlMs(options.queueTtlSeconds);
   const rateLimitRedisClient = resolveMatchmakingRateLimitRedisClient(options);
 
