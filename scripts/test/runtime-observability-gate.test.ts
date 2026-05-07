@@ -14,6 +14,11 @@ type MockResponseInit = {
   textBody?: string;
 };
 
+type FetchCall = {
+  url: string;
+  init?: RequestInit;
+};
+
 function createMockResponse(init: MockResponseInit): Response {
   return {
     ok: init.ok ?? true,
@@ -24,10 +29,11 @@ function createMockResponse(init: MockResponseInit): Response {
   } as Response;
 }
 
-function installFetchMock(entries: Record<string, MockResponseInit | Error>): () => void {
+function installFetchMock(entries: Record<string, MockResponseInit | Error>, calls: FetchCall[] = []): () => void {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    calls.push({ url, init });
     const entry = entries[url];
     if (!entry) {
       throw new Error(`Unexpected fetch: ${url}`);
@@ -42,7 +48,22 @@ function installFetchMock(entries: Record<string, MockResponseInit | Error>): ()
   };
 }
 
+function getRequestHeader(call: FetchCall | undefined, name: string): string | undefined {
+  const headers = call?.init?.headers;
+  if (!headers) {
+    return undefined;
+  }
+  if (headers instanceof Headers) {
+    return headers.get(name) ?? undefined;
+  }
+  if (Array.isArray(headers)) {
+    return headers.find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  }
+  return headers[name] ?? headers[name.toLowerCase()];
+}
+
 test("runtime observability gate builds a passing report for a healthy target environment", async () => {
+  const calls: FetchCall[] = [];
   const restoreFetch = installFetchMock({
     "https://veil-staging.example.com/api/runtime/health": {
       jsonBody: {
@@ -106,7 +127,7 @@ veil_auth_account_sessions 7
 veil_auth_token_delivery_queue_count 0
 `
     }
-  });
+  }, calls);
 
   try {
     const report = await buildRuntimeObservabilityGateReport({
@@ -115,6 +136,7 @@ veil_auth_token_delivery_queue_count 0
       targetSurface: "wechat",
       targetEnvironment: "staging",
       serverUrl: "https://veil-staging.example.com",
+      adminToken: "release-admin-token",
       maxSampleAgeMinutes: 30
     });
 
@@ -137,6 +159,14 @@ veil_auth_token_delivery_queue_count 0
     assert.match(markdown, /# Runtime Observability Gate/);
     assert.match(markdown, /Target environment: `staging`/);
     assert.match(markdown, /Gameplay actions: 180/);
+    assert.equal(
+      getRequestHeader(calls.find((call) => call.url.endsWith("/api/runtime/auth-readiness")), "x-veil-admin-token"),
+      "release-admin-token"
+    );
+    assert.equal(
+      getRequestHeader(calls.find((call) => call.url.endsWith("/api/runtime/metrics")), "x-veil-admin-token"),
+      "release-admin-token"
+    );
   } finally {
     restoreFetch();
   }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  buildRuntimeAdminRequestInit,
   buildRuntimeObservabilityEvidenceReport,
   evaluateFreshness,
   getRevision,
@@ -27,6 +28,7 @@ interface Args {
   serverUrl: string;
   targetSurface: TargetSurface;
   targetEnvironment?: string;
+  adminToken?: string;
   outputDir?: string;
   outputPath?: string;
   markdownOutputPath?: string;
@@ -120,6 +122,7 @@ function parseArgs(argv: string[]): Args {
   let serverUrl: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let targetEnvironment: string | undefined;
+  let adminToken: string | undefined;
   let outputDir: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
@@ -155,6 +158,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--target-environment" && next) {
       targetEnvironment = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === "--admin-token" && next) {
+      adminToken = next.trim();
       index += 1;
       continue;
     }
@@ -200,6 +208,7 @@ function parseArgs(argv: string[]): Args {
     serverUrl,
     targetSurface,
     ...(targetEnvironment ? { targetEnvironment } : {}),
+    ...(adminToken ? { adminToken } : {}),
     ...(outputDir ? { outputDir } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
@@ -264,8 +273,8 @@ function getOutputPaths(args: Args): {
   };
 }
 
-async function fetchJsonPayload<T>(url: string): Promise<{ response: Response; payload: T }> {
-  const response = await fetch(url);
+async function fetchJsonPayload<T>(url: string, init?: RequestInit): Promise<{ response: Response; payload: T }> {
+  const response = await fetch(url, init);
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`.trim());
   }
@@ -291,7 +300,10 @@ async function captureRoomLifecycle(args: Args): Promise<RoomLifecycleCapture> {
   }
 
   try {
-    const { response, payload } = await fetchJsonPayload<RoomLifecyclePayload>(url);
+    const { response, payload } = await fetchJsonPayload<RoomLifecyclePayload>(
+      url,
+      buildRuntimeAdminRequestInit(args.adminToken)
+    );
     const freshness = evaluateFreshness(payload.checkedAt, args.maxSampleAgeMinutes * 60 * 1_000);
     const hasAlerts = (payload.alerts?.length ?? 0) > 0;
     const status: RoomLifecycleStatus =
@@ -370,6 +382,7 @@ export async function buildRuntimeObservabilityBundleReport(args: Args): Promise
     serverUrl: args.serverUrl,
     targetSurface: args.targetSurface,
     targetEnvironment: args.targetEnvironment,
+    adminToken: args.adminToken,
     outputPath: outputPaths.evidenceJsonPath,
     markdownOutputPath: outputPaths.evidenceMarkdownPath,
     maxSampleAgeMinutes: args.maxSampleAgeMinutes

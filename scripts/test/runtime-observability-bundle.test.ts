@@ -14,6 +14,11 @@ type MockResponseInit = {
   textBody?: string;
 };
 
+type FetchCall = {
+  url: string;
+  init?: RequestInit;
+};
+
 function createMockResponse(init: MockResponseInit): Response {
   return {
     ok: init.ok ?? true,
@@ -24,10 +29,11 @@ function createMockResponse(init: MockResponseInit): Response {
   } as Response;
 }
 
-function installFetchMock(entries: Record<string, MockResponseInit | Error>): () => void {
+function installFetchMock(entries: Record<string, MockResponseInit | Error>, calls: FetchCall[] = []): () => void {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    calls.push({ url, init });
     const entry = entries[url];
     if (!entry) {
       throw new Error(`Unexpected fetch: ${url}`);
@@ -42,9 +48,24 @@ function installFetchMock(entries: Record<string, MockResponseInit | Error>): ()
   };
 }
 
+function getRequestHeader(call: FetchCall | undefined, name: string): string | undefined {
+  const headers = call?.init?.headers;
+  if (!headers) {
+    return undefined;
+  }
+  if (headers instanceof Headers) {
+    return headers.get(name) ?? undefined;
+  }
+  if (Array.isArray(headers)) {
+    return headers.find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  }
+  return headers[name] ?? headers[name.toLowerCase()];
+}
+
 test("runtime observability bundle writes normalized verdicts and optional room lifecycle evidence", async () => {
   const now = new Date().toISOString();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-runtime-observability-bundle-"));
+  const calls: FetchCall[] = [];
   const restoreFetch = installFetchMock({
     "https://veil-staging.example.com/api/runtime/health": {
       jsonBody: {
@@ -133,7 +154,7 @@ veil_auth_token_delivery_queue_count 0
         }
       }
     }
-  });
+  }, calls);
 
   try {
     const report = await buildRuntimeObservabilityBundleReport({
@@ -144,6 +165,7 @@ veil_auth_token_delivery_queue_count 0
       serverUrl: "https://veil-staging.example.com",
       outputDir: workspace,
       includeRoomLifecycle: true,
+      adminToken: "release-admin-token",
       maxSampleAgeMinutes: 30
     });
 
@@ -161,6 +183,18 @@ veil_auth_token_delivery_queue_count 0
     assert.match(markdown, /# Runtime Observability Bundle/);
     assert.match(markdown, /Room lifecycle: `captured`/);
     assert.match(markdown, /Target environment: `staging`/);
+    assert.equal(
+      getRequestHeader(calls.find((call) => call.url.endsWith("/api/runtime/auth-readiness")), "x-veil-admin-token"),
+      "release-admin-token"
+    );
+    assert.equal(
+      getRequestHeader(calls.find((call) => call.url.endsWith("/api/runtime/metrics")), "x-veil-admin-token"),
+      "release-admin-token"
+    );
+    assert.equal(
+      getRequestHeader(calls.find((call) => call.url.endsWith("/api/runtime/room-lifecycle-summary")), "x-veil-admin-token"),
+      "release-admin-token"
+    );
   } finally {
     restoreFetch();
   }

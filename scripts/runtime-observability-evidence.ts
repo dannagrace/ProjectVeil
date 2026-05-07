@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isBaselineRuntimeHealthResponse } from "./runtime-health-contract.mjs";
 
 export type TargetSurface = "h5" | "wechat";
 export type EndpointStatus = "passed" | "warn" | "failed";
@@ -13,6 +14,7 @@ interface Args {
   serverUrl: string;
   targetSurface: TargetSurface;
   targetEnvironment?: string;
+  adminToken?: string;
   outputPath?: string;
   markdownOutputPath?: string;
   maxSampleAgeMinutes: number;
@@ -26,10 +28,15 @@ interface GitRevision {
 }
 
 interface RuntimeHealthPayload {
-  status?: "ok";
+  status?: "ok" | "warn";
   checkedAt?: string;
   service?: string;
   runtime?: {
+    persistence?: {
+      status?: string;
+      storage?: string;
+      message?: string;
+    };
     activeRoomCount?: number;
     connectionCount?: number;
     activeBattleCount?: number;
@@ -141,6 +148,7 @@ export interface RuntimeObservabilityEvidenceReport {
 
 const DEFAULT_RELEASE_READINESS_DIR = path.resolve("artifacts", "release-readiness");
 const HEX_REVISION_PATTERN = /^[a-f0-9]+$/i;
+const RUNTIME_ADMIN_TOKEN_HEADER = "x-veil-admin-token";
 const REQUIRED_RUNTIME_METRICS = [
   "veil_active_room_count",
   "veil_connection_count",
@@ -159,6 +167,7 @@ export function parseArgs(argv: string[]): Args {
   let serverUrl: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let targetEnvironment: string | undefined;
+  let adminToken: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
   let maxSampleAgeMinutes = 30;
@@ -195,6 +204,11 @@ export function parseArgs(argv: string[]): Args {
       index += 1;
       continue;
     }
+    if (arg === "--admin-token" && next) {
+      adminToken = next.trim();
+      index += 1;
+      continue;
+    }
     if (arg === "--output" && next) {
       outputPath = next;
       index += 1;
@@ -228,6 +242,7 @@ export function parseArgs(argv: string[]): Args {
     serverUrl,
     targetSurface,
     ...(targetEnvironment ? { targetEnvironment } : {}),
+    ...(adminToken ? { adminToken } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
     maxSampleAgeMinutes
@@ -310,17 +325,37 @@ function toRelativePath(filePath: string): string {
   return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
 }
 
-async function fetchResponse(url: string): Promise<Response> {
+export function resolveRuntimeAdminToken(adminToken?: string): string | undefined {
+  return adminToken?.trim() || process.env.VEIL_ADMIN_TOKEN?.trim() || undefined;
+}
+
+export function buildRuntimeAdminRequestInit(adminToken?: string): RequestInit | undefined {
+  const resolvedAdminToken = resolveRuntimeAdminToken(adminToken);
+  if (!resolvedAdminToken) {
+    return undefined;
+  }
+  return {
+    headers: {
+      [RUNTIME_ADMIN_TOKEN_HEADER]: resolvedAdminToken
+    }
+  };
+}
+
+async function fetchResponse(url: string, init?: RequestInit): Promise<Response> {
   try {
-    return await fetch(url);
+    return await fetch(url, init);
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 }
 
-async function fetchJsonPayload<T>(url: string): Promise<{ response: Response; payload: T }> {
-  const response = await fetchResponse(url);
-  if (!response.ok) {
+async function fetchJsonPayload<T>(
+  url: string,
+  init?: RequestInit,
+  options?: { allowErrorStatus?: boolean }
+): Promise<{ response: Response; payload: T }> {
+  const response = await fetchResponse(url, init);
+  if (!response.ok && !options?.allowErrorStatus) {
     throw new Error(`${response.status} ${response.statusText}`.trim());
   }
   return {
@@ -329,8 +364,8 @@ async function fetchJsonPayload<T>(url: string): Promise<{ response: Response; p
   };
 }
 
-async function fetchTextPayload(url: string): Promise<{ response: Response; payload: string }> {
-  const response = await fetchResponse(url);
+async function fetchTextPayload(url: string, init?: RequestInit): Promise<{ response: Response; payload: string }> {
+  const response = await fetchResponse(url, init);
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`.trim());
   }
@@ -358,16 +393,21 @@ export async function buildRuntimeObservabilityEvidenceReport(args: Args): Promi
   const serverUrl = args.serverUrl.replace(/\/$/, "");
   const maxAgeMs = args.maxSampleAgeMinutes * 60 * 1_000;
   const candidateName = args.candidate?.trim() || revision.shortCommit;
+  const adminRequestInit = buildRuntimeAdminRequestInit(args.adminToken);
   const endpoints: RuntimeObservabilityEvidenceEndpointReport[] = [];
 
   const healthUrl = `${serverUrl}/api/runtime/health`;
   let healthPayload: RuntimeHealthPayload | undefined;
   try {
-    const { response, payload } = await fetchJsonPayload<RuntimeHealthPayload>(healthUrl);
+    const { response, payload } = await fetchJsonPayload<RuntimeHealthPayload>(healthUrl, undefined, {
+      allowErrorStatus: true
+    });
     healthPayload = payload;
     const freshness = evaluateFreshness(payload.checkedAt, maxAgeMs);
+    const acceptsLocalDevDegradedHealth =
+      args.targetEnvironment?.trim() === "local-dev" && isBaselineRuntimeHealthResponse(response.status, payload);
     const status: EndpointStatus =
-      payload.status === "ok" && freshness === "fresh"
+      ((response.ok && payload.status === "ok") || acceptsLocalDevDegradedHealth) && freshness === "fresh"
         ? "passed"
         : freshness === "stale" || freshness === "missing_timestamp" || freshness === "invalid_timestamp"
           ? "warn"
@@ -383,6 +423,9 @@ export async function buildRuntimeObservabilityEvidenceReport(args: Args): Promi
     if (payload.status !== "ok") {
       details.push(`runtime health status reported ${JSON.stringify(payload.status ?? "missing")}`);
     }
+    if (acceptsLocalDevDegradedHealth) {
+      details.push("degraded in-memory runtime health accepted for local-dev baseline validation");
+    }
     if (freshness !== "fresh") {
       details.push(`runtime health sample freshness is ${freshness}`);
     }
@@ -394,7 +437,9 @@ export async function buildRuntimeObservabilityEvidenceReport(args: Args): Promi
       httpStatus: response.status,
       summary:
         status === "passed"
-          ? "Runtime health responded with an OK payload."
+          ? acceptsLocalDevDegradedHealth
+            ? "Runtime health returned a local-dev degraded in-memory payload accepted by the baseline contract."
+            : "Runtime health responded with an OK payload."
           : payload.status !== "ok"
             ? `Runtime health reported ${JSON.stringify(payload.status ?? "missing")}.`
             : `Runtime health sample is ${freshness}.`,
@@ -440,7 +485,7 @@ export async function buildRuntimeObservabilityEvidenceReport(args: Args): Promi
   const authUrl = `${serverUrl}/api/runtime/auth-readiness`;
   let authPayload: AuthReadinessPayload | undefined;
   try {
-    const { response, payload } = await fetchJsonPayload<AuthReadinessPayload>(authUrl);
+    const { response, payload } = await fetchJsonPayload<AuthReadinessPayload>(authUrl, adminRequestInit);
     authPayload = payload;
     const freshness = evaluateFreshness(payload.checkedAt, maxAgeMs);
     const hasAlerts = (payload.alerts?.length ?? 0) > 0;
@@ -519,7 +564,7 @@ export async function buildRuntimeObservabilityEvidenceReport(args: Args): Promi
 
   const metricsUrl = `${serverUrl}/api/runtime/metrics`;
   try {
-    const { response, payload } = await fetchTextPayload(metricsUrl);
+    const { response, payload } = await fetchTextPayload(metricsUrl, adminRequestInit);
     const observedAt = healthPayload?.checkedAt ?? authPayload?.checkedAt;
     const freshness = evaluateFreshness(observedAt, maxAgeMs);
     const missingMetrics = REQUIRED_RUNTIME_METRICS.filter((metric) => !payload.includes(metric));

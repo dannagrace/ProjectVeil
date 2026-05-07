@@ -21,6 +21,7 @@ interface Args {
   serverUrl?: string;
   targetSurface: TargetSurface;
   targetEnvironment?: string;
+  adminToken?: string;
   captureReportPath?: string;
   outputPath?: string;
   markdownOutputPath?: string;
@@ -70,6 +71,7 @@ function parseArgs(argv: string[]): Args {
   let serverUrl: string | undefined;
   let targetSurface: TargetSurface = "wechat";
   let targetEnvironment: string | undefined;
+  let adminToken: string | undefined;
   let captureReportPath: string | undefined;
   let outputPath: string | undefined;
   let markdownOutputPath: string | undefined;
@@ -104,6 +106,11 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--target-environment" && next) {
       targetEnvironment = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === "--admin-token" && next) {
+      adminToken = next.trim();
       index += 1;
       continue;
     }
@@ -145,6 +152,7 @@ function parseArgs(argv: string[]): Args {
     ...(serverUrl ? { serverUrl } : {}),
     targetSurface,
     ...(targetEnvironment ? { targetEnvironment } : {}),
+    ...(adminToken ? { adminToken } : {}),
     ...(captureReportPath ? { captureReportPath } : {}),
     ...(outputPath ? { outputPath } : {}),
     ...(markdownOutputPath ? { markdownOutputPath } : {}),
@@ -201,6 +209,7 @@ async function loadEvidence(args: Args): Promise<{ report: RuntimeObservabilityE
       serverUrl: args.serverUrl!,
       targetSurface: args.targetSurface,
       targetEnvironment: args.targetEnvironment,
+      adminToken: args.adminToken,
       maxSampleAgeMinutes: args.maxSampleAgeMinutes
     })
   };
