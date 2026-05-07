@@ -2139,48 +2139,50 @@ function collectPhase1EvidenceReferences(
     });
   }
 
-  if (wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)) {
-    const report = readJsonFile<WechatReleaseCandidateSummary>(wechatCandidateSummaryPath);
-    const commit = report.candidate?.revision ?? undefined;
-    evidence.push({
-      gateId: "wechat-release",
-      label: "WeChat release validation",
-      source: {
-        kind: "wechat-release-candidate-summary",
-        path: wechatCandidateSummaryPath
-      },
-      commit,
-      generatedAt: report.generatedAt,
-      candidateHint: deriveCandidateHint(wechatCandidateSummaryPath, commit)
-    });
-  } else if (wechatRcValidationPath && fs.existsSync(wechatRcValidationPath)) {
-    const report = readJsonFile<WechatRcValidationReport>(wechatRcValidationPath);
-    const commit = report.commit ?? undefined;
-    evidence.push({
-      gateId: "wechat-release",
-      label: "WeChat release validation",
-      source: {
-        kind: "wechat-rc-validation",
-        path: wechatRcValidationPath
-      },
-      commit,
-      generatedAt: report.generatedAt,
-      candidateHint: deriveCandidateHint(wechatRcValidationPath, commit)
-    });
-  } else if (targetSurface === "wechat" && wechatSmokeReportPath && fs.existsSync(wechatSmokeReportPath)) {
-    const report = readJsonFile<WechatSmokeReport>(wechatSmokeReportPath);
-    const commit = report.artifact?.sourceRevision;
-    evidence.push({
-      gateId: "wechat-release",
-      label: "WeChat release validation",
-      source: {
-        kind: "wechat-smoke-report",
-        path: wechatSmokeReportPath
-      },
-      commit,
-      generatedAt: report.execution?.executedAt,
-      candidateHint: deriveCandidateHint(wechatSmokeReportPath, commit)
-    });
+  if (targetSurface === "wechat") {
+    if (wechatCandidateSummaryPath && fs.existsSync(wechatCandidateSummaryPath)) {
+      const report = readJsonFile<WechatReleaseCandidateSummary>(wechatCandidateSummaryPath);
+      const commit = report.candidate?.revision ?? undefined;
+      evidence.push({
+        gateId: "wechat-release",
+        label: "WeChat release validation",
+        source: {
+          kind: "wechat-release-candidate-summary",
+          path: wechatCandidateSummaryPath
+        },
+        commit,
+        generatedAt: report.generatedAt,
+        candidateHint: deriveCandidateHint(wechatCandidateSummaryPath, commit)
+      });
+    } else if (wechatRcValidationPath && fs.existsSync(wechatRcValidationPath)) {
+      const report = readJsonFile<WechatRcValidationReport>(wechatRcValidationPath);
+      const commit = report.commit ?? undefined;
+      evidence.push({
+        gateId: "wechat-release",
+        label: "WeChat release validation",
+        source: {
+          kind: "wechat-rc-validation",
+          path: wechatRcValidationPath
+        },
+        commit,
+        generatedAt: report.generatedAt,
+        candidateHint: deriveCandidateHint(wechatRcValidationPath, commit)
+      });
+    } else if (wechatSmokeReportPath && fs.existsSync(wechatSmokeReportPath)) {
+      const report = readJsonFile<WechatSmokeReport>(wechatSmokeReportPath);
+      const commit = report.artifact?.sourceRevision;
+      evidence.push({
+        gateId: "wechat-release",
+        label: "WeChat release validation",
+        source: {
+          kind: "wechat-smoke-report",
+          path: wechatSmokeReportPath
+        },
+        commit,
+        generatedAt: report.execution?.executedAt,
+        candidateHint: deriveCandidateHint(wechatSmokeReportPath, commit)
+      });
+    }
   }
 
   if (manualEvidenceLedgerPath && fs.existsSync(manualEvidenceLedgerPath)) {

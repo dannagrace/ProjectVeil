@@ -1565,6 +1565,115 @@ test("evaluatePhase1EvidenceConsistencyGate fails stale or mismatched candidate 
   assert.match(gate.failures.join("\n"), /commit mismatch/);
 });
 
+test("evaluatePhase1EvidenceConsistencyGate ignores optional WeChat evidence for H5 gates", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatCandidateSummaryPath = path.join(workspace, "artifacts", "wechat-release", "codex.wechat.release-candidate-summary.json");
+
+  writeJson(snapshotPath, {
+    generatedAt: "2026-04-02T08:30:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: "2026-04-02T08:32:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    execution: {
+      status: "passed",
+      finishedAt: "2026-04-02T08:32:00.000Z",
+      exitCode: 0
+    },
+    summary: {
+      total: 2,
+      passed: 2,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: "2026-04-02T08:33:00.000Z",
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 384,
+      invariantChecks: 2304
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(wechatCandidateSummaryPath, {
+    generatedAt: "2026-03-20T08:30:00.000Z",
+    candidate: {
+      revision: "deadbeef",
+      status: "ready"
+    },
+    evidence: {
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  const gate = evaluatePhase1EvidenceConsistencyGate(
+    "h5",
+    {
+      commit: "abc123",
+      shortCommit: "abc123",
+      branch: "test-branch",
+      dirty: false
+    },
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath,
+    undefined,
+    undefined,
+    wechatCandidateSummaryPath,
+    undefined,
+    undefined
+  );
+
+  assert.equal(gate.status, "passed");
+  assert.deepEqual(gate.failures, []);
+  assert.doesNotMatch(gate.summary, /WeChat release validation/);
+});
+
 test("evaluatePhase1EvidenceConsistencyGate fails when Phase 1 evidence timestamps drift too far apart", () => {
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
