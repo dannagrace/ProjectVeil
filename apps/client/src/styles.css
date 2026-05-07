@@ -373,6 +373,21 @@ h1 {
 
 .session-meta-row {
   margin-top: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.session-meta-row .muted {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-meta-row .session-link {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 
 .session-link {

@@ -184,6 +184,54 @@ test("h5 smoke reaches lobby http path and room websocket path", async ({ page }
   });
 });
 
+test("h5 room session actions wrap inside the hero sidebar", async ({ page }, testInfo) => {
+  const roomId = buildRoomId("e2e-h5-session-actions");
+
+  await page.setViewportSize({ width: 1512, height: 900 });
+
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+    await page.locator("[data-lobby-room-id]").fill(roomId);
+    await page.locator("[data-lobby-player-id]").fill("player-1");
+    await page.locator("[data-lobby-display-name]").fill("Session Actions Smoke");
+    await acceptLobbyPrivacyConsent(page);
+    await page.locator("[data-enter-room]").click();
+
+    await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
+
+    const overflowingSessionActions = await page.locator(".hero-panel").evaluate((panel) => {
+      const panelRect = panel.getBoundingClientRect();
+      const row = panel.querySelector<HTMLElement>(".session-meta-row");
+      const rowRect = row?.getBoundingClientRect();
+      return Array.from(panel.querySelectorAll<HTMLButtonElement>(".session-meta-row .session-link"))
+        .map((button) => {
+          const rect = button.getBoundingClientRect();
+          return {
+            text: button.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            panelLeft: Math.round(panelRect.left),
+            panelRight: Math.round(panelRect.right),
+            rowLeft: Math.round(rowRect?.left ?? 0),
+            rowRight: Math.round(rowRect?.right ?? 0),
+            scrollWidth: button.scrollWidth,
+            clientWidth: button.clientWidth
+          };
+        })
+        .filter(
+          (button) =>
+            button.left < panelRect.left - 1 ||
+            button.right > panelRect.right + 1 ||
+            button.left < button.rowLeft - 1 ||
+            button.right > button.rowRight + 1 ||
+            button.scrollWidth > button.clientWidth + 1
+        );
+    });
+    expect(overflowingSessionActions).toEqual([]);
+  });
+});
+
 test("h5 mobile room keeps the map and light-surface panels readable", async ({ page }, testInfo) => {
   const roomId = buildRoomId("e2e-h5-mobile-layout");
 
