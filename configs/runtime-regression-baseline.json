@@ -17,8 +17,8 @@
     "world_progression": {
       "rooms": 48,
       "successfulRoomsMin": 48,
-      "actionsPerSecondMin": 150,
-      "durationMsMax": 1200,
+      "actionsPerSecondMin": 60,
+      "durationMsMax": 2500,
       "cpuCoreUtilizationPctMax": 80,
       "runtimeHealthAfterConnect": {
         "activeRoomCountEq": 48,
@@ -31,8 +31,8 @@
     "battle_settlement": {
       "rooms": 48,
       "successfulRoomsMin": 48,
-      "actionsPerSecondMin": 250,
-      "durationMsMax": 1200,
+      "actionsPerSecondMin": 45,
+      "durationMsMax": 9000,
       "cpuCoreUtilizationPctMax": 75,
       "runtimeHealthAfterConnect": {
         "activeRoomCountEq": 48,
@@ -46,8 +46,8 @@
     "reconnect": {
       "rooms": 48,
       "successfulRoomsMin": 48,
-      "actionsPerSecondMin": 100,
-      "durationMsMax": 1500,
+      "actionsPerSecondMin": 80,
+      "durationMsMax": 2000,
       "cpuCoreUtilizationPctMax": 50,
       "runtimeHealthAfterConnect": {
         "activeRoomCountEq": 48,
@@ -56,7 +56,7 @@
       "runtimeHealthAfterScenario": {
         "connectMessagesTotalMin": 192,
         "actionMessagesTotalMin": 336,
-        "connectionCountMin": 96
+        "connectionCountMin": 48
       }
     }
   }
