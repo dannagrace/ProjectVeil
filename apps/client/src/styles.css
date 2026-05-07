@@ -1121,7 +1121,12 @@ h1 {
   border-radius: 12px;
   border: 1px solid rgba(78, 58, 42, 0.16);
   background: rgba(255, 255, 255, 0.92);
-  color: var(--ink);
+  color: var(--ink-on-light);
+}
+
+.account-input::placeholder {
+  color: var(--muted-on-light);
+  opacity: 1;
 }
 
 .account-save {

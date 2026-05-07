@@ -119,6 +119,24 @@ test("h5 lobby light cards keep secondary text readable", async ({ page }, testI
     for (const color of disclosureToggleColors) {
       expect(readRgbLightness(color)).toBeLessThan(0.42);
     }
+
+    const inputColors = await page
+      .locator(".lobby-form.info-card .account-input")
+      .evaluateAll((inputs) =>
+        inputs
+          .filter((input) => {
+            const rect = input.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          })
+          .map((input) => ({
+            valueColor: getComputedStyle(input).color,
+            placeholderColor: getComputedStyle(input, "::placeholder").color
+          }))
+      );
+    expect(inputColors.length).toBeGreaterThan(0);
+    for (const color of inputColors.flatMap((input) => [input.valueColor, input.placeholderColor])) {
+      expect(readRgbLightness(color)).toBeLessThan(0.42);
+    }
   });
 });
 
