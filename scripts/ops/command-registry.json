@@ -354,6 +354,11 @@
         "runner": "node --import tsx --test ./scripts/test/codex-automation-branches.test.ts"
       },
       {
+        "name": "codex-local-artifacts-hygiene",
+        "legacyScript": "test:codex-local-artifacts-hygiene",
+        "runner": "node --import tsx --test ./scripts/test/codex-local-artifacts-hygiene.test.ts"
+      },
+      {
         "name": "content-smoke-gate",
         "legacyScript": "test:content-smoke-gate",
         "runner": "node --import tsx --test ./scripts/test/content-smoke-gate.test.ts"

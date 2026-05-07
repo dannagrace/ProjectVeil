@@ -26,6 +26,7 @@ const assetConfig = parseOrNull();
 if (assetConfig) {
   validateManifestCoverage(assetConfig, errors);
   validateAssetFiles(assetConfig, errors);
+  validateRuntimeAssetPathPolicy(assetConfig, errors);
   validateRoadmapCoverage(assetConfig, errors);
   validateIssue33Dimensions(assetConfig, errors);
   validateCocosPresentationAudioAssets(errors);
@@ -123,6 +124,18 @@ function validateAssetFiles(assetConfig: ReturnType<typeof parseAssetConfig>, er
     const cocosPath = toCocosAssetFilepath(assetPath);
     if (!existsSync(cocosPath)) {
       errors.push(`${assetPath} does not exist at ${path.relative(rootDir, cocosPath)}`);
+    }
+  }
+}
+
+function validateRuntimeAssetPathPolicy(assetConfig: ReturnType<typeof parseAssetConfig>, errors: string[]): void {
+  for (const assetPath of collectAssetPaths(assetConfig)) {
+    if (!assetPath.startsWith("/assets/pixel/")) {
+      errors.push(`${assetPath} must use the production pixel asset namespace /assets/pixel/`);
+    }
+
+    if (path.extname(assetPath).toLowerCase() !== ".png") {
+      errors.push(`${assetPath} must be a PNG production runtime asset`);
     }
   }
 }

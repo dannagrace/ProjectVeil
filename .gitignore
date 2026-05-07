@@ -51,6 +51,7 @@ artifacts/wechat-release/*
 !artifacts/wechat-release/device-runtime-review.json
 playwright-report
 test-results
+output/
 apps/cocos-client/library
 apps/cocos-client/local
 apps/cocos-client/profiles
