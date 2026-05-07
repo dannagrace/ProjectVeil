@@ -257,17 +257,33 @@ test("concurrent move to same tile resolves deterministically", async ({ browser
       await expect(playerTwoPage.getByTestId("battle-panel")).not.toContainText("No active battle", { timeout: 10_000 });
 
       await expect
-        .poll(async () => (await readAutomationState(playerOnePage)).hero?.x ?? null, {
-          message: "waiting for player one authoritative tile resolution"
+        .poll(async () => {
+          const [playerOneState, playerTwoState] = await Promise.all([
+            readAutomationState(playerOnePage),
+            readAutomationState(playerTwoPage)
+          ]);
+          const heroes = [playerOneState.hero, playerTwoState.hero].filter(
+            (hero): hero is NonNullable<AutomationState["hero"]> => Boolean(hero)
+          );
+          return heroes.filter((hero) => hero.x === target.x && hero.y === target.y).length;
+        }, {
+          message: "waiting for exactly one authoritative conflict winner at the target tile"
         })
-        .toBe(target.x);
-      await expect.poll(async () => (await readAutomationState(playerOnePage)).hero?.y ?? null).toBe(target.y);
+        .toBe(1);
       await expect
         .poll(async () => {
-          const hero = (await readAutomationState(playerTwoPage)).hero;
-          return hero ? `${hero.x},${hero.y}` : null;
+          const [playerOneState, playerTwoState] = await Promise.all([
+            readAutomationState(playerOnePage),
+            readAutomationState(playerTwoPage)
+          ]);
+          const positions = [playerOneState.hero, playerTwoState.hero]
+            .filter((hero): hero is NonNullable<AutomationState["hero"]> => Boolean(hero))
+            .map((hero) => `${hero.x},${hero.y}`);
+          return new Set(positions).size;
+        }, {
+          message: "waiting for the conflict loser to remain outside the occupied target tile"
         })
-        .not.toBe(`${target.x},${target.y}`);
+        .toBe(2);
       await expectMoveSpentGreaterThan(playerOnePage, playerOneSpentBefore);
       await expectMoveSpentGreaterThan(playerTwoPage, playerTwoSpentBefore);
     });
