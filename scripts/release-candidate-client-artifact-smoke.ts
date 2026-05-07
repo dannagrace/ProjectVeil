@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 type CaseStatus = "passed" | "failed" | "skipped";
@@ -86,13 +87,26 @@ interface ReleaseCandidateClientArtifactSmokeReport {
 
 const BUILD_COMMAND = "npm run build:client:h5";
 const FIXTURE_COMMAND = "npm run validate -- e2e:fixtures";
-const PLAYWRIGHT_COMMAND =
-  "VEIL_PLAYWRIGHT_CLIENT_MODE=preview npx playwright test --project=release-candidate-artifact-smoke --reporter=json";
+const PLAYWRIGHT_COMMAND = "npx playwright test --project=release-candidate-artifact-smoke --reporter=json";
 const OUTPUT_TAIL_BYTES = 4000;
+const DEFAULT_SERVER_HOST = "127.0.0.1";
+const DEFAULT_CLIENT_HOST = "127.0.0.1";
+const DEFAULT_SERVER_PORT = 2567;
+const DEFAULT_CLIENT_PORT = 4173;
 const REQUIRED_CASE_TITLES = [
   "rc-artifact: guest login reaches lobby and room boot",
   "rc-artifact: cached session restore reaches room boot"
 ] as const;
+const BUILD_RUNTIME_ENV_KEYS = ["VITE_VEIL_SERVER_HTTP_URL", "VITE_VEIL_SERVER_WS_URL"] as const;
+const SMOKE_RUNTIME_ENV_KEYS = [
+  "VEIL_PLAYWRIGHT_CLIENT_MODE",
+  "VEIL_PLAYWRIGHT_SERVER_PORT",
+  "VEIL_PLAYWRIGHT_CLIENT_PORT",
+  "VEIL_PLAYWRIGHT_SERVER_ORIGIN",
+  "VEIL_PLAYWRIGHT_SERVER_WS_URL"
+] as const;
+
+type EnvOverrides = Record<string, string>;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -147,9 +161,56 @@ function readGitValue(args: string[]): string {
   return result.stdout.trim();
 }
 
-function runCommand(command: string): void {
+function readPort(key: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[key] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function derivePort(base: number, span = 300): number {
+  const seed =
+    process.env.VEIL_PLAYWRIGHT_WORKSPACE_SEED?.trim() ||
+    `${process.cwd()}:${process.pid}:release-candidate-client-artifact-smoke`;
+  const hash = createHash("sha1").update(seed).digest();
+  const offset = ((hash[0] << 8) | hash[1]) % span;
+  return base + offset;
+}
+
+function normalizeOrigin(value: string | undefined, fallbackHost: string, fallbackPort: number, protocol: "http" | "ws"): string {
+  return value?.trim() || `${protocol}://${fallbackHost}:${fallbackPort}`;
+}
+
+function resolvePlaywrightRuntimeEnv(): EnvOverrides {
+  const serverPort = readPort("VEIL_PLAYWRIGHT_SERVER_PORT", derivePort(DEFAULT_SERVER_PORT));
+  const clientPort = readPort("VEIL_PLAYWRIGHT_CLIENT_PORT", derivePort(DEFAULT_CLIENT_PORT));
+  const serverOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_SERVER_ORIGIN, DEFAULT_SERVER_HOST, serverPort, "http");
+  const serverWsOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_SERVER_WS_URL, DEFAULT_SERVER_HOST, serverPort, "ws");
+  const clientOrigin = normalizeOrigin(process.env.VEIL_PLAYWRIGHT_CLIENT_ORIGIN, DEFAULT_CLIENT_HOST, clientPort, "http");
+
+  return {
+    VEIL_PLAYWRIGHT_CLIENT_MODE: "preview",
+    VEIL_PLAYWRIGHT_SERVER_PORT: String(serverPort),
+    VEIL_PLAYWRIGHT_CLIENT_PORT: String(clientPort),
+    VEIL_PLAYWRIGHT_SERVER_ORIGIN: serverOrigin,
+    VEIL_PLAYWRIGHT_SERVER_WS_URL: serverWsOrigin,
+    VEIL_PLAYWRIGHT_CLIENT_ORIGIN: clientOrigin,
+    VEIL_DEV_SERVER_HTTP_URL: serverOrigin,
+    VITE_VEIL_SERVER_HTTP_URL: serverOrigin,
+    VITE_VEIL_SERVER_WS_URL: serverWsOrigin
+  };
+}
+
+function formatCommandWithEnv(command: string, env: EnvOverrides, keys: readonly string[]): string {
+  const prefix = keys.map((key) => `${key}=${env[key]}`).join(" ");
+  return prefix ? `${prefix} ${command}` : command;
+}
+
+function runCommand(command: string, envOverrides: EnvOverrides = {}): void {
   const result = spawnSync(command, {
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ...envOverrides
+    },
     shell: true,
     stdio: "inherit",
     encoding: "utf8"
@@ -232,11 +293,12 @@ function main(): void {
   const artifactDir = path.resolve(args.clientArtifactDir ?? "apps/client/dist");
   const outputPath = resolveOutputPath(args.outputPath, shortCommit);
   const rawPlaywrightReportPath = outputPath.replace(/\.json$/, ".playwright.json");
+  const runtimeEnv = resolvePlaywrightRuntimeEnv();
   const startedAtValue = Date.now();
   const startedAt = new Date(startedAtValue).toISOString();
 
   runCommand(FIXTURE_COMMAND);
-  runCommand(BUILD_COMMAND);
+  runCommand(BUILD_COMMAND, runtimeEnv);
 
   if (!fs.existsSync(artifactDir)) {
     fail(`Built client artifact directory does not exist: ${artifactDir}`);
@@ -244,6 +306,10 @@ function main(): void {
 
   const result = spawnSync(PLAYWRIGHT_COMMAND, {
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ...runtimeEnv
+    },
     shell: true,
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 20
@@ -294,8 +360,8 @@ function main(): void {
     artifact: {
       kind: "apps/client/dist",
       path: path.relative(process.cwd(), artifactDir).replace(/\\/g, "/"),
-      buildCommand: BUILD_COMMAND,
-      smokeCommand: PLAYWRIGHT_COMMAND
+      buildCommand: formatCommandWithEnv(BUILD_COMMAND, runtimeEnv, BUILD_RUNTIME_ENV_KEYS),
+      smokeCommand: formatCommandWithEnv(PLAYWRIGHT_COMMAND, runtimeEnv, SMOKE_RUNTIME_ENV_KEYS)
     },
     execution: {
       status: result.status === 0 ? "passed" : "failed",
