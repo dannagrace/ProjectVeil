@@ -137,6 +137,11 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
   const artifactsDir = path.join(workspace, "artifacts", "release-readiness");
   const wechatDir = path.join(workspace, "artifacts", "wechat-release");
   const revision = "abc1234";
+  const staleDefaultCocosPath = path.resolve(
+    "artifacts",
+    "release-readiness",
+    "cocos-rc-reconnect-replay-test-stale-deadbee.json"
+  );
 
   const snapshotPath = path.join(artifactsDir, "release-readiness-pass.json");
   const h5SmokePath = path.join(artifactsDir, "client-release-candidate-smoke-pass.json");
@@ -398,23 +403,54 @@ test("phase1 candidate dossier aggregates Phase 1 evidence into one accepted-ris
     publishAuditHistory: []
   });
 
-  const dossier = await buildPhase1CandidateDossier({
-    candidate: "phase1-rc",
-    candidateRevision: revision,
-    runtimeObservabilityGatePath,
-    snapshotPath,
-    h5SmokePath,
-    reconnectSoakPath,
-    cocosBundlePath,
-    wechatCandidateSummaryPath,
-    persistencePath,
-    syncGovernancePath,
-    ciTrendSummaryPath,
-    coverageSummaryPath,
-    configCenterLibraryPath,
-    targetSurface: "wechat",
-    maxEvidenceAgeHours: 72
-  });
+  const dossier = await (async () => {
+    try {
+      writeJson(staleDefaultCocosPath, {
+        generatedAt: hoursAgo(1),
+        candidate: {
+          revision: "deadbeef1234567890",
+          shortRevision: "deadbee"
+        },
+        execution: {
+          overallStatus: "passed"
+        },
+        reviewSignals: {
+          resumeSuccessVerified: true,
+          freshJoinFallbackVerified: true
+        },
+        scenarios: [
+          {
+            id: "resume-success",
+            status: "passed"
+          },
+          {
+            id: "resume-fallback-fresh-join",
+            status: "passed"
+          }
+        ]
+      });
+
+      return await buildPhase1CandidateDossier({
+        candidate: "phase1-rc",
+        candidateRevision: revision,
+        runtimeObservabilityGatePath,
+        snapshotPath,
+        h5SmokePath,
+        reconnectSoakPath,
+        cocosBundlePath,
+        wechatCandidateSummaryPath,
+        persistencePath,
+        syncGovernancePath,
+        ciTrendSummaryPath,
+        coverageSummaryPath,
+        configCenterLibraryPath,
+        targetSurface: "wechat",
+        maxEvidenceAgeHours: 72
+      });
+    } finally {
+      fs.rmSync(staleDefaultCocosPath, { force: true });
+    }
+  })();
 
   assert.equal(dossier.candidate.name, "phase1-rc");
   assert.equal(dossier.candidate.revision, revision);

@@ -660,48 +660,68 @@ function resolveOptionalPath(explicitPath: string | undefined, fallback: string 
   return fs.existsSync(fallback) ? fallback : undefined;
 }
 
+function collectReleaseEvidenceSearchDirs(...filePaths: Array<string | undefined>): string[] {
+  return Array.from(
+    new Set(
+      filePaths
+        .filter((filePath): filePath is string => Boolean(filePath))
+        .map((filePath) => path.dirname(path.resolve(filePath)))
+    )
+  );
+}
+
+function resolveCocosReconnectReplayPath(
+  explicitPath: string | undefined,
+  ...releaseEvidencePaths: Array<string | undefined>
+): string | undefined {
+  if (explicitPath) {
+    return path.resolve(explicitPath);
+  }
+
+  const releaseEvidenceDirs = collectReleaseEvidenceSearchDirs(...releaseEvidencePaths);
+  for (const dirPath of releaseEvidenceDirs) {
+    const candidate = resolveLatestFile(dirPath, (entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"));
+    if (candidate) {
+      return candidate;
+    }
+  }
+  if (releaseEvidenceDirs.length > 0) {
+    return undefined;
+  }
+
+  return resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"));
+}
+
 function resolveInputPaths(args: Args): Phase1CandidateDossier["inputs"] {
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
-  const cocosReconnectReplayPath = resolveOptionalPath(
+  const snapshotPath = resolveOptionalPath(
+    args.snapshotPath,
+    resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-") && entry.endsWith(".json"))
+  );
+  const h5SmokePath = resolveOptionalPath(
+    args.h5SmokePath,
+    resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("client-release-candidate-smoke-") && entry.endsWith(".json"))
+  );
+  const reconnectSoakPath = resolveOptionalPath(
+    args.reconnectSoakPath,
+    fs.existsSync(path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json"))
+      ? path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json")
+      : resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json"))
+  );
+  const cocosReconnectReplayPath = resolveCocosReconnectReplayPath(
     args.cocosRcReconnectReplayPath,
-    resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("cocos-rc-reconnect-replay-") && entry.endsWith(".json"))
+    snapshotPath,
+    h5SmokePath,
+    reconnectSoakPath
   );
   return {
     ...(args.serverUrl ? { serverUrl: args.serverUrl } : {}),
     ...(resolveOptionalPath(args.runtimeObservabilityGatePath, undefined)
       ? { runtimeObservabilityGatePath: resolveOptionalPath(args.runtimeObservabilityGatePath, undefined)! }
       : {}),
-    ...(resolveOptionalPath(
-      args.snapshotPath,
-      resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-") && entry.endsWith(".json"))
-    )
-      ? { snapshotPath: resolveOptionalPath(
-          args.snapshotPath,
-          resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("release-readiness-") && entry.endsWith(".json"))
-        )! }
-      : {}),
-    ...(resolveOptionalPath(
-      args.h5SmokePath,
-      resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("client-release-candidate-smoke-") && entry.endsWith(".json"))
-    )
-      ? { h5SmokePath: resolveOptionalPath(
-          args.h5SmokePath,
-          resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("client-release-candidate-smoke-") && entry.endsWith(".json"))
-        )! }
-      : {}),
-    ...(resolveOptionalPath(
-      args.reconnectSoakPath,
-      fs.existsSync(path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json"))
-        ? path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json")
-        : resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json"))
-    )
-      ? { reconnectSoakPath: resolveOptionalPath(
-          args.reconnectSoakPath,
-          fs.existsSync(path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json"))
-            ? path.join(DEFAULT_RELEASE_READINESS_DIR, "colyseus-reconnect-soak-summary.json")
-            : resolveLatestFile(DEFAULT_RELEASE_READINESS_DIR, (entry) => entry.startsWith("colyseus-reconnect-soak-summary") && entry.endsWith(".json"))
-        )! }
-      : {}),
+    ...(snapshotPath ? { snapshotPath } : {}),
+    ...(h5SmokePath ? { h5SmokePath } : {}),
+    ...(reconnectSoakPath ? { reconnectSoakPath } : {}),
     ...(wechatArtifactsDir ? { wechatArtifactsDir } : {}),
     ...(resolveOptionalPath(args.wechatCandidateSummaryPath, wechatArtifactsDir ? path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json") : undefined)
       ? { wechatCandidateSummaryPath: resolveOptionalPath(args.wechatCandidateSummaryPath, wechatArtifactsDir ? path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json") : undefined)! }
