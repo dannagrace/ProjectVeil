@@ -43,7 +43,7 @@ interface PrimaryJourneyEvidenceArtifact {
   execution?: {
     owner?: string;
     completedAt?: string;
-    overallStatus?: "passed" | "failed";
+    overallStatus?: SnapshotResult;
     summary?: string;
   };
   environment?: {
@@ -62,6 +62,26 @@ interface PrimaryJourneyEvidenceArtifact {
     status?: EvidenceStatus | "failed";
     summary?: string;
     evidence?: string[];
+  }>;
+  failureSummary?: PrimaryJourneyFailureSummary;
+}
+
+interface PrimaryJourneyFinding {
+  id?: JourneyStepId;
+  title?: string;
+  status?: string;
+  reason?: string;
+  artifactPath?: string;
+}
+
+interface PrimaryJourneyFailureSummary {
+  regressedJourneySegments?: PrimaryJourneyFinding[];
+  blockedJourneySegments?: PrimaryJourneyFinding[];
+  lackingJourneyEvidence?: PrimaryJourneyFinding[];
+  lackingRequiredEvidence?: Array<{
+    id?: CanonicalEvidenceId;
+    label?: string;
+    reason?: string;
   }>;
 }
 
@@ -866,11 +886,63 @@ function applyPrimaryJourneyEvidence(snapshot: CocosReleaseCandidateSnapshot, ar
     snapshot.execution.summary = artifact.execution.summary.trim();
   }
 
+  applyPrimaryJourneyFailureSummary(snapshot, artifact.failureSummary);
+
   snapshot.checkpointLedger = buildCheckpointLedger(
     path.dirname(snapshot.linkedEvidence.primaryJourneyEvidence?.path ?? process.cwd()),
     artifact.artifacts?.milestoneDir,
     snapshot.journey
   );
+}
+
+function applyPrimaryJourneyFinding(
+  snapshot: CocosReleaseCandidateSnapshot,
+  finding: PrimaryJourneyFinding,
+  status: Extract<EvidenceStatus, "failed" | "blocked" | "pending">
+): void {
+  if (!finding.id) {
+    return;
+  }
+  const step = snapshot.journey.find((candidate) => candidate.id === finding.id);
+  if (!step) {
+    return;
+  }
+
+  if (status === "pending") {
+    if (step.status !== "failed" && step.status !== "blocked") {
+      step.status = "pending";
+    }
+  } else {
+    step.status = resolveMergedStatus(step.status, status);
+  }
+
+  const reason = normalizeString(finding.reason);
+  if (reason) {
+    step.notes = reason;
+  }
+  if (finding.artifactPath?.trim()) {
+    step.evidence = appendUnique(step.evidence, [finding.artifactPath.trim()]);
+  }
+  step.sourceRefs = appendUnique(step.sourceRefs, ["primary-journey-evidence"]);
+}
+
+function applyPrimaryJourneyFailureSummary(
+  snapshot: CocosReleaseCandidateSnapshot,
+  failureSummary: PrimaryJourneyFailureSummary | undefined
+): void {
+  if (!failureSummary) {
+    return;
+  }
+
+  for (const finding of failureSummary.regressedJourneySegments ?? []) {
+    applyPrimaryJourneyFinding(snapshot, finding, "failed");
+  }
+  for (const finding of failureSummary.blockedJourneySegments ?? []) {
+    applyPrimaryJourneyFinding(snapshot, finding, "blocked");
+  }
+  for (const finding of failureSummary.lackingJourneyEvidence ?? []) {
+    applyPrimaryJourneyFinding(snapshot, finding, "pending");
+  }
 }
 
 function applyWechatSmokeReport(snapshot: CocosReleaseCandidateSnapshot, report: WechatSmokeReport): void {
@@ -916,22 +988,28 @@ function recomputeSnapshotExecution(snapshot: CocosReleaseCandidateSnapshot): vo
   const hasBlockedStep = snapshot.journey.some((step) => step.required && step.status === "blocked");
   const hasPendingStep = snapshot.journey.some((step) => step.required && step.status === "pending");
   const missingRequiredEvidence = snapshot.requiredEvidence.some((field) => field.required && field.value.trim().length === 0);
+  const primaryJourneyResult = snapshot.linkedEvidence.primaryJourneyEvidence?.result;
+  const hasFailedLinkedPrimaryJourney = primaryJourneyResult === "failed";
+  const hasBlockedLinkedPrimaryJourney = primaryJourneyResult === "blocked" || primaryJourneyResult === "partial";
 
   if (!hasAnyProgress) {
     snapshot.execution.overallStatus = "pending";
     return;
   }
-  if (hasFailedStep) {
+  if (hasFailedStep || hasFailedLinkedPrimaryJourney) {
     snapshot.execution.overallStatus = "failed";
     if (!snapshot.execution.summary.trim()) {
       snapshot.execution.summary = "At least one required primary-client journey segment failed.";
     }
     return;
   }
-  if (hasBlockedStep) {
+  if (hasBlockedStep || hasBlockedLinkedPrimaryJourney) {
     snapshot.execution.overallStatus = "blocked";
     if (!snapshot.execution.summary.trim()) {
-      snapshot.execution.summary = "A required primary-client journey segment is blocked.";
+      snapshot.execution.summary =
+        primaryJourneyResult === "partial"
+          ? "Linked primary-client journey evidence is partial; required visual/device evidence is still blocked."
+          : "A required primary-client journey segment is blocked.";
     }
     return;
   }

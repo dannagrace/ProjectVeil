@@ -269,3 +269,111 @@ test("release:cocos-rc:snapshot imports primary journey evidence into the canoni
   assert.equal(snapshot.failureSummary.lackingJourneyEvidence.length, 0);
   assert.equal(snapshot.failureSummary.lackingRequiredEvidence.length, 0);
 });
+
+test("release:cocos-rc:snapshot blocks partial primary journey evidence with visual-evidence gaps", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "veil-cocos-primary-journey-partial-"));
+  const primaryJourneyPath = path.join(workspace, "cocos-primary-journey.partial.json");
+  const outputPath = path.join(workspace, "rc.snapshot.json");
+  const milestoneFiles = writeJourneyMilestones(workspace);
+
+  writeJson(primaryJourneyPath, {
+    candidate: {
+      shortCommit: "abc1234"
+    },
+    execution: {
+      owner: "codex",
+      completedAt: "2026-04-02T10:30:00+08:00",
+      overallStatus: "partial",
+      summary:
+        "Headless primary-client journey evidence captured with blocked visual evidence; attach required captures before release sign-off."
+    },
+    environment: {
+      server: "ws://127.0.0.1:2567"
+    },
+    artifacts: {
+      milestoneDir: path.join(workspace, "milestones")
+    },
+    requiredEvidence: [
+      {
+        id: "roomId",
+        value: "room-primary-journey",
+        evidence: [milestoneFiles["room-join"]]
+      },
+      {
+        id: "reconnectPrompt",
+        value: "连接已恢复",
+        evidence: [milestoneFiles["reconnect-restore"]]
+      },
+      {
+        id: "restoredState",
+        value: "Restored room-primary-journey on day 5 with preserved world state.",
+        evidence: [milestoneFiles["reconnect-restore"]]
+      },
+      {
+        id: "firstBattleResult",
+        value: "attacker_victory; gold +12; experience +25",
+        evidence: [milestoneFiles["battle-settlement"]]
+      }
+    ],
+    journey: [
+      { id: "lobby-entry", status: "passed", summary: "Lobby ok", evidence: [milestoneFiles["lobby-entry"]] },
+      { id: "room-join", status: "passed", summary: "Room ok", evidence: [milestoneFiles["room-join"]] },
+      { id: "map-explore", status: "passed", summary: "Explore ok", evidence: [milestoneFiles["map-explore"]] },
+      { id: "first-battle", status: "passed", summary: "Battle ok", evidence: [milestoneFiles["first-battle"]] },
+      { id: "battle-settlement", status: "passed", summary: "Settlement ok", evidence: [milestoneFiles["battle-settlement"]] },
+      { id: "reconnect-restore", status: "passed", summary: "Reconnect ok", evidence: [milestoneFiles["reconnect-restore"]] },
+      { id: "return-to-world", status: "passed", summary: "Return ok", evidence: [milestoneFiles["return-to-world"]] }
+    ],
+    failureSummary: {
+      summary: "Blocked journey segments: lobby-entry (visual evidence blocked)",
+      regressedJourneySegments: [],
+      blockedJourneySegments: [
+        {
+          id: "lobby-entry",
+          title: "Lobby entry",
+          status: "failed",
+          reason: "Required visual evidence blocked: creator-preview, wechat-safe-area.",
+          artifactPath: path.join(workspace, "visual-evidence.json")
+        }
+      ],
+      lackingJourneyEvidence: [],
+      lackingRequiredEvidence: []
+    }
+  });
+
+  execFileSync(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "./scripts/cocos-release-candidate-snapshot.ts",
+      "--candidate",
+      "rc-partial-primary-journey",
+      "--primary-journey-evidence",
+      primaryJourneyPath,
+      "--output",
+      outputPath
+    ],
+    {
+      cwd: repoRoot,
+      stdio: "pipe"
+    }
+  );
+
+  const snapshot = JSON.parse(fs.readFileSync(outputPath, "utf8")) as {
+    execution: { overallStatus: string };
+    linkedEvidence: { primaryJourneyEvidence?: { result: string } };
+    failureSummary: {
+      summary: string;
+      blockedJourneySegments: Array<{ id: string; reason: string }>;
+    };
+    journey: Array<{ id: string; status: string; notes: string; evidence: string[] }>;
+  };
+
+  assert.equal(snapshot.linkedEvidence.primaryJourneyEvidence?.result, "partial");
+  assert.equal(snapshot.execution.overallStatus, "blocked");
+  assert.equal(snapshot.journey.find((entry) => entry.id === "lobby-entry")?.status, "blocked");
+  assert.match(snapshot.journey.find((entry) => entry.id === "lobby-entry")?.notes ?? "", /visual evidence blocked/);
+  assert.deepEqual(snapshot.failureSummary.blockedJourneySegments.map((entry) => entry.id), ["lobby-entry"]);
+  assert.match(snapshot.failureSummary.summary, /Blocked journey segments: lobby-entry/);
+});
