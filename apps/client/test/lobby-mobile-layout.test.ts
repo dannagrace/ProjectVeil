@@ -37,6 +37,7 @@ test("H5 gameplay shell keeps mobile playfield ahead of diagnostics and supports
   assert.match(styles, /\.grid \{[\s\S]*grid-template-columns: repeat\(var\(--map-columns\), minmax\(var\(--tile-min-size\), 1fr\)\);/);
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.grid \{[\s\S]*--tile-min-size: 44px;/);
   assert.match(styles, /\.tile \{[\s\S]*min-width: var\(--tile-min-size\);[\s\S]*min-height: var\(--tile-min-size\);/);
+  assert.match(styles, /\.info-card \.info-card-eyebrow \{[\s\S]*color: var\(--muted-on-light\);/);
   assert.match(styles, /\.hero-secondary-disclosure/);
   assert.match(styles, /@media \(max-width: 1100px\) \{[\s\S]*\.hero-secondary-disclosure summary \{[\s\S]*min-height: 44px;/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{/);

@@ -1795,6 +1795,10 @@ h1 {
   color: var(--muted);
 }
 
+.info-card .info-card-eyebrow {
+  color: var(--muted-on-light);
+}
+
 .meta-row {
   display: flex;
   flex-wrap: wrap;
