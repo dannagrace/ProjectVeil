@@ -1,8 +1,18 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { listTrackedRootTestFiles } from "./root-test-discovery.ts";
 
 const ROOT_TEST_COMMAND = [process.execPath, "--import", "tsx", "--test"] as const;
+export const ROOT_TEST_CONCURRENCY = "4";
+
+export function buildRootTestArgs(trackedTestFiles: string[]): string[] {
+  return [
+    ...ROOT_TEST_COMMAND.slice(1),
+    `--test-concurrency=${ROOT_TEST_CONCURRENCY}`,
+    ...trackedTestFiles,
+  ];
+}
 
 function main(): never {
   const trackedTestFiles = listTrackedRootTestFiles();
@@ -13,7 +23,7 @@ function main(): never {
 
   const result = spawnSync(
     ROOT_TEST_COMMAND[0],
-    [...ROOT_TEST_COMMAND.slice(1), ...trackedTestFiles],
+    buildRootTestArgs(trackedTestFiles),
     {
       cwd: process.cwd(),
       stdio: "inherit",
@@ -31,4 +41,10 @@ function main(): never {
   process.exit(1);
 }
 
-main();
+function isDirectRun(): boolean {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (isDirectRun()) {
+  main();
+}
