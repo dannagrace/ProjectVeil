@@ -30,7 +30,7 @@ import { registerRuntimeObservabilityRoutes, resetRuntimeObservability } from "@
 import type { RoomSnapshotStore } from "@server/persistence";
 import type { RoomPersistenceSnapshot } from "@server/index";
 
-type ScenarioName = "world_progression" | "battle_settlement" | "reconnect" | "reconnect_soak";
+export type ScenarioName = "world_progression" | "battle_settlement" | "reconnect" | "reconnect_soak";
 
 interface StressOptions {
   rooms: number;
@@ -193,6 +193,12 @@ const DEFAULT_HOST = "127.0.0.1";
 const WEBSOCKET_ACTION_RATE_LIMIT_SPACING_MS = 150;
 const STRESS_ROOM_VARIANTS = ["phase1", "frontier_basin", "contested_basin"] as const;
 const BATTLE_STRESS_ROOM_VARIANTS = ["frontier_basin", "contested_basin"] as const;
+const STRESS_DISPLAY_NAME_PREFIX: Record<ScenarioName, string> = {
+  world_progression: "wp",
+  battle_settlement: "bs",
+  reconnect: "rc",
+  reconnect_soak: "rs"
+};
 const COLYSEUS_RECONNECT_MIN_UPTIME_LOG = "[Colyseus reconnection]: ❌ Room has not been up for long enough for automatic reconnection.";
 const DEFAULT_RECONNECT_SOAK_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "colyseus-reconnect-soak-summary.json");
 const DEFAULT_STRESS_ARTIFACT_PATH = path.resolve("artifacts", "release-readiness", "stress-rooms-runtime-metrics.json");
@@ -356,6 +362,10 @@ function readGitRevision(): GitRevision {
 
 function buildCommandString(): string {
   return ["node", "--import", "tsx", "./scripts/stress-concurrent-rooms.ts", ...process.argv.slice(2)].join(" ");
+}
+
+export function buildStressDisplayName(scenario: ScenarioName, index: number): string {
+  return `Stress ${STRESS_DISPLAY_NAME_PREFIX[scenario]} ${index}`;
 }
 
 async function fetchRuntimeHealthSummary(host: string, port: number): Promise<RuntimeHealthSummary | undefined> {
@@ -702,7 +712,7 @@ async function connectRooms(
     const playerId = `stress-${scenario}-${index}-player`;
     const authSession = issueGuestAuthSession({
       playerId,
-      displayName: `Stress ${scenario} ${index}`
+      displayName: buildStressDisplayName(scenario, index)
     });
     const room = await joinRoomWithRetry(options.host, options.port, roomId, playerId, {
       authToken: authSession.token

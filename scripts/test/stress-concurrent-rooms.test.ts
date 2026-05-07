@@ -3,7 +3,8 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { joinRoomWithRetry } from "../stress-concurrent-rooms.ts";
+import { findDisplayNameModerationViolation } from "../../packages/shared/src/display-name-validation.ts";
+import { buildStressDisplayName, joinRoomWithRetry, type ScenarioName } from "../stress-concurrent-rooms.ts";
 
 function createCloseableRoom(onLeave: () => void) {
   return {
@@ -85,4 +86,16 @@ test("joinRoomWithRetry forwards auth tokens to the Colyseus join request", asyn
     seed: 1001,
     authToken: "stress-token"
   });
+});
+
+test("buildStressDisplayName stays inside display-name rules for high reconnect soak indexes", () => {
+  const scenarios: ScenarioName[] = ["world_progression", "battle_settlement", "reconnect", "reconnect_soak"];
+
+  for (const scenario of scenarios) {
+    for (const index of [0, 47, 99, 100, 119, 9999]) {
+      const displayName = buildStressDisplayName(scenario, index);
+      assert.equal(findDisplayNameModerationViolation(displayName), null, `${scenario}:${index} -> ${displayName}`);
+      assert.match(displayName, /^Stress [a-z]{2} \d+$/);
+    }
+  }
 });
