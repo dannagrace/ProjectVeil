@@ -361,6 +361,83 @@ test("h5 diagnostics panel keeps light-surface text readable", async ({ page }, 
   });
 });
 
+test("h5 desktop expanded sidebar panels stay inside the hero column", async ({ page }, testInfo) => {
+  const roomId = buildRoomId("e2e-h5-sidebar-overflow");
+
+  await page.setViewportSize({ width: 1512, height: 900 });
+
+  await withSmokeDiagnostics(testInfo, [page], async () => {
+    await waitForLobbyReady(page);
+    await page.locator("[data-lobby-room-id]").fill(roomId);
+    await page.locator("[data-lobby-player-id]").fill("player-1");
+    await page.locator("[data-lobby-display-name]").fill("Sidebar Overflow Smoke");
+    await acceptLobbyPrivacyConsent(page);
+    await page.locator("[data-enter-room]").click();
+
+    await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
+    await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
+    await page.getByTestId("hero-build-secondary-disclosure").evaluate((disclosure) => {
+      (disclosure as HTMLDetailsElement).open = true;
+    });
+    await page.getByTestId("diagnostics-secondary-disclosure").evaluate((disclosure) => {
+      (disclosure as HTMLDetailsElement).open = true;
+    });
+
+    const overflowingSidebarPanels = await page.locator(".hero-panel").evaluate((panel) => {
+      const panelRect = panel.getBoundingClientRect();
+      const selectors = [
+        ".hero-build-secondary-disclosure",
+        ".hero-attribute-row",
+        ".hero-equipment-panel",
+        ".hero-equipment-item",
+        ".hero-skill-tree",
+        ".hero-skill-branch",
+        ".hero-skill-item",
+        ".diagnostics-secondary-disclosure",
+        ".diagnostics-panel",
+        ".diagnostics-grid",
+        ".diagnostics-card",
+        ".diagnostics-alert-list",
+        ".diagnostics-triage-grid",
+        ".diagnostics-triage-section",
+        ".diagnostics-triage-row",
+        ".diagnostics-summary"
+      ];
+      return Array.from(panel.querySelectorAll<HTMLElement>(selectors.join(", ")))
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        })
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            label: [
+              element.tagName.toLowerCase(),
+              element.className,
+              element.getAttribute("data-testid") ?? "",
+              element.textContent?.replace(/\s+/g, " ").trim().slice(0, 60) ?? ""
+            ]
+              .filter(Boolean)
+              .join(" "),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            panelLeft: Math.round(panelRect.left),
+            panelRight: Math.round(panelRect.right),
+            scrollWidth: element.scrollWidth,
+            clientWidth: element.clientWidth
+          };
+        })
+        .filter(
+          (element) =>
+            element.left < panelRect.left - 1 ||
+            element.right > panelRect.right + 1 ||
+            element.scrollWidth > element.clientWidth + 2
+        );
+    });
+    expect(overflowingSidebarPanels).toEqual([]);
+  });
+});
+
 test("h5 smoke exposes the battle share stub when WeChat APIs are unavailable", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     let copiedText = "";

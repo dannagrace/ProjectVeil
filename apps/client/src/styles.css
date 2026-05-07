@@ -610,10 +610,12 @@ h1 {
 .diagnostics-triage-row {
   display: grid;
   gap: 4px;
+  min-width: 0;
   padding: 8px 10px;
   border-radius: 12px;
   background: rgba(247, 239, 228, 0.68);
   color: var(--ink-on-light);
+  overflow-wrap: anywhere;
 }
 
 .diagnostics-triage-row span {
@@ -635,15 +637,18 @@ h1 {
   color: #4f3f2f;
   font-size: 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .hero-secondary-disclosure {
   margin-top: 14px;
+  min-width: 0;
   border: 1px solid rgba(94, 109, 126, 0.12);
   border-radius: var(--pv-radius-panel);
   background: var(--paper-strong);
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .hero-secondary-disclosure summary {
@@ -682,8 +687,14 @@ h1 {
 
 .hero-secondary-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  min-width: 0;
   padding: 0 12px 12px;
+}
+
+.hero-secondary-body > * {
+  min-width: 0;
 }
 
 .hero-secondary-body .account-card,
@@ -1726,6 +1737,39 @@ h1 {
 .info-card .hero-skill-copy,
 .info-card .hero-skill-meta span {
   color: var(--muted-on-light);
+}
+
+.hero-panel .hero-attribute-panel,
+.hero-panel .hero-equipment-panel,
+.hero-panel .hero-equipment-item,
+.hero-panel .hero-skill-tree,
+.hero-panel .hero-skill-branch,
+.hero-panel .hero-skill-item,
+.hero-panel .diagnostics-panel,
+.hero-panel .diagnostics-card,
+.hero-panel .diagnostics-triage-section,
+.hero-panel .diagnostics-summary-shell {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.hero-panel .hero-attribute-row,
+.hero-panel .diagnostics-grid,
+.hero-panel .diagnostics-alert-list,
+.hero-panel .diagnostics-triage-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hero-panel .hero-equipment-meta,
+.hero-panel .hero-equipment-actions,
+.hero-panel .hero-skill-meta {
+  flex-wrap: wrap;
+}
+
+.hero-panel .hero-equipment-meta > *,
+.hero-panel .hero-skill-meta > * {
+  min-width: 0;
 }
 
 .info-card-media {
