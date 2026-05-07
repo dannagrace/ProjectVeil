@@ -21,7 +21,7 @@ async function startLobbyRouteServer(port: number): Promise<Server> {
   resetGuestAuthSessions();
   const transport = new WebSocketTransport();
   registerLobbyRoutes(transport.getExpressApp() as never, { listRooms: listLobbyRooms });
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;

@@ -7,7 +7,7 @@ import type { AchievementDefinition } from "@veil/shared/event-log";
 async function startAccountRouteServer(port: number): Promise<Server> {
   const transport = new WebSocketTransport();
   registerPlayerAccountRoutes(transport.getExpressApp() as never, null);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }

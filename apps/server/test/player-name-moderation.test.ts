@@ -10,7 +10,7 @@ async function startServer(port: number, store: MemoryRoomSnapshotStore): Promis
   const app = transport.getExpressApp() as never;
   registerAuthRoutes(app, store);
   registerPlayerAccountRoutes(app, store);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }

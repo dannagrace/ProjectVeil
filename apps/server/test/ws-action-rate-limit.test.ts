@@ -166,7 +166,7 @@ async function startObservabilityServer(port: number): Promise<Server> {
 
   const transport = new WebSocketTransport();
   registerRuntimeObservabilityRoutes(transport.getExpressApp() as never);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;

@@ -12,7 +12,7 @@ async function startServer(port: number): Promise<Server> {
   configureRoomSnapshotStore(null);
   resetLobbyRoomRegistry();
   const transport = new WebSocketTransport();
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;

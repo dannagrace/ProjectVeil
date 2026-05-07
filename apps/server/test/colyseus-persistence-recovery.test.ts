@@ -404,7 +404,8 @@ async function resolveBattle(
 async function startServer(port: number, store: RoomSnapshotStore): Promise<Server> {
   configureRoomSnapshotStore(store);
   const server = new Server({
-    transport: new WebSocketTransport()
+    transport: new WebSocketTransport(),
+    gracefullyShutdown: false
   });
 
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);

@@ -51,6 +51,7 @@ interface TestProcess {
       (() => void) | ((reason: unknown) => void) | ((error: Error) => void)
     >
   >;
+  removedEvents: Array<"SIGINT" | "SIGTERM" | "unhandledRejection" | "uncaughtException">;
   exitCodes: number[];
 }
 
@@ -84,16 +85,24 @@ function createLogger(): DevServerBootstrapDependencies["logger"] & TestLogger {
 
 function createProcessStub(): DevServerBootstrapDependencies["process"] & TestProcess {
   const handlers: TestProcess["handlers"] = {};
+  const removedEvents: TestProcess["removedEvents"] = [];
   const exitCodes: number[] = [];
 
   return {
     handlers,
+    removedEvents,
     exitCodes,
     once(event, listener) {
       handlers[event] = listener;
     },
     on(event, listener) {
       handlers[event] = listener;
+    },
+    off(event, listener) {
+      if (handlers[event] === listener) {
+        delete handlers[event];
+      }
+      removedEvents.push(event);
     },
     exit(code) {
       exitCodes.push(code);
@@ -283,6 +292,14 @@ function assertStartupLogIncludes(logger: TestLogger, patterns: RegExp[]): void 
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+function assertProcessHandlersRemoved(process: TestProcess): void {
+  assert.equal(process.handlers.SIGINT, undefined);
+  assert.equal(process.handlers.SIGTERM, undefined);
+  assert.equal(process.handlers.unhandledRejection, undefined);
+  assert.equal(process.handlers.uncaughtException, undefined);
+  assert.deepEqual(process.removedEvents, ["SIGINT", "SIGTERM", "unhandledRejection", "uncaughtException"]);
 }
 
 function backupValidationSkipped() {
@@ -493,6 +510,7 @@ test("dev server startup wires the in-memory bootstrap path and closes stores on
   assert.equal(memoryStore.closeCalls, 1);
   assert.equal(configCenterStore.closeCalls, 1);
   assert.deepEqual(base.process.exitCodes, [0]);
+  assertProcessHandlersRemoved(base.process);
   assert.match(buildPrometheusMetricsDocument(), /^veil_config_center_store_type 1$/m);
 });
 
@@ -502,7 +520,7 @@ test("dev server loads runtime secrets before reading persistence config", async
   const configCenterStore = createConfigCenterStore("filesystem");
   const memoryStore = createMemoryStore();
 
-  await startDevServer(3102, "127.0.0.1", {
+  const runtime = await startDevServer(3102, "127.0.0.1", {
     loadRuntimeSecrets: async () => {
       order.push("loadRuntimeSecrets");
     },
@@ -555,6 +573,12 @@ test("dev server loads runtime secrets before reading persistence config", async
   });
 
   assert.deepEqual(order.slice(0, 2), ["loadRuntimeSecrets", "readMySqlPersistenceConfig"]);
+
+  await runtime.gracefullyShutdown(false);
+
+  assert.equal(memoryStore.closeCalls, 1);
+  assert.equal(configCenterStore.closeCalls, 1);
+  assertProcessHandlersRemoved(base.process);
 });
 
 test("dev server logs process-level failures, closes stores, and exits non-zero", async () => {

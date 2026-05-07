@@ -231,7 +231,7 @@ class MemoryPlayerAccountStore implements RoomSnapshotStore {
 async function startAccountRouteServer(port: number, store: RoomSnapshotStore | null): Promise<Server> {
   const transport = new WebSocketTransport();
   registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }

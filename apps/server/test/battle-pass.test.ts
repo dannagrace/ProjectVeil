@@ -61,7 +61,7 @@ function createBattlePassWorldSnapshot(): RoomPersistenceSnapshot {
 async function startAccountRouteServer(port: number, store: MemoryRoomSnapshotStore): Promise<Server> {
   const transport = new WebSocketTransport();
   registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }
@@ -69,7 +69,7 @@ async function startAccountRouteServer(port: number, store: MemoryRoomSnapshotSt
 async function startShopRouteServer(port: number, store: MemoryRoomSnapshotStore, products: Partial<ShopProduct>[]): Promise<Server> {
   const transport = new WebSocketTransport();
   registerShopRoutes(transport.getExpressApp() as never, store, { products });
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }

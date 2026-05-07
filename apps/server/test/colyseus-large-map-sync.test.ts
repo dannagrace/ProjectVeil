@@ -20,7 +20,8 @@ async function wait(ms: number): Promise<void> {
 async function startServer(port: number): Promise<Server> {
   configureRoomSnapshotStore(new MemoryRoomSnapshotStore());
   const server = new Server({
-    transport: new WebSocketTransport()
+    transport: new WebSocketTransport(),
+    gracefullyShutdown: false
   });
 
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);

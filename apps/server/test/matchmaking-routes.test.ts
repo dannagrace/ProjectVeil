@@ -128,7 +128,7 @@ async function startMatchmakingServer(
     service: options?.service,
     queueTtlSeconds: options?.queueTtlSeconds
   });
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   server.define("veil", VeilColyseusRoom).filterBy(["logicalRoomId"]);
   await server.listen(port, "127.0.0.1");
   return server;

@@ -143,7 +143,7 @@ async function startConfigViewerServer(port: number, rootDir: string): Promise<{
   await store.initializeRuntimeConfigs();
   const transport = new WebSocketTransport();
   registerConfigViewerRoutes(transport.getExpressApp() as never, store);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return { server, store };
 }

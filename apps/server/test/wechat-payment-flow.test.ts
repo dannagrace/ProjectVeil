@@ -173,7 +173,7 @@ async function startWechatPaymentServer(input: {
     fetchImpl: input.fetchImpl
   });
 
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(input.port, "127.0.0.1");
   return server;
 }

@@ -204,10 +204,23 @@ interface DevServerLogger {
   error(message: string, error: unknown): void;
 }
 
+type DevServerSignalEvent = "SIGINT" | "SIGTERM";
+type DevServerRuntimeErrorEvent = "unhandledRejection" | "uncaughtException";
+type DevServerProcessEvent = DevServerSignalEvent | DevServerRuntimeErrorEvent;
+type DevServerSignalHandler = () => void;
+type DevServerUnhandledRejectionHandler = (reason: unknown) => void;
+type DevServerUncaughtExceptionHandler = (error: Error) => void;
+type DevServerProcessHandler =
+  | DevServerSignalHandler
+  | DevServerUnhandledRejectionHandler
+  | DevServerUncaughtExceptionHandler;
+
 interface DevServerProcess {
-  once(event: "SIGINT" | "SIGTERM", listener: () => void): void;
-  on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
-  on(event: "uncaughtException", listener: (error: Error) => void): void;
+  once(event: DevServerSignalEvent, listener: DevServerSignalHandler): void;
+  on(event: "unhandledRejection", listener: DevServerUnhandledRejectionHandler): void;
+  on(event: "uncaughtException", listener: DevServerUncaughtExceptionHandler): void;
+  off?(event: DevServerProcessEvent, listener: DevServerProcessHandler): void;
+  removeListener?(event: DevServerProcessEvent, listener: DevServerProcessHandler): void;
   exit(code: number): never | void;
 }
 
@@ -923,13 +936,13 @@ export async function startDevServer(
     return shutdownPromise;
   };
 
-  deps.process.once("SIGINT", () => {
-    void beginShutdown({ exitCode: 0 });
-  });
-  deps.process.once("SIGTERM", () => {
-    void beginShutdown({ exitCode: 0 });
-  });
-  deps.process.on("unhandledRejection", (reason) => {
+  const handleSigint = (): void => {
+    void beginShutdown({ exitCode: 0 }).finally(removeProcessHandlers);
+  };
+  const handleSigterm = (): void => {
+    void beginShutdown({ exitCode: 0 }).finally(removeProcessHandlers);
+  };
+  const handleUnhandledRejection = (reason: unknown): void => {
     recordRuntimeErrorEvent({
       id: randomUUID(),
       recordedAt: new Date().toISOString(),
@@ -956,9 +969,9 @@ export async function startDevServer(
       exitCode: 1,
       message: "Unhandled promise rejection in dev server",
       error: reason
-    });
-  });
-  deps.process.on("uncaughtException", (error) => {
+    }).finally(removeProcessHandlers);
+  };
+  const handleUncaughtException = (error: Error): void => {
     recordRuntimeErrorEvent({
       id: randomUUID(),
       recordedAt: new Date().toISOString(),
@@ -985,12 +998,37 @@ export async function startDevServer(
       exitCode: 1,
       message: "Uncaught exception in dev server",
       error
-    });
-  });
+    }).finally(removeProcessHandlers);
+  };
+
+  let processHandlersRemoved = false;
+  const removeProcessListener = (event: DevServerProcessEvent, listener: DevServerProcessHandler): void => {
+    if (deps.process.off) {
+      deps.process.off(event, listener);
+      return;
+    }
+    deps.process.removeListener?.(event, listener);
+  };
+  function removeProcessHandlers(): void {
+    if (processHandlersRemoved) {
+      return;
+    }
+    processHandlersRemoved = true;
+    removeProcessListener("SIGINT", handleSigint);
+    removeProcessListener("SIGTERM", handleSigterm);
+    removeProcessListener("unhandledRejection", handleUnhandledRejection);
+    removeProcessListener("uncaughtException", handleUncaughtException);
+  }
+
+  deps.process.once("SIGINT", handleSigint);
+  deps.process.once("SIGTERM", handleSigterm);
+  deps.process.on("unhandledRejection", handleUnhandledRejection);
+  deps.process.on("uncaughtException", handleUncaughtException);
 
   return {
     gracefullyShutdown: async (exitProcess = false): Promise<void> => {
       await beginShutdown(exitProcess ? { exitCode: 0 } : {});
+      removeProcessHandlers();
     }
   };
 }

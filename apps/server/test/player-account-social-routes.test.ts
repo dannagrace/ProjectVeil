@@ -8,7 +8,7 @@ import { registerPlayerAccountRoutes } from "@server/domain/account/player-accou
 async function startServer(store: MemoryRoomSnapshotStore, port: number): Promise<Server> {
   const transport = new WebSocketTransport();
   registerPlayerAccountRoutes(transport.getExpressApp() as never, store);
-  const server = new Server({ transport });
+  const server = new Server({ transport, gracefullyShutdown: false });
   await server.listen(port, "127.0.0.1");
   return server;
 }
