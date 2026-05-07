@@ -440,6 +440,159 @@ test("buildReleaseGateSummaryReport warns when WeChat commercial verification is
   );
 });
 
+test("buildReleaseGateSummaryReport does not mix default Cocos replay with explicit candidate evidence", () => {
+  const workspace = createTempWorkspace();
+  const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");
+  const h5SmokePath = path.join(workspace, "artifacts", "release-readiness", "client-release-candidate-smoke-pass.json");
+  const reconnectSoakPath = path.join(workspace, "artifacts", "release-readiness", "colyseus-reconnect-soak-summary-pass.json");
+  const wechatArtifactsDir = path.join(workspace, "artifacts", "wechat-release");
+  const staleDefaultCocosPath = path.resolve(
+    "artifacts",
+    "release-readiness",
+    "cocos-rc-reconnect-replay-test-stale-deadbee.json"
+  );
+
+  writeJson(snapshotPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    summary: {
+      status: "passed",
+      requiredFailed: 0,
+      requiredPending: 0
+    }
+  });
+  writeJson(h5SmokePath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    execution: {
+      status: "passed",
+      exitCode: 0,
+      finishedAt: isoHoursAgo(1)
+    },
+    summary: {
+      total: 1,
+      passed: 1,
+      failed: 0
+    }
+  });
+  writeJson(reconnectSoakPath, {
+    generatedAt: isoHoursAgo(1),
+    revision: {
+      commit: "abc123",
+      shortCommit: "abc123"
+    },
+    status: "passed",
+    summary: {
+      failedScenarios: 0,
+      scenarioNames: ["reconnect_soak"]
+    },
+    soakSummary: {
+      reconnectAttempts: 12,
+      invariantChecks: 48
+    },
+    results: [
+      {
+        scenario: "reconnect_soak",
+        failedRooms: 0,
+        runtimeHealthAfterCleanup: {
+          activeRoomCount: 0,
+          connectionCount: 0,
+          activeBattleCount: 0,
+          heroCount: 0
+        }
+      }
+    ]
+  });
+  writeJson(path.join(wechatArtifactsDir, "codex.wechat.release-candidate-summary.json"), {
+    generatedAt: isoHoursAgo(1),
+    candidate: {
+      revision: "abc123",
+      status: "ready"
+    },
+    evidence: {
+      package: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.package.json")
+      },
+      validation: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.rc-validation-report.json")
+      },
+      smoke: {
+        status: "passed",
+        summary: "ok",
+        artifactPath: path.join(wechatArtifactsDir, "codex.wechat.smoke-report.json")
+      },
+      manualReview: {
+        status: "ready",
+        requiredPendingChecks: 0,
+        requiredFailedChecks: 0,
+        requiredMetadataFailures: 0,
+        checks: []
+      }
+    },
+    blockers: []
+  });
+
+  try {
+    writeJson(staleDefaultCocosPath, {
+      generatedAt: isoHoursAgo(1),
+      candidate: {
+        revision: "deadbeef1234567890",
+        shortRevision: "deadbee"
+      },
+      execution: {
+        overallStatus: "passed"
+      },
+      reviewSignals: {
+        resumeSuccessVerified: true,
+        freshJoinFallbackVerified: true
+      },
+      scenarios: [
+        {
+          id: "resume-success",
+          status: "passed"
+        },
+        {
+          id: "resume-fallback-fresh-join",
+          status: "passed"
+        }
+      ]
+    });
+
+    const report = buildReleaseGateSummaryReport(
+      {
+        snapshotPath,
+        h5SmokePath,
+        reconnectSoakPath,
+        wechatArtifactsDir,
+        targetSurface: "wechat"
+      },
+      {
+        commit: "abc123",
+        shortCommit: "abc123",
+        branch: "test-branch",
+        dirty: false
+      }
+    );
+
+    assert.equal(report.inputs.cocosRcReconnectReplayPath, undefined);
+    assert.equal(report.gates.find((gate) => gate.id === "cocos-primary-client-reconnect-replay")?.required, false);
+    assert.equal(report.gates.find((gate) => gate.id === "phase1-evidence-consistency")?.status, "passed");
+    assert.equal(report.summary.status, "passed");
+  } finally {
+    fs.rmSync(staleDefaultCocosPath, { force: true });
+  }
+});
+
 test("buildReleaseGateSummaryReport requires production rollback drill evidence for wechat production gates", () => {
   const workspace = createTempWorkspace();
   const snapshotPath = path.join(workspace, "artifacts", "release-readiness", "release-readiness-pass.json");

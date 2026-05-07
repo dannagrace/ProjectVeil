@@ -798,11 +798,30 @@ function resolveReconnectSoakPath(args: Args): string | undefined {
   return resolveLatestReconnectSoakFile(getDefaultReleaseReadinessDir());
 }
 
-function resolveCocosRcReconnectReplayPath(args: Args): string | undefined {
+function resolveCocosRcReconnectReplayPath(args: Args, releaseEvidenceDirs: string[]): string | undefined {
   if (args.cocosRcReconnectReplayPath) {
     return path.resolve(args.cocosRcReconnectReplayPath);
   }
+  for (const dirPath of releaseEvidenceDirs) {
+    const candidate = resolveLatestCocosRcReconnectReplayFile(dirPath);
+    if (candidate) {
+      return candidate;
+    }
+  }
+  if (releaseEvidenceDirs.length > 0) {
+    return undefined;
+  }
   return resolveLatestCocosRcReconnectReplayFile(getDefaultReleaseReadinessDir());
+}
+
+function collectReleaseEvidenceSearchDirs(...filePaths: Array<string | undefined>): string[] {
+  return Array.from(
+    new Set(
+      filePaths
+        .filter((filePath): filePath is string => Boolean(filePath))
+        .map((filePath) => path.dirname(path.resolve(filePath)))
+    )
+  );
 }
 
 function resolveProductionRollbackDrillPath(args: Args): string | undefined {
@@ -2680,7 +2699,8 @@ export function buildReleaseGateSummaryReport(args: Args, revision: GitRevision)
   const snapshotPath = resolveSnapshotPath(args);
   const h5SmokePath = resolveH5SmokePath(args);
   const reconnectSoakPath = resolveReconnectSoakPath(args);
-  const cocosRcReconnectReplayPath = resolveCocosRcReconnectReplayPath(args);
+  const releaseEvidenceDirs = collectReleaseEvidenceSearchDirs(snapshotPath, h5SmokePath, reconnectSoakPath);
+  const cocosRcReconnectReplayPath = resolveCocosRcReconnectReplayPath(args, releaseEvidenceDirs);
   const productionRollbackDrillPath = resolveProductionRollbackDrillPath(args);
   const wechatArtifactsDir = resolveWechatArtifactsDir(args);
   const wechatRcValidationPath = resolveWechatRcValidationPath(args, wechatArtifactsDir);
