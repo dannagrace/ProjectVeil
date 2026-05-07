@@ -116,6 +116,7 @@ Commands:
   cocos:primary-journey                    Run the Cocos Primary Journey test suite.
   cocos:runtime-smoke                      Run the Cocos Runtime Smoke test suite.
   codex-branches                           Run the Codex Branches test suite.
+  codex-local-artifacts-hygiene            Run the Codex Local Artifacts Hygiene test suite.
   content-smoke-gate                       Run the Content Smoke Gate test suite.
   contracts                                Run the Contracts test suite.
   coverage:ci                              Run the Coverage CI test suite.
