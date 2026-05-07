@@ -207,12 +207,24 @@ function stripNodeStackTrace(stderr: string): string {
     .trimEnd() + "\n";
 }
 
+export function createCommandEnvironment(command: string, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+
+  if (/\bplaywright\s+test\b/.test(command)) {
+    delete env.NO_COLOR;
+  } else if (env.NO_COLOR !== undefined && env.FORCE_COLOR !== undefined) {
+    delete env.FORCE_COLOR;
+  }
+
+  return env;
+}
+
 function runCommand(command: string, args: string[]): number {
   const forwardedArgs = args[0] === "--" ? args.slice(1) : args;
   const commandLine = [command, ...forwardedArgs.map((arg) => shellQuote(arg))].join(" ");
   const result = spawnSync(commandLine, {
     encoding: "utf8",
-    env: process.env,
+    env: createCommandEnvironment(command),
     maxBuffer: 1024 * 1024 * 50,
     shell: true,
     stdio: ["inherit", "inherit", "pipe"],

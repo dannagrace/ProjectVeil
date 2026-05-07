@@ -169,14 +169,27 @@ function resolveClientCommand(): string {
   return "npm run dev -- client:h5";
 }
 
+function createWebServerEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...overrides };
+
+  // Playwright merges process.env again when spawning webServer commands, so an
+  // explicit undefined is needed to prevent NO_COLOR/FORCE_COLOR conflicts.
+  if (env.NO_COLOR !== undefined) {
+    env.FORCE_COLOR = undefined;
+  } else if (env.FORCE_COLOR !== undefined) {
+    env.NO_COLOR = undefined;
+  }
+
+  return env;
+}
+
 function createSharedWebServers(): WebServerPlugin[] {
   const reuseExistingServer = shouldReuseServers();
 
   return [
     {
       command: "npm run dev -- server",
-      env: {
-        ...process.env,
+      env: createWebServerEnv({
         PORT: String(serverPort),
         ANALYTICS_ENDPOINT: `${serverOrigin}/api/test/analytics/events`,
         ANALYTICS_SINK: "http",
@@ -189,7 +202,7 @@ function createSharedWebServers(): WebServerPlugin[] {
         VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX: process.env.VEIL_RATE_LIMIT_HTTP_GLOBAL_MAX ?? "2000",
         VEIL_RATE_LIMIT_HTTP_ADMIN_MAX: process.env.VEIL_RATE_LIMIT_HTTP_ADMIN_MAX ?? "200",
         VEIL_RATE_LIMIT_WS_ACTION_MAX: process.env.VEIL_RATE_LIMIT_WS_ACTION_MAX ?? "40"
-      },
+      }),
       port: serverPort,
       reuseExistingServer,
       stdout: "pipe",
@@ -202,13 +215,12 @@ function createSharedWebServers(): WebServerPlugin[] {
     },
     {
       command: resolveClientCommand(),
-      env: {
-        ...process.env,
+      env: createWebServerEnv({
         VEIL_PLAYWRIGHT_CLIENT_PORT: String(clientPort),
         VEIL_DEV_SERVER_HTTP_URL: serverOrigin,
         VITE_VEIL_SERVER_HTTP_URL: serverOrigin,
         VITE_VEIL_SERVER_WS_URL: serverWsOrigin
-      },
+      }),
       port: clientPort,
       reuseExistingServer,
       stdout: "pipe",

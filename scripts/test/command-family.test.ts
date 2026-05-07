@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { runFamilyCli } from "../ops/command-family.ts";
+import { createCommandEnvironment, runFamilyCli } from "../ops/command-family.ts";
 
 test("runFamilyCli shell-quotes forwarded args to avoid command substitution", () => {
   const markerPath = resolve(tmpdir(), `project-veil-command-family-${process.pid}-${Date.now()}`);
@@ -66,4 +66,24 @@ test("runFamilyCli handles forwarded subcommand help without spawning the runner
   } finally {
     process.stdout.write = originalWrite;
   }
+});
+
+test("createCommandEnvironment removes NO_COLOR for Playwright test commands", () => {
+  const env = createCommandEnvironment("npm run validate -- e2e:fixtures && playwright test --project=smoke", {
+    NO_COLOR: "1",
+    PATH: "/usr/bin",
+  });
+
+  assert.equal(env.NO_COLOR, undefined);
+  assert.equal(env.PATH, "/usr/bin");
+});
+
+test("createCommandEnvironment keeps NO_COLOR preferred for non-Playwright command conflicts", () => {
+  const env = createCommandEnvironment("node --test ./scripts/test/example.test.ts", {
+    FORCE_COLOR: "1",
+    NO_COLOR: "1",
+  });
+
+  assert.equal(env.NO_COLOR, "1");
+  assert.equal(env.FORCE_COLOR, undefined);
 });
