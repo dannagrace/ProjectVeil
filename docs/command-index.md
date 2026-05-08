@@ -210,7 +210,7 @@ Usage: npm run typecheck -- [command] [-- args...]
 
 Unified typecheck entrypoint for workspace, app, and ops-tooling compiler gates.
 
-No subcommand runs the workspace base typecheck.
+No subcommand runs the CI typecheck gate.
 
 Commands:
   ci         Typecheck CI.

@@ -17,5 +17,5 @@ test("family help exposes the unified CLI usage surface", () => {
   assert.match(renderFamilyHelp("release"), /gate:summary/);
   assert.match(renderFamilyHelp("validate"), /content-pack/);
   assert.match(renderFamilyHelp("test"), /Usage: npm test -- \[command\] \[-- args\.\.\.\]/);
-  assert.match(renderFamilyHelp("typecheck"), /No subcommand runs the workspace base typecheck/);
+  assert.match(renderFamilyHelp("typecheck"), /No subcommand runs the CI typecheck gate/);
 });

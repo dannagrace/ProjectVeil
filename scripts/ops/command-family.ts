@@ -46,9 +46,9 @@ const FAMILY_CONFIG: Record<CommandFamilyName, FamilyConfig> = {
     usage: "npm run db -- [command] [-- args...]",
   },
   typecheck: {
-    defaultRunner: "tsc -p tsconfig.base.json --noEmit",
+    defaultRunner: "node --import tsx ./scripts/ops/typecheck-cli.ts ci",
     description: "Unified typecheck entrypoint for workspace, app, and ops-tooling compiler gates.",
-    emptyState: "No subcommand runs the workspace base typecheck.",
+    emptyState: "No subcommand runs the CI typecheck gate.",
     usage: "npm run typecheck -- [command] [-- args...]",
   },
   dev: {
