@@ -1607,6 +1607,7 @@ test("GET /api/admin/players/:id/overview aggregates GM 360 data and records an 
     banReason: "Appeal pending",
     banExpiry: "2026-05-01T00:00:00.000Z"
   });
+  const recentPurchaseGrantedAt = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   store.seedPurchaseHistory("player-gm", [
     {
       purchaseId: "purchase-1",
@@ -1615,7 +1616,7 @@ test("GET /api/admin/players/:id/overview aggregates GM 360 data and records an 
       currency: "gems",
       amount: 60,
       paymentMethod: "gems",
-      grantedAt: "2026-04-08T12:00:00.000Z",
+      grantedAt: recentPurchaseGrantedAt,
       status: "completed"
     }
   ]);
