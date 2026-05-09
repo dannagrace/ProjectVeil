@@ -119,6 +119,16 @@ export function shouldOpenHeroSecondaryDisclosure(viewport: { matchMedia?: (quer
   return !viewport.matchMedia?.("(max-width: 1100px)").matches;
 }
 
+export type HeroSecondaryDisclosureKey = "account" | "build" | "diagnostics";
+
+export function resolveHeroSecondaryDisclosureOpen(
+  disclosures: Record<HeroSecondaryDisclosureKey, boolean | null>,
+  key: HeroSecondaryDisclosureKey,
+  viewport: { matchMedia?: (query: string) => { matches: boolean } } = window
+): boolean {
+  return disclosures[key] ?? shouldOpenHeroSecondaryDisclosure(viewport);
+}
+
 let debugBar: HTMLDivElement | null = null;
 
 if (shouldShowH5DebugBar()) {
@@ -324,6 +334,7 @@ interface AppState {
   lastBattleSettlement: BattleSettlementSummary | null;
   lastEncounterStarted: Extract<SessionUpdate["events"][number], { type: "battle.started" }> | null;
   predictionStatus: string;
+  heroSecondaryDisclosures: Record<HeroSecondaryDisclosureKey, boolean | null>;
   diagnostics: DiagnosticState;
   achievementPanel: {
     open: boolean;
@@ -458,6 +469,11 @@ const state: AppState = {
   lastBattleSettlement: null,
   lastEncounterStarted: null,
   predictionStatus: "",
+  heroSecondaryDisclosures: {
+    account: null,
+    build: null,
+    diagnostics: null
+  },
   diagnostics: {
     connectionStatus: shouldBootGame ? "connecting" : "connected",
     lastUpdateAt: null,
@@ -5000,7 +5016,8 @@ function render(): void {
   const hoveredTile = hoveredTileData();
   const hoveredObject = describeTileObject(hoveredTile);
   const hoveredBadges = objectBadgeAssets(hoveredObject);
-  const heroSecondaryDisclosureOpen = shouldOpenHeroSecondaryDisclosure() ? " open" : "";
+  const heroSecondaryDisclosureOpen = (key: HeroSecondaryDisclosureKey) =>
+    resolveHeroSecondaryDisclosureOpen(state.heroSecondaryDisclosures, key) ? " open" : "";
   const interactionLabel = (interactionType: string | null | undefined) => {
     if (interactionType === "battle") {
       return "战斗交互";
@@ -5065,7 +5082,7 @@ function render(): void {
           <button class="session-link" data-return-lobby="true">返回大厅</button>
           <button class="session-link" data-logout-guest="true">切换游客账号</button>
         </div>
-        <details class="hero-secondary-disclosure account-secondary-disclosure" data-testid="account-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+        <details class="hero-secondary-disclosure account-secondary-disclosure" data-testid="account-secondary-disclosure" data-hero-secondary-disclosure="account"${heroSecondaryDisclosureOpen("account")}>
           <summary>
             <strong>账号和回放</strong>
             <span>资料、任务、成就、战报回放和账号管理</span>
@@ -5189,7 +5206,7 @@ function render(): void {
           <p data-testid="hero-skill-points">Skill Points ${hero?.progression.skillPoints ?? 0}</p>
           <p class="muted" data-testid="hero-preview">${state.previewPlan ? `预览消耗 ${state.previewPlan.moveCost} 步` : state.predictionStatus || "悬停地图格子查看路径"}</p>
           <button class="modal-button" data-end-day="true" ${state.battle ? "disabled" : ""}>推进到下一天</button>
-          <details class="hero-secondary-disclosure hero-build-secondary-disclosure" data-testid="hero-build-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+          <details class="hero-secondary-disclosure hero-build-secondary-disclosure" data-testid="hero-build-secondary-disclosure" data-hero-secondary-disclosure="build"${heroSecondaryDisclosureOpen("build")}>
             <summary>
               <strong>英雄养成</strong>
               <span>装备、属性明细和技能树</span>
@@ -5201,7 +5218,7 @@ function render(): void {
             </div>
           </details>
         </div>
-        <details class="hero-secondary-disclosure diagnostics-secondary-disclosure" data-testid="diagnostics-secondary-disclosure"${heroSecondaryDisclosureOpen}>
+        <details class="hero-secondary-disclosure diagnostics-secondary-disclosure" data-testid="diagnostics-secondary-disclosure" data-hero-secondary-disclosure="diagnostics"${heroSecondaryDisclosureOpen("diagnostics")}>
           <summary>
             <strong>时间线和诊断</strong>
             <span>事件流、调试快照和导出工具</span>
@@ -5312,6 +5329,15 @@ function render(): void {
     ${renderGameplayAchievementPanel()}
     ${renderModal()}
   `;
+
+  for (const disclosure of Array.from(root.querySelectorAll<HTMLDetailsElement>("[data-hero-secondary-disclosure]"))) {
+    disclosure.addEventListener("toggle", () => {
+      const key = disclosure.dataset.heroSecondaryDisclosure;
+      if (key === "account" || key === "build" || key === "diagnostics") {
+        state.heroSecondaryDisclosures[key] = disclosure.open;
+      }
+    });
+  }
 
   for (const tileButton of Array.from(root.querySelectorAll<HTMLButtonElement>("[data-x][data-y]"))) {
     tileButton.addEventListener("mouseenter", () => {

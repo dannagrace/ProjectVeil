@@ -211,6 +211,27 @@ test("hero secondary disclosures default closed on compact mobile viewports", as
   );
 });
 
+test("hero secondary disclosure user overrides persist across render defaults", async () => {
+  const { resolveHeroSecondaryDisclosureOpen } = await loadMainModule();
+  const compactViewport = {
+    matchMedia: (query: string) => ({ matches: query === "(max-width: 1100px)" })
+  };
+  const wideViewport = {
+    matchMedia: () => ({ matches: false })
+  };
+  const disclosures: Record<"account" | "build" | "diagnostics", boolean | null> = {
+    account: null,
+    build: null,
+    diagnostics: null
+  };
+
+  assert.equal(resolveHeroSecondaryDisclosureOpen(disclosures, "diagnostics", compactViewport), false);
+  disclosures.diagnostics = true;
+  assert.equal(resolveHeroSecondaryDisclosureOpen(disclosures, "diagnostics", compactViewport), true);
+  disclosures.diagnostics = false;
+  assert.equal(resolveHeroSecondaryDisclosureOpen(disclosures, "diagnostics", wideViewport), false);
+});
+
 test("startMainH5Boot covers cached-session boot and exposes automation hooks before boot settles", async () => {
   const { startMainH5Boot } = await loadMainModule();
   const replayed = createSessionUpdate("cached");

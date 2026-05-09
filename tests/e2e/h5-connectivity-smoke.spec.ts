@@ -321,9 +321,8 @@ test("h5 diagnostics panel keeps light-surface text readable", async ({ page }, 
     await expect(page).toHaveURL(new RegExp(`roomId=${roomId}`));
     await expect(page.getByTestId("hero-move")).toHaveText(fullMoveTextPattern(), { timeout: 10_000 });
     const diagnosticsDisclosure = page.getByTestId("diagnostics-secondary-disclosure");
-    await diagnosticsDisclosure.evaluate((disclosure) => {
-      (disclosure as HTMLDetailsElement).open = true;
-    });
+    await diagnosticsDisclosure.locator(":scope > summary").click();
+    await expect(diagnosticsDisclosure).toHaveAttribute("open", "");
     await expect(page.getByTestId("diagnostic-panel")).toBeVisible();
 
     const diagnosticLightSurfaceColors = await page
