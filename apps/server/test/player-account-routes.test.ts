@@ -2504,15 +2504,17 @@ test("player account progression routes return a compact achievement and event r
 
   const meResponse = await fetch(`http://127.0.0.1:${port}/api/player-accounts/me/progression`, {
     headers: {
-      Authorization: `Bearer ${session.token}`
+      Authorization: `Bearer ${session.token}`,
+      "X-Veil-Test-Now": "2026-05-11T12:00:00.000Z"
     }
   });
-  const mePayload = (await meResponse.json()) as PlayerProgressionSnapshot;
+  const mePayload = (await meResponse.json()) as PlayerProgressionSnapshot & { dailyDungeon?: unknown | null };
   assert.equal(meResponse.status, 200);
   assert.deepEqual(mePayload.recentEventLog.map((entry) => entry.id), ["event-newer", "event-older"]);
   assert.equal(mePayload.achievements[1]?.id, "enemy_slayer");
   assert.equal(mePayload.achievements[1]?.current, 2);
   assert.equal(mePayload.achievements[1]?.progressUpdatedAt, "2026-03-27T12:02:00.000Z");
+  assert.equal(mePayload.dailyDungeon, null);
 });
 
 test("season progress and claim-tier routes expose battle pass state for the authenticated player", async (t) => {

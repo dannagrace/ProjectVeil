@@ -757,8 +757,23 @@ function resolvePrimaryDailyDungeon(now = new Date()) {
   return dungeon;
 }
 
+function isDailyDungeonNotActiveError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("daily_dungeon_not_active_for_");
+}
+
 function toDailyDungeonResponse(account: PlayerAccountSnapshot, now = new Date()) {
   return buildDailyDungeonSummary(resolvePrimaryDailyDungeon(now), account.dailyDungeonState, now);
+}
+
+function toOptionalDailyDungeonResponse(account: PlayerAccountSnapshot, now = new Date()) {
+  try {
+    return toDailyDungeonResponse(account, now);
+  } catch (error) {
+    if (isDailyDungeonNotActiveError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function toRewardMutation(
@@ -3548,6 +3563,7 @@ export function registerPlayerAccountRoutes(
 
     try {
       const featureFlags = resolveFeatureFlagsForPlayer(authSession.playerId);
+      const dailyDungeonNow = resolveDailyDungeonNow(request);
       const account =
         (await store.loadPlayerAccount(authSession.playerId)) ??
         (await store.ensurePlayerAccount({
@@ -3567,7 +3583,7 @@ export function registerPlayerAccountRoutes(
           }
         ),
         campaign: toCampaignResponse(account, accessContext),
-        dailyDungeon: toDailyDungeonResponse(account)
+        dailyDungeon: toOptionalDailyDungeonResponse(account, dailyDungeonNow)
       });
     } catch (error) {
       sendJson(response, 500, { error: toErrorPayload(error) });
