@@ -32,40 +32,49 @@ function seedRooms(count: number): void {
 }
 
 test("buildRuntimeSloSummaryPayload emits a passing JSON/Markdown/text contract", () => {
-  resetRuntimeObservability();
-  seedRooms(48);
-  for (let index = 0; index < 180; index += 1) {
-    recordWorldActionMessage();
-  }
-  for (let index = 0; index < 72; index += 1) {
-    recordBattleActionMessage();
-  }
-  recordReconnectWindowOpened();
-  recordReconnectWindowResolved("success");
-  recordAuthTokenDeliveryRequest();
-  recordAuthTokenDeliverySuccess();
-  setAuthTokenDeliveryQueueLatency({
-    oldestQueuedLatencyMs: 120,
-    nextAttemptDelayMs: 0
-  });
+  const originalNow = Date.now;
+  Date.now = () => 1712232000000;
+  try {
+    resetRuntimeObservability();
+    seedRooms(48);
+    for (let index = 0; index < 180; index += 1) {
+      recordWorldActionMessage();
+    }
+    for (let index = 0; index < 72; index += 1) {
+      recordBattleActionMessage();
+    }
+    recordReconnectWindowOpened();
+    recordReconnectWindowResolved("success");
+    recordAuthTokenDeliveryRequest();
+    recordAuthTokenDeliverySuccess();
+    setAuthTokenDeliveryQueueLatency({
+      oldestQueuedLatencyMs: 120,
+      nextAttemptDelayMs: 0
+    });
 
-  const report = buildRuntimeSloSummaryPayload("project-veil-test");
-  const markdown = renderRuntimeSloSummaryMarkdown(report);
-  const text = renderRuntimeSloSummaryText(report);
+    const report = buildRuntimeSloSummaryPayload("project-veil-test");
+    const markdown = renderRuntimeSloSummaryMarkdown(report);
+    const text = renderRuntimeSloSummaryText(report);
 
-  assert.equal(report.schemaVersion, 1);
-  assert.equal(report.service, "project-veil-test");
-  assert.equal(report.status, "pass");
-  assert.equal(report.snapshot.roomCount, 48);
-  assert.equal(report.snapshot.reconnectBacklog, 0);
-  assert.equal(report.snapshot.queueLatencyMs, 120);
-  assert.equal(report.snapshot.gameplayErrorRate, 0);
-  assert.equal(report.snapshot.reconnectErrorRate, 0);
-  assert.equal(report.snapshot.tokenDeliveryErrorRate, 0);
-  assert.equal(report.profiles.find((profile) => profile.id === "candidate_gate")?.status, "pass");
-  assert.match(markdown, /# Runtime SLO Summary/);
-  assert.match(markdown, /Candidate gate/);
-  assert.match(text, /runtime_slo status=pass/);
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.service, "project-veil-test");
+    assert.equal(report.status, "pass");
+    assert.equal(report.snapshot.uptimeSeconds, 0);
+    assert.equal(report.snapshot.roomCount, 48);
+    assert.equal(report.snapshot.reconnectBacklog, 0);
+    assert.equal(report.snapshot.queueLatencyMs, 120);
+    assert.ok(report.snapshot.actionThroughputPerSecond >= 150);
+    assert.equal(report.snapshot.gameplayErrorRate, 0);
+    assert.equal(report.snapshot.reconnectErrorRate, 0);
+    assert.equal(report.snapshot.tokenDeliveryErrorRate, 0);
+    assert.equal(report.profiles.find((profile) => profile.id === "candidate_gate")?.status, "pass");
+    assert.match(markdown, /# Runtime SLO Summary/);
+    assert.match(markdown, /Candidate gate/);
+    assert.match(text, /runtime_slo status=pass/);
+  } finally {
+    Date.now = originalNow;
+    resetRuntimeObservability();
+  }
 });
 
 test("buildRuntimeSloSummaryPayload classifies backlog, latency, and error-rate failures", () => {

@@ -2086,7 +2086,7 @@ export function buildRuntimeSloSummaryPayload(service = "project-veil-server"): 
     queueLatencyMs: health.runtime.auth.tokenDelivery.oldestQueuedLatencyMs,
     queueNextAttemptDelayMs: health.runtime.auth.tokenDelivery.nextAttemptDelayMs,
     actionThroughputPerSecond:
-      health.uptimeSeconds > 0 ? roundMetric(actionMessagesTotal / Math.max(health.uptimeSeconds, 0.001)) : 0,
+      actionMessagesTotal > 0 ? roundMetric(actionMessagesTotal / Math.max(health.uptimeSeconds, 0.001)) : 0,
     gameplayErrorRate: actionMessagesTotal > 0 ? roundMetric(gameplayErrorCount / actionMessagesTotal, 6) : 0,
     reconnectErrorRate: reconnectAttemptsTotal > 0 ? roundMetric(reconnectFailuresTotal / reconnectAttemptsTotal, 6) : 0,
     tokenDeliveryErrorRate:
