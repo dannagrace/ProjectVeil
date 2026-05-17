@@ -74,12 +74,13 @@ test("UGC review queue covers display name, guild name, and guild chat rejection
       invites: []
     })
   );
+  const guildChatExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   await store.createGuildChatMessage?.({
     guildId: "ugc-guild",
     authorPlayerId: "guild-owner",
     authorDisplayName: "GuildOwner",
     content: "欢迎加 discord12345 一起玩",
-    expiresAt: "2026-05-17T00:00:00.000Z",
+    expiresAt: guildChatExpiresAt,
     createdAt: "2026-04-17T01:00:00.000Z"
   });
 
